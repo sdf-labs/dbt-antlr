@@ -1,0 +1,8 @@
+---
+source: crates/dbt-antlr-codegen/src/grammar/mutual_recursion.rs
+assertion_line: 1713
+expression: render(&unit)
+---
+expr:
+  | <assoc=right> expr ''^'' expr
+  | ID

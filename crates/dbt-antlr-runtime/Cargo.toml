@@ -1,0 +1,41 @@
+[package]
+name = "dbt-antlr-runtime"
+version.workspace = true
+authors = [
+  "Konstantin Anisimov <rrevenantt@gmail.com>",
+  "Alex Snaps <alex@wcgw.dev>",
+  "Bo Lin <bo@dreamsphere.org>",
+]
+homepage.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/dbt-antlr-runtime"
+description = "Dbt fork of ANTLR4 runtime for Rust"
+readme = "README.md"
+edition = "2021"
+license = "BSD-3-Clause"
+keywords = ["ANTLR", "ANTLR4", "parsing", "runtime"]
+categories = ["parsing"]
+exclude = ["/build.rs", "/grammars", "/templates"]
+
+[features]
+arena-allocation-limit = []
+recursion-limit = []
+atn-dump = []
+
+[dependencies]
+uuid = "1.16.0"
+byteorder = "^1"
+fxhash = "0.2.1"
+bit-set = "0.8.0"
+hashbrown = "0.16.1"
+bumpalo = { version = "3.20.2", features = [
+  "allocator-api2",
+  "collections",
+  "boxed",
+] }
+stacker = { version = "0.1.23", optional = true }
+
+[dev-dependencies]
+serial_test = "3.4.0"
+dbt-antlr-runtime = { path = ".", features = ["atn-dump"] }
+dbt-antlr-codegen = { workspace = true, features = ["atn-export"] }

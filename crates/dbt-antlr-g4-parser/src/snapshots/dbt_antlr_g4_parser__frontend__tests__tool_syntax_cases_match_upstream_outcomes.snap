@@ -1,0 +1,344 @@
+---
+source: crates/dbt-antlr-g4-parser/src/frontend.rs
+expression: observed
+---
+[
+    (
+        "testA/missing-grammar-keyword",
+        [
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 0..1,
+                },
+                message: "mismatched input 'A' expecting {'lexer', 'parser', 'grammar'}",
+            },
+        ],
+    ),
+    (
+        "testA/missing-grammar-name",
+        [
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 8..9,
+                },
+                message: "missing {TOKEN_REF, RULE_REF} at ';'",
+            },
+        ],
+    ),
+    (
+        "testA/missing-grammar-semi",
+        [
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 10..11,
+                },
+                message: "missing ';' at 'a'",
+            },
+        ],
+    ),
+    (
+        "testA/extra-rule-semi",
+        [
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 19..20,
+                },
+                message: "mismatched input ';' expecting {<EOF>, 'mode'}",
+            },
+        ],
+    ),
+    (
+        "testA/extra-grammar-semi",
+        [
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 10..11,
+                },
+                message: "extraneous input ';' expecting {<EOF>, TOKEN_REF, RULE_REF, OPTIONS, TOKENS, CHANNELS, 'import', 'fragment', 'protected', 'public', 'private', 'mode', '@'}",
+            },
+        ],
+    ),
+    (
+        "testA/missing-rule-action",
+        [
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 19..20,
+                },
+                message: "missing ACTION at ':'",
+            },
+        ],
+    ),
+    (
+        "testA/malformed-rule-prequel",
+        [
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 14..15,
+                },
+                message: "mismatched input '(' expecting {'[', OPTIONS, 'returns', 'locals', 'throws', ':', '@'}",
+            },
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 18..19,
+                },
+                message: "mismatched input '|' expecting {OPTIONS, ':'}",
+            },
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 22..23,
+                },
+                message: "mismatched input ')' expecting {OPTIONS, ':'}",
+            },
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 26..27,
+                },
+                message: "mismatched input ';' expecting {OPTIONS, ':'}",
+            },
+        ],
+    ),
+    (
+        "testExtraColon",
+        [
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 15..16,
+                },
+                message: "no viable alternative at input ':'",
+            },
+        ],
+    ),
+    (
+        "testMissingRuleSemi",
+        [
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 20..21,
+                },
+                message: "no viable alternative at input ':'",
+            },
+        ],
+    ),
+    (
+        "testMissingRuleSemi2",
+        [
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 28..29,
+                },
+                message: "mismatched input ':' expecting {TOKEN_REF, LEXER_CHAR_SET, STRING_LITERAL, ACTION, ';', '(', '->', '<', '?', '*', '+', '|', '.', '~'}",
+            },
+        ],
+    ),
+    (
+        "testMissingRuleSemi3",
+        [
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 27..34,
+                },
+                message: "no viable alternative at input 'returns'",
+            },
+        ],
+    ),
+    (
+        "testMissingRuleSemi4",
+        [
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 20..25,
+                },
+                message: "no viable alternative at input 'catch'",
+            },
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 48..49,
+                },
+                message: "no viable alternative at input ':'",
+            },
+        ],
+    ),
+    (
+        "testMissingRuleSemi5",
+        [
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 20..25,
+                },
+                message: "no viable alternative at input 'catch'",
+            },
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 46..46,
+                },
+                message: "missing ';' at '<EOF>'",
+            },
+        ],
+    ),
+    (
+        "testBadRulePrequelStart",
+        [
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 15..24,
+                },
+                message: "extraneous input 'options {' expecting {TOKEN_REF, RULE_REF}",
+            },
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 25..26,
+                },
+                message: "mismatched input '=' expecting ACTION",
+            },
+        ],
+    ),
+    (
+        "testBadRulePrequelStart2",
+        [
+            SyntaxDiagnostic {
+                code: "G4F003",
+                stage: Parser,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 13..14,
+                },
+                message: "extraneous input '}' expecting {'[', OPTIONS, 'returns', 'locals', 'throws', ':', '@'}",
+            },
+        ],
+    ),
+    (
+        "testUnterminatedStringLiteral",
+        [
+            SyntaxDiagnostic {
+                code: "G4F002",
+                stage: Lexer,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 15..17,
+                },
+                message: "unterminated string literal",
+            },
+        ],
+    ),
+    (
+        "testParserRuleNameStartingWithUnderscore",
+        [
+            SyntaxDiagnostic {
+                code: "G4F002",
+                stage: Lexer,
+                span: SourceSpan {
+                    source: SourceId(
+                        0,
+                    ),
+                    bytes: 11..12,
+                },
+                message: "token recognition error at: '_'",
+            },
+        ],
+    ),
+]
