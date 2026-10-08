@@ -7,6 +7,8 @@
 //! Tier 2 (runs only with `ATN_SWEEP=1`) sweeps the codegen fixture corpus
 //! the same way.
 
+// Sweep progress goes to stdout/stderr like other long-running tests.
+#![allow(clippy::print_stdout, clippy::print_stderr)]
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -176,15 +178,19 @@ fn first_diff(oracle: &str, candidate: &str) -> String {
             let before = i.saturating_sub(1);
             let context = oracle_lines[before..i]
                 .iter()
-                .map(|line| format!("  context:   {line}\n"))
-                .collect::<String>();
+                .fold(String::new(), |mut acc, line| {
+                    acc.push_str("  context:   ");
+                    acc.push_str(line);
+                    acc.push('\n');
+                    acc
+                });
             return format!(
                 "first difference at line {}:\n{context}  oracle:    {a}\n  candidate: {b}",
                 i + 1,
             );
         }
     }
-    "dumps differ in trailing newline only".to_string()
+    "dumps differ in trailing newline only".to_owned()
 }
 
 fn assert_dumps_equal(context: &str, oracle: &str, candidate: &str) {
@@ -319,8 +325,8 @@ fn fixture_sweep() {
                 let message = payload
                     .downcast_ref::<String>()
                     .cloned()
-                    .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
-                    .unwrap_or_else(|| "<non-string panic>".to_string());
+                    .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                    .unwrap_or_else(|| "<non-string panic>".to_owned());
                 failures.push(format!("{dir_name}: {message}"));
             }
         }
