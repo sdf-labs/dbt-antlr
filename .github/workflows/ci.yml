@@ -42,11 +42,12 @@ jobs:
 
   # Workspace unit/integration tests on the MSRV (1.95) and current stable.
   unittests:
-    name: cargo test (${{ matrix.rust }})
-    runs-on: ubuntu-latest
+    name: cargo test (${{ matrix.os }}, ${{ matrix.rust }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
         rust: [ "1.96", stable ]
     steps:
       - name: Check out code
@@ -60,11 +61,13 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.rust }}
+          key: ${{ matrix.os }}-${{ matrix.rust }}
+
+      - name: cargo build dbt-antlr
+        run: cargo build --bin dbt-antlr
 
       - name: cargo test
         run: cargo test --workspace --all-targets
-
   # Self-hosting guarantee: regenerating the g4-parser front-end and the
   # runtime test goldens with the shipped codegen must be a zero diff.
   bootstrap:
@@ -97,12 +100,8 @@ jobs:
   # cached), renders each descriptor grammar through the Java tool's ST4
   # templates, re-emits it with the Rust codegen, compiles, and runs it.
   runtime-testsuite:
-    name: runtime conformance suite (${{ matrix.rust }})
+    name: runtime conformance suite
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        rust: [ "1.96", stable ]
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -113,15 +112,15 @@ jobs:
           distribution: 'zulu'
           java-version: 21
 
-      - name: Install Rust ${{ matrix.rust }}
+      - name: Install Rust 1.96
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.rust }}
+          toolchain: "1.96"
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          key: testsuite-${{ matrix.rust }}
+          key: testsuite
 
       # The pinned artifacts live under target/ and are keyed on the module
       # that records their URLs and SHA-256 checksums.
