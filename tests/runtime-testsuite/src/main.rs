@@ -1451,7 +1451,7 @@ mod tests {
         let descriptor = parse(
             "[type]\nLexer\n\n[grammar]\nlexer grammar L;\nA:'a';\n\n[input]\na\n\n[output]\nx\n",
         );
-        assert!(descriptor.skip_targets.is_empty());
+        assert_eq!(descriptor.skip_targets, Vec::<String>::new());
         assert!(skip_reason(&descriptor).is_none());
     }
 

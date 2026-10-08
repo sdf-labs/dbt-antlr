@@ -284,7 +284,7 @@ mod tests {
         assert_eq!(lexer.semantic.unit.name, "sentencesLexer");
         assert_eq!(parser.semantic.unit.name, "sentencesParser");
         assert_eq!(compilation.sources.len(), 1);
-        assert!(compilation.transform_report.entries.is_empty());
+        assert_eq!(compilation.transform_report.entries, []);
     }
 
     #[test]

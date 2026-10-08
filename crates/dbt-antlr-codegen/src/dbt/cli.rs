@@ -60,7 +60,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
             "-no-visitor" => gen_visitor = false,
             "-listener" => gen_listener = true,
             "-no-listener" => gen_listener = false,
-            "-h" | "-help" | "--help" => miette::bail!("{USAGE}"),
+            "-h" | "-help" | "--help" => return Err(miette::miette!("{USAGE}")),
             _ if arg.starts_with("-D") => {
                 writeln!(stderr, "warning: ignoring option {arg}").into_diagnostic()?;
             }
@@ -89,7 +89,11 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
 
 fn value_after(option: &str, args: &[String], index: &mut usize) -> miette::Result<String> {
     args.get(*index).map_or_else(
-        || miette::bail!("option {option} expects a directory\n{USAGE}"),
+        || {
+            Err(miette::miette!(
+                "option {option} expects a directory\n{USAGE}"
+            ))
+        },
         |value| {
             *index += 1;
             Ok(value.clone())

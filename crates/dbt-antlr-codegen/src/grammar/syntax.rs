@@ -1189,10 +1189,11 @@ finally { finish(); }
         insta::assert_debug_snapshot!("converts_parser_rules_and_nested_elements", unit);
         // Provenance is tracked in a separate index a `unit` snapshot cannot express, so keep it as
         // an explicit invariant.
-        assert!(
-            !provenance
+        assert_ne!(
+            provenance
                 .origins(ModelNodeId::Rule(unit.rules[0].id))
-                .is_empty()
+                .len(),
+            0
         );
     }
 

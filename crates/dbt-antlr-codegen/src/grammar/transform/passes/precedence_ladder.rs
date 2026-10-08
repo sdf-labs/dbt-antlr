@@ -1478,7 +1478,7 @@ member : INT ;
             .run(&mut grammar, &mut ids, false)
             .expect("a second pass should remain valid");
         assert!(!second.entries[0].changed);
-        assert!(second.candidates.is_empty());
+        assert_eq!(second.candidates, []);
     }
 
     #[test]
@@ -1650,7 +1650,7 @@ atom : INT ;
                 .iter()
                 .any(|option| { option.name.value == "assoc" && option.value.value == "right" })
         );
-        assert!(alternatives[2].options.is_empty());
+        assert_eq!(alternatives[2].options, []);
     }
 
     #[test]

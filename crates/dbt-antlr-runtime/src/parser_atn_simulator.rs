@@ -243,7 +243,7 @@ impl<'sim> ParserATNSimulator<'sim> {
 
         loop {
             //            println!("exec atn loop previous D {}",previousD as i32 -1);
-            let D = if let Some(s) = { local.dfa_ref.get_edge(previousD, (token + 1) as usize) } {
+            let D = if let Some(s) = local.dfa_ref.get_edge(previousD, (token + 1) as usize) {
                 s
             } else {
                 self.compute_target_state(previousD, token, local)?
