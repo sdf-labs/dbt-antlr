@@ -38,4 +38,4 @@ stacker = { version = "0.1.23", optional = true }
 [dev-dependencies]
 serial_test = "3.4.0"
 dbt-antlr-runtime = { path = ".", features = ["atn-dump"] }
-dbt-antlr-codegen = { workspace = true, features = ["atn-export"] }
+dbt-antlr = { workspace = true, features = ["atn-export"] }

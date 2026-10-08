@@ -331,7 +331,7 @@ fn prebuild_generator(args: &Args) -> io::Result<PathBuf> {
             .arg("--manifest-path")
             .arg(args.workspace_root.join("Cargo.toml"))
             .arg("-p")
-            .arg("dbt-antlr-codegen")
+            .arg("dbt-antlr")
             .arg("--bin")
             .arg("dbt-antlr")
             .arg("--message-format=json"),

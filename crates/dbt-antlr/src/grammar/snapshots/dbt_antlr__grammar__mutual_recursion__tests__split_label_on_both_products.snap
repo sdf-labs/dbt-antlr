@@ -1,0 +1,10 @@
+---
+source: crates/dbt-antlr/src/grammar/mutual_recursion.rs
+assertion_line: 1925
+expression: render(&unit)
+---
+e:
+  | e ''+'' e #Add
+  | e ''..'' #Range
+  | ''..'' #Range
+  | ID #Atom

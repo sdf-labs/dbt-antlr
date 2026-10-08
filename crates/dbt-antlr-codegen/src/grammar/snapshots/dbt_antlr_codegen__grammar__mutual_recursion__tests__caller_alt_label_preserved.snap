@@ -1,8 +1,0 @@
----
-source: crates/dbt-antlr-codegen/src/grammar/mutual_recursion.rs
-assertion_line: 1913
-expression: render(&unit)
----
-e:
-  | e ''+'' ID #ViaSatellite
-  | ID #Atom

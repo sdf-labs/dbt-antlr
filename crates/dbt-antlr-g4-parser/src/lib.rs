@@ -3,7 +3,7 @@
 //! Checked-in `ANTLRv4` recognizers and recovered source-syntax facade.
 //!
 //! This crate is a lockstep implementation dependency of
-//! `dbt-antlr-codegen`. Its exported facade is intentionally narrow and is
+//! `dbt-antlr`. Its exported facade is intentionally narrow and is
 //! not a standalone compatibility promise.
 
 mod frontend;

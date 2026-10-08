@@ -5,7 +5,7 @@ Rust parsers targeting the `dbt-antlr-runtime` runtime.
 
 ## Repository layout
 
-- `crates/dbt-antlr-codegen` — the tool: `.g4` loading, semantics, ATN
+- `crates/dbt-antlr` — the tool: `.g4` loading, semantics, ATN
   construction, and code generation. The emission layer (`src/dbt/`) renders
   recognizers for the `dbt-antlr-runtime` runtime from a minijinja template that
   mirrors the Java tool's `Rust.stg`; the `dbt-antlr` binary is the
@@ -33,7 +33,7 @@ This repository stands on three projects, all BSD-3-Clause licensed:
 - **[antlr-rust-runtime](https://github.com/ophi-dev/antlr-rust-runtime)**
   (Konstantin Vyatkin / Ophidiarium contributors) — a from-scratch, pure-Rust
   reimplementation of the ANTLR v4 tool and runtime. The tool side of this
-  repository (`dbt-antlr-codegen`, `dbt-antlr-g4-parser`, the
+  repository (`dbt-antlr`, `dbt-antlr-g4-parser`, the
   conformance-test harness, and — for now — `antlr-rust-runtime`) was
   seeded from v0.34.0 of that project (see `LICENSE`).
 

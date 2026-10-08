@@ -11,7 +11,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use dbt_antlr_codegen::atn_export::{compile_atn_data, GrammarAtnData};
+use dbt_antlr::atn_export::{compile_atn_data, GrammarAtnData};
 use dbt_antlr_runtime::atn::ATN;
 use dbt_antlr_runtime::atn_deserializer::ATNDeserializer;
 use dbt_antlr_runtime::atn_dump::dump_atn;
@@ -103,7 +103,7 @@ fn gen_dir() -> PathBuf {
 }
 
 fn fixtures_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../dbt-antlr-codegen/tests/codegen-direct/fixtures")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../dbt-antlr/tests/codegen-direct/fixtures")
 }
 
 /// Parses the word list of the `atn:` section of a `.interp` file.

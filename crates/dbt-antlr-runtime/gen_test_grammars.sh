@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GEN_BIN="$WORKSPACE_ROOT/target/debug/dbt-antlr"
 
 cargo build --quiet --manifest-path "$WORKSPACE_ROOT/Cargo.toml" \
-    -p dbt-antlr-codegen --bin dbt-antlr
+    -p dbt-antlr --bin dbt-antlr
 
 declare -a GRAMMARS=(
     "VisitorBasic"

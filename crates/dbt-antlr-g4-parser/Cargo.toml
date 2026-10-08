@@ -4,7 +4,7 @@ categories = [
   "parser-implementations",
   "parsing",
 ]
-description = "ANTLR v4 grammar parser used internally by dbt-antlr-codegen"
+description = "ANTLR v4 grammar parser used internally by dbt-antlr"
 edition.workspace = true
 homepage.workspace = true
 include = ["/Cargo.toml", "/README.md", "/src/**"]
