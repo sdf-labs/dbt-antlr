@@ -20,7 +20,10 @@ pub struct EmittedFile {
     pub name: String,
     /// File content, byte-identical to the Java tool's output modulo the
     /// `grammarFileName` canonicalization documented on
-    /// [`emit_lexer_files`].
+    /// [`emit_lexer_files`] and the lint allow header: the Java tool emits
+    /// inner `#![allow(...)]` attributes, which make the files unusable with
+    /// `include!`, so generated files carry no lint attributes and consumers
+    /// put `#[allow]` on the wrapping module instead.
     pub content: String,
 }
 

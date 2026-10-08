@@ -1,119 +1,99 @@
 // Generated from Labels.g4 by ANTLR 4.13.2
-
-use super::labelsparser::*;
+use dbt_antlr_runtime::errors::ANTLRError;
+use dbt_antlr_runtime::token::{CommonToken, Token};
 use dbt_antlr_runtime::tree::ParseTreeListener;
+use super::labelsparser::*;
 
-// A complete Visitor for a parse tree produced by LabelsParser.
+/// A complete listener for a parse tree produced by LabelsParser,
+/// with empty default bodies.
+pub trait LabelsBaseListener<'arena, Tok = CommonToken<'arena>> : ParseTreeListener<'arena, LabelsParserNodeKind, Tok>
+where
+    Tok: Token + 'arena,
+{
+    /// Enter a parse tree produced by {@link LabelsParser#s}.
+    /// @param ctx the parse tree
+    fn enter_s<'input: 'arena>(&mut self, _ctx: &SContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-pub trait LabelsBaseListener<'arena>:
-    ParseTreeListener<'arena, LabelsParserNodeKind> {
+    /// Exit a parse tree produced by {@link LabelsParser#s}.
+    /// @param ctx the parse tree
+    fn exit_s<'input: 'arena>(&mut self, _ctx: &SContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-    /**
-     * Enter a parse tree produced by \{@link LabelsBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_s(&mut self, _ctx: &SContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  LabelsBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_s(&mut self, _ctx: &SContext<'input, 'arena>) {}
+    /// Enter a parse tree produced by the {@code add}
+    /// labeled alternative in {@link LabelsParser#e}.
+    /// @param ctx the parse tree
+    fn enter_add<'input: 'arena>(&mut self, _ctx: &AddContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
+    /// Exit a parse tree produced by the {@code add}
+    /// labeled alternative in {@link LabelsParser#e}.
+    /// @param ctx the parse tree
+    fn exit_add<'input: 'arena>(&mut self, _ctx: &AddContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-    /**
-     * Enter a parse tree produced by \{@link LabelsBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_add(&mut self, _ctx: &AddContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  LabelsBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_add(&mut self, _ctx: &AddContext<'input, 'arena>) {}
+    /// Enter a parse tree produced by the {@code parens}
+    /// labeled alternative in {@link LabelsParser#e}.
+    /// @param ctx the parse tree
+    fn enter_parens<'input: 'arena>(&mut self, _ctx: &ParensContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
+    /// Exit a parse tree produced by the {@code parens}
+    /// labeled alternative in {@link LabelsParser#e}.
+    /// @param ctx the parse tree
+    fn exit_parens<'input: 'arena>(&mut self, _ctx: &ParensContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-    /**
-     * Enter a parse tree produced by \{@link LabelsBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_parens(&mut self, _ctx: &ParensContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  LabelsBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_parens(&mut self, _ctx: &ParensContext<'input, 'arena>) {}
+    /// Enter a parse tree produced by the {@code mult}
+    /// labeled alternative in {@link LabelsParser#e}.
+    /// @param ctx the parse tree
+    fn enter_mult<'input: 'arena>(&mut self, _ctx: &MultContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
+    /// Exit a parse tree produced by the {@code mult}
+    /// labeled alternative in {@link LabelsParser#e}.
+    /// @param ctx the parse tree
+    fn exit_mult<'input: 'arena>(&mut self, _ctx: &MultContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-    /**
-     * Enter a parse tree produced by \{@link LabelsBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_mult(&mut self, _ctx: &MultContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  LabelsBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_mult(&mut self, _ctx: &MultContext<'input, 'arena>) {}
+    /// Enter a parse tree produced by the {@code dec}
+    /// labeled alternative in {@link LabelsParser#e}.
+    /// @param ctx the parse tree
+    fn enter_dec<'input: 'arena>(&mut self, _ctx: &DecContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
+    /// Exit a parse tree produced by the {@code dec}
+    /// labeled alternative in {@link LabelsParser#e}.
+    /// @param ctx the parse tree
+    fn exit_dec<'input: 'arena>(&mut self, _ctx: &DecContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-    /**
-     * Enter a parse tree produced by \{@link LabelsBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_dec(&mut self, _ctx: &DecContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  LabelsBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_dec(&mut self, _ctx: &DecContext<'input, 'arena>) {}
+    /// Enter a parse tree produced by the {@code anID}
+    /// labeled alternative in {@link LabelsParser#e}.
+    /// @param ctx the parse tree
+    fn enter_anID<'input: 'arena>(&mut self, _ctx: &AnIDContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
+    /// Exit a parse tree produced by the {@code anID}
+    /// labeled alternative in {@link LabelsParser#e}.
+    /// @param ctx the parse tree
+    fn exit_anID<'input: 'arena>(&mut self, _ctx: &AnIDContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-    /**
-     * Enter a parse tree produced by \{@link LabelsBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_anid(&mut self, _ctx: &AnIDContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  LabelsBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_anid(&mut self, _ctx: &AnIDContext<'input, 'arena>) {}
+    /// Enter a parse tree produced by the {@code anInt}
+    /// labeled alternative in {@link LabelsParser#e}.
+    /// @param ctx the parse tree
+    fn enter_anInt<'input: 'arena>(&mut self, _ctx: &AnIntContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
+    /// Exit a parse tree produced by the {@code anInt}
+    /// labeled alternative in {@link LabelsParser#e}.
+    /// @param ctx the parse tree
+    fn exit_anInt<'input: 'arena>(&mut self, _ctx: &AnIntContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-    /**
-     * Enter a parse tree produced by \{@link LabelsBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_anint(&mut self, _ctx: &AnIntContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  LabelsBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_anint(&mut self, _ctx: &AnIntContext<'input, 'arena>) {}
+    /// Enter a parse tree produced by the {@code inc}
+    /// labeled alternative in {@link LabelsParser#e}.
+    /// @param ctx the parse tree
+    fn enter_inc<'input: 'arena>(&mut self, _ctx: &IncContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
+    /// Exit a parse tree produced by the {@code inc}
+    /// labeled alternative in {@link LabelsParser#e}.
+    /// @param ctx the parse tree
+    fn exit_inc<'input: 'arena>(&mut self, _ctx: &IncContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-    /**
-     * Enter a parse tree produced by \{@link LabelsBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_inc(&mut self, _ctx: &IncContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  LabelsBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_inc(&mut self, _ctx: &IncContext<'input, 'arena>) {}
+    /// Enter a parse tree produced by {@link LabelsParser#blk}.
+    /// @param ctx the parse tree
+    fn enter_blk<'input: 'arena>(&mut self, _ctx: &BlkContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-
-    /**
-     * Enter a parse tree produced by \{@link LabelsBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_blk(&mut self, _ctx: &BlkContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  LabelsBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_blk(&mut self, _ctx: &BlkContext<'input, 'arena>) {}
-
+    /// Exit a parse tree produced by {@link LabelsParser#blk}.
+    /// @param ctx the parse tree
+    fn exit_blk<'input: 'arena>(&mut self, _ctx: &BlkContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
 }

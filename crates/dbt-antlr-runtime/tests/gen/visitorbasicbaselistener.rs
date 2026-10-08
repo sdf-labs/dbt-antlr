@@ -1,23 +1,21 @@
 // Generated from VisitorBasic.g4 by ANTLR 4.13.2
-
-use super::visitorbasicparser::*;
+use dbt_antlr_runtime::errors::ANTLRError;
+use dbt_antlr_runtime::token::{CommonToken, Token};
 use dbt_antlr_runtime::tree::ParseTreeListener;
+use super::visitorbasicparser::*;
 
-// A complete Visitor for a parse tree produced by VisitorBasicParser.
+/// A complete listener for a parse tree produced by VisitorBasicParser,
+/// with empty default bodies.
+pub trait VisitorBasicBaseListener<'arena, Tok = CommonToken<'arena>> : ParseTreeListener<'arena, VisitorBasicParserNodeKind, Tok>
+where
+    Tok: Token + 'arena,
+{
+    /// Enter a parse tree produced by {@link VisitorBasicParser#s}.
+    /// @param ctx the parse tree
+    fn enter_s<'input: 'arena>(&mut self, _ctx: &SContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-pub trait VisitorBasicBaseListener<'arena>:
-    ParseTreeListener<'arena, VisitorBasicParserNodeKind> {
-
-    /**
-     * Enter a parse tree produced by \{@link VisitorBasicBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_s(&mut self, _ctx: &SContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  VisitorBasicBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_s(&mut self, _ctx: &SContext<'input, 'arena>) {}
-
+    /// Exit a parse tree produced by {@link VisitorBasicParser#s}.
+    /// @param ctx the parse tree
+    fn exit_s<'input: 'arena>(&mut self, _ctx: &SContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
 }

@@ -1,35 +1,29 @@
 // Generated from SimpleLR.g4 by ANTLR 4.13.2
-
-use super::simplelrparser::*;
+use dbt_antlr_runtime::errors::ANTLRError;
+use dbt_antlr_runtime::token::{CommonToken, Token};
 use dbt_antlr_runtime::tree::ParseTreeListener;
+use super::simplelrparser::*;
 
-// A complete Visitor for a parse tree produced by SimpleLRParser.
+/// A complete listener for a parse tree produced by SimpleLRParser,
+/// with empty default bodies.
+pub trait SimpleLRBaseListener<'arena, Tok = CommonToken<'arena>> : ParseTreeListener<'arena, SimpleLRParserNodeKind, Tok>
+where
+    Tok: Token + 'arena,
+{
+    /// Enter a parse tree produced by {@link SimpleLRParser#s}.
+    /// @param ctx the parse tree
+    fn enter_s<'input: 'arena>(&mut self, _ctx: &SContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-pub trait SimpleLRBaseListener<'arena>:
-    ParseTreeListener<'arena, SimpleLRParserNodeKind> {
+    /// Exit a parse tree produced by {@link SimpleLRParser#s}.
+    /// @param ctx the parse tree
+    fn exit_s<'input: 'arena>(&mut self, _ctx: &SContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-    /**
-     * Enter a parse tree produced by \{@link SimpleLRBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_s(&mut self, _ctx: &SContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  SimpleLRBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_s(&mut self, _ctx: &SContext<'input, 'arena>) {}
+    /// Enter a parse tree produced by {@link SimpleLRParser#a}.
+    /// @param ctx the parse tree
+    fn enter_a<'input: 'arena>(&mut self, _ctx: &AContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-
-    /**
-     * Enter a parse tree produced by \{@link SimpleLRBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_a(&mut self, _ctx: &AContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  SimpleLRBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_a(&mut self, _ctx: &AContext<'input, 'arena>) {}
-
+    /// Exit a parse tree produced by {@link SimpleLRParser#a}.
+    /// @param ctx the parse tree
+    fn exit_a<'input: 'arena>(&mut self, _ctx: &AContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
 }

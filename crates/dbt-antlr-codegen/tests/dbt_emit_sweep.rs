@@ -4,9 +4,11 @@
 //!
 //! Emits every grammar in `dbt-antlr-runtime/grammars/` and asserts byte-exact
 //! output against the goldens in `dbt-antlr-runtime/tests/gen/` (modulo the
-//! intentional packed-ATN section of parser files). The `Perf.g4` goldens
-//! were first verified byte-identical against a fresh Java tool (`dbt-antlr4-2.0.0`) run
-//! (see `MEMO.md`) before being committed.
+//! intentional packed-ATN section of parser files). The goldens were first
+//! verified byte-identical against a fresh Java tool (`dbt-antlr4-2.0.0`) run
+//! before being committed; the committed files deviate from that oracle only
+//! in the lint allow header (generated files carry no inner `#![allow(...)]`
+//! attributes so they work with `include!`).
 
 mod common;
 
