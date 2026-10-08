@@ -15,7 +15,7 @@ edition = "2021"
 license = "BSD-3-Clause"
 keywords = ["ANTLR", "ANTLR4", "parsing", "runtime"]
 categories = ["parsing"]
-exclude = ["/build.rs", "/grammars", "/templates"]
+exclude = ["/build.rs", "/gen_test_grammars.sh", "/grammars", "/templates", "/tests"]
 
 [features]
 arena-allocation-limit = []

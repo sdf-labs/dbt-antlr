@@ -115,3 +115,8 @@ use_self = "warn"
 useless_let_if_seq = "warn"
 verbose_bit_mask = "warn"
 wildcard_imports = "warn"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
