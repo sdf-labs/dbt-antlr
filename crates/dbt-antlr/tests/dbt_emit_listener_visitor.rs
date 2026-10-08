@@ -24,9 +24,7 @@
 mod common;
 
 use common::{compile_check, grammars_dir, report_first_diff};
-use dbt_antlr::dbt::{
-    EmittedFile, emit_files, emit_files_with_flags, emit_listener_visitor_files,
-};
+use dbt_antlr::dbt::{EmittedFile, emit_files, emit_files_with_flags, emit_listener_visitor_files};
 
 fn emit(grammar: &str, gen_listener: bool, gen_visitor: bool) -> Vec<EmittedFile> {
     let grammar = grammars_dir().join(grammar);

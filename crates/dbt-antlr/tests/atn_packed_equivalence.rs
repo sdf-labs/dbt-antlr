@@ -1,7 +1,7 @@
 //! Differential ATN equivalence tests.
 //!
 //! Tier 1 (always runs) compares the packed-ATN deserializer against the
-//! proven Java-word deserializer on the in-crate golden grammars, using the
+//! proven Java-word deserializer on the dbt-antlr-runtime golden grammars, using the
 //! `.interp` files produced by the Java ANTLR tool as oracles.
 //!
 //! Tier 2 (runs only with `ATN_SWEEP=1`) sweeps the codegen fixture corpus
@@ -11,7 +11,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use dbt_antlr::atn_export::{compile_atn_data, GrammarAtnData};
+use dbt_antlr::atn_export::{GrammarAtnData, compile_atn_data};
 use dbt_antlr_runtime::atn::ATN;
 use dbt_antlr_runtime::atn_deserializer::ATNDeserializer;
 use dbt_antlr_runtime::atn_dump::dump_atn;
@@ -95,15 +95,15 @@ const SKIP: [(&str, &str); 15] = [
 ];
 
 fn grammars_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("grammars")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../dbt-antlr-runtime/grammars")
 }
 
 fn gen_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/gen")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../dbt-antlr-runtime/tests/gen")
 }
 
 fn fixtures_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../dbt-antlr/tests/codegen-direct/fixtures")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/codegen-direct/fixtures")
 }
 
 /// Parses the word list of the `atn:` section of a `.interp` file.

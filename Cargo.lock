@@ -172,6 +172,7 @@ dependencies = [
 name = "dbt-antlr"
 version = "0.1.0"
 dependencies = [
+ "dbt-antlr",
  "dbt-antlr-g4-parser",
  "dbt-antlr-runtime",
  "hmac-sha256",
@@ -204,7 +205,6 @@ dependencies = [
  "bit-set",
  "bumpalo",
  "byteorder",
- "dbt-antlr",
  "dbt-antlr-runtime",
  "fxhash",
  "hashbrown 0.16.1",

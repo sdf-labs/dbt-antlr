@@ -45,6 +45,7 @@ serde_json = "1"
 thiserror.workspace = true
 
 [dev-dependencies]
+dbt-antlr = { path = ".", features = ["atn-export"] }
 dbt-antlr-runtime = { workspace = true, features = ["atn-dump"] }
 hmac-sha256 = "1"
 insta.workspace = true
