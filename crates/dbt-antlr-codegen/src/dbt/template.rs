@@ -74,6 +74,8 @@ pub fn render_template(ctx: &Value) -> Result<String, Error> {
     env.add_function("rust_type", rust_type_function);
     env.add_function("rust_type_init", rust_type_init_function);
     env.add_global("ST_WRAP", WRAP_MARK.to_string());
+    env.add_global("RUNTIME_VERSION_MAJOR", dbt_antlr_runtime::VERSION_MAJOR);
+    env.add_global("RUNTIME_VERSION_MINOR", dbt_antlr_runtime::VERSION_MINOR);
     let template = env.template_from_str(&source)?;
     Ok(resolve_wraps(&template.render(ctx)?))
 }

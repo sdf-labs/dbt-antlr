@@ -266,7 +266,7 @@ where
 // Generated from {{ grammarFileName }} by ANTLR {{ ANTLRVersion }}
 {%- endmacro -%}
 {%- macro Parser(parser, funcs, atn, sempredFuncs, superClass, file, namedActions, contextSuperClass) -%}
-dbt_antlr_runtime::check_version!("0","1");
+dbt_antlr_runtime::check_version!("{{ RUNTIME_VERSION_MAJOR }}","{{ RUNTIME_VERSION_MINOR }}");
 {% if parser.tokens %}{% for t in parser.tokens %}pub const {{ parser.grammarName }}_{{ t.key }}:i32={{ t.value }};{{ " \n" if not loop.last }}{% endfor %}{{ "\n" }}{% endif %}pub const {{ parser.grammarName }}_EOF:i32=EOF;
 {% for r in parser.rules %}pub const RULE_{{ r.name }}:usize = {{ r.index }};{{ " \n" if not loop.last }}{% endfor %}{{ "\n" }}pub const ruleNames: [&'static str; {{ parser.ruleNames | length }}] = [
     {{ parser.ruleNames | map("st_quote") | wrap_list(", ", 4, "    ", 4) }}
@@ -1358,7 +1358,7 @@ use std::sync::LazyLock;
 {{ Lexer(lexer, lexer.atn, lexer.actionFuncs, lexer.sempredFuncs, none, namedActions) }}
 {%- endmacro -%}
 {%- macro Lexer(lexer, atn, actionFuncs, sempredFuncs, superClass, namedActions) -%}
-dbt_antlr_runtime::check_version!("0","1");
+dbt_antlr_runtime::check_version!("{{ RUNTIME_VERSION_MAJOR }}","{{ RUNTIME_VERSION_MINOR }}");
 {% if lexer.tokens %}{% for t in lexer.tokens %}pub const {{ t.key }}:i32={{ t.value }}{% if not loop.last %}; 
 {% endif %}{% endfor %};
 {% endif %}

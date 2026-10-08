@@ -143,20 +143,45 @@ pub const fn version_str_eq(a: &str, b: &str) -> bool {
     }
     true
 }
+/// Parses a numeric version component (e.g. `"13"`) in const context.
+///
+/// Public only so [`check_version!`] can reference it from downstream crates.
+#[doc(hidden)]
+pub const fn version_str_to_u64(s: &str) -> u64 {
+    let bytes = s.as_bytes();
+    let mut n: u64 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        assert!(b >= b'0' && b <= b'9', "version component is not numeric");
+        n = n * 10 + (b - b'0') as u64;
+        i += 1;
+    }
+    n
+}
 
+/// Compile-time compatibility gate between generated code and the runtime.
+///
+/// Generated parsers embed `check_version!("<major>", "<minor>")` naming the
+/// runtime version the generating tool was built against. The check passes
+/// when the linked runtime has the same major version and a minor version
+/// greater than or equal to the generated one: additive runtime releases never
+/// break previously generated code, while a runtime older than the generator
+/// (or a different major) fails to compile with a clear message.
 #[macro_export]
 macro_rules! check_version {
     ($major:literal, $minor:literal) => {
         const _: () = assert!(
             $crate::version_str_eq($major, $crate::VERSION_MAJOR)
-                && $crate::version_str_eq($minor, $crate::VERSION_MINOR),
-            "Generated parser is not compatible with current runtime version, \
-             please regenerate using the matching ANTLR tool version, \
-             or update the runtime to match the version used for generation."
+                && $crate::version_str_to_u64($crate::VERSION_MINOR)
+                    >= $crate::version_str_to_u64($minor),
+            "Generated parser is not compatible with the current runtime version: \
+             it requires the same major version of dbt-antlr-runtime and at least \
+             the minor version used at generation time. Update the runtime \
+             dependency, or regenerate using an older ANTLR tool version."
         );
     };
 }
-
 #[macro_export]
 macro_rules! impl_tree {
     // Pattern: EnumName { Variant1, Variant2, ... }
