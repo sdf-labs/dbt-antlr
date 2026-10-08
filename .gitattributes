@@ -1,0 +1,3 @@
+# The repo is full of byte-exact fixtures (goldens, .interp files, insta
+# snapshots); always check text out with LF, even on Windows.
+* text=auto eol=lf
