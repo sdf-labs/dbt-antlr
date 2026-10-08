@@ -17,8 +17,6 @@ use std::path::PathBuf;
 
 use miette::{Context as _, IntoDiagnostic as _};
 
-use crate::dbt::emit_files_with_flags;
-
 const USAGE: &str = "\
 usage: dbt-antlr [OPTIONS] <grammar.g4>
   -o <dir>          output directory (default: current dir)
@@ -120,27 +118,28 @@ pub fn run(
     stderr: &mut impl Write,
 ) -> miette::Result<()> {
     let cli = parse_args(args, stderr)?;
-    let files = emit_files_with_flags(
-        &cli.grammar,
-        &cli.lib_dirs,
-        cli.gen_listener,
-        cli.gen_visitor,
-    )
-    .into_diagnostic()
-    .wrap_err_with(|| format!("cannot emit {}", cli.grammar.display()))?;
-    std::fs::create_dir_all(&cli.out_dir)
+    let mut config = crate::Config::new(&cli.grammar);
+    config
+        .out_dir(&cli.out_dir)
+        .listener(cli.gen_listener)
+        .visitor(cli.gen_visitor)
+        .cargo_directives(false);
+    for dir in &cli.lib_dirs {
+        config.lib_dir(dir);
+    }
+    let written = config
+        .generate()
         .into_diagnostic()
-        .wrap_err_with(|| format!("cannot create {}", cli.out_dir.display()))?;
-    for file in &files {
-        let path = cli.out_dir.join(&file.name);
-        std::fs::write(&path, &file.content)
-            .into_diagnostic()
-            .wrap_err_with(|| format!("cannot write {}", path.display()))?;
-        writeln!(stdout, "{}", file.name).into_diagnostic()?;
+        .wrap_err_with(|| format!("cannot emit {}", cli.grammar.display()))?;
+    for path in &written {
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        writeln!(stdout, "{name}").into_diagnostic()?;
     }
     Ok(())
 }
-
 #[cfg(test)]
 mod tests {
     use super::parse_args;

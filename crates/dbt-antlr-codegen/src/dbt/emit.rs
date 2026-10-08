@@ -37,6 +37,17 @@ pub enum EmitError {
     /// yet (left recursion, embedded actions, sempreds, labels).
     #[error("unsupported grammar construct: {0}")]
     Unsupported(String),
+    /// The generator configuration is invalid.
+    #[error("invalid generator configuration: {0}")]
+    Config(String),
+    /// An output directory or file could not be written.
+    #[error("cannot write {path}: {source}")]
+    Write {
+        /// Path that could not be written.
+        path: PathBuf,
+        /// Underlying I/O error.
+        source: std::io::Error,
+    },
 }
 
 fn compile_grammar(

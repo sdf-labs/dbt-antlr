@@ -5,18 +5,25 @@
 //!
 //! The emission layer ([`dbt`]) renders recognizers from the minijinja
 //! template `templates/dbt/Rust.stg.jinja` on top of the grammar analysis in
-//! `grammar`. The `dbt-antlr` binary ([`run_cli`]) is the Java-tool-like
-//! command line.
+//! `grammar`. There are two ways to run a generation:
+//!
+//! - [`Config`]: the build-script API. Add this crate as a build dependency
+//!   and call it from `build.rs`; the generated code compiles against the
+//!   `dbt-antlr-runtime` crate. No tool installation is needed.
+//! - The `dbt-antlr` binary ([`run_cli`]): the Java-tool-like command line
+//!   for one-shot or checked-in generation.
 
 #[cfg(feature = "atn-export")]
 pub mod atn_export;
 mod compile_error;
+mod config;
 pub mod dbt;
 mod error;
 #[allow(dead_code)]
 pub(crate) mod grammar;
 mod optimization;
 
+pub use config::Config;
 pub use error::{Diagnostic, Error, ErrorKind, Severity};
 
 /// Version of this generator package.
