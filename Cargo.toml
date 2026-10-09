@@ -20,7 +20,7 @@ homepage = "https://github.com/sdf-labs/dbt-antlr"
 
 [workspace.dependencies]
 dbt-antlr-g4-parser = { path = "crates/dbt-antlr-g4-parser", version = "=0.1.0" }
-dbt-antlr-codegen = { path = "crates/dbt-antlr-codegen", version = "=0.1.0" }
+dbt-antlr-codegen = { path = "crates/dbt-antlr-codegen", version = "=0.1.0", default-features = false }
 dbt-antlr-runtime = { path = "crates/dbt-antlr-runtime", version = "=0.1.0" }
 icu_properties = { version = "2.2.0", features = ["alloc"] }
 insta = { version = "1", default-features = false }
