@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerate src/generated/ with the Rust codegen (dbt-antlr).
+# Regenerate src/generated/ with the Rust codegen (dbt-antlr-codegen).
 # The checked-in recognizers are the step-6.5 bootstrap fixpoint: rerunning
 # this script must reproduce them with zero diff. The base listener is
 # emitted for Java-tool parity but is not part of the compiled facade, so it
@@ -8,10 +8,10 @@ set -euo pipefail
 
 WORKSPACE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GEN_BIN="$WORKSPACE_ROOT/target/debug/dbt-antlr"
+GEN_BIN="$WORKSPACE_ROOT/target/debug/dbt-antlr-codegen"
 
 cargo build --quiet --manifest-path "$WORKSPACE_ROOT/Cargo.toml" \
-    -p dbt-antlr --bin dbt-antlr
+    -p dbt-antlr-codegen --bin dbt-antlr-codegen
 
 for grammar in ANTLRv4Lexer ANTLRv4Parser; do
     echo "Generating: $grammar"

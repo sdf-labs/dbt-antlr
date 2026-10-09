@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Regenerate tests/gen/ with the Rust codegen (dbt-antlr).
+# Regenerate tests/gen/ with the Rust codegen (dbt-antlr-codegen).
 set -euo pipefail
 
 WORKSPACE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GEN_BIN="$WORKSPACE_ROOT/target/debug/dbt-antlr"
+GEN_BIN="$WORKSPACE_ROOT/target/debug/dbt-antlr-codegen"
 
 cargo build --quiet --manifest-path "$WORKSPACE_ROOT/Cargo.toml" \
-    -p dbt-antlr --bin dbt-antlr
+    -p dbt-antlr-codegen --bin dbt-antlr-codegen
 
 declare -a GRAMMARS=(
     "VisitorBasic"
