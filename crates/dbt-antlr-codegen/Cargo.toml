@@ -6,16 +6,16 @@ categories = [
 ]
 description = "ANTLR v4 grammar compiler and Rust source generator"
 documentation = "https://docs.rs/dbt-antlr-codegen"
-edition.workspace = true
-homepage.workspace = true
+edition = { workspace = true }
+homepage = { workspace = true }
 include = ["/Cargo.toml", "/README.md", "/src/**", "/templates/**"]
 keywords = ["antlr", "antlr4", "codegen", "lexer", "parser"]
-license.workspace = true
+license = { workspace = true }
 name = "dbt-antlr-codegen"
 readme = "README.md"
-repository.workspace = true
-rust-version.workspace = true
-version.workspace = true
+repository = { workspace = true }
+rust-version = { workspace = true }
+version = { workspace = true }
 
 [lib]
 name = "dbt_antlr_codegen"
@@ -35,26 +35,26 @@ atn-export = []
 fancy = ["miette/fancy"]
 
 [dependencies]
-dbt-antlr-g4-parser.workspace = true
-dbt-antlr-runtime.workspace = true
+dbt-antlr-g4-parser = { workspace = true }
+dbt-antlr-runtime = { workspace = true }
 icu_casemap = "2.2.0"
-icu_properties.workspace = true
+icu_properties = { workspace = true }
 intl = { version = "0.6.0", default-features = false, features = [
   "full",
   "normalization",
 ] }
 miette = { version = "7.6.0", default-features = false }
-minijinja.workspace = true
+minijinja = { workspace = true }
 petgraph = { version = "0.8.3", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
-thiserror.workspace = true
+thiserror = { workspace = true }
 
 [dev-dependencies]
 dbt-antlr-codegen = { path = ".", features = ["atn-export"] }
 dbt-antlr-runtime = { workspace = true, features = ["atn-dump"] }
 hmac-sha256 = "1"
-insta.workspace = true
-memchr.workspace = true
+insta = { workspace = true }
+memchr = { workspace = true }
 
 [lints]
 workspace = true

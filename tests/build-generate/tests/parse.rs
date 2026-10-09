@@ -13,7 +13,7 @@ use dbt_antlr_runtime::{Arena, InputStream};
 
 fn parse_tree(input: &str) -> String {
     Arena::with(|arena| {
-        let lexer = ExprLexer::<_, CommonTokenFactory>::new(arena, InputStream::new(input));
+        let lexer = ExprLexer::<_, CommonTokenFactory<'_, '_>>::new(arena, InputStream::new(input));
         let mut parser = ExprParser::new(arena, CommonTokenStream::new(lexer));
         let tree = parser.prog().expect("parses");
         tree.to_string_tree(parser.get_rule_names())
