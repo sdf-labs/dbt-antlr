@@ -1,14 +1,14 @@
 [workspace]
 members = [
   "crates/dbt-antlr-g4-parser",
-  "crates/dbt-antlr",
+  "crates/dbt-antlr-codegen",
   "crates/dbt-antlr-runtime",
   "tests/runtime-testsuite",
   "tests/build-generate",
 ]
 resolver = "3"
-# Makes bare `cargo run` execute the `dbt-antlr` generator binary.
-default-members = ["crates/dbt-antlr"]
+# Makes bare `cargo run` execute the `dbt-antlr-codegen` generator binary.
+default-members = ["crates/dbt-antlr-codegen"]
 
 [workspace.package]
 version = "0.1.0"
@@ -20,7 +20,7 @@ homepage = "https://github.com/sdf-labs/dbt-antlr"
 
 [workspace.dependencies]
 dbt-antlr-g4-parser = { path = "crates/dbt-antlr-g4-parser", version = "=0.1.0" }
-dbt-antlr = { path = "crates/dbt-antlr", version = "=0.1.0" }
+dbt-antlr-codegen = { path = "crates/dbt-antlr-codegen", version = "=0.1.0" }
 dbt-antlr-runtime = { path = "crates/dbt-antlr-runtime", version = "=0.1.0" }
 icu_properties = { version = "2.2.0", features = ["alloc"] }
 insta = { version = "1", default-features = false }

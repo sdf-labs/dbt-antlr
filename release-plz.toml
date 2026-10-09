@@ -4,7 +4,7 @@
 # per crate with unreleased changes (changelogs come from commit messages).
 # Merging a release PR publishes that crate to crates.io in dependency order
 # (dbt-antlr-runtime -> dbt-antlr-g4-parser -> dbt-antlr), tags the release
-# commit, and creates the GitHub release. The dbt-antlr-v* tag then triggers
+# commit, and creates the GitHub release. The dbt-antlr-codegen-v* tag then triggers
 # the cargo-dist workflow (release.yml), which attaches prebuilt binaries.
 
 
@@ -19,6 +19,6 @@ git_tag_name = "dbt-antlr-g4-parser-v{{ version }}"
 git_release_enable = true
 
 [[package]]
-name = "dbt-antlr"
-git_tag_name = "dbt-antlr-v{{ version }}"
+name = "dbt-antlr-codegen"
+git_tag_name = "dbt-antlr-codegen-v{{ version }}"
 git_release_enable = true

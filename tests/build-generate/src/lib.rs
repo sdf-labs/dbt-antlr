@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Bo Lin
 //! Dogfood for the build-script generation model: the recognizer under
 //! [`exprlexer`] / [`exprparser`] is generated from `grammars/Expr.g4` by
-//! this crate's `build.rs` via `dbt_antlr::Config`, then compiled
+//! this crate's `build.rs` via `dbt_antlr_codegen::Config`, then compiled
 //! against `dbt-antlr-runtime` like any consumer crate would do.
 
 // Generated recognizers: lint with the codegen templates, not the workspace

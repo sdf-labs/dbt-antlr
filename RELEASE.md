@@ -5,7 +5,7 @@ This workspace ships three crates with independent versions:
 | Crate                 | What it is                                                           | Cadence                   |
 |-----------------------+----------------------------------------------------------------------+---------------------------|
 | `dbt-antlr-runtime`   | Library that generated parsers compile against                       | Frequent                  |
-| `dbt-antlr`           | The generator: `dbt-antlr` binary + `dbt_antlr` build-script library | Occasional                |
+| `dbt-antlr-codegen`   | The generator: `dbt-antlr-codegen` binary + `dbt_antlr_codegen` build-script library | Occasional    |
 | `dbt-antlr-g4-parser` | Internal grammar front-end of the generator                          | Rides along with the tool |
 
 `tests/runtime-testsuite` and `tests/build-generate` are `publish = false`.
@@ -17,7 +17,7 @@ publish rights to the three crates. For the first publish, create the crates
 on crates.io first (publishing `dbt-antlr-runtime 0.1.0` once by hand with
 `cargo publish -p dbt-antlr-runtime` is the simplest way — the dependency
 graph is acyclic, so no bootstrap hacks are needed; order is runtime, then
-g4-parser, then dbt-antlr).
+g4-parser, then dbt-antlr-codegen).
 
 ## How a release works
 
@@ -27,10 +27,10 @@ g4-parser, then dbt-antlr).
    `feat:`, `fix:`).
 2. Merging a release PR publishes that crate to crates.io in dependency
    order, tags the release commit (`dbt-antlr-runtime-vX.Y.Z`,
-   `dbt-antlr-g4-parser-vX.Y.Z`, or `dbt-antlr-vX.Y.Z`), and creates the
+   `dbt-antlr-g4-parser-vX.Y.Z`, or `dbt-antlr-codegen-vX.Y.Z`), and creates the
    GitHub release.
-3. A `dbt-antlr-vX.Y.Z` tag additionally triggers the **Release** workflow
-   (cargo-dist): it builds the `dbt-antlr` binary for the five platform
+3. A `dbt-antlr-codegen-vX.Y.Z` tag additionally triggers the **Release** workflow
+   (cargo-dist): it builds the `dbt-antlr-codegen` binary for the five platform
    targets and attaches archives, checksums, and shell/powershell installers
    to the GitHub release.
 

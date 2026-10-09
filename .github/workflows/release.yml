@@ -46,7 +46,7 @@ on:
       # binaries. release-plz also tags the library crates
       # (dbt-antlr-runtime-v*, dbt-antlr-g4-parser-v*), which must not trigger
       # this workflow: a tag naming a non-dist-able package errors.
-      - 'dbt-antlr-v[0-9]+.[0-9]+.[0-9]+*'
+      - 'dbt-antlr-codegen-v[0-9]+.[0-9]+.[0-9]+*'
 
 jobs:
   # Run 'dist plan' (or host) to determine what tasks we need to do

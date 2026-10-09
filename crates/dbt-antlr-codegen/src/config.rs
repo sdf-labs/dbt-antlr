@@ -23,7 +23,7 @@ use crate::dbt::{EmitError, emit_files_with_flags};
 ///
 /// ```rust,no_run
 /// // build.rs
-/// dbt_antlr::Config::new("grammars/Expr.g4")
+/// dbt_antlr_codegen::Config::new("grammars/Expr.g4")
 ///     .generate()
 ///     .unwrap_or_else(|error| panic!("{error:?}"));
 /// ```

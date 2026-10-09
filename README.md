@@ -5,10 +5,10 @@ Rust parsers targeting the `dbt-antlr-runtime` runtime.
 
 ## Repository layout
 
-- `crates/dbt-antlr` — the tool: `.g4` loading, semantics, ATN
+- `crates/dbt-antlr-codegen` — the tool: `.g4` loading, semantics, ATN
   construction, and code generation. The emission layer (`src/dbt/`) renders
   recognizers for the `dbt-antlr-runtime` runtime from a minijinja template that
-  mirrors the Java tool's `Rust.stg`; the `dbt-antlr` binary is the
+  mirrors the Java tool's `Rust.stg`; the `dbt-antlr-codegen` binary is the
   Java-tool-like command line (`-o`, `-lib`, `-visitor`, `-no-listener`).
 - `crates/dbt-antlr-g4-parser` — the `.g4` grammar front-end.
 - `crates/dbt-antlr-runtime` — our ANTLR4 runtime for Rust. This is the code

@@ -70,8 +70,8 @@ jobs:
         with:
           key: ${{ matrix.os }}-${{ matrix.rust }}
 
-      - name: cargo build dbt-antlr
-        run: cargo build --bin dbt-antlr
+      - name: cargo build dbt-antlr-codegen
+        run: cargo build --bin dbt-antlr-codegen
 
       - name: cargo test
         run: cargo test --workspace --all-targets

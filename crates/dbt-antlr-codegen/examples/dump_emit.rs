@@ -19,14 +19,14 @@ fn main() {
     let no_visitor = args.any(|arg| arg == "--no-visitor");
     let grammar = std::path::Path::new(&grammar).canonicalize().unwrap();
     let emit = if no_visitor {
-        dbt_antlr::dbt::emit_files_with_flags(
+        dbt_antlr_codegen::dbt::emit_files_with_flags(
             &grammar,
             &[grammar.parent().unwrap().to_path_buf()],
             true,
             false,
         )
     } else {
-        dbt_antlr::dbt::emit_files(&grammar, &[grammar.parent().unwrap().to_path_buf()])
+        dbt_antlr_codegen::dbt::emit_files(&grammar, &[grammar.parent().unwrap().to_path_buf()])
     };
     let files = emit.unwrap();
     for f in files {

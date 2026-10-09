@@ -4,7 +4,7 @@
 //! with the dbt-antlr generator as a plain build dependency.
 
 fn main() {
-    dbt_antlr::Config::new("grammars/Expr.g4")
+    dbt_antlr_codegen::Config::new("grammars/Expr.g4")
         .generate()
         .unwrap_or_else(|error| panic!("{error:?}"));
 }

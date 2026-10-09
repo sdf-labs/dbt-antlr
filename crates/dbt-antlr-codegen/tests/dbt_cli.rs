@@ -7,8 +7,8 @@
 mod common;
 
 use common::grammars_dir;
-use dbt_antlr::dbt::cli;
-use dbt_antlr::dbt::emit_files_with_flags;
+use dbt_antlr_codegen::dbt::cli;
+use dbt_antlr_codegen::dbt::emit_files_with_flags;
 
 #[test]
 fn cli_writes_the_emitted_files() {

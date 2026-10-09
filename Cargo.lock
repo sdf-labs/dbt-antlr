@@ -99,7 +99,7 @@ dependencies = [
 name = "build-generate"
 version = "0.1.0"
 dependencies = [
- "dbt-antlr",
+ "dbt-antlr-codegen",
  "dbt-antlr-runtime",
 ]
 
@@ -169,10 +169,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "dbt-antlr"
+name = "dbt-antlr-codegen"
 version = "0.1.0"
 dependencies = [
- "dbt-antlr",
+ "dbt-antlr-codegen",
  "dbt-antlr-g4-parser",
  "dbt-antlr-runtime",
  "hmac-sha256",

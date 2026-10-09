@@ -13,7 +13,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use dbt_antlr::atn_export::{GrammarAtnData, compile_atn_data};
+use dbt_antlr_codegen::atn_export::{GrammarAtnData, compile_atn_data};
 use dbt_antlr_runtime::atn::ATN;
 use dbt_antlr_runtime::atn_deserializer::ATNDeserializer;
 use dbt_antlr_runtime::atn_dump::dump_atn;
