@@ -38,6 +38,28 @@ Library tags deliberately do not trigger binary builds (see the MANUAL EDIT
 comment in `.github/workflows/release.yml`; re-apply it after any
 `dist generate` run, e.g. on cargo-dist version upgrades).
 
+## Tag pushes do not start the binary workflow
+
+release-plz pushes release tags with the workflow's `GITHUB_TOKEN`, and
+GitHub does not let events from `GITHUB_TOKEN` trigger other workflows. So a
+`dbt-antlr-codegen-vX.Y.Z` tag created by release-plz does **not** start the
+Release (cargo-dist) workflow, and the GitHub release stays without binaries.
+Two ways to get the binaries built:
+
+- Manual (current setup): after release-plz publishes a tool release, re-push
+  the tag from any checkout with your own credentials:
+
+  ```sh
+  git push origin :refs/tags/dbt-antlr-codegen-vX.Y.Z
+  git push origin dbt-antlr-codegen-vX.Y.Z
+  ```
+
+  cargo-dist attaches the binaries to the existing GitHub release.
+- Automatic: store a personal access token (repository contents: write) as a
+  `RELEASE_PLZ_TOKEN` secret and set `GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}`
+  in `release-plz.yml`. Tag pushes from release-plz then trigger the Release
+  workflow like a human push.
+
 ## Generated-code compatibility
 
 Generated parsers embed `check_version!("<major>", "<minor>")` naming the
