@@ -7,6 +7,9 @@ members = ["cargo:."]
 cargo-dist-version = "0.32.0"
 # CI backends to support
 ci = "github"
+# release.yml carries a manual tag-pattern edit (only dbt-antlr-codegen-v*
+# tags get binaries); do not fail the "generated CI is out of date" check on it.
+allow-dirty = ["ci"]
 # The installers to generate for each app
 installers = ["shell", "powershell"]
 # Build scripts in pinned-release mode extract archives with a pure-Rust
