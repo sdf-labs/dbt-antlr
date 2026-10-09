@@ -52,6 +52,9 @@ GitHub release `dbt-antlr-codegen-v0.1.0`, verifies its SHA-256 checksum
 (optionally pinned further with `pinned_release_sha256`), caches it under
 `OUT_DIR`, and invokes it. Requires `curl` on `PATH`.
 
+Prebuilt binaries are currently published for `0.1.0` only; later releases
+ship crates.io-only until binary distribution is re-enabled (see `RELEASE.md`).
+
 Or install the command:
 
 ```bash

@@ -1,6 +1,6 @@
 # Releasing dbt-antlr
 
-This workspace ships three crates with independent versions:
+This workspace ships three crates in lock-step from one shared `workspace.package` version:
 
 | Crate                 | What it is                                                           | Cadence                   |
 |-----------------------+----------------------------------------------------------------------+---------------------------|
@@ -29,36 +29,33 @@ g4-parser, then dbt-antlr-codegen).
    order, tags the release commit (`dbt-antlr-runtime-vX.Y.Z`,
    `dbt-antlr-g4-parser-vX.Y.Z`, or `dbt-antlr-codegen-vX.Y.Z`), and creates the
    GitHub release.
-3. A `dbt-antlr-codegen-vX.Y.Z` tag additionally triggers the **Release** workflow
-   (cargo-dist): it builds the `dbt-antlr-codegen` binary for the five platform
-   targets and attaches archives, checksums, and shell/powershell installers
-   to the GitHub release.
+Binary distribution is currently disabled; see below.
 
-Library tags deliberately do not trigger binary builds (see the MANUAL EDIT
-comment in `.github/workflows/release.yml`; re-apply it after any
-`dist generate` run, e.g. on cargo-dist version upgrades).
+## Binary distribution (currently disabled)
 
-## Tag pushes do not start the binary workflow
+cargo-dist binary builds are disabled while the tool side stabilizes: the
+generated `.github/workflows/release.yml` was removed, so releases are
+crates.io packages, git tags, and GitHub releases only. `dist-workspace.toml`
+and `[profile.dist]` stay in the repo as inert config so re-enabling is cheap.
 
-release-plz pushes release tags with the workflow's `GITHUB_TOKEN`, and
-GitHub does not let events from `GITHUB_TOKEN` trigger other workflows. So a
-`dbt-antlr-codegen-vX.Y.Z` tag created by release-plz does **not** start the
-Release (cargo-dist) workflow, and the GitHub release stays without binaries.
-Two ways to get the binaries built:
+The `dbt-antlr-codegen-v0.1.0` release keeps its prebuilt archives, so
+`Config::pinned_release("0.1.0")` keeps working; later versions have no
+archives until distribution is re-enabled.
 
-- Manual (current setup): after release-plz publishes a tool release, re-push
-  the tag from any checkout with your own credentials:
+To re-enable:
 
-  ```sh
-  git push origin :refs/tags/dbt-antlr-codegen-vX.Y.Z
-  git push origin dbt-antlr-codegen-vX.Y.Z
-  ```
-
-  cargo-dist attaches the binaries to the existing GitHub release.
-- Automatic: store a personal access token (repository contents: write) as a
-  `RELEASE_PLZ_TOKEN` secret and set `GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}`
-  in `release-plz.yml`. Tag pushes from release-plz then trigger the Release
-  workflow like a human push.
+1. Restore `.github/workflows/release.yml` from git history, or regenerate it
+   with `dist generate`. If regenerating, re-apply the tag-trigger scoping to
+   `dbt-antlr-codegen-v[0-9]+.[0-9]+.[0-9]+*` so library tags do not trigger
+   binary builds.
+2. Store a personal access token (repository contents: write) as a
+   `RELEASE_PLZ_TOKEN` secret and set
+   `GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}` in `release-plz.yml`.
+   release-plz pushes tags with the workflow's `GITHUB_TOKEN`, and GitHub does
+   not let events from `GITHUB_TOKEN` trigger other workflows. Without the
+   PAT, every tool release needs a manual tag re-push to start the binary
+   build: `git push origin :refs/tags/dbt-antlr-codegen-vX.Y.Z` followed by
+   `git push origin dbt-antlr-codegen-vX.Y.Z`.
 
 ## Generated-code compatibility
 
