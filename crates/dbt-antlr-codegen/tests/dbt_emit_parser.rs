@@ -1,3 +1,4 @@
+#![cfg(feature = "generator")]
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Bo Lin
 //! Golden-diff test for the dbt parser emission layer.

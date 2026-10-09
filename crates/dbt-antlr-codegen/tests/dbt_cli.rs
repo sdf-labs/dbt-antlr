@@ -1,3 +1,4 @@
+#![cfg(feature = "generator")]
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Bo Lin
 //! Integration test for the dbt emission command line (`src/dbt/cli.rs`):

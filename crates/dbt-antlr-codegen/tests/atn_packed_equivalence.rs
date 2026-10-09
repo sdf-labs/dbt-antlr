@@ -1,3 +1,4 @@
+#![cfg(feature = "generator")]
 //! Differential ATN equivalence tests.
 //!
 //! Tier 1 (always runs) compares the packed-ATN deserializer against the

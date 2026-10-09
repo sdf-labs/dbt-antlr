@@ -40,6 +40,14 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # The slim build-dependency configurations must stay compilable; the
+      # workspace-wide run above always enables default features through the
+      # generator binary and dev-dependencies.
+      - name: cargo clippy (slim feature sets)
+        run: |
+          cargo clippy -p dbt-antlr-codegen --no-default-features -- -D warnings
+          cargo clippy -p dbt-antlr-codegen --no-default-features --features download -- -D warnings
+
   # Workspace unit/integration tests on the MSRV (1.95) and current stable.
   unittests:
     name: cargo test (${{ matrix.os }}, ${{ matrix.rust }})

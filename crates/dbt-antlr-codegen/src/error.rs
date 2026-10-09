@@ -35,6 +35,7 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
+    #[cfg(feature = "generator")]
     pub(crate) fn new(
         code: &'static str,
         severity: Severity,
@@ -96,6 +97,7 @@ pub struct Error {
 }
 
 impl Error {
+    #[cfg(feature = "generator")]
     pub(crate) const fn compilation(message: String, diagnostics: Vec<Diagnostic>) -> Self {
         Self {
             kind: ErrorKind::Compilation,
@@ -152,4 +154,37 @@ impl From<io::Error> for Error {
     fn from(source: io::Error) -> Self {
         Self::generation(source)
     }
+}
+
+/// Errors of the emission layer.
+#[derive(Debug, thiserror::Error)]
+pub enum EmitError {
+    /// The grammar failed to compile.
+    #[cfg(feature = "generator")]
+    #[error("grammar compilation failed: {0}")]
+    Compile(#[from] crate::Error),
+    /// The template failed to load or render.
+    #[cfg(feature = "generator")]
+    #[error("template rendering failed: {0}")]
+    Template(#[from] minijinja::Error),
+    /// The grammar uses a construct the emission layer does not support
+    /// yet (left recursion, embedded actions, sempreds, labels).
+    #[cfg(feature = "generator")]
+    #[error("unsupported grammar construct: {0}")]
+    Unsupported(String),
+    /// The generator configuration is invalid.
+    #[error("invalid generator configuration: {0}")]
+    Config(String),
+    /// A pinned release binary could not be downloaded, verified, or run.
+    #[cfg(feature = "download")]
+    #[error("pinned release binary failed: {0}")]
+    Download(String),
+    /// An output directory or file could not be written.
+    #[error("cannot write {path}: {source}")]
+    Write {
+        /// Path that could not be written.
+        path: PathBuf,
+        /// Underlying I/O error.
+        source: io::Error,
+    },
 }

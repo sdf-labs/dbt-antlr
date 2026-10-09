@@ -27,31 +27,7 @@ pub struct EmittedFile {
     pub content: String,
 }
 
-/// Errors of the emission layer.
-#[derive(Debug, thiserror::Error)]
-pub enum EmitError {
-    /// The grammar failed to compile.
-    #[error("grammar compilation failed: {0}")]
-    Compile(#[from] crate::Error),
-    /// The template failed to load or render.
-    #[error("template rendering failed: {0}")]
-    Template(#[from] minijinja::Error),
-    /// The grammar uses a construct the emission layer does not support
-    /// yet (left recursion, embedded actions, sempreds, labels).
-    #[error("unsupported grammar construct: {0}")]
-    Unsupported(String),
-    /// The generator configuration is invalid.
-    #[error("invalid generator configuration: {0}")]
-    Config(String),
-    /// An output directory or file could not be written.
-    #[error("cannot write {path}: {source}")]
-    Write {
-        /// Path that could not be written.
-        path: PathBuf,
-        /// Underlying I/O error.
-        source: std::io::Error,
-    },
-}
+pub use crate::error::EmitError;
 
 fn compile_grammar(
     grammar_path: &Path,

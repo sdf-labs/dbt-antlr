@@ -1,3 +1,4 @@
+#![cfg(feature = "generator")]
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Bo Lin
 //! Full golden sweep for the dbt emission layer (milestone 4.7).

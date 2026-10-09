@@ -42,10 +42,9 @@ on:
   pull_request:
   push:
     tags:
-      # MANUAL EDIT (re-apply after 'dist generate'): only tool releases get
-      # binaries. release-plz also tags the library crates
-      # (dbt-antlr-runtime-v*, dbt-antlr-g4-parser-v*), which must not trigger
-      # this workflow: a tag naming a non-dist-able package errors.
+      # MANUAL EDIT (re-apply after every `dist generate`): only tool releases
+      # get binaries. release-plz also tags dbt-antlr-runtime-v* and
+      # dbt-antlr-g4-parser-v*, which this pattern must not match.
       - 'dbt-antlr-codegen-v[0-9]+.[0-9]+.[0-9]+*'
 
 jobs:
