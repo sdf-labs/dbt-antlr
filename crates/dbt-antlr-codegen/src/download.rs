@@ -173,10 +173,10 @@ fn extract_binary(archive: &Path, destination: &Path) -> Result<(), EmitError> {
         path: archive.to_path_buf(),
         source,
     })?;
-    let mut archive = zip::ZipArchive::new(file)
+    let mut zip_archive = zip::ZipArchive::new(file)
         .map_err(|error| EmitError::Download(format!("cannot read archive: {error}")))?;
-    for index in 0..archive.len() {
-        let mut entry = archive
+    for index in 0..zip_archive.len() {
+        let mut entry = zip_archive
             .by_index(index)
             .map_err(|error| EmitError::Download(format!("cannot read archive: {error}")))?;
         if entry.name().ends_with(exe_name()) {

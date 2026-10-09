@@ -81,6 +81,11 @@ jobs:
       - name: cargo build dbt-antlr-codegen
         run: cargo build --bin dbt-antlr-codegen
 
+      # Compile-check the pinned-binary download path on every OS; the
+      # workspace-wide jobs only build it on Linux.
+      - name: cargo check (download feature)
+        run: cargo check -p dbt-antlr-codegen --no-default-features --features download
+
       - name: cargo test
         run: cargo test --workspace --all-targets
   # Self-hosting guarantee: regenerating the g4-parser front-end and the
