@@ -578,17 +578,17 @@ fn check_block_options(block: &Block, rule_name: &str, diagnostics: &mut Vec<Dia
     for alternative in &block.alternatives {
         for element in &alternative.elements {
             check_misplaced_assoc_option(&element.options, rule_name, diagnostics);
-            if let Some(label) = &element.label {
-                if matches!(element.kind, ElementKind::Block(_)) {
-                    diagnostics.push(Diagnostic::error(
-                        "G4S055",
-                        label.span.clone(),
-                        format!(
-                            "label {} assigned to a block which is not a set",
-                            label.name
-                        ),
-                    ));
-                }
+            if let Some(label) = &element.label
+                && matches!(element.kind, ElementKind::Block(_))
+            {
+                diagnostics.push(Diagnostic::error(
+                    "G4S055",
+                    label.span.clone(),
+                    format!(
+                        "label {} assigned to a block which is not a set",
+                        label.name
+                    ),
+                ));
             }
             match &element.kind {
                 ElementKind::RuleCall(_) => {
@@ -1521,10 +1521,10 @@ impl VocabularyBuilder {
         let Some(number) = self.by_literal.remove(literal) else {
             return;
         };
-        if let Some(token) = self.by_number.get_mut(&number) {
-            if token.literal.as_deref() == Some(literal) {
-                token.literal = None;
-            }
+        if let Some(token) = self.by_number.get_mut(&number)
+            && token.literal.as_deref() == Some(literal)
+        {
+            token.literal = None;
         }
         self.literal_order.retain(|candidate| candidate != literal);
     }
@@ -1557,10 +1557,10 @@ fn name_table(max_token_type: i32, names: &BTreeMap<String, i32>) -> Vec<Option<
         let Ok(index) = usize::try_from(*number) else {
             continue;
         };
-        if let Some(slot) = table.get_mut(index) {
-            if slot.is_none() {
-                *slot = Some(name.clone());
-            }
+        if let Some(slot) = table.get_mut(index)
+            && slot.is_none()
+        {
+            *slot = Some(name.clone());
         }
     }
     table
@@ -1576,10 +1576,10 @@ fn symbolic_name_table(vocabulary: &Vocabulary) -> Vec<Option<String>> {
         if name.starts_with("T__") {
             continue;
         }
-        if let Ok(index) = usize::try_from(token.number) {
-            if let Some(slot) = table.get_mut(index) {
-                *slot = Some(name.clone());
-            }
+        if let Ok(index) = usize::try_from(token.number)
+            && let Some(slot) = table.get_mut(index)
+        {
+            *slot = Some(name.clone());
         }
     }
     table

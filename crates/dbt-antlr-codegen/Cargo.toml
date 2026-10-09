@@ -56,8 +56,5 @@ hmac-sha256 = "1"
 insta = { workspace = true }
 memchr = { workspace = true }
 
-[lints]
-workspace = true
-
 [package.metadata.docs.rs]
 all-features = true

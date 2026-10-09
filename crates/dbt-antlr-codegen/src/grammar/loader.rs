@@ -104,10 +104,10 @@ impl Loader {
         }
         let roots = self.options.roots.clone();
         for path in roots {
-            if let Some(grammar) = self.load_path(&path, Some(&path), false) {
-                if !self.roots.contains(&grammar) {
-                    self.roots.push(grammar);
-                }
+            if let Some(grammar) = self.load_path(&path, Some(&path), false)
+                && !self.roots.contains(&grammar)
+            {
+                self.roots.push(grammar);
             }
         }
         let roots = self.roots.clone();

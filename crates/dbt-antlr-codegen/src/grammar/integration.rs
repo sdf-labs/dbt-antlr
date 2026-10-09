@@ -151,14 +151,14 @@ pub(crate) fn integrate_loaded(
 
     let mut vocabularies = Vec::new();
     for (source, outputs) in &source_outputs {
-        if loaded.grammars.grammar(*source).header.kind == GrammarKind::Combined {
-            if let (Some(lexer), Some(parser)) = (outputs.lexer, outputs.parser) {
-                vocabularies.push(IntegratedVocabulary {
-                    consumer: parser,
-                    source: IntegratedVocabularySource::Grammar(lexer),
-                    declaration: None,
-                });
-            }
+        if loaded.grammars.grammar(*source).header.kind == GrammarKind::Combined
+            && let (Some(lexer), Some(parser)) = (outputs.lexer, outputs.parser)
+        {
+            vocabularies.push(IntegratedVocabulary {
+                consumer: parser,
+                source: IntegratedVocabularySource::Grammar(lexer),
+                declaration: None,
+            });
         }
     }
     for edge in &loaded.grammars.vocabularies {
@@ -908,10 +908,9 @@ fn parser_literals(rules: &[Rule]) -> Vec<String> {
                                 value: Terminal::Literal(literal),
                                 ..
                             } = member
+                                && seen.insert(literal.clone())
                             {
-                                if seen.insert(literal.clone()) {
-                                    literals.push(literal.clone());
-                                }
+                                literals.push(literal.clone());
                             }
                         }
                     }
