@@ -1,5 +1,5 @@
 ---
-source: crates/dbt-antlr-codegen/src/grammar/syntax.rs
+source: crates/dbt-antlr/src/grammar/syntax.rs
 assertion_line: 1221
 expression: members.body
 ---

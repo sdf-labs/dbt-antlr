@@ -5,8 +5,8 @@
 //! goldens in `dbt-antlr-runtime/tests/gen/`.
 //!
 //! ```sh
-//! cargo run -p dbt-antlr-codegen --example dump_emit -- ../dbt-antlr-runtime/grammars/SimpleLR.g4
-//! cargo run -p dbt-antlr-codegen --example dump_emit -- ../dbt-antlr-runtime/grammars/SimpleLR.g4 --no-visitor
+//! cargo run -p dbt-antlr --example dump_emit -- ../dbt-antlr-runtime/grammars/SimpleLR.g4
+//! cargo run -p dbt-antlr --example dump_emit -- ../dbt-antlr-runtime/grammars/SimpleLR.g4 --no-visitor
 //! ```
 
 #![allow(clippy::print_stdout)]

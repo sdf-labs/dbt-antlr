@@ -1,10 +1,4 @@
 // Generated from ANTLRv4Lexer.g4 by ANTLR 4.13.2
-#![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(nonstandard_style)]
-#![allow(unused_variables)]
-#![allow(unused_braces)]
-#![allow(unused_parens)]
 
 use dbt_antlr_runtime::token::TOKEN_INVALID_TYPE;
 

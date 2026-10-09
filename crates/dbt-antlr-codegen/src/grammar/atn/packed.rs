@@ -1378,13 +1378,12 @@ impl ParserAtnBuilder {
         transition: ParserTransitionSpec,
     ) -> Result<TransitionId, ParserAtnError> {
         let source = self.checked_state(source, "transition source")?;
-        if let Some(existing) = self.transitions_by_source.get(&source) {
-            if let Some(&index) = existing
+        if let Some(existing) = self.transitions_by_source.get(&source)
+            && let Some(&index) = existing
                 .iter()
                 .find(|&&index| self.transitions[index].spec() == transition)
-            {
-                return TransitionId::try_from(index);
-            }
+        {
+            return TransitionId::try_from(index);
         }
         let record = self.transition_record(source, transition)?;
         let index = self.transitions.len();

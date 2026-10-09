@@ -243,7 +243,7 @@ impl<'sim> ParserATNSimulator<'sim> {
 
         loop {
             //            println!("exec atn loop previous D {}",previousD as i32 -1);
-            let D = if let Some(s) = { local.dfa_ref.get_edge(previousD, (token + 1) as usize) } {
+            let D = if let Some(s) = local.dfa_ref.get_edge(previousD, (token + 1) as usize) {
                 s
             } else {
                 self.compute_target_state(previousD, token, local)?
@@ -370,12 +370,9 @@ impl<'sim> ParserATNSimulator<'sim> {
             self.compute_reach_set(closure.get_items(), t, false, local)
         };
 
-        let reach = match reach {
-            None => {
-                self.add_dfaedge(local.dfa_ref, previousD, t, local.dfa_ref.get_error_state());
-                return Ok(local.dfa_ref.get_error_state());
-            }
-            Some(x) => x,
+        let Some(reach) = reach else {
+            self.add_dfaedge(local.dfa_ref, previousD, t, local.dfa_ref.get_error_state());
+            return Ok(local.dfa_ref.get_error_state());
         };
 
         let predicted_alt = self.get_unique_alt(&reach);
@@ -1029,7 +1026,6 @@ impl<'sim> ParserATNSimulator<'sim> {
         TF: TokenFactory<'input, 'arena> + 'arena,
         P: Parser<'input, 'arena, TF>,
     {
-        //        println!("closure({:?})",config);
         if config.get_state().state_type() == ATNStateType::RuleStop {
             if !config.get_context().unwrap().is_empty() {
                 config.get_context().unwrap().run(|temp| {
@@ -1057,13 +1053,13 @@ impl<'sim> ParserATNSimulator<'sim> {
                 let context = config.take_context();
                 for i in 0..context.length() {
                     if context.get_return_state(i) == ATNStateRef::invalid() {
-                        if i != context.length() - 1 {
-                            panic!("EMPTY_RETURN_STATE is not last for some reason, please report error")
-                        }
+                        assert!(
+                            i == context.length() - 1,
+                            "EMPTY_RETURN_STATE is not last for some reason, please report error"
+                        );
                         continue;
                     }
                     let return_state = context.get_return_state(i) as ATNStateRef;
-                    //                    let new_ctx = context.take_parent(i).unwrap();
                     let new_ctx = context.get_parent(i);
                     let mut c = ATNConfig::new(return_state, config.get_alt(), new_ctx)
                         .with_semantic_context(config.semantic_context());
@@ -1114,8 +1110,6 @@ impl<'sim> ParserATNSimulator<'sim> {
         TF: TokenFactory<'input, 'arena> + 'arena,
         P: Parser<'input, 'arena, TF>,
     {
-        //println!("depth {}",depth);
-        //        println!("closure_work started {:?}",config);
         let p = config.get_state();
         if !p.has_epsilon_only_transitions() {
             configs.add_cached(config.clone(), local.merge_cache);
@@ -1182,14 +1176,9 @@ impl<'sim> ParserATNSimulator<'sim> {
                 )
             };
         }
-        //        println!("closure_work ended {:?}",config);
     }
 
     fn can_drop_loop_entry_edge_in_left_recursive_rule(&self, _config: &ATNConfig) -> bool {
-        //        if std::env::var("TURN_OFF_LR_LOOP_ENTRY_BRANCH_OPT").ok()
-        //            .and_then(|it|str::parse::<bool>(&it).ok()) == Some(true)
-        //        { return false }
-
         let state = _config.get_state();
 
         if let Some(StarLoopEntryState { is_precedence, .. }) = state.try_as() {
@@ -1244,10 +1233,9 @@ impl<'sim> ParserATNSimulator<'sim> {
             {
                 continue;
             }
-            //            println!("test2");
+
             return false;
         }
-        //        println!("dropping on state {} ", state.get_state_number());
 
         true
     }
@@ -1633,7 +1621,7 @@ impl<'scratch> MergeCache<'scratch> {
     }
 }
 
-#[derive(Eq)]
+#[derive(Eq, Debug)]
 pub struct MergeKey<'scratch> {
     pub left: PredictionContextRef<'scratch>,
     pub right: PredictionContextRef<'scratch>,

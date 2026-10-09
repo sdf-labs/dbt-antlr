@@ -7,9 +7,7 @@
 //! The output model ([`model`]) mirrors the Java `codegen.model` classes; the
 //! factories ([`lexer_factory`], [`parser_factory`]) mirror the Java
 //! `OutputModelController` / `LexerFactory` / `ParserFactory` walks on top of
-//! the vendored `grammar` analysis layer.
-//!
-//! See the "Emission layer design" section of `MEMO.md` for the architecture.
+//! the `grammar` analysis layer.
 
 mod action_translator;
 pub mod cli;

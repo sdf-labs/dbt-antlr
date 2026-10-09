@@ -6,49 +6,74 @@ categories = [
 ]
 description = "ANTLR v4 grammar compiler and Rust source generator"
 documentation = "https://docs.rs/dbt-antlr-codegen"
-edition.workspace = true
-homepage.workspace = true
+edition = { workspace = true }
+homepage = { workspace = true }
 include = ["/Cargo.toml", "/README.md", "/src/**", "/templates/**"]
 keywords = ["antlr", "antlr4", "codegen", "lexer", "parser"]
-license.workspace = true
+license = { workspace = true }
 name = "dbt-antlr-codegen"
 readme = "README.md"
-repository.workspace = true
-rust-version.workspace = true
-version.workspace = true
+repository = { workspace = true }
+rust-version = { workspace = true }
+version = { workspace = true }
 
 [lib]
 name = "dbt_antlr_codegen"
 path = "src/lib.rs"
 
 [[bin]]
-name = "dbt-antlr"
-path = "src/bin/dbt-antlr.rs"
+name = "dbt-antlr-codegen"
+path = "src/bin/dbt-antlr-codegen.rs"
+required-features = ["generator"]
 
 [features]
-atn-export = []
-
+# The grammar compiler and code generator itself. Disable it together with
+# `fancy` (default-features = false, features = ["download"]) to make this
+# crate a thin client that downloads and runs a pinned release binary of
+# `dbt-antlr-codegen` instead of compiling the generator.
+default = ["generator", "fancy"]
+atn-export = ["generator"]
+download = ["dep:flate2", "dep:sha2", "dep:tar", "dep:zip"]
+# Fancy miette diagnostics rendering (backtrace, terminal colors, source
+# snippets). On by default so the installed command keeps pretty output;
+# build-dependency consumers should set default-features = false to skip
+# this dependency subtree.
+fancy = ["miette/fancy"]
+generator = [
+  "dep:dbt-antlr-g4-parser",
+  "dep:dbt-antlr-runtime",
+  "dep:icu_casemap",
+  "dep:icu_properties",
+  "dep:intl",
+  "dep:minijinja",
+  "dep:petgraph",
+  "dep:serde",
+]
 [dependencies]
-dbt-antlr-g4-parser.workspace = true
-dbt-antlr-runtime.workspace = true
-icu_casemap = "2.2.0"
-icu_properties.workspace = true
+dbt-antlr-g4-parser = { workspace = true, optional = true }
+dbt-antlr-runtime = { workspace = true, optional = true }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"], optional = true }
+icu_casemap = { version = "2.2.0", optional = true }
+icu_properties = { workspace = true, optional = true }
 intl = { version = "0.6.0", default-features = false, features = [
   "full",
   "normalization",
-] }
-miette = { version = "7.6.0", default-features = false, features = ["fancy"] }
-minijinja.workspace = true
-petgraph = { version = "0.8.3", default-features = false, features = ["std"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-thiserror.workspace = true
+], optional = true }
+miette = { version = "7.6.0", default-features = false }
+minijinja = { workspace = true, optional = true }
+petgraph = { version = "0.8.3", default-features = false, features = ["std"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+sha2 = { version = "0.10", optional = true }
+tar = { version = "0.4", optional = true }
+thiserror = { workspace = true }
+zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
 
 [dev-dependencies]
+dbt-antlr-codegen = { path = ".", features = ["atn-export"] }
 dbt-antlr-runtime = { workspace = true, features = ["atn-dump"] }
 hmac-sha256 = "1"
-insta.workspace = true
-memchr.workspace = true
+insta = { workspace = true }
+memchr = { workspace = true }
 
 [lints]
 workspace = true

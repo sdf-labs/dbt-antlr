@@ -1,3 +1,4 @@
+#![cfg(feature = "generator")]
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Bo Lin
 //! Integration test for the dbt emission command line (`src/dbt/cli.rs`):
@@ -30,7 +31,7 @@ fn cli_writes_the_emitted_files() {
 
     let expected =
         emit_files_with_flags(&grammar, &[grammars_dir()], true, true).expect("emission succeeds");
-    assert!(!expected.is_empty());
+    assert_ne!(expected.len(), 0);
     for file in &expected {
         let written = std::fs::read_to_string(out_dir.join(&file.name))
             .unwrap_or_else(|error| panic!("{} written: {error}", file.name));

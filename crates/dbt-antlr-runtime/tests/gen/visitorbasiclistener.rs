@@ -1,4 +1,3 @@
-#![allow(nonstandard_style)]
 // Generated from VisitorBasic.g4 by ANTLR 4.13.2
 use dbt_antlr_runtime::errors::ANTLRError;
 use dbt_antlr_runtime::token::{CommonToken, Token};

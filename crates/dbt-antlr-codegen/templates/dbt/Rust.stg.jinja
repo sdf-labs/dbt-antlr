@@ -79,13 +79,6 @@ Parser-specific notes:
     environment; rustTypeInitMap ::= [ ... ] -> rust_type_init(). -#}
 {%- macro ParserFile(file, parser, namedActions, contextSuperClass) -%}
 {{ fileHeader(file.grammarFileName, file.ANTLRVersion) }}
-#![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(non_snake_case)]
-#![allow(non_upper_case_globals)]
-#![allow(nonstandard_style)]
-#![allow(unused_braces)]
-#![allow(unused_parens)]
 {% if namedActions.header %}{{ namedActions.header }}
 {% endif %}use dbt_antlr_runtime::Arena;
 use dbt_antlr_runtime::PredictionContextCache;
@@ -125,7 +118,6 @@ use std::ops::{DerefMut, Deref};
     `<file.listenerLabelRuleNames.(lname)>` map lookup (undefined when the
     name is a plain rule name). -#}
 {%- macro ListenerFile(file, header, namedActions) -%}
-#![allow(nonstandard_style)]
 {{ fileHeader(file.grammarFileName, file.ANTLRVersion) }}
 {% if header %}{{ header }}
 {% endif %}use dbt_antlr_runtime::errors::ANTLRError;
@@ -153,42 +145,42 @@ where
 }
 {{ "" }}
 {%- endmacro -%}
-{#- BaseListenerFile: the STG original emits an undeclared `'input` lifetime
-    (the generated file does not compile; the dbt test suite never includes
-    it). Ported verbatim. When `header` is absent the two blank lines around
-    the STG `<if(header)>` collapse to one. -#}
+{#- BaseListenerFile: convenience supertrait with empty default bodies.
+    Deviation from the STG original: the upstream template emits an
+    undeclared `'input` lifetime and misses the `Tok` parameter, so the
+    generated file never compiled; this version mirrors ListenerFile. When
+    `header` is absent the two blank lines around the STG `<if(header)>`
+    collapse to one. -#}
 {%- macro BaseListenerFile(file, header, namedActions) -%}
 {{ fileHeader(file.grammarFileName, file.ANTLRVersion) }}
-{% if header %}
-{{ header }}
-{% endif %}
-
-use super::{{ file.parserName | lower }}::*;
+{% if header %}{{ header }}
+{% endif %}use dbt_antlr_runtime::errors::ANTLRError;
+use dbt_antlr_runtime::token::{CommonToken, Token};
 use dbt_antlr_runtime::tree::ParseTreeListener;
+use super::{{ file.parserName | lower }}::*;
 
-// A complete Visitor for a parse tree produced by {{ file.parserName }}.
+/// A complete listener for a parse tree produced by {{ file.parserName }},
+/// with empty default bodies.
+pub trait {{ file.grammarName }}BaseListener<'arena, Tok = CommonToken<'arena>> : ParseTreeListener<'arena, {{ file.parserName }}NodeKind, Tok>
+where
+    Tok: Token + 'arena,
+{
+{% for lname in file.listenerNames %}{% if file.listenerLabelRuleNames[lname] %}    /// Enter a parse tree produced by the {@code {{ lname }}}
+    /// labeled alternative in {@link {{ file.parserName }}#{{ file.listenerLabelRuleNames[lname] }}}.
+{% else %}    /// Enter a parse tree produced by {@link {{ file.parserName }}#{{ lname }}}.
+{% endif %}    /// @param ctx the parse tree
+    fn enter_{{ lname }}<'input: 'arena>(&mut self, _ctx: &{{ lname | cap }}Context<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-pub trait {{ file.grammarName }}BaseListener<'arena>:
-    ParseTreeListener<'arena, {{ file.parserName }}NodeKind> {
-
-{% for lname in file.listenerNames %}    /**
-     * Enter a parse tree produced by \{@link {{ file.grammarName }}BaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_{{ lname | lower }}(&mut self, _ctx: &{{ lname | cap }}Context<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  {{ file.grammarName }}BaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_{{ lname | lower }}(&mut self, _ctx: &{{ lname | cap }}Context<'input, 'arena>) {}
-
+{% if file.listenerLabelRuleNames[lname] %}    /// Exit a parse tree produced by the {@code {{ lname }}}
+    /// labeled alternative in {@link {{ file.parserName }}#{{ file.listenerLabelRuleNames[lname] }}}.
+{% else %}    /// Exit a parse tree produced by {@link {{ file.parserName }}#{{ lname }}}.
+{% endif %}    /// @param ctx the parse tree
+    fn exit_{{ lname }}<'input: 'arena>(&mut self, _ctx: &{{ lname | cap }}Context<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 {{ "\n" if not loop.last }}{% endfor %}
 
 }
 {%- endmacro -%}
 {%- macro VisitorFile(file, header, namedActions) -%}
-#![allow(nonstandard_style)]
-#![allow(dead_code)]
 {{ fileHeader(file.grammarFileName, file.ANTLRVersion) }}
 {% if header %}{{ header }}
 {% endif %}use dbt_antlr_runtime::token::{CommonToken, Token};
@@ -266,7 +258,7 @@ where
 // Generated from {{ grammarFileName }} by ANTLR {{ ANTLRVersion }}
 {%- endmacro -%}
 {%- macro Parser(parser, funcs, atn, sempredFuncs, superClass, file, namedActions, contextSuperClass) -%}
-dbt_antlr_runtime::check_version!("0","1");
+dbt_antlr_runtime::check_version!("{{ RUNTIME_VERSION_MAJOR }}","{{ RUNTIME_VERSION_MINOR }}");
 {% if parser.tokens %}{% for t in parser.tokens %}pub const {{ parser.grammarName }}_{{ t.key }}:i32={{ t.value }};{{ " \n" if not loop.last }}{% endfor %}{{ "\n" }}{% endif %}pub const {{ parser.grammarName }}_EOF:i32=EOF;
 {% for r in parser.rules %}pub const RULE_{{ r.name }}:usize = {{ r.index }};{{ " \n" if not loop.last }}{% endfor %}{{ "\n" }}pub const ruleNames: [&'static str; {{ parser.ruleNames | length }}] = [
     {{ parser.ruleNames | map("st_quote") | wrap_list(", ", 4, "    ", 4) }}
@@ -1328,12 +1320,6 @@ let _local_ctx_fn = |recog: &Self| -> &'arena {{ ctxName }}Context<TF::Tok> {rec
 {%- endmacro -%}
 {%- macro LexerFile(lexerFile, lexer, namedActions) -%}
 {{ fileHeader(lexerFile.grammarFileName, lexerFile.ANTLRVersion) }}
-#![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(nonstandard_style)]
-#![allow(unused_variables)]
-#![allow(unused_braces)]
-#![allow(unused_parens)]
 {% if namedActions.header %}{{ namedActions.header }}
 {% endif %}use dbt_antlr_runtime::Arena;
 use dbt_antlr_runtime::atn::ATN;
@@ -1358,7 +1344,7 @@ use std::sync::LazyLock;
 {{ Lexer(lexer, lexer.atn, lexer.actionFuncs, lexer.sempredFuncs, none, namedActions) }}
 {%- endmacro -%}
 {%- macro Lexer(lexer, atn, actionFuncs, sempredFuncs, superClass, namedActions) -%}
-dbt_antlr_runtime::check_version!("0","1");
+dbt_antlr_runtime::check_version!("{{ RUNTIME_VERSION_MAJOR }}","{{ RUNTIME_VERSION_MINOR }}");
 {% if lexer.tokens %}{% for t in lexer.tokens %}pub const {{ t.key }}:i32={{ t.value }}{% if not loop.last %}; 
 {% endif %}{% endfor %};
 {% endif %}

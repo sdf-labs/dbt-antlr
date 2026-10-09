@@ -193,9 +193,8 @@ impl IntervalSetBuf {
                 // should be merged with next interval in list
                 loop {
                     i += 1;
-                    let next = match self.intervals.get(i) {
-                        Some(v) => v,
-                        None => break,
+                    let Some(next) = self.intervals.get(i) else {
+                        break;
                     };
                     if !bigger.adjacent(next) && bigger.disjoint(next) {
                         break;

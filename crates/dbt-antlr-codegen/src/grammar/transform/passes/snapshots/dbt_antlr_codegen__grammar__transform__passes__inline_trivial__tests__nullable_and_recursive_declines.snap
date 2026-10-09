@@ -1,5 +1,5 @@
 ---
-source: crates/dbt-antlr-codegen/src/grammar/transform/passes/inline_trivial.rs
+source: crates/dbt-antlr/src/grammar/transform/passes/inline_trivial.rs
 expression: candidate_lines(&report)
 ---
 [

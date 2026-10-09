@@ -1,17 +1,20 @@
+#![cfg(feature = "generator")]
 //! Differential ATN equivalence tests.
 //!
 //! Tier 1 (always runs) compares the packed-ATN deserializer against the
-//! proven Java-word deserializer on the in-crate golden grammars, using the
+//! proven Java-word deserializer on the dbt-antlr-runtime golden grammars, using the
 //! `.interp` files produced by the Java ANTLR tool as oracles.
 //!
 //! Tier 2 (runs only with `ATN_SWEEP=1`) sweeps the codegen fixture corpus
 //! the same way.
 
+// Sweep progress goes to stdout/stderr like other long-running tests.
+#![allow(clippy::print_stdout, clippy::print_stderr)]
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use dbt_antlr_codegen::atn_export::{compile_atn_data, GrammarAtnData};
+use dbt_antlr_codegen::atn_export::{GrammarAtnData, compile_atn_data};
 use dbt_antlr_runtime::atn::ATN;
 use dbt_antlr_runtime::atn_deserializer::ATNDeserializer;
 use dbt_antlr_runtime::atn_dump::dump_atn;
@@ -95,15 +98,15 @@ const SKIP: [(&str, &str); 15] = [
 ];
 
 fn grammars_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("grammars")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../dbt-antlr-runtime/grammars")
 }
 
 fn gen_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/gen")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../dbt-antlr-runtime/tests/gen")
 }
 
 fn fixtures_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../dbt-antlr-codegen/tests/codegen-direct/fixtures")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/codegen-direct/fixtures")
 }
 
 /// Parses the word list of the `atn:` section of a `.interp` file.
@@ -176,15 +179,19 @@ fn first_diff(oracle: &str, candidate: &str) -> String {
             let before = i.saturating_sub(1);
             let context = oracle_lines[before..i]
                 .iter()
-                .map(|line| format!("  context:   {line}\n"))
-                .collect::<String>();
+                .fold(String::new(), |mut acc, line| {
+                    acc.push_str("  context:   ");
+                    acc.push_str(line);
+                    acc.push('\n');
+                    acc
+                });
             return format!(
                 "first difference at line {}:\n{context}  oracle:    {a}\n  candidate: {b}",
                 i + 1,
             );
         }
     }
-    "dumps differ in trailing newline only".to_string()
+    "dumps differ in trailing newline only".to_owned()
 }
 
 fn assert_dumps_equal(context: &str, oracle: &str, candidate: &str) {
@@ -319,8 +326,8 @@ fn fixture_sweep() {
                 let message = payload
                     .downcast_ref::<String>()
                     .cloned()
-                    .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
-                    .unwrap_or_else(|| "<non-string panic>".to_string());
+                    .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                    .unwrap_or_else(|| "<non-string panic>".to_owned());
                 failures.push(format!("{dir_name}: {message}"));
             }
         }

@@ -490,8 +490,7 @@ where
                 let rule_index = p.get_rule_index();
                 let rule_name = rule_names
                     .get(rule_index)
-                    .map(|&it| it.to_owned())
-                    .unwrap_or_else(|| rule_index.to_string());
+                    .map_or_else(|| rule_index.to_string(), |&it| it.to_owned());
                 result.push_str(&rule_name);
                 result.push(' ');
             } else if !p.is_empty() {

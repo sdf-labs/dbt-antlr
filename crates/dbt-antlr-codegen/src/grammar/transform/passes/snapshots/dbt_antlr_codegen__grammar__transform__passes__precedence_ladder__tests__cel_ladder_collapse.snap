@@ -1,5 +1,5 @@
 ---
-source: crates/dbt-antlr-codegen/src/grammar/transform/passes/precedence_ladder.rs
+source: crates/dbt-antlr/src/grammar/transform/passes/precedence_ladder.rs
 expression: "(summarize(&grammar.units[0]), &report.entries, &report.candidates,)"
 ---
 (

@@ -249,6 +249,18 @@ where
     configs: &'ephemeral [AC],
 }
 
+impl<'ephemeral, AC> Debug for ImmutableStore<'ephemeral, AC>
+where
+    AC: ATNConfigType<'ephemeral>,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImmutableStore")
+            .field("cached_hash", &self.cached_hash)
+            .field("len", &self.configs.len())
+            .finish()
+    }
+}
+
 impl<'ephemeral, AC> PartialEq for ImmutableStore<'ephemeral, AC>
 where
     AC: ATNConfigType<'ephemeral>,

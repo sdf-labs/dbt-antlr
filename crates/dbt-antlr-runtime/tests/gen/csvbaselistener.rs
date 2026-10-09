@@ -1,59 +1,45 @@
 // Generated from CSV.g4 by ANTLR 4.13.2
-
-use super::csvparser::*;
+use dbt_antlr_runtime::errors::ANTLRError;
+use dbt_antlr_runtime::token::{CommonToken, Token};
 use dbt_antlr_runtime::tree::ParseTreeListener;
+use super::csvparser::*;
 
-// A complete Visitor for a parse tree produced by CSVParser.
+/// A complete listener for a parse tree produced by CSVParser,
+/// with empty default bodies.
+pub trait CSVBaseListener<'arena, Tok = CommonToken<'arena>> : ParseTreeListener<'arena, CSVParserNodeKind, Tok>
+where
+    Tok: Token + 'arena,
+{
+    /// Enter a parse tree produced by {@link CSVParser#csvFile}.
+    /// @param ctx the parse tree
+    fn enter_csvFile<'input: 'arena>(&mut self, _ctx: &CsvFileContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-pub trait CSVBaseListener<'arena>:
-    ParseTreeListener<'arena, CSVParserNodeKind> {
+    /// Exit a parse tree produced by {@link CSVParser#csvFile}.
+    /// @param ctx the parse tree
+    fn exit_csvFile<'input: 'arena>(&mut self, _ctx: &CsvFileContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-    /**
-     * Enter a parse tree produced by \{@link CSVBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_csvfile(&mut self, _ctx: &CsvFileContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  CSVBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_csvfile(&mut self, _ctx: &CsvFileContext<'input, 'arena>) {}
+    /// Enter a parse tree produced by {@link CSVParser#hdr}.
+    /// @param ctx the parse tree
+    fn enter_hdr<'input: 'arena>(&mut self, _ctx: &HdrContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
+    /// Exit a parse tree produced by {@link CSVParser#hdr}.
+    /// @param ctx the parse tree
+    fn exit_hdr<'input: 'arena>(&mut self, _ctx: &HdrContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-    /**
-     * Enter a parse tree produced by \{@link CSVBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_hdr(&mut self, _ctx: &HdrContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  CSVBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_hdr(&mut self, _ctx: &HdrContext<'input, 'arena>) {}
+    /// Enter a parse tree produced by {@link CSVParser#row}.
+    /// @param ctx the parse tree
+    fn enter_row<'input: 'arena>(&mut self, _ctx: &RowContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
+    /// Exit a parse tree produced by {@link CSVParser#row}.
+    /// @param ctx the parse tree
+    fn exit_row<'input: 'arena>(&mut self, _ctx: &RowContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-    /**
-     * Enter a parse tree produced by \{@link CSVBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_row(&mut self, _ctx: &RowContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  CSVBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_row(&mut self, _ctx: &RowContext<'input, 'arena>) {}
+    /// Enter a parse tree produced by {@link CSVParser#field}.
+    /// @param ctx the parse tree
+    fn enter_field<'input: 'arena>(&mut self, _ctx: &FieldContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-
-    /**
-     * Enter a parse tree produced by \{@link CSVBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_field(&mut self, _ctx: &FieldContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  CSVBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_field(&mut self, _ctx: &FieldContext<'input, 'arena>) {}
-
+    /// Exit a parse tree produced by {@link CSVParser#field}.
+    /// @param ctx the parse tree
+    fn exit_field<'input: 'arena>(&mut self, _ctx: &FieldContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
 }

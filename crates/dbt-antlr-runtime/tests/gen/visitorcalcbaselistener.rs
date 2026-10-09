@@ -1,59 +1,51 @@
 // Generated from VisitorCalc.g4 by ANTLR 4.13.2
-
-use super::visitorcalcparser::*;
+use dbt_antlr_runtime::errors::ANTLRError;
+use dbt_antlr_runtime::token::{CommonToken, Token};
 use dbt_antlr_runtime::tree::ParseTreeListener;
+use super::visitorcalcparser::*;
 
-// A complete Visitor for a parse tree produced by VisitorCalcParser.
+/// A complete listener for a parse tree produced by VisitorCalcParser,
+/// with empty default bodies.
+pub trait VisitorCalcBaseListener<'arena, Tok = CommonToken<'arena>> : ParseTreeListener<'arena, VisitorCalcParserNodeKind, Tok>
+where
+    Tok: Token + 'arena,
+{
+    /// Enter a parse tree produced by {@link VisitorCalcParser#s}.
+    /// @param ctx the parse tree
+    fn enter_s<'input: 'arena>(&mut self, _ctx: &SContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-pub trait VisitorCalcBaseListener<'arena>:
-    ParseTreeListener<'arena, VisitorCalcParserNodeKind> {
+    /// Exit a parse tree produced by {@link VisitorCalcParser#s}.
+    /// @param ctx the parse tree
+    fn exit_s<'input: 'arena>(&mut self, _ctx: &SContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-    /**
-     * Enter a parse tree produced by \{@link VisitorCalcBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_s(&mut self, _ctx: &SContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  VisitorCalcBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_s(&mut self, _ctx: &SContext<'input, 'arena>) {}
+    /// Enter a parse tree produced by the {@code add}
+    /// labeled alternative in {@link VisitorCalcParser#expr}.
+    /// @param ctx the parse tree
+    fn enter_add<'input: 'arena>(&mut self, _ctx: &AddContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
+    /// Exit a parse tree produced by the {@code add}
+    /// labeled alternative in {@link VisitorCalcParser#expr}.
+    /// @param ctx the parse tree
+    fn exit_add<'input: 'arena>(&mut self, _ctx: &AddContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-    /**
-     * Enter a parse tree produced by \{@link VisitorCalcBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_add(&mut self, _ctx: &AddContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  VisitorCalcBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_add(&mut self, _ctx: &AddContext<'input, 'arena>) {}
+    /// Enter a parse tree produced by the {@code number}
+    /// labeled alternative in {@link VisitorCalcParser#expr}.
+    /// @param ctx the parse tree
+    fn enter_number<'input: 'arena>(&mut self, _ctx: &NumberContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
+    /// Exit a parse tree produced by the {@code number}
+    /// labeled alternative in {@link VisitorCalcParser#expr}.
+    /// @param ctx the parse tree
+    fn exit_number<'input: 'arena>(&mut self, _ctx: &NumberContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-    /**
-     * Enter a parse tree produced by \{@link VisitorCalcBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_number(&mut self, _ctx: &NumberContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  VisitorCalcBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_number(&mut self, _ctx: &NumberContext<'input, 'arena>) {}
+    /// Enter a parse tree produced by the {@code multiply}
+    /// labeled alternative in {@link VisitorCalcParser#expr}.
+    /// @param ctx the parse tree
+    fn enter_multiply<'input: 'arena>(&mut self, _ctx: &MultiplyContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
-
-    /**
-     * Enter a parse tree produced by \{@link VisitorCalcBaseParser#s}.
-     * @param ctx the parse tree
-,      */
-    fn enter_multiply(&mut self, _ctx: &MultiplyContext<'input, 'arena>) {}
-    /**
-     * Exit a parse tree produced by \{@link  VisitorCalcBaseParser#s}.
-     * @param ctx the parse tree
-     */
-    fn exit_multiply(&mut self, _ctx: &MultiplyContext<'input, 'arena>) {}
-
+    /// Exit a parse tree produced by the {@code multiply}
+    /// labeled alternative in {@link VisitorCalcParser#expr}.
+    /// @param ctx the parse tree
+    fn exit_multiply<'input: 'arena>(&mut self, _ctx: &MultiplyContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> { Ok(()) }
 
 }

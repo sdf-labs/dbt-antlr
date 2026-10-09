@@ -20,24 +20,14 @@ pub struct EmittedFile {
     pub name: String,
     /// File content, byte-identical to the Java tool's output modulo the
     /// `grammarFileName` canonicalization documented on
-    /// [`emit_lexer_files`].
+    /// [`emit_lexer_files`] and the lint allow header: the Java tool emits
+    /// inner `#![allow(...)]` attributes, which make the files unusable with
+    /// `include!`, so generated files carry no lint attributes and consumers
+    /// put `#[allow]` on the wrapping module instead.
     pub content: String,
 }
 
-/// Errors of the emission layer.
-#[derive(Debug, thiserror::Error)]
-pub enum EmitError {
-    /// The grammar failed to compile.
-    #[error("grammar compilation failed: {0}")]
-    Compile(#[from] crate::Error),
-    /// The template failed to load or render.
-    #[error("template rendering failed: {0}")]
-    Template(#[from] minijinja::Error),
-    /// The grammar uses a construct the emission layer does not support
-    /// yet (left recursion, embedded actions, sempreds, labels).
-    #[error("unsupported grammar construct: {0}")]
-    Unsupported(String),
-}
+pub use crate::error::EmitError;
 
 fn compile_grammar(
     grammar_path: &Path,

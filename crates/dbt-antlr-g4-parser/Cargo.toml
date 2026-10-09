@@ -4,24 +4,24 @@ categories = [
   "parser-implementations",
   "parsing",
 ]
-description = "ANTLR v4 grammar parser used internally by dbt-antlr-codegen"
-edition.workspace = true
-homepage.workspace = true
+description = "ANTLR v4 grammar parser used internally by dbt-antlr"
+edition = { workspace = true }
+homepage = { workspace = true }
 include = ["/Cargo.toml", "/README.md", "/src/**"]
 keywords = ["antlr", "antlr4", "codegen", "grammar", "parser"]
-license.workspace = true
+license = { workspace = true }
 name = "dbt-antlr-g4-parser"
 publish = true
 readme = "README.md"
-repository.workspace = true
-rust-version.workspace = true
-version.workspace = true
+repository = { workspace = true }
+rust-version = { workspace = true }
+version = { workspace = true }
 
 [dependencies]
-dbt-antlr-runtime.workspace = true
+dbt-antlr-runtime = { workspace = true }
 
 [dev-dependencies]
-insta.workspace = true
+insta = { workspace = true }
 serde_json = "1"
 
 [lints]

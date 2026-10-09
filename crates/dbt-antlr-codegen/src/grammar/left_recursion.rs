@@ -494,11 +494,11 @@ fn prepend_precedence_predicate(
 
 fn set_rightmost_precedence(elements: &mut [Element], rule_name: &str, precedence: u32) {
     for element in elements.iter_mut().rev() {
-        if let ElementKind::RuleCall(call) = &mut element.kind {
-            if call.name == rule_name {
-                call.precedence = Some(precedence);
-                return;
-            }
+        if let ElementKind::RuleCall(call) = &mut element.kind
+            && call.name == rule_name
+        {
+            call.precedence = Some(precedence);
+            return;
         }
     }
 }

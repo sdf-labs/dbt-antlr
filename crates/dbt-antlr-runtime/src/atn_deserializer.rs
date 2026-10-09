@@ -82,12 +82,12 @@ impl ATNDeserializer {
     // fn reset(&self, _data: Vec<u8>) { unimplemented!() }
 
     fn check_version(&self, version: i32) {
-        if version != self::SERIALIZED_VERSION {
-            panic!(
-                "Could not deserialize ATN with version {} (expected {})",
-                version, SERIALIZED_VERSION
-            );
-        }
+        assert!(
+            version == SERIALIZED_VERSION,
+            "Could not deserialize ATN with version {} (expected {})",
+            version,
+            SERIALIZED_VERSION
+        );
     }
 
     fn read_atn(&self, data: &mut Iter<i32>) -> ATN {

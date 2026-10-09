@@ -751,7 +751,7 @@ kw : 'select' | 'from' | KWTOK ;
             .run(&mut grammar, &mut ids, false)
             .expect("a second run should remain valid");
         assert!(!second.entries[0].changed);
-        assert!(second.candidates.is_empty());
+        assert_eq!(second.candidates, []);
     }
 
     #[test]

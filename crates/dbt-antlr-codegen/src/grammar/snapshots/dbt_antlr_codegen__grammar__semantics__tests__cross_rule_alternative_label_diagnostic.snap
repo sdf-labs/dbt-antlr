@@ -1,5 +1,5 @@
 ---
-source: crates/dbt-antlr-codegen/src/grammar/semantics.rs
+source: crates/dbt-antlr/src/grammar/semantics.rs
 expression: error.diagnostics()
 ---
 [

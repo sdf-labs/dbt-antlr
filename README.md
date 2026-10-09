@@ -1,14 +1,14 @@
 # dbt-antlr
 
-A pure-Rust ANTLR v4 toolchain for dbt: a grammar compiler that generates
-Rust parsers targeting the `dbt-antlr-runtime` runtime.
+A pure-Rust ANTLR v4 toolchain+runtime, with a special emphasis on optimizing
+for SQL-like languages.
 
 ## Repository layout
 
 - `crates/dbt-antlr-codegen` — the tool: `.g4` loading, semantics, ATN
   construction, and code generation. The emission layer (`src/dbt/`) renders
   recognizers for the `dbt-antlr-runtime` runtime from a minijinja template that
-  mirrors the Java tool's `Rust.stg`; the `dbt-antlr` binary is the
+  mirrors the Java tool's `Rust.stg`; the `dbt-antlr-codegen` binary is the
   Java-tool-like command line (`-o`, `-lib`, `-visitor`, `-no-listener`).
 - `crates/dbt-antlr-g4-parser` — the `.g4` grammar front-end.
 - `crates/dbt-antlr-runtime` — our ANTLR4 runtime for Rust. This is the code
@@ -16,9 +16,14 @@ Rust parsers targeting the `dbt-antlr-runtime` runtime.
 - `tests/runtime-testsuite` — harness for the official ANTLR
   runtime conformance suite.
 
-## Provenance and credits
+## History and credits
 
-This repository stands on three projects, all BSD-3-Clause licensed:
+This project supersedes [dbt-antlr4](https://github.com/sdf-labs/antlr4/). It
+originated by taking the Antlr codegen tool ported to Rust by
+`antlr-rust-runtime`, and retargetting it for the `dbt-antlr4` runtime.
+
+This repository traces its lineage through three upstream projects, all
+BSD-3-Clause licensed:
 
 - **[ANTLR 4](https://github.com/antlr/antlr4)** (The ANTLR Project, Terence
   Parr and contributors) — the original parser generator and the definition of
@@ -33,7 +38,7 @@ This repository stands on three projects, all BSD-3-Clause licensed:
 - **[antlr-rust-runtime](https://github.com/ophi-dev/antlr-rust-runtime)**
   (Konstantin Vyatkin / Ophidiarium contributors) — a from-scratch, pure-Rust
   reimplementation of the ANTLR v4 tool and runtime. The tool side of this
-  repository (`dbt-antlr-codegen`, `dbt-antlr-g4-parser`, the
+  repository (`dbt-antlr`, `dbt-antlr-g4-parser`, the
   conformance-test harness, and — for now — `antlr-rust-runtime`) was
   seeded from v0.34.0 of that project (see `LICENSE`).
 

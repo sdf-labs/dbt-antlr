@@ -1033,7 +1033,7 @@ fn union_ranges(left: &[i32], right: &[i32]) -> Vec<i32> {
         .0
         .iter()
         .chain(right.as_chunks::<2>().0)
-        .map(|range| (range[0], range[1]))
+        .map(|&range| <(i32, i32)>::from(range))
         .collect::<Vec<_>>();
     pairs.sort_unstable();
 

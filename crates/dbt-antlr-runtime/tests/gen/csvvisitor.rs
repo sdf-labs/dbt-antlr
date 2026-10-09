@@ -1,5 +1,3 @@
-#![allow(nonstandard_style)]
-#![allow(dead_code)]
 // Generated from CSV.g4 by ANTLR 4.13.2
 use dbt_antlr_runtime::token::{CommonToken, Token};
 use dbt_antlr_runtime::errors::ANTLRError;

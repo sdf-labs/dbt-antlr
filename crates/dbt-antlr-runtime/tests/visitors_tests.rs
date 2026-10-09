@@ -2,7 +2,7 @@
 mod gen {
     #![allow(non_snake_case)]
     // Generated parsers/lexers: lint with the codegen template, not here.
-    #![allow(clippy::all)]
+    #![allow(clippy::all, warnings)]
     pub mod csvlexer;
     pub mod csvlistener;
     pub mod csvparser;

@@ -324,10 +324,10 @@ impl ModelBuilder<'_> {
                     span: spec.span(),
                 });
             }
-            if let Some(action) = prequel.child_rule(p::RULE_action_) {
-                if let Some(action) = self.named_action(action, None) {
-                    actions.push(action);
-                }
+            if let Some(action) = prequel.child_rule(p::RULE_action_)
+                && let Some(action) = self.named_action(action, None)
+            {
+                actions.push(action);
             }
         }
 
@@ -420,10 +420,10 @@ impl ModelBuilder<'_> {
             if let Some(spec) = prequel.child_rule(p::RULE_optionsSpec) {
                 options.extend(spec.child_rules(p::RULE_option).filter_map(parse_option));
             }
-            if let Some(action) = prequel.child_rule(p::RULE_ruleAction) {
-                if let Some(action) = self.named_action(action, None) {
-                    actions.push(action);
-                }
+            if let Some(action) = prequel.child_rule(p::RULE_ruleAction)
+                && let Some(action) = self.named_action(action, None)
+            {
+                actions.push(action);
             }
         }
         let block_node = node
@@ -1189,10 +1189,11 @@ finally { finish(); }
         insta::assert_debug_snapshot!("converts_parser_rules_and_nested_elements", unit);
         // Provenance is tracked in a separate index a `unit` snapshot cannot express, so keep it as
         // an explicit invariant.
-        assert!(
-            !provenance
+        assert_ne!(
+            provenance
                 .origins(ModelNodeId::Rule(unit.rules[0].id))
-                .is_empty()
+                .len(),
+            0
         );
     }
 

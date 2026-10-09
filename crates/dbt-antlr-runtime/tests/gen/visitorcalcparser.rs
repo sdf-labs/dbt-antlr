@@ -1,11 +1,4 @@
 // Generated from VisitorCalc.g4 by ANTLR 4.13.2
-#![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(non_snake_case)]
-#![allow(non_upper_case_globals)]
-#![allow(nonstandard_style)]
-#![allow(unused_braces)]
-#![allow(unused_parens)]
 use dbt_antlr_runtime::Arena;
 use dbt_antlr_runtime::PredictionContextCache;
 use dbt_antlr_runtime::parser::{Parser, BaseParser, ParserRecog, ListenerId};

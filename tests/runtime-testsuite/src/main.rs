@@ -152,7 +152,7 @@ enum Category {
     /// `RenderGrammar.java` / `StringTemplate` rendering of the descriptor
     /// grammar failed.
     RenderFail,
-    /// `dbt-antlr` exited non-zero or reported diagnostics.
+    /// `dbt-antlr-codegen` exited non-zero or reported diagnostics.
     ToolFail,
     /// `rustc` rejected the generated recognizer plus harness `main.rs`.
     CompileFail,
@@ -322,7 +322,7 @@ impl<'a> SweepContext<'a> {
     }
 }
 
-/// Builds `dbt-antlr` once and resolves its executable path from
+/// Builds `dbt-antlr-codegen` once and resolves its executable path from
 /// cargo's JSON messages, honoring any `CARGO_TARGET_DIR` redirection.
 fn prebuild_generator(args: &Args) -> io::Result<PathBuf> {
     let output = run_output(
@@ -333,12 +333,12 @@ fn prebuild_generator(args: &Args) -> io::Result<PathBuf> {
             .arg("-p")
             .arg("dbt-antlr-codegen")
             .arg("--bin")
-            .arg("dbt-antlr")
+            .arg("dbt-antlr-codegen")
             .arg("--message-format=json"),
     )?;
     if !output.status.success() {
         return Err(io::Error::other(format!(
-            "dbt-antlr build failed\nstderr:\n{}",
+            "dbt-antlr-codegen build failed\nstderr:\n{}",
             String::from_utf8_lossy(&output.stderr)
         )));
     }
@@ -346,7 +346,7 @@ fn prebuild_generator(args: &Args) -> io::Result<PathBuf> {
     stdout
         .lines()
         .filter(|line| line.contains("\"reason\":\"compiler-artifact\""))
-        .filter(|line| json_string_value(line, "name").as_deref() == Some("dbt-antlr"))
+        .filter(|line| json_string_value(line, "name").as_deref() == Some("dbt-antlr-codegen"))
         .filter_map(|line| json_string_value(line, "executable"))
         .map(PathBuf::from)
         .next_back()
@@ -1391,14 +1391,14 @@ mod tests {
 
     #[test]
     fn json_string_value_unescapes_windows_paths() {
-        let line = r#"{"reason":"compiler-artifact","target":{"name":"dbt-antlr"},"executable":"C:\\target\\debug\\dbt-antlr.exe"}"#;
+        let line = r#"{"reason":"compiler-artifact","target":{"name":"dbt-antlr-codegen"},"executable":"C:\\target\\debug\\dbt-antlr-codegen.exe"}"#;
         assert_eq!(
             json_string_value(line, "executable").as_deref(),
-            Some(r"C:\target\debug\dbt-antlr.exe")
+            Some(r"C:\target\debug\dbt-antlr-codegen.exe")
         );
         assert_eq!(
             json_string_value(line, "name").as_deref(),
-            Some("dbt-antlr")
+            Some("dbt-antlr-codegen")
         );
     }
 
@@ -1451,7 +1451,7 @@ mod tests {
         let descriptor = parse(
             "[type]\nLexer\n\n[grammar]\nlexer grammar L;\nA:'a';\n\n[input]\na\n\n[output]\nx\n",
         );
-        assert!(descriptor.skip_targets.is_empty());
+        assert_eq!(descriptor.skip_targets, Vec::<String>::new());
         assert!(skip_reason(&descriptor).is_none());
     }
 

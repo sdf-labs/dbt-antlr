@@ -1593,7 +1593,7 @@ fn parse_property_escape(tail: &str, inverted: bool) -> Result<(CharSetAtom, usi
         .as_chunks::<2>()
         .0
         .iter()
-        .map(|range| (range[0], range[1]))
+        .map(|&range| <(i32, i32)>::from(range))
         .collect::<Vec<_>>();
     let ranges = if inverted {
         complement_ranges(&ranges)

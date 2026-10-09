@@ -1,4 +1,5 @@
 use std::convert::TryFrom;
+use std::fmt::{Debug, Formatter};
 use std::hash::Hasher;
 use std::mem::{ManuallyDrop, MaybeUninit};
 use std::ops::Deref;
@@ -82,6 +83,18 @@ where
 
     allocated_bytes: AtomicUsize,
     dfa_state_bytes: AtomicUsize,
+}
+
+impl<'sim, CS> Debug for DFA<'sim, CS>
+where
+    CS: ConfigSet<'sim> + 'sim,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DFA")
+            .field("atn_start_state", &self.atn_start_state)
+            .field("decision", &self.decision)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'sim, CS> DFA<'sim, CS>
@@ -380,10 +393,11 @@ impl<'sim> DFA<'sim, ATNConfigSet<'sim>> {
         &self,
         precedence: i32,
     ) -> Option<&'sim ParserDFAState<'sim>> {
-        if !self.is_precedence_dfa() {
-            // FIXME: this should return ANTLRError
-            panic!("dfa is supposed to be precedence here");
-        }
+        // FIXME: this should return ANTLRError
+        assert!(
+            self.is_precedence_dfa(),
+            "dfa is supposed to be precedence here"
+        );
 
         self.s0()
             .and_then(|state| self.get_edge(state, precedence as usize))
@@ -394,10 +408,11 @@ impl<'sim> DFA<'sim, ATNConfigSet<'sim>> {
         precedence: i32,
         start_state: &'sim ParserDFAState<'sim>,
     ) {
-        if !self.is_precedence_dfa() {
-            // FIXME: this should return ANTLRError
-            panic!("set_precedence_start_state called for not precedence dfa")
-        }
+        // FIXME: this should return ANTLRError
+        assert!(
+            self.is_precedence_dfa(),
+            "set_precedence_start_state called for not precedence dfa"
+        );
 
         if precedence < 0 {
             return;
@@ -535,11 +550,11 @@ where
     }
 }
 
-impl<'sim, CS> std::fmt::Debug for DFAStateKey<'sim, CS>
+impl<'sim, CS> Debug for DFAStateKey<'sim, CS>
 where
     CS: ConfigSet<'sim> + 'sim,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "DFAStateKey({:p})", self.0)
     }
 }
@@ -936,9 +951,10 @@ where
     #[inline(always)]
     fn as_ref(&self) -> &[EdgeRepr] {
         self.edges.get_or_init(|| {
-            if self.store.is_null() {
-                panic!("Attempted to access edge set for invalid DFA state");
-            }
+            assert!(
+                !self.store.is_null(),
+                "Attempted to access edge set for invalid DFA state"
+            );
             unsafe { &*self.store }.alloc_edge_set()
         })
     }
@@ -1026,10 +1042,8 @@ where
         edge_set.iter_mut().for_each(|slot| {
             slot.write(AtomicI32::new(i32::MIN));
         });
-        self.allocated_bytes.fetch_add(
-            std::mem::size_of::<EdgeRepr>() * self.set_size,
-            Ordering::Relaxed,
-        );
+        self.allocated_bytes
+            .fetch_add(size_of::<EdgeRepr>() * self.set_size, Ordering::Relaxed);
         unsafe { edge_set.assume_init() }
     }
 
@@ -1038,11 +1052,11 @@ where
     }
 }
 
-impl<'sim, CS> std::fmt::Debug for EdgeSetStore<'sim, CS>
+impl<'sim, CS> Debug for EdgeSetStore<'sim, CS>
 where
     CS: ConfigSet<'sim> + 'sim,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EdgeSetStore")
             .field("store", &"Vec<RwLock<FxHashMap<i32, &'sim DFAState>>>")
             .finish()

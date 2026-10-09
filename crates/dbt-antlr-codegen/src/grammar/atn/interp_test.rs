@@ -1459,7 +1459,7 @@ mod tests {
                 parser_named(&compilation, "T"),
                 &fixture(fixture_name).join("T.interp"),
             );
-            assert!(compilation.diagnostics.is_empty());
+            assert_eq!(compilation.diagnostics, []);
             compilation
         }
 
@@ -2797,7 +2797,7 @@ mod tests {
                     "testleftrecursiontoolissues-testargonprimaryruleinleftrecursiverule-e2b3d25b22",
                     "T",
                 );
-                assert!(compilation.diagnostics.is_empty());
+                assert_eq!(compilation.diagnostics, []);
             }
         }
 
@@ -4779,7 +4779,10 @@ mod tests {
                     "ID@57",
                 ],
             );
-            assert!(authored_labels(&parser.semantic.unit.rules).is_empty());
+            assert_eq!(
+                authored_labels(&parser.semantic.unit.rules),
+                Vec::<String>::new()
+            );
         }
 
         #[test]

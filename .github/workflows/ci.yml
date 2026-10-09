@@ -1,0 +1,153 @@
+name: CI
+
+concurrency:
+  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  # Code quality: formatting and lints. Uses stable so clippy/rustfmt are the
+  # current versions.
+  quality:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # The slim build-dependency configurations must stay compilable; the
+      # workspace-wide run above always enables default features through the
+      # generator binary and dev-dependencies.
+      - name: cargo clippy (slim feature sets)
+        run: |
+          cargo clippy -p dbt-antlr-codegen --no-default-features -- -D warnings
+          cargo clippy -p dbt-antlr-codegen --no-default-features --features download -- -D warnings
+
+  # Workspace unit/integration tests on the MSRV and current stable.
+  unittests:
+    name: cargo test (${{ matrix.os }}, ${{ matrix.rust }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        rust: [ "1.96", stable ]
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Exclude build dirs from Windows Defender
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Add-MpPreference -ExclusionPath "${{ github.workspace }}"
+          Add-MpPreference -ExclusionPath "$env:USERPROFILE\.cargo"
+
+      - name: Install Rust ${{ matrix.rust }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}-${{ matrix.rust }}
+
+      - name: cargo build dbt-antlr-codegen
+        run: cargo build --bin dbt-antlr-codegen
+
+      # Compile-check the pinned-binary download path on every OS; the
+      # workspace-wide jobs only build it on Linux.
+      - name: cargo check (download feature)
+        run: cargo check -p dbt-antlr-codegen --no-default-features --features download
+
+      - name: cargo test
+        run: cargo test --workspace --all-targets
+  # Self-hosting guarantee: regenerating the g4-parser front-end and the
+  # runtime test goldens with the shipped codegen must be a zero diff.
+  bootstrap:
+    name: bootstrap fixpoint + goldens
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: bootstrap
+
+      - name: Regenerate g4-parser front-end
+        run: crates/dbt-antlr-g4-parser/regen_frontend.sh
+
+      - name: Regenerate runtime test goldens
+        run: crates/dbt-antlr-runtime/gen_test_grammars.sh
+
+      - name: Verify zero diff
+        run: git diff --exit-code
+
+  # Upstream ANTLR runtime conformance suite, driven end-to-end against
+  # generated Rust parsers. The harness requires fetching the pinned dbt-antlr4
+  # 2.0.0 tool jar and descriptor corpus from the GitHub release
+  # (checksum-verified, cached)
+  runtime-testsuite:
+    name: runtime conformance suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'zulu'
+          java-version: 21
+
+      - name: Install Rust 1.96
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.96"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: testsuite
+
+      # The pinned artifacts live under target/ and are keyed on the module
+      # that records their URLs and SHA-256 checksums.
+      - name: Cache pinned upstream artifacts
+        uses: actions/cache@v4
+        with:
+          path: target/dbt-antlr-runtime-testsuite-cache
+          key: upstream-artifacts-${{ hashFiles('tests/runtime-testsuite/src/upstream.rs') }}
+
+      - name: Run runtime conformance suite
+        run: cargo run -p runtime-testsuite --release --color never

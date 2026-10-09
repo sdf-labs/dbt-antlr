@@ -214,12 +214,14 @@ where
 
         let buffer_start_index = self.get_buffer_start_index();
         let buffer_stop_index = buffer_start_index + self.tokens.len() as isize - 1;
-        if start < buffer_start_index || stop > buffer_stop_index {
-            panic!(
-                "interval {}..={} not in token buffer window: {}..{}",
-                start, stop, buffer_start_index, buffer_stop_index
-            );
-        }
+        assert!(
+            !(start < buffer_start_index || stop > buffer_stop_index),
+            "interval {}..={} not in token buffer window: {}..{}",
+            start,
+            stop,
+            buffer_start_index,
+            buffer_stop_index
+        );
 
         let a = start - buffer_start_index;
         let b = stop - buffer_start_index;
@@ -244,9 +246,7 @@ where
 {
     #[inline]
     fn consume(&mut self) {
-        if self.fetched_eof {
-            panic!("cannot consume EOF");
-        }
+        assert!(!self.fetched_eof, "cannot consume EOF");
         if self.la(1) == TOKEN_EOF {
             self.fetched_eof = true;
         }
@@ -266,8 +266,7 @@ where
     #[inline]
     fn la(&mut self, i: isize) -> i32 {
         self.lt(i)
-            .map(|t| t.borrow().get_token_type())
-            .unwrap_or(TOKEN_INVALID_TYPE)
+            .map_or(TOKEN_INVALID_TYPE, |t| t.borrow().get_token_type())
     }
 
     #[inline]
@@ -304,9 +303,7 @@ where
             index = min(index, self.get_buffer_start_index() + self.size() + 1);
         }
         let i = index - self.get_buffer_start_index();
-        if i < 0 || i >= self.tokens.len() as isize {
-            panic!()
-        }
+        assert!(!(i < 0 || i >= self.tokens.len() as isize),);
 
         self.p = i;
         self.current_token_index = index;

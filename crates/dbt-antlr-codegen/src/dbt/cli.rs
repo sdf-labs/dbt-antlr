@@ -4,7 +4,7 @@
 //! ANTLR tool's argument syntax:
 //!
 //! ```text
-//! dbt-antlr [OPTIONS] <grammar.g4>
+//! dbt-antlr-codegen [OPTIONS] <grammar.g4>
 //!   -o <dir>          output directory (default: current dir)
 //!   -lib <dir>        grammar/library search dir for imports (repeatable)
 //!   -visitor          generate visitor (+base visitor)
@@ -17,10 +17,8 @@ use std::path::PathBuf;
 
 use miette::{Context as _, IntoDiagnostic as _};
 
-use crate::dbt::emit_files_with_flags;
-
 const USAGE: &str = "\
-usage: dbt-antlr [OPTIONS] <grammar.g4>
+usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   -o <dir>          output directory (default: current dir)
   -lib <dir>        grammar/library search dir for imports (repeatable)
   -visitor          generate visitor (+base visitor)
@@ -60,7 +58,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
             "-no-visitor" => gen_visitor = false,
             "-listener" => gen_listener = true,
             "-no-listener" => gen_listener = false,
-            "-h" | "-help" | "--help" => miette::bail!("{USAGE}"),
+            "-h" | "-help" | "--help" => return Err(miette::miette!("{USAGE}")),
             _ if arg.starts_with("-D") => {
                 writeln!(stderr, "warning: ignoring option {arg}").into_diagnostic()?;
             }
@@ -89,7 +87,11 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
 
 fn value_after(option: &str, args: &[String], index: &mut usize) -> miette::Result<String> {
     args.get(*index).map_or_else(
-        || miette::bail!("option {option} expects a directory\n{USAGE}"),
+        || {
+            Err(miette::miette!(
+                "option {option} expects a directory\n{USAGE}"
+            ))
+        },
         |value| {
             *index += 1;
             Ok(value.clone())
@@ -116,27 +118,28 @@ pub fn run(
     stderr: &mut impl Write,
 ) -> miette::Result<()> {
     let cli = parse_args(args, stderr)?;
-    let files = emit_files_with_flags(
-        &cli.grammar,
-        &cli.lib_dirs,
-        cli.gen_listener,
-        cli.gen_visitor,
-    )
-    .into_diagnostic()
-    .wrap_err_with(|| format!("cannot emit {}", cli.grammar.display()))?;
-    std::fs::create_dir_all(&cli.out_dir)
+    let mut config = crate::Config::new(&cli.grammar);
+    config
+        .out_dir(&cli.out_dir)
+        .listener(cli.gen_listener)
+        .visitor(cli.gen_visitor)
+        .cargo_directives(false);
+    for dir in &cli.lib_dirs {
+        config.lib_dir(dir);
+    }
+    let written = config
+        .generate()
         .into_diagnostic()
-        .wrap_err_with(|| format!("cannot create {}", cli.out_dir.display()))?;
-    for file in &files {
-        let path = cli.out_dir.join(&file.name);
-        std::fs::write(&path, &file.content)
-            .into_diagnostic()
-            .wrap_err_with(|| format!("cannot write {}", path.display()))?;
-        writeln!(stdout, "{}", file.name).into_diagnostic()?;
+        .wrap_err_with(|| format!("cannot emit {}", cli.grammar.display()))?;
+    for path in &written {
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        writeln!(stdout, "{name}").into_diagnostic()?;
     }
     Ok(())
 }
-
 #[cfg(test)]
 mod tests {
     use super::parse_args;
