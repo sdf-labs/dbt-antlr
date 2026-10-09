@@ -52,6 +52,19 @@ pub struct ATNState {
     ext: ATNStateExt,
 }
 
+impl Debug for ATNState {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ATNState")
+            .field("state_type", &self.state_type)
+            .field("epsilon_only_transitions", &self.epsilon_only_transitions)
+            .field("rule_index", &self.rule_index)
+            .field("state_number", &self.state_number)
+            .field("state_type_id", &self.state_type_id)
+            .field("transitions", &self.transitions)
+            .finish_non_exhaustive()
+    }
+}
+
 pub trait ATNStateExtTrait {
     fn self_type() -> ATNStateType;
 
@@ -133,6 +146,12 @@ pub union ATNStateExt {
     plus_block_start: ManuallyDrop<PlusBlockStartState>,
 
     invalid: (),
+}
+
+impl Debug for ATNStateExt {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ATNStateExt").finish_non_exhaustive()
+    }
 }
 
 impl ATNState {
@@ -352,6 +371,7 @@ impl BaseATNState {
     }
 }
 
+#[derive(Debug)]
 pub struct RuleStartState {
     pub stop_state: ATNStateRef,
     pub is_left_recursive: bool,
@@ -379,6 +399,7 @@ impl RuleStartState {
     }
 }
 
+#[derive(Debug)]
 pub struct RuleStopState {}
 
 impl RuleStopState {
@@ -393,6 +414,7 @@ impl RuleStopState {
     }
 }
 
+#[derive(Debug)]
 pub struct BlockEndState {
     pub end_state: ATNStateRef,
 
@@ -414,6 +436,7 @@ impl BlockEndState {
     }
 }
 
+#[derive(Debug)]
 pub struct LoopEndState {
     pub loop_back_state: ATNStateRef,
 
@@ -435,6 +458,7 @@ impl LoopEndState {
     }
 }
 
+#[derive(Debug)]
 pub struct StarLoopbackState {
     _marker: std::marker::PhantomData<()>,
 }
@@ -453,6 +477,7 @@ impl StarLoopbackState {
     }
 }
 
+#[derive(Debug)]
 pub struct BasicState {
     _marker: std::marker::PhantomData<()>,
 }
@@ -471,6 +496,7 @@ impl BasicState {
     }
 }
 
+#[derive(Debug)]
 pub struct StarLoopEntryState {
     pub decision: i32,
     pub nongreedy: bool,
@@ -504,6 +530,7 @@ impl StarLoopEntryState {
     }
 }
 
+#[derive(Debug)]
 pub struct TokenStartState {
     pub decision: i32,
     pub nongreedy: bool,
@@ -527,6 +554,7 @@ impl TokenStartState {
     }
 }
 
+#[derive(Debug)]
 pub struct PlusLoopBackState {
     pub decision: i32,
     pub nongreedy: bool,
@@ -550,6 +578,7 @@ impl PlusLoopBackState {
     }
 }
 
+#[derive(Debug)]
 pub struct BasicBlockStartState {
     pub decision: i32,
     pub nongreedy: bool,
@@ -580,6 +609,7 @@ impl BasicBlockStartState {
     }
 }
 
+#[derive(Debug)]
 pub struct StarBlockStartState {
     pub decision: i32,
     pub nongreedy: bool,
@@ -610,6 +640,7 @@ impl StarBlockStartState {
     }
 }
 
+#[derive(Debug)]
 pub struct PlusBlockStartState {
     pub decision: i32,
     pub nongreedy: bool,
@@ -643,6 +674,7 @@ impl PlusBlockStartState {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct ATNStateRef(NonNull<ATNState>);
 
 impl ATNStateRef {
@@ -713,14 +745,6 @@ impl AsRef<ATNState> for ATNStateRef {
         unsafe { &*self.0.as_ptr() }
     }
 }
-
-impl Clone for ATNStateRef {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl Copy for ATNStateRef {}
 
 impl std::hash::Hash for ATNStateRef {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {

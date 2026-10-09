@@ -13,6 +13,8 @@
 //! transitions to make left recursive rules work.
 use std::ops::{Deref, DerefMut};
 
+use std::fmt::{Debug, Formatter};
+
 use crate::arena::Arena;
 use crate::atn::ATN;
 use crate::atn_simulator::ParserATNSimulatorManager;
@@ -59,8 +61,8 @@ pub struct ParserInterpreterExt {
     atn_manager: &'static ParserATNSimulatorManager,
 }
 
-impl std::fmt::Debug for ParserInterpreterExt {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for ParserInterpreterExt {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ParserInterpreterExt")
             .field("grammar_file_name", &self.grammar_file_name)
             .field("rule_names", &self.rule_names)
@@ -175,6 +177,17 @@ where
     /// recursive alternatives of a left-recursive rule. Computed lazily when
     /// [ParserInterpreter::set_track_alt_numbers] is enabled.
     outer_alt_decision_states: Option<Vec<bool>>,
+}
+
+impl<'input, 'arena, Input, TF> Debug for ParserInterpreter<'input, 'arena, Input, TF>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    Input: TokenStream<'input, 'arena, TF> + 'arena,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ParserInterpreter").finish_non_exhaustive()
+    }
 }
 
 impl<'input, 'arena, Input, TF> Deref for ParserInterpreter<'input, 'arena, Input, TF>

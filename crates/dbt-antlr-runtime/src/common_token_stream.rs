@@ -46,8 +46,7 @@ where
     #[inline]
     fn la(&mut self, i: isize) -> i32 {
         self.lt(i)
-            .map(|t| t.borrow().get_token_type())
-            .unwrap_or(TOKEN_INVALID_TYPE)
+            .map_or(TOKEN_INVALID_TYPE, |t| t.borrow().get_token_type())
     }
 
     #[inline(always)]

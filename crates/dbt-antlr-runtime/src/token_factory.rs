@@ -166,12 +166,12 @@ where
             (Some(t), _) => t,
             (None, Some(x)) => {
                 if stop >= x.size() || start >= x.size() {
-                    "<EOF>".to_string()
+                    "<EOF>".to_owned()
                 } else {
                     x.get_text(start, stop).to_string()
                 }
             }
-            _ => "".to_string(),
+            _ => "".to_owned(),
         };
         self.0.arena.alloc_token(OwningToken::new(
             ttype,

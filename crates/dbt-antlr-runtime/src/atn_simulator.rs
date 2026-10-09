@@ -63,8 +63,7 @@ impl<'sim, CS: ConfigSet<'sim>> BaseATNSimulator<'sim, CS> {
         self.decision_to_dfa
             .iter()
             .next()
-            .map(|dfa| dfa.edge_set_bytes())
-            .unwrap_or(0)
+            .map_or(0, |dfa| dfa.edge_set_bytes())
     }
 
     dfa_sum_method!(dfa_bytes, allocated_bytes);
@@ -117,6 +116,15 @@ where
     decision_to_dfa: RwLock<Arc<NotifyOnDrop<Vec<DFA<'static, CS>>>>>,
     context_cache_sentinel: SentinelGuard,
     decision_to_dfa_sentinel: SentinelGuard,
+}
+
+impl<CS> Debug for ATNSimulatorMan<CS>
+where
+    CS: ConfigSet<'static> + 'static,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ATNSimulatorMan").finish_non_exhaustive()
+    }
 }
 
 impl<CS: ConfigSet<'static> + 'static> ATNSimulatorMan<CS> {

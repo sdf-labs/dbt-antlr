@@ -1,4 +1,4 @@
-use std::fmt::{Display, Error, Formatter};
+use std::fmt::{Debug, Display, Error, Formatter};
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::ops::Deref;
 use std::ptr::NonNull;
@@ -103,7 +103,7 @@ impl Hash for PredictionContext<'_> {
 }
 
 static EMPTY_PREDICTION_CONTEXT: LazyLock<PredictionContext<'static>> = LazyLock::new(|| {
-    PredictionContext::Singleton(SingletonPredictionContext {
+    Singleton(SingletonPredictionContext {
         cached_hash: 0,
         parent_ctx: None,
         return_state: ATNStateRef::invalid(),
@@ -116,7 +116,7 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
         parent_ctx: Option<PredictionContextRef<'ephemeral>>,
         return_state: ATNStateRef,
     ) -> Self {
-        PredictionContext::Singleton(SingletonPredictionContext {
+        Singleton(SingletonPredictionContext {
             cached_hash: 0,
             parent_ctx,
             return_state,
@@ -128,7 +128,7 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
         parents: &'ephemeral [Option<PredictionContextRef<'ephemeral>>],
         return_states: &'ephemeral [ATNStateRef],
     ) -> Self {
-        PredictionContext::Array(ArrayPredictionContext {
+        Array(ArrayPredictionContext {
             cached_hash: 0,
             parents,
             return_states,
@@ -139,7 +139,7 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
     fn calc_hash(&mut self) {
         let mut hasher = FxHasher32::default();
         match self {
-            PredictionContext::Singleton(SingletonPredictionContext {
+            Singleton(SingletonPredictionContext {
                 parent_ctx,
                 return_state,
                 ..
@@ -150,7 +150,7 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
                 });
                 hasher.write_usize(return_state.as_usize());
             }
-            PredictionContext::Array(ArrayPredictionContext {
+            Array(ArrayPredictionContext {
                 parents,
                 return_states,
                 ..
@@ -170,31 +170,25 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
         let hash = hasher.finish() as u32;
 
         match self {
-            PredictionContext::Singleton(SingletonPredictionContext { cached_hash, .. })
-            | PredictionContext::Array(ArrayPredictionContext { cached_hash, .. }) => {
-                *cached_hash = hash
-            }
+            Singleton(SingletonPredictionContext { cached_hash, .. })
+            | Array(ArrayPredictionContext { cached_hash, .. }) => *cached_hash = hash,
         };
     }
 
     pub fn get_parent(&self, index: usize) -> Option<PredictionContextRef<'ephemeral>> {
         match self {
-            PredictionContext::Singleton(singleton) => {
+            Singleton(singleton) => {
                 //                assert_eq!(index, 0);
                 singleton.parent_ctx
             }
-            PredictionContext::Array(array) => array.parents[index],
+            Array(array) => array.parents[index],
         }
     }
 
     pub fn get_return_state(&self, index: usize) -> ATNStateRef {
         match self {
-            PredictionContext::Singleton(SingletonPredictionContext { return_state, .. }) => {
-                *return_state
-            }
-            PredictionContext::Array(ArrayPredictionContext { return_states, .. }) => {
-                return_states[index]
-            }
+            Singleton(SingletonPredictionContext { return_state, .. }) => *return_state,
+            Array(ArrayPredictionContext { return_states, .. }) => return_states[index],
         }
     }
 
@@ -207,7 +201,7 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
 
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
-        if let PredictionContext::Singleton(singleton) = self {
+        if let Singleton(singleton) = self {
             return singleton.is_empty();
         }
         self.get_return_state(0) == ATNStateRef::invalid()
@@ -221,8 +215,8 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
     #[inline(always)]
     pub fn hash_code(&self) -> u32 {
         match self {
-            PredictionContext::Singleton(SingletonPredictionContext { cached_hash, .. })
-            | PredictionContext::Array(ArrayPredictionContext { cached_hash, .. }) => *cached_hash,
+            Singleton(SingletonPredictionContext { cached_hash, .. })
+            | Array(ArrayPredictionContext { cached_hash, .. }) => *cached_hash,
         }
     }
 
@@ -241,7 +235,7 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
         }
 
         let r = match (a.as_ref(), b.as_ref()) {
-            (PredictionContext::Singleton(sa), PredictionContext::Singleton(sb)) => {
+            (Singleton(sa), Singleton(sb)) => {
                 //                println!("single result = {}",result);
                 Self::merge_singletons(sa, sb, root_is_wildcard, cache)
             }
@@ -266,10 +260,6 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
                 }
             }
         };
-        assert_ne!(r.hash_code(), 0);
-
-        //            cache.entry(a.clone()).or_insert_with(||HashMap::new())
-        //                .insert(b.clone(),r.clone());
         cache.insert(MergeKey::new(a, b), r);
 
         r
@@ -483,7 +473,7 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum RefType {
     Interned,
     Adhoc,
@@ -574,7 +564,7 @@ impl Hash for PredictionContextRef<'_> {
 
 impl Display for PredictionContextRef<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        self.as_ref().fmt(f)
+        Display::fmt(self.as_ref(), f)
     }
 }
 
@@ -681,6 +671,13 @@ impl<'sim> PredictionContextCacheInner<'sim> {
 
 pub struct PredictionContextCache<'sim>(RwLock<PredictionContextCacheInner<'sim>>, AtomicUsize);
 
+impl Debug for PredictionContextCache<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PredictionContextCache")
+            .finish_non_exhaustive()
+    }
+}
+
 impl PredictionContextCache<'static> {
     #[doc(hidden)]
     pub fn new() -> Self {
@@ -719,14 +716,12 @@ impl<'sim> PredictionContextCache<'sim> {
         }
 
         let shared: PredictionContext<'sim> = match context.as_ref() {
-            PredictionContext::Singleton(singleton) => {
-                PredictionContext::Singleton(SingletonPredictionContext {
-                    cached_hash: singleton.cached_hash,
-                    parent_ctx: singleton.parent_ctx.map(|x| self.get_shared_context(&x)),
-                    return_state: singleton.return_state,
-                })
-            }
-            PredictionContext::Array(array) => {
+            Singleton(singleton) => Singleton(SingletonPredictionContext {
+                cached_hash: singleton.cached_hash,
+                parent_ctx: singleton.parent_ctx.map(|x| self.get_shared_context(&x)),
+                return_state: singleton.return_state,
+            }),
+            Array(array) => {
                 let (return_states, parents) = {
                     let mut locked = self
                         .0
@@ -745,7 +740,7 @@ impl<'sim> PredictionContextCache<'sim> {
                         *parent = original.map(|x| self.get_shared_context(&x))
                     });
 
-                PredictionContext::Array(ArrayPredictionContext {
+                Array(ArrayPredictionContext {
                     cached_hash: array.cached_hash,
                     parents,
                     return_states,

@@ -172,7 +172,7 @@ impl<'input, T: TextType<'input>> Display for TokenImpl<'input, T> {
             txt,
             self.get_token_type(),
             if self.get_channel() > 0 {
-                ",channel=".to_string() + self.get_channel().to_string().as_str()
+                ",channel=".to_owned() + self.get_channel().to_string().as_str()
             } else {
                 String::new()
             },
@@ -292,7 +292,7 @@ impl From<&dyn Token> for OwningToken {
             value.get_token_index() as i32,
             value.get_line(),
             value.get_char_position_in_line(),
-            value.get_text().to_string(),
+            value.get_text().to_owned(),
         )
     }
 }

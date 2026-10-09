@@ -17,6 +17,9 @@ keywords = ["ANTLR", "ANTLR4", "parsing", "runtime"]
 categories = ["parsing"]
 exclude = ["/build.rs", "/gen_test_grammars.sh", "/grammars", "/templates", "/tests"]
 
+[lints]
+workspace = true
+
 [features]
 arena-allocation-limit = []
 recursion-limit = []

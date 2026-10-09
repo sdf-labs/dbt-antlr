@@ -184,7 +184,7 @@ impl ANTLRError {
     {
         ANTLRErrorKind::NoAltError(NoViableAltError {
             base: BaseRecognitionError {
-                message: "".to_string(),
+                message: "".to_owned(),
                 offending_token: OwningToken::from(recog.get_current_token() as &dyn Token),
                 offending_state: recog.get_state(),
                 // ctx: recog.get_parser_rule_context().clone(),
@@ -208,7 +208,7 @@ impl ANTLRError {
     {
         ANTLRErrorKind::NoAltError(NoViableAltError {
             base: BaseRecognitionError {
-                message: "".to_string(),
+                message: "".to_owned(),
                 offending_token,
                 offending_state: recog.get_state(),
                 states_stack: rule_stack(recog), // ctx: recog.get_parser_rule_context().clone(),
@@ -396,7 +396,7 @@ impl BaseRecognitionError {
         P: Parser<'input, 'arena, TF>,
     {
         BaseRecognitionError {
-            message: "".to_string(),
+            message: "".to_owned(),
             offending_token: OwningToken::from(recog.get_current_token() as &dyn Token),
             offending_state: recog.get_state(),
             // ctx: recog.get_parser_rule_context().clone(),

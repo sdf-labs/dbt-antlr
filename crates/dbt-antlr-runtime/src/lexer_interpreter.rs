@@ -5,6 +5,8 @@
 //! [crate::lexer_atn_simulator::LexerATNSimulator].
 use std::ops::{Deref, DerefMut};
 
+use std::fmt::{Debug, Formatter};
+
 use crate::arena::Arena;
 use crate::atn::ATN;
 use crate::atn_simulator::LexerATNSimulatorManager;
@@ -37,8 +39,8 @@ pub struct LexerInterpreterExt {
     atn_manager: &'static LexerATNSimulatorManager,
 }
 
-impl std::fmt::Debug for LexerInterpreterExt {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for LexerInterpreterExt {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LexerInterpreterExt")
             .field("grammar_file_name", &self.grammar_file_name)
             .field("rule_names", &self.rule_names)
@@ -117,6 +119,16 @@ where
     base: LexerInterpreterBase<'input, 'arena, Input, TF>,
 }
 
+impl<'input, 'arena, Input, TF> Debug for LexerInterpreter<'input, 'arena, Input, TF>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    Input: CharStream<'input>,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LexerInterpreter").finish_non_exhaustive()
+    }
+}
 impl<'input, 'arena, Input, TF> LexerInterpreter<'input, 'arena, Input, TF>
 where
     'input: 'arena,

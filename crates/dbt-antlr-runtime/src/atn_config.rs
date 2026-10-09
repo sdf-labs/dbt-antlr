@@ -254,8 +254,7 @@ impl<'ephemeral> LexerATNConfig<'ephemeral> {
         LexerATNConfig {
             base: self.base.finalize(cache, dfa),
             lexer_action_executor: lexer_action_executor
-                .map(|ex| (ex as *const LexerActionExecutor) as usize)
-                .unwrap_or(0)
+                .map_or(0, |ex| (ex as *const LexerActionExecutor) as usize)
                 | (has_passed_through_non_greedy_decision as usize),
         }
     }
@@ -265,9 +264,8 @@ impl<'ephemeral> LexerATNConfig<'ephemeral> {
         lexer_action_executor: Option<&'ephemeral LexerActionExecutor>,
     ) -> Self {
         let has_passed_through_non_greedy_decision = self.has_passed_through_non_greedy_decision();
-        let lexer_action_executor = lexer_action_executor
-            .map(|ex| (ex as *const LexerActionExecutor) as usize)
-            .unwrap_or(0);
+        let lexer_action_executor =
+            lexer_action_executor.map_or(0, |ex| (ex as *const LexerActionExecutor) as usize);
         Self {
             lexer_action_executor: lexer_action_executor
                 | (has_passed_through_non_greedy_decision as usize),

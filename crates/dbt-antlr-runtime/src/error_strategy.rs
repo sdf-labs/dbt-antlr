@@ -590,6 +590,19 @@ where
     _marker: PhantomData<(&'input (), *mut &'arena (), TF, P)>,
 }
 
+impl<'input, 'arena, TF, P> fmt::Debug for ErrorStrategyDelegate<'input, 'arena, TF, P>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    P: Parser<'input, 'arena, TF>,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ErrorStrategyDelegate")
+            .field("data", &self.data)
+            .finish_non_exhaustive()
+    }
+}
+
 impl<'input, 'arena, TF, P> ErrorStrategyDelegate<'input, 'arena, TF, P>
 where
     'input: 'arena,

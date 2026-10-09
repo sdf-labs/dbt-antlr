@@ -1,6 +1,7 @@
 //! Base parser implementation
 use std::borrow::{Borrow, Cow};
 use std::cell::Cell;
+use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 
@@ -168,6 +169,24 @@ where
         &'arena TF,
         //        &'arena TreeNode<'input, 'arena, Node, TF::Tok>,
     )>,
+}
+
+impl<'input, 'arena, Ext, Node, Input, TF> Debug
+    for BaseParser<'input, 'arena, Ext, Node, Input, TF>
+where
+    'input: 'arena,
+    Ext: ParserRecog<'input, 'arena, Self, TF::Tok>,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    Input: TokenStream<'input, 'arena, TF>,
+    Node: NodeKindType<'arena, TF::Tok>,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BaseParser")
+            .field("state", &self.state)
+            .field("matched_eof", &self.matched_eof)
+            .field("build_parse_trees", &self.build_parse_trees)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'input, 'arena, Ext, Node, Input, TF> Deref
@@ -370,10 +389,8 @@ where
             None => Some(self.get_current_token().borrow()),
             Some(x) => Some(self.input.get(x).borrow()),
         };
-        let line = offending_token.map(|x| x.get_line()).unwrap_or(0);
-        let column = offending_token
-            .map(|x| x.get_char_position_in_line())
-            .unwrap_or(-1);
+        let line = offending_token.map_or(0, |x| x.get_line());
+        let column = offending_token.map_or(-1, |x| x.get_char_position_in_line());
 
         for listener in self.error_listeners.iter() {
             listener.syntax_error(

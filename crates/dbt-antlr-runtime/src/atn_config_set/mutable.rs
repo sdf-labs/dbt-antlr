@@ -459,6 +459,17 @@ where
     configs: bumpalo::collections::Vec<'ephemeral, AC>,
 }
 
+impl<'ephemeral, AC> Debug for ScratchStore<'ephemeral, AC>
+where
+    AC: ATNConfigType<'ephemeral>,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScratchStore")
+            .field("len", &self.configs.len())
+            .finish()
+    }
+}
+
 impl<'ephemeral, AC> PartialEq for ScratchStore<'ephemeral, AC>
 where
     AC: ATNConfigType<'ephemeral>,

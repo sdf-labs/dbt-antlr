@@ -117,7 +117,7 @@ impl<'input> InputStream<'input> {
         // let data_raw = data_raw.as_ref();
         // let data = data_raw.to_indexed_vec();
         Self {
-            name: "<empty>".to_string(),
+            name: "<empty>".to_owned(),
             data_raw,
             index: 0,
             // phantom: Default::default(),
@@ -151,9 +151,7 @@ impl IntStream for InputStream<'_> {
                 .item(self.index)
                 .unwrap_or(crate::int_stream::EOF);
         }
-        if offset == 0 {
-            panic!("should not be called with offset 0");
-        }
+        assert!(offset != 0, "should not be called with offset 0");
         if offset < 0 {
             offset += 1; // e.g., translate LA(-1) to use offset i=0; then data[p+0-1]
         }

@@ -160,6 +160,6 @@ impl InputData for str {
 
     #[inline]
     fn to_display(&self) -> String {
-        self.to_string()
+        self.to_owned()
     }
 }

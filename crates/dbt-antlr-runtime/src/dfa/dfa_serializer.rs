@@ -1,4 +1,4 @@
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 
 use crate::atn_config_set::ConfigSet;
 
@@ -11,6 +11,12 @@ where
 {
     dfa: &'a DFA<'sim, CS>,
     get_edge_label: &'a dyn Fn(usize) -> String,
+}
+
+impl<'sim, CS: ConfigSet<'sim> + 'sim> Debug for DFASerializer<'sim, '_, CS> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DFASerializer").finish_non_exhaustive()
+    }
 }
 
 impl<'sim, CS: ConfigSet<'sim> + 'sim> Display for DFASerializer<'sim, '_, CS> {
