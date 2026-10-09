@@ -4,7 +4,7 @@
 //! ANTLR tool's argument syntax:
 //!
 //! ```text
-//! dbt-antlr [OPTIONS] <grammar.g4>
+//! dbt-antlr-codegen [OPTIONS] <grammar.g4>
 //!   -o <dir>          output directory (default: current dir)
 //!   -lib <dir>        grammar/library search dir for imports (repeatable)
 //!   -visitor          generate visitor (+base visitor)
@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use miette::{Context as _, IntoDiagnostic as _};
 
 const USAGE: &str = "\
-usage: dbt-antlr [OPTIONS] <grammar.g4>
+usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   -o <dir>          output directory (default: current dir)
   -lib <dir>        grammar/library search dir for imports (repeatable)
   -visitor          generate visitor (+base visitor)
