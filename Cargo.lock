@@ -170,7 +170,7 @@ dependencies = [
 
 [[package]]
 name = "dbt-antlr-codegen"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dbt-antlr-codegen",
  "dbt-antlr-g4-parser",
@@ -194,7 +194,7 @@ dependencies = [
 
 [[package]]
 name = "dbt-antlr-g4-parser"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dbt-antlr-runtime",
  "insta",
@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "dbt-antlr-runtime"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bit-set",
  "bumpalo",
@@ -766,7 +766,7 @@ dependencies = [
 
 [[package]]
 name = "runtime-testsuite"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "sha2",
  "zip",

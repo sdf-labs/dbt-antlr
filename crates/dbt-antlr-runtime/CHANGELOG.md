@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-runtime-v0.1.0...dbt-antlr-runtime-v0.1.1) - 2026-10-09
+
+### Other
+
+- release v0.1.0 ([#2](https://github.com/sdf-labs/dbt-antlr/pull/2))
+
 ## [0.1.0](https://github.com/sdf-labs/dbt-antlr/releases/tag/dbt-antlr-runtime-v0.1.0) - 2026-10-09
 
 ### Other
