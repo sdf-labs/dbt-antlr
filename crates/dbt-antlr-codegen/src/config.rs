@@ -198,10 +198,12 @@ impl Config {
             path: out_dir.clone(),
             source,
         })?;
+
         if let Some(version) = &self.pinned_release_version {
-            return self.generate_pinned(version, &out_dir);
+            self.generate_pinned(version, &out_dir)
+        } else {
+            self.generate_in_process(&out_dir)
         }
-        self.generate_in_process(&out_dir)
     }
 
     #[cfg(feature = "download")]

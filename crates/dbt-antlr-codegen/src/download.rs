@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Bo Lin
+
 //! Runs generation through a pinned prebuilt `dbt-antlr-codegen` release
 //! binary instead of the in-process generator.
 //!
-//! This module is the escape hatch for build environments where compiling
-//! the generator (the `generator` feature) is too expensive: the binary for
+//! This module is an optimization for build environments where compiling
+//! the generator (the `generator` feature) might be too expensive: the binary for
 //! the build host is downloaded from the GitHub release matching a pinned
 //! version, verified against a SHA-256 checksum, and invoked with the
-//! configured grammar arguments. Only `curl` on `PATH` is required.
+//! configured grammar arguments.
+//!
+//! NOTE: `curl` on `PATH` is required.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -209,6 +212,10 @@ fn ensure_binary(release: &PinnedRelease, out_dir: &Path) -> Result<PathBuf, Emi
         .join(&triple);
     let binary = stage.join(exe_name());
     if binary.exists() {
+        // We just trust local to never corrupt the binary. A potential pitfall
+        // is if you manually changed the cached binary to something else (e.g.
+        // for testing), then the script would keep invoking the modified binary
+        // until either the cache is cleared or the pinned version is upgraded
         return Ok(binary);
     }
     std::fs::create_dir_all(&stage).map_err(|source| EmitError::Write {
@@ -236,10 +243,6 @@ fn ensure_binary(release: &PinnedRelease, out_dir: &Path) -> Result<PathBuf, Emi
 
 /// Runs the pinned binary over the configured grammars and returns the
 /// generated file paths in `out_dir`.
-///
-/// The binary writes into a private staging directory first so the returned
-/// file list is exactly the set the generator produced, regardless of what
-/// else lives in `out_dir`.
 pub(crate) fn generate_with_pinned_binary(
     release: &PinnedRelease,
     grammars: &[PathBuf],
