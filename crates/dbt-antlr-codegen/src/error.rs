@@ -162,7 +162,7 @@ pub enum EmitError {
     /// The grammar failed to compile.
     #[cfg(feature = "generator")]
     #[error("grammar compilation failed: {0}")]
-    Compile(#[from] crate::Error),
+    Compile(#[from] Error),
     /// The template failed to load or render.
     #[cfg(feature = "generator")]
     #[error("template rendering failed: {0}")]

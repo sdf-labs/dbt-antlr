@@ -28,6 +28,25 @@ memchr = "2"
 minijinja = { version = "2.24", features = ["builtins"] }
 thiserror = "2"
 
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+debug_assert_with_mut_call = "warn"
+inefficient_to_string = "warn"
+str_to_string = "warn"
+string_lit_as_bytes = "warn"
+too_many_lines = "warn"
+manual_assert = "warn"
+manual_let_else = "warn"
+get_unwrap = "warn"
+map_unwrap_or = "warn"
+empty_drop = "warn"
+expl_impl_clone_on_copy = "warn"
+unnecessary_self_imports = "warn"
+unused_async = "warn"
 
 # The profile that 'dist' will build with
 [profile.dist]

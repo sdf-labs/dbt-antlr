@@ -10,3 +10,6 @@ dbt-antlr-runtime = { workspace = true }
 
 [build-dependencies]
 dbt-antlr-codegen = { workspace = true }
+
+[lints]
+workspace = true
