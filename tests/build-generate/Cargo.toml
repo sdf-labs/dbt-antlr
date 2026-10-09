@@ -10,4 +10,4 @@ publish = false
 dbt-antlr-runtime.workspace = true
 
 [build-dependencies]
-dbt-antlr-codegen.workspace = true
+dbt-antlr-codegen = { workspace = true, default-features = false }

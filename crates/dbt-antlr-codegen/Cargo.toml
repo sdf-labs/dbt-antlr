@@ -26,7 +26,13 @@ name = "dbt-antlr-codegen"
 path = "src/bin/dbt-antlr-codegen.rs"
 
 [features]
+# Fancy miette diagnostics rendering (backtrace, terminal colors, source
+# snippets). On by default so the installed command keeps pretty output;
+# build-dependency consumers should set default-features = false to skip
+# this dependency subtree.
+default = ["fancy"]
 atn-export = []
+fancy = ["miette/fancy"]
 
 [dependencies]
 dbt-antlr-g4-parser.workspace = true
@@ -37,7 +43,7 @@ intl = { version = "0.6.0", default-features = false, features = [
   "full",
   "normalization",
 ] }
-miette = { version = "7.6.0", default-features = false, features = ["fancy"] }
+miette = { version = "7.6.0", default-features = false }
 minijinja.workspace = true
 petgraph = { version = "0.8.3", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }

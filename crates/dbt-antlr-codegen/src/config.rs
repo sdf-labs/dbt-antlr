@@ -18,7 +18,9 @@ use crate::dbt::{EmitError, emit_files_with_flags};
 /// dbt-antlr-runtime = "0.1"
 ///
 /// [build-dependencies]
-/// dbt-antlr = "0.1"
+/// # default-features = false skips the `fancy` diagnostics rendering the
+/// # command-line tool uses; it shrinks the build-dependency tree by ~40%.
+/// dbt-antlr-codegen = { version = "0.1", default-features = false }
 /// ```
 ///
 /// ```rust,no_run
