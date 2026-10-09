@@ -1,11 +1,11 @@
-# release-plz configuration: independent per-crate versioning and publishing.
+# release-plz configuration: lock-step versioning (one shared workspace
+# version), per-crate publishing.
 #
 # Flow: on every push to main, release-plz opens or refreshes one release PR
 # per crate with unreleased changes (changelogs come from commit messages).
 # Merging a release PR publishes that crate to crates.io in dependency order
-# (dbt-antlr-runtime -> dbt-antlr-g4-parser -> dbt-antlr), tags the release
-# commit, and creates the GitHub release. The dbt-antlr-codegen-v* tag then triggers
-# the cargo-dist workflow (release.yml), which attaches prebuilt binaries.
+# (dbt-antlr-runtime -> dbt-antlr-g4-parser -> dbt-antlr-codegen), tags the
+# release commit, and creates the GitHub release.
 
 
 [[package]]

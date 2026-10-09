@@ -7,8 +7,10 @@ members = ["cargo:."]
 cargo-dist-version = "0.32.0"
 # CI backends to support
 ci = "github"
-# release.yml carries a manual tag-pattern edit (only dbt-antlr-codegen-v*
-# tags get binaries); do not fail the "generated CI is out of date" check on it.
+# Binary distribution is currently DISABLED: .github/workflows/release.yml was
+# removed (see RELEASE.md, "Binary distribution"). This config stays so
+# re-enabling is cheap; allow-dirty lets local `dist plan` run without the
+# generated workflow file.
 allow-dirty = ["ci"]
 # The installers to generate for each app
 installers = ["shell", "powershell"]
