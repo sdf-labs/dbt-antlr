@@ -185,7 +185,6 @@ dependencies = [
  "minijinja",
  "petgraph",
  "serde",
- "serde_json",
  "thiserror",
 ]
 
