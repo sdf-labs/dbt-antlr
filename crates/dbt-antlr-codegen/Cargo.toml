@@ -48,7 +48,6 @@ generator = [
   "dep:minijinja",
   "dep:petgraph",
   "dep:serde",
-  "dep:serde_json",
 ]
 [dependencies]
 dbt-antlr-g4-parser = { workspace = true, optional = true }
@@ -64,7 +63,6 @@ miette = { version = "7.6.0", default-features = false }
 minijinja = { workspace = true, optional = true }
 petgraph = { version = "0.8.3", default-features = false, features = ["std"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
-serde_json = { version = "1", optional = true }
 sha2 = { version = "0.10", optional = true }
 tar = { version = "0.4", optional = true }
 thiserror = { workspace = true }
