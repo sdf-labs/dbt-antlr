@@ -20,6 +20,14 @@ pub(super) fn run_dbt_antlr(args: &[impl AsRef<OsStr>]) -> Output {
         .expect("dbt-antlr-codegen should run")
 }
 
+pub(super) fn run_dbt_antlr_in(dir: &Path, args: &[impl AsRef<OsStr>]) -> Output {
+    cli_command(env!("CARGO_BIN_EXE_dbt-antlr-codegen"))
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("dbt-antlr-codegen should run")
+}
+
 pub(super) fn cli_command(binary: &str) -> Command {
     let mut command = Command::new(binary);
     command

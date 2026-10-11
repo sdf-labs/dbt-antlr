@@ -320,19 +320,25 @@ WS : [ \t\r\n]+ -> skip ;
     for (grammar_name, source, code, message) in cases {
         let grammar_dir = temp.path().join(grammar_name);
         fs::create_dir_all(&grammar_dir).expect("grammar directory should be writable");
-        let grammar = grammar_dir.join(format!("{grammar_name}.g4"));
-        fs::write(&grammar, source).expect("invalid grammar should be writable");
+        fs::write(grammar_dir.join(format!("{grammar_name}.g4")), source)
+            .expect("invalid grammar should be writable");
+        // Invoke with paths relative to the temporary directory: miette wraps
+        // its rendered output at a fixed width, so absolute paths would make
+        // the wrap points (and this snapshot) depend on the machine.
+        let grammar = format!("{grammar_name}/{grammar_name}.g4");
         for flag in [
             "--optimize-precedence-ladders",
             "--report-precedence-ladders",
         ] {
-            let out = grammar_dir.join(flag.trim_start_matches("--"));
-            let output = run_dbt_antlr(&[
-                grammar.as_os_str(),
-                OsStr::new(flag),
-                OsStr::new("-o"),
-                out.as_os_str(),
-            ]);
+            let output = run_dbt_antlr_in(
+                temp.path(),
+                &[
+                    OsStr::new(&grammar),
+                    OsStr::new(flag),
+                    OsStr::new("-o"),
+                    OsStr::new("generated"),
+                ],
+            );
             assert!(
                 !output.status.success(),
                 "{grammar_name} unexpectedly succeeded with {flag}"
@@ -340,17 +346,7 @@ WS : [ \t\r\n]+ -> skip ;
             let stderr = utf8(&output.stderr);
             assert!(stderr.contains(code), "{stderr}");
             assert!(stderr.contains(message), "{stderr}");
-            diagnostics.push((
-                grammar_name,
-                flag,
-                replace_miette_path(
-                    stderr,
-                    temp.path()
-                        .to_str()
-                        .expect("temporary path should be UTF-8"),
-                    "$TMP",
-                ),
-            ));
+            diagnostics.push((grammar_name, flag, stderr.to_owned()));
         }
     }
 
