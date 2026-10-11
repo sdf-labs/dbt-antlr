@@ -83,6 +83,16 @@ impl OptimizationOptions {
     }
 
     #[cfg(feature = "download")]
+    pub(crate) const fn inline_trivial(&self) -> bool {
+        self.inline_trivial_rules
+    }
+
+    #[cfg(feature = "download")]
+    pub(crate) const fn report_trivial(&self) -> bool {
+        self.report_trivial_rules
+    }
+
+    #[cfg(feature = "download")]
     pub(crate) const fn optimize_ladders(&self) -> bool {
         self.optimize_precedence_ladders
     }

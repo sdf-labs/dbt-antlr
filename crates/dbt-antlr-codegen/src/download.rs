@@ -275,6 +275,12 @@ pub(crate) fn generate_with_pinned_binary(
     for entry in optimization.entry_rules() {
         command.arg("--entry-rule").arg(entry);
     }
+    if optimization.inline_trivial() {
+        command.arg("--inline-trivial-rules");
+    }
+    if optimization.report_trivial() {
+        command.arg("--report-trivial-rules");
+    }
     if optimization.optimize_ladders() {
         command.arg("--optimize-precedence-ladders");
     }

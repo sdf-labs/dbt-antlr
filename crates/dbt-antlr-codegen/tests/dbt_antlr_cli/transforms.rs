@@ -474,3 +474,207 @@ fn embedded_rule_attributes_keep_potentially_referenced_ladder_contexts() {
     // `Rust.stg`); such attribute types never compiled in this emission
     // layer. The transform-level guarantees above are what this test pins.
 }
+
+#[allow(clippy::disallowed_methods)] // `insta` assertion macros unwrap internal I/O.
+#[test]
+fn trivial_rule_inlining_is_explicit_auditable_and_recognition_preserving() {
+    let temp = temporary_directory("trivial-inline");
+    let grammar = fixture("trivial-inline/Inline.g4");
+    let (baseline, optimized, report) = run_optimization_matrix(
+        temp.path(),
+        &grammar,
+        "--inline-trivial-rules",
+        "--report-trivial-rules",
+    );
+
+    let manifest = fs::read_to_string(optimized.join("optimizations.json"))
+        .expect("applied optimization manifest should be emitted");
+    let stable_manifest = manifest.replace(env!("CARGO_MANIFEST_DIR"), "$CARGO_MANIFEST_DIR");
+    insta::assert_snapshot!("trivial_inline_optimization_manifest", stable_manifest);
+    let dry_run_manifest = fs::read_to_string(report.join("optimizations.json"))
+        .expect("dry-run optimization manifest should be emitted");
+    assert!(dry_run_manifest.contains("\"reportOnly\": true"));
+    assert!(dry_run_manifest.contains("\"status\": \"eligible\""));
+    assert!(dry_run_manifest.contains("\"status\": \"declined\""));
+    assert!(!dry_run_manifest.contains("\"status\": \"applied\""));
+
+    let baseline_parser = fs::read_to_string(baseline.join("inlineparser.rs"))
+        .expect("baseline parser should be emitted");
+    let optimized_parser = fs::read_to_string(optimized.join("inlineparser.rs"))
+        .expect("optimized parser should be emitted");
+    for dissolved in ["kw", "qualifier", "group"] {
+        assert!(
+            generated_parser_has_rule(&baseline_parser, dissolved),
+            "baseline lost {dissolved}"
+        );
+        assert!(
+            !generated_parser_has_rule(&optimized_parser, dissolved),
+            "optimized parser should inline away {dissolved}"
+        );
+    }
+    for kept in ["target", "marked", "badge", "opt"] {
+        assert!(
+            generated_parser_has_rule(&optimized_parser, kept),
+            "declined or shared rule {kept} must keep its API"
+        );
+    }
+
+    assert_generated_project(
+        temp.path(),
+        &baseline,
+        &optimized,
+        r#"
+#[cfg(test)]
+mod trivial_inline_differential {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use dbt_antlr_runtime::common_token_stream::CommonTokenStream;
+    use dbt_antlr_runtime::error_listener::ErrorListener;
+    use dbt_antlr_runtime::errors::ANTLRError;
+    use dbt_antlr_runtime::int_stream::IntStream;
+    use dbt_antlr_runtime::parser::Parser;
+    use dbt_antlr_runtime::recognizer::Recognizer;
+    use dbt_antlr_runtime::token::Token;
+    use dbt_antlr_runtime::token_factory::CommonTokenFactory;
+    use dbt_antlr_runtime::{Arena, InputStream};
+
+    use crate::{baseline, optimized};
+
+    #[derive(Debug)]
+    struct ParseOutcome {
+        completed: bool,
+        syntax_errors: usize,
+        token_index: isize,
+    }
+
+    impl ParseOutcome {
+        fn accepted(&self) -> bool {
+            self.completed && self.syntax_errors == 0
+        }
+    }
+
+    struct CountingErrors {
+        count: Rc<Cell<usize>>,
+    }
+
+    impl<'input: 'arena, 'arena, R> ErrorListener<'input, 'arena, R> for CountingErrors
+    where
+        R: Recognizer<'input, 'arena>,
+    {
+        fn syntax_error(
+            &self,
+            _recognizer: &R,
+            _offending_symbol: Option<&dyn Token>,
+            _line: u32,
+            _column: i32,
+            _msg: &str,
+            _error: Option<&ANTLRError>,
+        ) {
+            self.count.set(self.count.get() + 1);
+        }
+    }
+
+    macro_rules! parse_result {
+        ($name:ident, $module:ident, $entry:ident) => {
+            fn $name(input: &str) -> ParseOutcome {
+                Arena::with(|arena| {
+                    let lexer = $module::inlinelexer::InlineLexer::<_, CommonTokenFactory>::new(
+                        arena,
+                        InputStream::new(input),
+                    );
+                    let stream = CommonTokenStream::new(lexer);
+                    let mut parser = $module::inlineparser::InlineParser::new(arena, stream);
+                    let error_count = Rc::new(Cell::new(0));
+                    parser.add_error_listener(Box::new(CountingErrors {
+                        count: Rc::clone(&error_count),
+                    }));
+                    match parser.$entry() {
+                        Ok(_tree) => {
+                            let token_index = parser.get_input_stream().index();
+                            ParseOutcome {
+                                completed: true,
+                                syntax_errors: error_count.get(),
+                                token_index,
+                            }
+                        }
+                        Err(_) => ParseOutcome {
+                            completed: false,
+                            syntax_errors: usize::MAX,
+                            token_index: 0,
+                        },
+                    }
+                })
+            }
+        };
+    }
+
+    fn assert_same_recognition(input: &str, baseline: ParseOutcome, optimized: ParseOutcome) {
+        assert_eq!(
+            optimized.accepted(),
+            baseline.accepted(),
+            "recognition diverged for {input:?}: baseline={baseline:?}, optimized={optimized:?}"
+        );
+        if baseline.accepted() {
+            assert_eq!(
+                optimized.token_index, baseline.token_index,
+                "valid-input consumption diverged for {input:?}: \
+                 baseline={baseline:?}, optimized={optimized:?}"
+            );
+        }
+    }
+
+    parse_result!(baseline, baseline, start);
+    parse_result!(optimized, optimized, start);
+
+    #[test]
+    fn valid_and_invalid_inputs_keep_the_authored_language() {
+        for input in [
+            "select @x;",
+            "from @@abc;",
+            "@x select where from;",
+            "@@y;",
+            "*z; +q;",
+            "(@x,);",
+            "(@@deep);",
+            "select @a; @b from; (@c,); *d;",
+        ] {
+            let baseline = baseline(input);
+            assert!(
+                baseline.accepted(),
+                "baseline should accept {input:?}: {baseline:?}"
+            );
+            assert_same_recognition(input, baseline, optimized(input));
+        }
+        for input in [
+            "select;",
+            "@x",
+            "select from @x;",
+            "* ;",
+            "(@x;",
+            "(@x,,);",
+            ",;",
+            "x;",
+            "select @x",
+        ] {
+            let baseline = baseline(input);
+            assert!(
+                !baseline.accepted(),
+                "baseline should reject {input:?}: {baseline:?}"
+            );
+            assert_same_recognition(input, baseline, optimized(input));
+        }
+    }
+
+    #[test]
+    fn inlined_token_sets_and_blocks_survive_direct_reparse() {
+        let outcome = optimized("select @x; @y select from where; (@z,);");
+        assert!(
+            outcome.accepted(),
+            "optimized parser should accept the mixed statement input: {outcome:?}"
+        );
+    }
+}
+"#,
+    );
+}

@@ -31,6 +31,8 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   -no-listener      do not generate listener (+base listener)
   -Dkey=value       ignored with a warning (compat)
   --entry-rule <NAME>           mark NAME as a parser entry rule (repeatable)
+  --inline-trivial-rules        inline trivial pure parser rules into their callers
+  --report-trivial-rules        report --inline-trivial-rules changes without applying
   --optimize-precedence-ladders collapse precedence ladders into left-recursive rules
   --report-precedence-ladders   report --optimize-precedence-ladders without applying
 ";
@@ -44,6 +46,8 @@ struct CliArgs {
     gen_listener: bool,
     gen_visitor: bool,
     entry_rules: Vec<String>,
+    inline_trivial: bool,
+    report_trivial: bool,
     optimize_ladders: bool,
     report_ladders: bool,
 }
@@ -55,6 +59,8 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let mut gen_listener = true;
     let mut gen_visitor = false;
     let mut entry_rules = Vec::new();
+    let mut inline_trivial = false;
+    let mut report_trivial = false;
     let mut optimize_ladders = false;
     let mut report_ladders = false;
 
@@ -76,6 +82,8 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
             "--entry-rule" => {
                 entry_rules.push(value_after(arg, args, &mut index)?);
             }
+            "--inline-trivial-rules" => inline_trivial = true,
+            "--report-trivial-rules" => report_trivial = true,
             "--optimize-precedence-ladders" => optimize_ladders = true,
             "--report-precedence-ladders" => report_ladders = true,
             "-h" | "-help" | "--help" => return Err(miette::miette!("{USAGE}")),
@@ -96,6 +104,9 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let Some(grammar) = grammar else {
         miette::bail!("missing grammar file\n{USAGE}");
     };
+    if inline_trivial && report_trivial {
+        miette::bail!("--inline-trivial-rules conflicts with --report-trivial-rules");
+    }
     if optimize_ladders && report_ladders {
         miette::bail!("--optimize-precedence-ladders conflicts with --report-precedence-ladders");
     }
@@ -106,6 +117,8 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         gen_listener,
         gen_visitor,
         entry_rules,
+        inline_trivial,
+        report_trivial,
         optimize_ladders,
         report_ladders,
     })
@@ -165,6 +178,8 @@ pub fn run(
         .listener(cli.gen_listener)
         .visitor(cli.gen_visitor)
         .cargo_directives(false)
+        .inline_trivial_rules(cli.inline_trivial)
+        .report_trivial_rules(cli.report_trivial)
         .optimize_precedence_ladders(cli.optimize_ladders)
         .report_precedence_ladders(cli.report_ladders);
     for dir in &cli.lib_dirs {

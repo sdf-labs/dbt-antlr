@@ -133,6 +133,20 @@ impl Config {
         self
     }
 
+    /// Inlines trivial pure parser rules into their call sites (the command
+    /// line's `--inline-trivial-rules`). Default: `false`.
+    pub const fn inline_trivial_rules(&mut self, enabled: bool) -> &mut Self {
+        self.optimization.inline_trivial_rules(enabled);
+        self
+    }
+
+    /// Reports what [`Config::inline_trivial_rules`] would change without
+    /// applying it (the command line's `--report-trivial-rules`).
+    pub const fn report_trivial_rules(&mut self, enabled: bool) -> &mut Self {
+        self.optimization.report_trivial_rules(enabled);
+        self
+    }
+
     /// Collapses precedence-ladder rule chains into left-recursive rules
     /// (the command line's `--optimize-precedence-ladders`). Default:
     /// `false`.
