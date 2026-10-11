@@ -18,6 +18,7 @@ use std::process::Command;
 use sha2::Digest;
 
 use crate::error::EmitError;
+use crate::optimization::OptimizationOptions;
 
 /// Default location of the project's GitHub release assets.
 const DEFAULT_RELEASE_BASE_URL: &str = "https://github.com/sdf-labs/dbt-antlr/releases/download";
@@ -249,6 +250,7 @@ pub(crate) fn generate_with_pinned_binary(
     lib_dirs: &[PathBuf],
     gen_listener: bool,
     gen_visitor: bool,
+    optimization: &OptimizationOptions,
     out_dir: &Path,
 ) -> Result<Vec<PathBuf>, EmitError> {
     let binary = ensure_binary(release, out_dir)?;
@@ -269,6 +271,15 @@ pub(crate) fn generate_with_pinned_binary(
     }
     if !gen_listener {
         command.arg("-no-listener");
+    }
+    for entry in optimization.entry_rules() {
+        command.arg("--entry-rule").arg(entry);
+    }
+    if optimization.optimize_ladders() {
+        command.arg("--optimize-precedence-ladders");
+    }
+    if optimization.report_ladders() {
+        command.arg("--report-precedence-ladders");
     }
     command.args(grammars);
     let status = command.status().map_err(|error| {

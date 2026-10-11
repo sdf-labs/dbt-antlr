@@ -19,6 +19,6 @@ mod parser_factory;
 pub mod template;
 
 pub use emit::{
-    EmitError, EmittedFile, emit_files, emit_files_with_flags, emit_lexer_files,
-    emit_listener_visitor_files,
+    EmitError, EmittedFile, EmittedOutput, emit_files, emit_files_with_flags,
+    emit_files_with_options, emit_lexer_files, emit_listener_visitor_files,
 };

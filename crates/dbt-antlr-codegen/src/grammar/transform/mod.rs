@@ -21,6 +21,7 @@ use super::provenance::ProvenanceIndex;
 use analysis::{AnalysisInvalidation, TransformAnalysis};
 
 pub(crate) use crate::optimization::metrics::StructuralMetrics;
+pub(crate) use artifact::render_optimization_manifest;
 pub(crate) use registry::TransformRegistry;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
