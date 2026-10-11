@@ -152,9 +152,13 @@ pub(super) fn fixture(relative: &str) -> PathBuf {
 /// optimization, and report-only — asserting each run succeeds, that the
 /// baseline emits no optimization manifest, and that report mode emits only
 /// `optimizations.json`. Returns the three output directories.
+///
+/// `grammar` is a path relative to the crate manifest directory, which the
+/// CLI runs in: rendered source paths in `optimizations.json` are then
+/// constant on every platform, keeping the manifest snapshots stable.
 pub(super) fn run_optimization_matrix(
     root: &Path,
-    grammar: &Path,
+    grammar: &str,
     apply_flag: &str,
     report_flag: &str,
 ) -> (PathBuf, PathBuf, PathBuf) {
@@ -166,11 +170,11 @@ pub(super) fn run_optimization_matrix(
         (&optimized, Some(apply_flag)),
         (&report, Some(report_flag)),
     ] {
-        let mut args = vec![grammar.as_os_str(), OsStr::new("-o"), out.as_os_str()];
+        let mut args = vec![OsStr::new(grammar), OsStr::new("-o"), out.as_os_str()];
         if let Some(flag) = extra {
             args.push(OsStr::new(flag));
         }
-        let output = run_dbt_antlr(&args);
+        let output = run_dbt_antlr_in(Path::new(env!("CARGO_MANIFEST_DIR")), &args);
         assert!(
             output.status.success(),
             "{extra:?} failed\nstdout: {}\nstderr: {}",

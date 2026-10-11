@@ -10,18 +10,16 @@ use super::support::*;
 #[test]
 fn precedence_ladder_optimization_is_explicit_auditable_and_recognition_preserving() {
     let temp = temporary_directory("precedence-ladder");
-    let grammar = fixture("precedence-ladder/Ladder.g4");
     let (baseline, optimized, report) = run_optimization_matrix(
         temp.path(),
-        &grammar,
+        "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
         "--optimize-precedence-ladders",
         "--report-precedence-ladders",
     );
 
     let manifest = fs::read_to_string(optimized.join("optimizations.json"))
         .expect("applied optimization manifest should be emitted");
-    let stable_manifest = manifest.replace(env!("CARGO_MANIFEST_DIR"), "$CARGO_MANIFEST_DIR");
-    insta::assert_snapshot!("precedence_ladder_optimization_manifest", stable_manifest);
+    insta::assert_snapshot!("precedence_ladder_optimization_manifest", manifest);
     let dry_run_manifest = fs::read_to_string(report.join("optimizations.json"))
         .expect("dry-run optimization manifest should be emitted");
     assert!(dry_run_manifest.contains("\"reportOnly\": true"));
@@ -471,18 +469,16 @@ fn embedded_rule_attributes_keep_potentially_referenced_ladder_contexts() {
 #[test]
 fn trivial_rule_inlining_is_explicit_auditable_and_recognition_preserving() {
     let temp = temporary_directory("trivial-inline");
-    let grammar = fixture("trivial-inline/Inline.g4");
     let (baseline, optimized, report) = run_optimization_matrix(
         temp.path(),
-        &grammar,
+        "tests/fixtures/transforms/trivial-inline/Inline.g4",
         "--inline-trivial-rules",
         "--report-trivial-rules",
     );
 
     let manifest = fs::read_to_string(optimized.join("optimizations.json"))
         .expect("applied optimization manifest should be emitted");
-    let stable_manifest = manifest.replace(env!("CARGO_MANIFEST_DIR"), "$CARGO_MANIFEST_DIR");
-    insta::assert_snapshot!("trivial_inline_optimization_manifest", stable_manifest);
+    insta::assert_snapshot!("trivial_inline_optimization_manifest", manifest);
     let dry_run_manifest = fs::read_to_string(report.join("optimizations.json"))
         .expect("dry-run optimization manifest should be emitted");
     assert!(dry_run_manifest.contains("\"reportOnly\": true"));

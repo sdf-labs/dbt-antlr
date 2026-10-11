@@ -1,6 +1,6 @@
 ---
 source: crates/dbt-antlr-codegen/tests/dbt_antlr_cli/transforms.rs
-expression: stable_manifest
+expression: manifest
 ---
 {
   "version": 1,
@@ -28,7 +28,7 @@ expression: stable_manifest
           "grammar": "InlineParser",
           "entryRule": "kw",
           "source": {
-            "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/trivial-inline/Inline.g4",
+            "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
             "byteStart": 205,
             "byteEnd": 255,
             "start": {
@@ -59,7 +59,7 @@ expression: stable_manifest
               "caller": "stmt",
               "alternative": 1,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/trivial-inline/Inline.g4",
+                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
                 "byteStart": 57,
                 "byteEnd": 59,
                 "start": {
@@ -76,7 +76,7 @@ expression: stable_manifest
               "caller": "stmt",
               "alternative": 2,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/trivial-inline/Inline.g4",
+                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
                 "byteStart": 85,
                 "byteEnd": 87,
                 "start": {
@@ -95,7 +95,7 @@ expression: stable_manifest
           "grammar": "InlineParser",
           "entryRule": "qualifier",
           "source": {
-            "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/trivial-inline/Inline.g4",
+            "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
             "byteStart": 391,
             "byteEnd": 419,
             "start": {
@@ -126,7 +126,7 @@ expression: stable_manifest
               "caller": "target",
               "alternative": 1,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/trivial-inline/Inline.g4",
+                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
                 "byteStart": 311,
                 "byteEnd": 320,
                 "start": {
@@ -145,7 +145,7 @@ expression: stable_manifest
           "grammar": "InlineParser",
           "entryRule": "group",
           "source": {
-            "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/trivial-inline/Inline.g4",
+            "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
             "byteStart": 672,
             "byteEnd": 706,
             "start": {
@@ -176,7 +176,7 @@ expression: stable_manifest
               "caller": "stmt",
               "alternative": 4,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/trivial-inline/Inline.g4",
+                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
                 "byteStart": 118,
                 "byteEnd": 123,
                 "start": {
@@ -195,7 +195,7 @@ expression: stable_manifest
           "grammar": "InlineParser",
           "entryRule": "marked",
           "source": {
-            "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/trivial-inline/Inline.g4",
+            "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
             "byteStart": 473,
             "byteEnd": 506,
             "start": {
@@ -221,7 +221,7 @@ expression: stable_manifest
               "caller": "stmt",
               "alternative": 3,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/trivial-inline/Inline.g4",
+                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
                 "byteStart": 100,
                 "byteEnd": 106,
                 "start": {
@@ -240,7 +240,7 @@ expression: stable_manifest
           "grammar": "InlineParser",
           "entryRule": "badge",
           "source": {
-            "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/trivial-inline/Inline.g4",
+            "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
             "byteStart": 579,
             "byteEnd": 612,
             "start": {
@@ -266,7 +266,7 @@ expression: stable_manifest
               "caller": "marked",
               "alternative": 1,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/trivial-inline/Inline.g4",
+                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
                 "byteStart": 492,
                 "byteEnd": 497,
                 "start": {
@@ -285,7 +285,7 @@ expression: stable_manifest
           "grammar": "InlineParser",
           "entryRule": "opt",
           "source": {
-            "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/trivial-inline/Inline.g4",
+            "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
             "byteStart": 747,
             "byteEnd": 769,
             "start": {
@@ -311,7 +311,7 @@ expression: stable_manifest
               "caller": "stmt",
               "alternative": 4,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/trivial-inline/Inline.g4",
+                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
                 "byteStart": 694,
                 "byteEnd": 697,
                 "start": {

@@ -1,6 +1,6 @@
 ---
 source: crates/dbt-antlr-codegen/tests/dbt_antlr_cli/transforms.rs
-expression: stable_manifest
+expression: manifest
 ---
 {
   "version": 1,
@@ -28,7 +28,7 @@ expression: stable_manifest
           "grammar": "LadderParser",
           "entryRule": "loosePrefix",
           "source": {
-            "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+            "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
             "byteStart": 1030,
             "byteEnd": 1078,
             "start": {
@@ -58,7 +58,7 @@ expression: stable_manifest
           "grammar": "LadderParser",
           "entryRule": "sum",
           "source": {
-            "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+            "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
             "byteStart": 76,
             "byteEnd": 114,
             "start": {
@@ -100,7 +100,7 @@ expression: stable_manifest
               "sourceRule": "sum",
               "sourceAlternative": 1,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
                 "byteStart": 86,
                 "byteEnd": 108,
                 "start": {
@@ -122,7 +122,7 @@ expression: stable_manifest
               "sourceRule": "product",
               "sourceAlternative": 1,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
                 "byteStart": 130,
                 "byteEnd": 152,
                 "start": {
@@ -160,7 +160,7 @@ expression: stable_manifest
           "grammar": "LadderParser",
           "entryRule": "directEntry",
           "source": {
-            "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+            "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
             "byteStart": 226,
             "byteEnd": 256,
             "start": {
@@ -207,7 +207,7 @@ expression: stable_manifest
               "sourceRule": "directEntry",
               "sourceAlternative": 1,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
                 "byteStart": 244,
                 "byteEnd": 250,
                 "start": {
@@ -228,7 +228,7 @@ expression: stable_manifest
               "sourceRule": "direct",
               "sourceAlternative": 1,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
                 "byteStart": 271,
                 "byteEnd": 276,
                 "start": {
@@ -249,7 +249,7 @@ expression: stable_manifest
               "sourceRule": "direct",
               "sourceAlternative": 2,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
                 "byteStart": 283,
                 "byteEnd": 299,
                 "start": {
@@ -270,7 +270,7 @@ expression: stable_manifest
               "sourceRule": "right",
               "sourceAlternative": 1,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
                 "byteStart": 319,
                 "byteEnd": 339,
                 "start": {
@@ -297,7 +297,7 @@ expression: stable_manifest
           "grammar": "LadderParser",
           "entryRule": "expr",
           "source": {
-            "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+            "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
             "byteStart": 347,
             "byteEnd": 440,
             "start": {
@@ -359,7 +359,7 @@ expression: stable_manifest
               "sourceRule": "expr",
               "sourceAlternative": 1,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
                 "byteStart": 358,
                 "byteEnd": 434,
                 "start": {
@@ -381,7 +381,7 @@ expression: stable_manifest
               "sourceRule": "conditionalOr",
               "sourceAlternative": 1,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
                 "byteStart": 462,
                 "byteEnd": 522,
                 "start": {
@@ -403,7 +403,7 @@ expression: stable_manifest
               "sourceRule": "conditionalAnd",
               "sourceAlternative": 1,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
                 "byteStart": 551,
                 "byteEnd": 599,
                 "start": {
@@ -425,7 +425,7 @@ expression: stable_manifest
               "sourceRule": "relation",
               "sourceAlternative": 1,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
                 "byteStart": 622,
                 "byteEnd": 626,
                 "start": {
@@ -446,7 +446,7 @@ expression: stable_manifest
               "sourceRule": "relation",
               "sourceAlternative": 2,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
                 "byteStart": 633,
                 "byteEnd": 699,
                 "start": {
@@ -467,7 +467,7 @@ expression: stable_manifest
               "sourceRule": "calc",
               "sourceAlternative": 1,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
                 "byteStart": 718,
                 "byteEnd": 723,
                 "start": {
@@ -488,7 +488,7 @@ expression: stable_manifest
               "sourceRule": "calc",
               "sourceAlternative": 2,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
                 "byteStart": 730,
                 "byteEnd": 766,
                 "start": {
@@ -509,7 +509,7 @@ expression: stable_manifest
               "sourceRule": "calc",
               "sourceAlternative": 3,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
                 "byteStart": 773,
                 "byteEnd": 803,
                 "start": {
@@ -530,7 +530,7 @@ expression: stable_manifest
               "sourceRule": "unary",
               "sourceAlternative": 1,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
                 "byteStart": 823,
                 "byteEnd": 861,
                 "start": {
@@ -551,7 +551,7 @@ expression: stable_manifest
               "sourceRule": "unary",
               "sourceAlternative": 2,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
                 "byteStart": 868,
                 "byteEnd": 903,
                 "start": {
@@ -572,7 +572,7 @@ expression: stable_manifest
               "sourceRule": "unary",
               "sourceAlternative": 3,
               "source": {
-                "path": "$CARGO_MANIFEST_DIR/tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
                 "byteStart": 910,
                 "byteEnd": 941,
                 "start": {
