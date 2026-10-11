@@ -133,6 +133,13 @@ impl Config {
         self
     }
 
+    /// Deletes parser rules that are unreachable from the entry rules (the
+    /// command line's `--prune-unreachable-rules`). Default: `false`.
+    pub const fn prune_unreachable_rules(&mut self, enabled: bool) -> &mut Self {
+        self.optimization.prune_unreachable_rules(enabled);
+        self
+    }
+
     /// Inlines trivial pure parser rules into their call sites (the command
     /// line's `--inline-trivial-rules`). Default: `false`.
     pub const fn inline_trivial_rules(&mut self, enabled: bool) -> &mut Self {

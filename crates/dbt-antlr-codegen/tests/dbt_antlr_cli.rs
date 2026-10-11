@@ -6,6 +6,8 @@
 //! trivial pure rule inlining, and unreachable rule pruning with entry rule
 //! inference.
 
+#[path = "dbt_antlr_cli/generation.rs"]
+mod generation;
 #[path = "dbt_antlr_cli/support.rs"]
 mod support;
 #[path = "dbt_antlr_cli/transforms.rs"]

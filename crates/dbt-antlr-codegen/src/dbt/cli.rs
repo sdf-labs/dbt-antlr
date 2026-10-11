@@ -31,6 +31,7 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   -no-listener      do not generate listener (+base listener)
   -Dkey=value       ignored with a warning (compat)
   --entry-rule <NAME>           mark NAME as a parser entry rule (repeatable)
+  --prune-unreachable-rules     delete parser rules unreachable from the entry rules
   --inline-trivial-rules        inline trivial pure parser rules into their callers
   --report-trivial-rules        report --inline-trivial-rules changes without applying
   --optimize-precedence-ladders collapse precedence ladders into left-recursive rules
@@ -46,6 +47,7 @@ struct CliArgs {
     gen_listener: bool,
     gen_visitor: bool,
     entry_rules: Vec<String>,
+    prune_unreachable: bool,
     inline_trivial: bool,
     report_trivial: bool,
     optimize_ladders: bool,
@@ -59,6 +61,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let mut gen_listener = true;
     let mut gen_visitor = false;
     let mut entry_rules = Vec::new();
+    let mut prune_unreachable = false;
     let mut inline_trivial = false;
     let mut report_trivial = false;
     let mut optimize_ladders = false;
@@ -82,6 +85,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
             "--entry-rule" => {
                 entry_rules.push(value_after(arg, args, &mut index)?);
             }
+            "--prune-unreachable-rules" => prune_unreachable = true,
             "--inline-trivial-rules" => inline_trivial = true,
             "--report-trivial-rules" => report_trivial = true,
             "--optimize-precedence-ladders" => optimize_ladders = true,
@@ -117,6 +121,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         gen_listener,
         gen_visitor,
         entry_rules,
+        prune_unreachable,
         inline_trivial,
         report_trivial,
         optimize_ladders,
@@ -178,6 +183,7 @@ pub fn run(
         .listener(cli.gen_listener)
         .visitor(cli.gen_visitor)
         .cargo_directives(false)
+        .prune_unreachable_rules(cli.prune_unreachable)
         .inline_trivial_rules(cli.inline_trivial)
         .report_trivial_rules(cli.report_trivial)
         .optimize_precedence_ladders(cli.optimize_ladders)

@@ -275,6 +275,9 @@ pub(crate) fn generate_with_pinned_binary(
     for entry in optimization.entry_rules() {
         command.arg("--entry-rule").arg(entry);
     }
+    if optimization.prune_unreachable() {
+        command.arg("--prune-unreachable-rules");
+    }
     if optimization.inline_trivial() {
         command.arg("--inline-trivial-rules");
     }

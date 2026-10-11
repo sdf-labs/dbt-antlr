@@ -83,6 +83,11 @@ impl OptimizationOptions {
     }
 
     #[cfg(feature = "download")]
+    pub(crate) const fn prune_unreachable(&self) -> bool {
+        self.prune_unreachable
+    }
+
+    #[cfg(feature = "download")]
     pub(crate) const fn inline_trivial(&self) -> bool {
         self.inline_trivial_rules
     }
