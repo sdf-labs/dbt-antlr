@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// Copyright (c) 2026 Konstantin Vyatkin
+// Copyright (c) 2026 Bo Lin
 //! Minimal JSON-like writer for the optimization manifest.
 //!
 //! Used for writing the inspection-only optimization manifest. Avoids a

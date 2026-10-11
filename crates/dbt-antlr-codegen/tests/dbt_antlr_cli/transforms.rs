@@ -3,11 +3,9 @@
 //! Grammar transform integration tests, ported from the vendored
 //! `antlr-rust-codegen` `antlr4_rust_gen_cli/transforms.rs` suite to the
 //! `dbt-antlr-codegen` command line and the `dbt-antlr-runtime` runtime.
-#![allow(clippy::disallowed_methods)] // insta assertion macros unwrap internal I/O.
 #[allow(clippy::wildcard_imports)]
 use super::support::*;
 
-#[allow(clippy::disallowed_methods)] // `insta` assertion macros unwrap internal I/O.
 #[allow(clippy::too_many_lines)] // the differential harness source is one literal
 #[test]
 fn precedence_ladder_optimization_is_explicit_auditable_and_recognition_preserving() {
@@ -254,7 +252,6 @@ mod precedence_ladder_differential {
     );
 }
 
-#[allow(clippy::disallowed_methods)] // `insta` assertion macros unwrap internal I/O.
 #[test]
 fn configured_entry_survives_precedence_ladder_optimization() {
     let temp = temporary_directory("configured-precedence-entry");
@@ -286,7 +283,6 @@ fn configured_entry_survives_precedence_ladder_optimization() {
     assert_generated_modules_compile(temp.path(), &out);
 }
 
-#[allow(clippy::disallowed_methods)] // `insta` assertion macros unwrap internal I/O.
 #[test]
 fn precedence_ladder_modes_reject_authored_semantic_errors_before_transforming() {
     let temp = temporary_directory("precedence-ladder-authored-errors");
