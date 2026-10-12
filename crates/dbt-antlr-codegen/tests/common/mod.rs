@@ -22,27 +22,8 @@ pub(crate) fn golden_dir() -> PathBuf {
         .expect("golden directory exists")
 }
 
-/// Reads a golden, rewriting its pinned `check_version!` line to the current
-/// runtime version. The goldens on disk pin a zero minor floor (see
-/// `gen_test_grammars.sh`); emission stamps the generation-time runtime
-/// version, which changes on every release. The floor semantics themselves
-/// are covered by `dbt-antlr-runtime/tests/version_check.rs`.
 pub(crate) fn read_golden(name: &str) -> String {
-    std::fs::read_to_string(golden_dir().join(name))
-        .expect("golden readable")
-        .split_inclusive('\n')
-        .map(|line| {
-            if line.starts_with("dbt_antlr_runtime::check_version!(") {
-                format!(
-                    "dbt_antlr_runtime::check_version!(\"{}\",\"{}\");\n",
-                    dbt_antlr_runtime::VERSION_MAJOR,
-                    dbt_antlr_runtime::VERSION_MINOR
-                )
-            } else {
-                line.to_owned()
-            }
-        })
-        .collect()
+    std::fs::read_to_string(golden_dir().join(name)).expect("golden readable")
 }
 
 /// Byte index where the embedded-ATN section starts (its definition, not
