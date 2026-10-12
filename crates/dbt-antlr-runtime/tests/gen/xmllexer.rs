@@ -19,7 +19,7 @@ use dbt_antlr_runtime::vocabulary::{Vocabulary,VocabularyImpl};
 use std::ops::{DerefMut, Deref};
 use std::sync::LazyLock;
 
-dbt_antlr_runtime::check_version!("0","0");
+dbt_antlr_runtime::check_version!("0","2");
 pub const COMMENT:i32=1; 
 pub const CDATA:i32=2; 
 pub const DTD:i32=3; 
