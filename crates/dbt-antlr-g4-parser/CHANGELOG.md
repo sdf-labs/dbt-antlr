@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-g4-parser-v0.2.0...dbt-antlr-g4-parser-v0.2.1) - 2026-10-12
+
+### Other
+
+- regenerate checked-in recognizers on the release PR ([#11](https://github.com/sdf-labs/dbt-antlr/pull/11))
+
+### Tests
+
+- unbreak main after 0.2.0, and give release PRs CI ([#9](https://github.com/sdf-labs/dbt-antlr/pull/9))
+
 ## [0.1.0](https://github.com/sdf-labs/dbt-antlr/releases/tag/dbt-antlr-g4-parser-v0.1.0) - 2026-10-09
 
 ### Other
