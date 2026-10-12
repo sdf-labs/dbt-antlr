@@ -38,9 +38,11 @@ g4-parser, then dbt-antlr-codegen).
 4. Wait for the checks on the release PR before merging. GitHub does not
    run `pull_request` workflows on PRs opened by `GITHUB_TOKEN`
    (anti-recursion), so the Release-plz workflow dispatches the CI workflow
-   onto the release branch after every refresh; the run attaches to the
-   release branch head commit (including the regeneration commit) and
-   appears in the release PR checks.
+   onto the release branch after every refresh. Check runs from a
+   `workflow_dispatch` run do not join the PR rollup, so the CI workflow's
+   `ci-status` job mirrors the aggregated result as a `ci (dispatched)`
+   commit status, which does appear in the release PR checks and links to
+   the full run.
 
 Binary distribution is currently disabled; see below.
 
