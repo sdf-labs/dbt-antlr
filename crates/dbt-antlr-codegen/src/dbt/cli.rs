@@ -10,6 +10,12 @@
 //!   -visitor          generate visitor (+base visitor)
 //!   -no-listener      do not generate listener (+base listener)
 //!   -Dkey=value       ignored with a warning (compat)
+//!   --entry-rule <NAME>           mark NAME as a parser entry rule (repeatable)
+//!   --prune-unreachable-rules     delete parser rules unreachable from the entry rules
+//!   --inline-trivial-rules        inline trivial pure parser rules into their callers
+//!   --report-trivial-rules        report --inline-trivial-rules changes without applying
+//!   --optimize-precedence-ladders collapse precedence ladders into left-recursive rules
+//!   --report-precedence-ladders   report --optimize-precedence-ladders without applying
 //! ```
 
 use std::io::Write;
@@ -24,6 +30,12 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   -visitor          generate visitor (+base visitor)
   -no-listener      do not generate listener (+base listener)
   -Dkey=value       ignored with a warning (compat)
+  --entry-rule <NAME>           mark NAME as a parser entry rule (repeatable)
+  --prune-unreachable-rules     delete parser rules unreachable from the entry rules
+  --inline-trivial-rules        inline trivial pure parser rules into their callers
+  --report-trivial-rules        report --inline-trivial-rules changes without applying
+  --optimize-precedence-ladders collapse precedence ladders into left-recursive rules
+  --report-precedence-ladders   report --optimize-precedence-ladders without applying
 ";
 
 /// Parsed command line.
@@ -34,6 +46,12 @@ struct CliArgs {
     lib_dirs: Vec<PathBuf>,
     gen_listener: bool,
     gen_visitor: bool,
+    entry_rules: Vec<String>,
+    prune_unreachable: bool,
+    inline_trivial: bool,
+    report_trivial: bool,
+    optimize_ladders: bool,
+    report_ladders: bool,
 }
 
 fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArgs> {
@@ -42,6 +60,12 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let mut lib_dirs = Vec::new();
     let mut gen_listener = true;
     let mut gen_visitor = false;
+    let mut entry_rules = Vec::new();
+    let mut prune_unreachable = false;
+    let mut inline_trivial = false;
+    let mut report_trivial = false;
+    let mut optimize_ladders = false;
+    let mut report_ladders = false;
 
     let mut index = 0;
     while index < args.len() {
@@ -58,6 +82,14 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
             "-no-visitor" => gen_visitor = false,
             "-listener" => gen_listener = true,
             "-no-listener" => gen_listener = false,
+            "--entry-rule" => {
+                entry_rules.push(value_after(arg, args, &mut index)?);
+            }
+            "--prune-unreachable-rules" => prune_unreachable = true,
+            "--inline-trivial-rules" => inline_trivial = true,
+            "--report-trivial-rules" => report_trivial = true,
+            "--optimize-precedence-ladders" => optimize_ladders = true,
+            "--report-precedence-ladders" => report_ladders = true,
             "-h" | "-help" | "--help" => return Err(miette::miette!("{USAGE}")),
             _ if arg.starts_with("-D") => {
                 writeln!(stderr, "warning: ignoring option {arg}").into_diagnostic()?;
@@ -76,26 +108,53 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let Some(grammar) = grammar else {
         miette::bail!("missing grammar file\n{USAGE}");
     };
+    if inline_trivial && report_trivial {
+        miette::bail!("--inline-trivial-rules conflicts with --report-trivial-rules");
+    }
+    if optimize_ladders && report_ladders {
+        miette::bail!("--optimize-precedence-ladders conflicts with --report-precedence-ladders");
+    }
     Ok(CliArgs {
         grammar,
         out_dir,
         lib_dirs,
         gen_listener,
         gen_visitor,
+        entry_rules,
+        prune_unreachable,
+        inline_trivial,
+        report_trivial,
+        optimize_ladders,
+        report_ladders,
     })
 }
 
 fn value_after(option: &str, args: &[String], index: &mut usize) -> miette::Result<String> {
     args.get(*index).map_or_else(
-        || {
-            Err(miette::miette!(
-                "option {option} expects a directory\n{USAGE}"
-            ))
-        },
+        || Err(miette::miette!("option {option} expects a value\n{USAGE}")),
         |value| {
             *index += 1;
             Ok(value.clone())
         },
+    )
+}
+
+/// Renders one non-fatal diagnostic in the `warning[G4S078]: path:line:
+/// column: message` format the Java tool's Rust target diagnostics use.
+fn render_diagnostic(diagnostic: &crate::Diagnostic) -> String {
+    let severity = match diagnostic.severity() {
+        crate::Severity::Warning => "warning",
+        crate::Severity::Error => "error",
+    };
+    let position = match (diagnostic.line(), diagnostic.column()) {
+        (Some(line), Some(column)) => format!(":{line}:{column}"),
+        _ => String::new(),
+    };
+    format!(
+        "{severity}[{}]: {}{position}: {}",
+        diagnostic.code(),
+        diagnostic.path().display(),
+        diagnostic.message()
     )
 }
 
@@ -123,15 +182,29 @@ pub fn run(
         .out_dir(&cli.out_dir)
         .listener(cli.gen_listener)
         .visitor(cli.gen_visitor)
-        .cargo_directives(false);
+        .cargo_directives(false)
+        .prune_unreachable_rules(cli.prune_unreachable)
+        .inline_trivial_rules(cli.inline_trivial)
+        .report_trivial_rules(cli.report_trivial)
+        .optimize_precedence_ladders(cli.optimize_ladders)
+        .report_precedence_ladders(cli.report_ladders);
     for dir in &cli.lib_dirs {
         config.lib_dir(dir);
     }
-    let written = config
-        .generate()
+    for entry in &cli.entry_rules {
+        config.entry_rule(entry);
+    }
+    let generation = config
+        .generate_detailed()
         .into_diagnostic()
         .wrap_err_with(|| format!("cannot emit {}", cli.grammar.display()))?;
-    for path in &written {
+    for diagnostic in generation.diagnostics() {
+        writeln!(stderr, "{}", render_diagnostic(diagnostic)).into_diagnostic()?;
+    }
+    for message in generation.optimization_messages() {
+        writeln!(stderr, "{message}").into_diagnostic()?;
+    }
+    for path in generation.written_files() {
         let name = path.file_name().map_or_else(
             || path.display().to_string(),
             |name| name.to_string_lossy().into_owned(),

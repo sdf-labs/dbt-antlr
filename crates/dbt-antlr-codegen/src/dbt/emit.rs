@@ -9,9 +9,10 @@ use crate::dbt::lexer_factory::build_lexer_file_context;
 use crate::dbt::listener_factory::build_tree_walk_file_contexts;
 use crate::dbt::parser_factory::build_parser_file_context;
 use crate::dbt::template::render_template;
+use crate::error::Diagnostic;
 use crate::grammar::compiler::{self, Compilation};
 use crate::grammar::loader::LoadOptions;
-
+use crate::optimization::{OptimizationOptions, OptimizationPlan};
 /// One generated source file.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmittedFile {
@@ -38,6 +39,25 @@ fn compile_grammar(
         roots: roots.clone(),
         library_directories: library_dirs.to_vec(),
     })
+    .map_err(|error| crate::compile_error::compilation_error(&error, &roots))
+    .map_err(EmitError::from)
+}
+
+fn compile_grammar_with(
+    grammar_path: &Path,
+    library_dirs: &[PathBuf],
+    plan: &OptimizationPlan,
+) -> Result<Compilation, EmitError> {
+    let roots = vec![grammar_path.to_path_buf()];
+    compiler::compile_with_transforms(
+        LoadOptions {
+            roots: roots.clone(),
+            library_directories: library_dirs.to_vec(),
+        },
+        plan.transforms(),
+        plan.report_only(),
+        plan.entry_rules(),
+    )
     .map_err(|error| crate::compile_error::compilation_error(&error, &roots))
     .map_err(EmitError::from)
 }
@@ -127,6 +147,69 @@ pub fn emit_files_with_flags(
     gen_visitor: bool,
 ) -> Result<Vec<EmittedFile>, EmitError> {
     let compilation = compile_grammar(grammar_path, library_dirs)?;
+    render_recognizer_files(&compilation, grammar_path, gen_listener, gen_visitor)
+}
+
+/// Output of [`emit_files_with_options`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EmittedOutput {
+    /// Generated recognizer source files. Empty when the selected transforms
+    /// run in report-only mode.
+    pub files: Vec<EmittedFile>,
+    /// Non-fatal compiler diagnostics (for example unreachable-rule
+    /// warnings).
+    pub diagnostics: Vec<Diagnostic>,
+    /// Transform notes for the user (for example `pruned: ...` lines).
+    pub optimization_messages: Vec<String>,
+    /// Rendered `optimizations.json` manifest, present when the selected
+    /// transforms emit one.
+    pub optimization_manifest: Option<String>,
+}
+
+/// [`emit_files_with_flags`] with an explicit grammar transform selection.
+///
+/// Applies the configured [`OptimizationOptions`] to the grammar model
+/// before ATN construction. When the selection runs in report-only mode (a
+/// `report_*` flag), no recognizer files are produced and
+/// [`EmittedOutput::optimization_manifest`] describes what the transform
+/// *would* change.
+///
+/// # Errors
+///
+/// See [`emit_lexer_files`]. Also returns [`EmitError::Config`] when the
+/// transform selection is internally inconsistent (for example apply and
+/// report modes of one transform combined).
+pub fn emit_files_with_options(
+    grammar_path: &Path,
+    library_dirs: &[PathBuf],
+    gen_listener: bool,
+    gen_visitor: bool,
+    optimization: &OptimizationOptions,
+) -> Result<EmittedOutput, EmitError> {
+    let plan = OptimizationPlan::from_options(optimization)?;
+    let compilation = compile_grammar_with(grammar_path, library_dirs, &plan)?;
+    let diagnostics = crate::compile_error::non_fatal_diagnostics(&compilation);
+    let optimization_messages = plan.diagnostic_messages(&compilation);
+    let optimization_manifest = plan.render_manifest(&compilation);
+    let files = if plan.report_only() {
+        Vec::new()
+    } else {
+        render_recognizer_files(&compilation, grammar_path, gen_listener, gen_visitor)?
+    };
+    Ok(EmittedOutput {
+        files,
+        diagnostics,
+        optimization_messages,
+        optimization_manifest,
+    })
+}
+
+fn render_recognizer_files(
+    compilation: &Compilation,
+    grammar_path: &Path,
+    gen_listener: bool,
+    gen_visitor: bool,
+) -> Result<Vec<EmittedFile>, EmitError> {
     let grammar_file_name = bare_file_name(grammar_path);
     let grammar_name = grammar_path.file_stem().map_or_else(
         || grammar_file_name.clone(),

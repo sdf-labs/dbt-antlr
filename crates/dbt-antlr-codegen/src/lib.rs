@@ -34,11 +34,11 @@ mod error;
 #[cfg(feature = "generator")]
 #[allow(dead_code)]
 pub(crate) mod grammar;
-#[cfg(feature = "generator")]
 mod optimization;
 
-pub use config::Config;
+pub use config::{Config, Generation};
 pub use error::{Diagnostic, EmitError, Error, ErrorKind, Severity};
+pub use optimization::OptimizationOptions;
 
 /// Version of this generator package.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

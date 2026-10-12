@@ -1,0 +1,26 @@
+---
+source: crates/dbt-antlr-codegen/tests/dbt_antlr_cli/transforms.rs
+expression: diagnostics
+---
+[
+    (
+        "DuplicateRule",
+        "--optimize-precedence-ladders",
+        "Error:   × cannot emit DuplicateRule/DuplicateRule.g4\n  ├─▶ grammar compilation failed: error[G4S002]: DuplicateRule/\n  │   DuplicateRule.g4:5:0: rule low is redefined\n  │   \n  ╰─▶ error[G4S002]: DuplicateRule/DuplicateRule.g4:5:0: rule low is redefined\n      \n\n",
+    ),
+    (
+        "DuplicateRule",
+        "--report-precedence-ladders",
+        "Error:   × cannot emit DuplicateRule/DuplicateRule.g4\n  ├─▶ grammar compilation failed: error[G4S002]: DuplicateRule/\n  │   DuplicateRule.g4:5:0: rule low is redefined\n  │   \n  ╰─▶ error[G4S002]: DuplicateRule/DuplicateRule.g4:5:0: rule low is redefined\n      \n\n",
+    ),
+    (
+        "DuplicateLabel",
+        "--optimize-precedence-ladders",
+        "Error:   × cannot emit DuplicateLabel/DuplicateLabel.g4\n  ├─▶ grammar compilation failed: error[G4S013]: DuplicateLabel/\n  │   DuplicateLabel.g4:4:25: alternative label Shared is redefined\n  │   \n  ╰─▶ error[G4S013]: DuplicateLabel/DuplicateLabel.g4:4:25: alternative label\n      Shared is redefined\n      \n\n",
+    ),
+    (
+        "DuplicateLabel",
+        "--report-precedence-ladders",
+        "Error:   × cannot emit DuplicateLabel/DuplicateLabel.g4\n  ├─▶ grammar compilation failed: error[G4S013]: DuplicateLabel/\n  │   DuplicateLabel.g4:4:25: alternative label Shared is redefined\n  │   \n  ╰─▶ error[G4S013]: DuplicateLabel/DuplicateLabel.g4:4:25: alternative label\n      Shared is redefined\n      \n\n",
+    ),
+]

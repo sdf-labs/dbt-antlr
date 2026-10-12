@@ -1,0 +1,21 @@
+---
+source: crates/dbt-antlr-codegen/tests/dbt_antlr_cli/transforms.rs
+expression: api
+---
+[
+    "const RULE_a",
+    "const RULE_b",
+    "const RULE_junk",
+    "const RecursiveEntries_EOF",
+    "const RecursiveEntries_ID",
+    "const RecursiveEntries_T__0",
+    "const RecursiveEntries_T__1",
+    "const RecursiveEntries_WS",
+    "fn a",
+    "fn b",
+    "fn junk",
+    "struct RecursiveEntriesParser",
+    "type AContextAll",
+    "type BContextAll",
+    "type JunkContextAll",
+]

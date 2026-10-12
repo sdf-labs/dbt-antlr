@@ -1,0 +1,28 @@
+---
+source: crates/dbt-antlr-codegen/tests/dbt_antlr_cli/transforms.rs
+expression: generated_parser_api(&parser)
+---
+[
+    "const RULE_alternate",
+    "const RULE_end",
+    "const RULE_live",
+    "const RULE_manual",
+    "const RULE_script",
+    "const RULE_start",
+    "const Reachability_EOF",
+    "const Reachability_ID",
+    "const Reachability_WS",
+    "fn alternate",
+    "fn end",
+    "fn live",
+    "fn manual",
+    "fn script",
+    "fn start",
+    "struct ReachabilityParser",
+    "type AlternateContextAll",
+    "type EndContextAll",
+    "type LiveContextAll",
+    "type ManualContextAll",
+    "type ScriptContextAll",
+    "type StartContextAll",
+]

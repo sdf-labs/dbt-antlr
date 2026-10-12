@@ -5,9 +5,10 @@
 
 use std::path::PathBuf;
 
+use crate::OptimizationOptions;
 #[cfg(feature = "generator")]
-use crate::dbt::emit_files_with_flags;
-use crate::error::EmitError;
+use crate::dbt::emit_files_with_options;
+use crate::error::{Diagnostic, EmitError};
 
 /// Generator configuration, primarily for use from a `build.rs` build script.
 ///
@@ -55,6 +56,7 @@ pub struct Config {
     gen_listener: bool,
     gen_visitor: bool,
     cargo_directives: bool,
+    optimization: OptimizationOptions,
     pinned_release_version: Option<String>,
     pinned_release_sha256: Option<String>,
     pinned_release_base_url: Option<String>,
@@ -70,6 +72,7 @@ impl Config {
             gen_listener: true,
             gen_visitor: false,
             cargo_directives: true,
+            optimization: OptimizationOptions::default(),
             pinned_release_version: None,
             pinned_release_sha256: None,
             pinned_release_base_url: None,
@@ -113,6 +116,57 @@ impl Config {
     /// Default: `true`.
     pub const fn cargo_directives(&mut self, print: bool) -> &mut Self {
         self.cargo_directives = print;
+        self
+    }
+
+    /// Returns the grammar transform selection for in-place configuration;
+    /// see [`OptimizationOptions`] for the available transforms. The
+    /// convenience setters below delegate to it.
+    pub const fn optimization(&mut self) -> &mut OptimizationOptions {
+        &mut self.optimization
+    }
+
+    /// Marks `name` as an explicit parser entry rule (the command line's
+    /// `--entry-rule`). Repeatable.
+    pub fn entry_rule(&mut self, name: impl Into<String>) -> &mut Self {
+        self.optimization.entry_rule(name);
+        self
+    }
+
+    /// Deletes parser rules that are unreachable from the entry rules (the
+    /// command line's `--prune-unreachable-rules`). Default: `false`.
+    pub const fn prune_unreachable_rules(&mut self, enabled: bool) -> &mut Self {
+        self.optimization.prune_unreachable_rules(enabled);
+        self
+    }
+
+    /// Inlines trivial pure parser rules into their call sites (the command
+    /// line's `--inline-trivial-rules`). Default: `false`.
+    pub const fn inline_trivial_rules(&mut self, enabled: bool) -> &mut Self {
+        self.optimization.inline_trivial_rules(enabled);
+        self
+    }
+
+    /// Reports what [`Config::inline_trivial_rules`] would change without
+    /// applying it (the command line's `--report-trivial-rules`).
+    pub const fn report_trivial_rules(&mut self, enabled: bool) -> &mut Self {
+        self.optimization.report_trivial_rules(enabled);
+        self
+    }
+
+    /// Collapses precedence-ladder rule chains into left-recursive rules
+    /// (the command line's `--optimize-precedence-ladders`). Default:
+    /// `false`.
+    pub const fn optimize_precedence_ladders(&mut self, enabled: bool) -> &mut Self {
+        self.optimization.optimize_precedence_ladders(enabled);
+        self
+    }
+
+    /// Reports what [`Config::optimize_precedence_ladders`] would change
+    /// without applying it (the command line's
+    /// `--report-precedence-ladders`).
+    pub const fn report_precedence_ladders(&mut self, enabled: bool) -> &mut Self {
+        self.optimization.report_precedence_ladders(enabled);
         self
     }
 
@@ -170,6 +224,19 @@ impl Config {
     // Cargo's build-script protocol reads directives from stdout.
     #[allow(clippy::print_stdout)]
     pub fn generate(&self) -> Result<Vec<PathBuf>, EmitError> {
+        Ok(self.generate_detailed()?.into_written_files())
+    }
+
+    /// [`generate`](Config::generate) with the non-fatal output of the run:
+    /// compiler warnings (for example unreachable parser rules) and
+    /// transform notes (for example `pruned: ...` lines).
+    ///
+    /// # Errors
+    ///
+    /// See [`generate`](Config::generate).
+    // Cargo's build-script protocol reads directives from stdout.
+    #[allow(clippy::print_stdout)]
+    pub fn generate_detailed(&self) -> Result<Generation, EmitError> {
         if self.grammars.is_empty() {
             return Err(EmitError::Config("no grammars configured".to_owned()));
         }
@@ -211,20 +278,26 @@ impl Config {
         &self,
         version: &str,
         out_dir: &std::path::Path,
-    ) -> Result<Vec<PathBuf>, EmitError> {
+    ) -> Result<Generation, EmitError> {
         let release = crate::download::PinnedRelease {
             version: version.to_owned(),
             expected_sha256: self.pinned_release_sha256.clone(),
             base_url: self.pinned_release_base_url.clone(),
         };
-        crate::download::generate_with_pinned_binary(
+        let written = crate::download::generate_with_pinned_binary(
             &release,
             &self.grammars,
             &self.lib_dirs,
             self.gen_listener,
             self.gen_visitor,
+            &self.optimization,
             out_dir,
-        )
+        )?;
+        Ok(Generation {
+            written,
+            diagnostics: Vec::new(),
+            optimization_messages: Vec::new(),
+        })
     }
 
     #[cfg(not(feature = "download"))]
@@ -232,7 +305,7 @@ impl Config {
         &self,
         version: &str,
         out_dir: &std::path::Path,
-    ) -> Result<Vec<PathBuf>, EmitError> {
+    ) -> Result<Generation, EmitError> {
         let _ = (version, out_dir);
         let _ = (&self.pinned_release_sha256, &self.pinned_release_base_url);
         Err(EmitError::Config(
@@ -241,16 +314,19 @@ impl Config {
     }
 
     #[cfg(feature = "generator")]
-    fn generate_in_process(&self, out_dir: &std::path::Path) -> Result<Vec<PathBuf>, EmitError> {
+    fn generate_in_process(&self, out_dir: &std::path::Path) -> Result<Generation, EmitError> {
         let mut written = Vec::new();
+        let mut diagnostics = Vec::new();
+        let mut optimization_messages = Vec::new();
         for grammar in &self.grammars {
-            let files = emit_files_with_flags(
+            let output = emit_files_with_options(
                 grammar,
                 &self.lib_dirs,
                 self.gen_listener,
                 self.gen_visitor,
+                &self.optimization,
             )?;
-            for file in &files {
+            for file in &output.files {
                 let path = out_dir.join(&file.name);
                 std::fs::write(&path, &file.content).map_err(|source| EmitError::Write {
                     path: path.clone(),
@@ -258,17 +334,83 @@ impl Config {
                 })?;
                 written.push(path);
             }
+            write_optimization_manifest(out_dir, output.optimization_manifest, &mut written)?;
+            diagnostics.extend(output.diagnostics);
+            optimization_messages.extend(output.optimization_messages);
         }
-        Ok(written)
+        Ok(Generation {
+            written,
+            diagnostics,
+            optimization_messages,
+        })
     }
 
     #[cfg(not(feature = "generator"))]
-    fn generate_in_process(&self, out_dir: &std::path::Path) -> Result<Vec<PathBuf>, EmitError> {
+    fn generate_in_process(&self, out_dir: &std::path::Path) -> Result<Generation, EmitError> {
         let _ = out_dir;
         Err(EmitError::Config(
             "this build of dbt-antlr-codegen was compiled without the `generator` feature; \
              enable it or use Config::pinned_release"
                 .to_owned(),
         ))
+    }
+}
+
+/// Writes `optimizations.json` next to the generated files when the
+/// selected transforms produced a manifest, and removes a stale manifest
+/// from an earlier optimized run when they did not.
+#[cfg(feature = "generator")]
+fn write_optimization_manifest(
+    out_dir: &std::path::Path,
+    manifest: Option<String>,
+    written: &mut Vec<PathBuf>,
+) -> Result<(), EmitError> {
+    let path = out_dir.join("optimizations.json");
+    match manifest {
+        Some(manifest) => {
+            std::fs::write(&path, manifest).map_err(|source| EmitError::Write {
+                path: path.clone(),
+                source,
+            })?;
+            written.push(path);
+        }
+        None => match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => return Err(EmitError::Write { path, source }),
+        },
+    }
+    Ok(())
+}
+
+/// Files and non-fatal output of [`Config::generate_detailed`].
+#[derive(Clone, Debug)]
+pub struct Generation {
+    written: Vec<PathBuf>,
+    diagnostics: Vec<Diagnostic>,
+    optimization_messages: Vec<String>,
+}
+
+impl Generation {
+    /// Every file written into the output directory, in write order.
+    pub fn written_files(&self) -> &[PathBuf] {
+        &self.written
+    }
+
+    /// Non-fatal compiler diagnostics of the run (for example unreachable
+    /// parser rule warnings). Empty for pinned-release generation, where
+    /// diagnostics stay on the release binary's stderr.
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
+    }
+
+    /// Transform notes of the run (for example `pruned: ...` lines).
+    pub fn optimization_messages(&self) -> &[String] {
+        &self.optimization_messages
+    }
+
+    /// Consumes the generation and returns the written files.
+    pub fn into_written_files(self) -> Vec<PathBuf> {
+        self.written
     }
 }
