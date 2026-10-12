@@ -13,6 +13,19 @@
 # version (also on 0.x, where `feat` alone would only bump patch).
 custom_minor_increment_regex = "^codegen"
 
+[changelog]
+protect_breaking_commits = true
+commit_parsers = [
+  { message = "^codegen", group = "added" },
+  { message = "^feat", group = "added" },
+  { message = "^fix", group = "fixed" },
+  { message = "^security", group = "security" },
+  { message = "^deprecated", group = "deprecated" },
+  { message = "^docs", group = "documentation" },
+  { message = "^test", group = "tests" },
+  { message = "^chore: release", skip = true },
+  { message = "^.*", group = "other" },
+]
 [[package]]
 name = "dbt-antlr-runtime"
 version_group = "dbt-antlr"
