@@ -151,3 +151,33 @@ jobs:
 
       - name: Run runtime conformance suite
         run: cargo run -p runtime-testsuite --release --color never
+
+  # Release PRs are opened by GITHUB_TOKEN, so they never trigger
+  # pull_request workflows; the Release-plz workflow dispatches this
+  # workflow onto the release branch instead. workflow_dispatch check runs
+  # do not show up in the PR rollup, so mirror the aggregated result as a
+  # classic commit status, which does.
+  ci-status:
+    name: ci status
+    if: always() && github.event_name == 'workflow_dispatch'
+    needs: [quality, unittests, bootstrap, runtime-testsuite]
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+    steps:
+      - name: Publish aggregated commit status
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          state=success
+          for result in $(echo "$NEEDS" | jq -r '.[].result'); do
+            if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
+              state=failure
+            fi
+          done
+          gh api "repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -f state="$state" \
+            -f context="ci (dispatched)" \
+            -f description="Aggregated result of the CI run dispatched by Release-plz" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

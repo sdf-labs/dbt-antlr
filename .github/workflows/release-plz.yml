@@ -71,9 +71,9 @@ jobs:
 
       # GitHub never runs pull_request workflows for PRs opened by
       # GITHUB_TOKEN (anti-recursion), so release PRs would otherwise get no
-      # CI. workflow_dispatch is the one exception GITHUB_TOKEN can trigger;
-      # the dispatched run attaches to the release branch head commit and
-      # shows up in the release PR checks.
+      # CI. workflow_dispatch is the one exception GITHUB_TOKEN can trigger.
+      # The ci.yml ci-status job mirrors the aggregated result as a commit
+      # status on the release branch head, which shows up in the release PR.
       - name: Run CI on the open release PR
         if: steps.release-pr.outputs.branch != ''
         env:
