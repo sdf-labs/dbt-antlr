@@ -3,330 +3,330 @@ source: crates/dbt-antlr-codegen/tests/dbt_antlr_cli/transforms.rs
 expression: manifest
 ---
 {
-  "version": 1,
-  "reportOnly": false,
-  "passes": [
-    {
-      "id": 0,
-      "name": "inline-trivial-rules",
-      "safetyClass": "recognition-preserving",
-      "changed": true,
-      "metrics": {
-        "before": {
-          "rules": 21,
-          "alternatives": 24,
-          "elements": 37
-        },
-        "after": {
-          "rules": 18,
-          "alternatives": 23,
-          "elements": 36
-        }
-      },
-      "candidates": [
+    "passes": [
         {
-          "grammar": "InlineParser",
-          "entryRule": "kw",
-          "source": {
-            "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
-            "byteStart": 205,
-            "byteEnd": 255,
-            "start": {
-              "line": 15,
-              "column": 0
-            },
-            "end": {
-              "line": 19,
-              "column": 5
-            }
-          },
-          "status": "applied",
-          "reason": "inlined token-set rule kw (3 members) into 2 call sites",
-          "rungs": [],
-          "boundaryRule": null,
-          "projected": null,
-          "removedRules": [
-            {
-              "rule": "kw",
-              "targetRule": null
-            }
-          ],
-          "alternatives": [],
-          "labelRenames": [],
-          "groupingChanges": [],
-          "inlinedCallSites": [
-            {
-              "caller": "stmt",
-              "alternative": 1,
-              "source": {
-                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
-                "byteStart": 57,
-                "byteEnd": 59,
-                "start": {
-                  "line": 8,
-                  "column": 6
+            "candidates": [
+                {
+                    "alternatives": [],
+                    "boundaryRule": None,
+                    "entryRule": "kw",
+                    "grammar": "InlineParser",
+                    "groupingChanges": [],
+                    "inlinedCallSites": [
+                        {
+                            "alternative": 1,
+                            "caller": "stmt",
+                            "source": {
+                                "byteEnd": 59,
+                                "byteStart": 57,
+                                "end": {
+                                    "column": 8,
+                                    "line": 8,
+                                },
+                                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 8,
+                                },
+                            },
+                        },
+                        {
+                            "alternative": 2,
+                            "caller": "stmt",
+                            "source": {
+                                "byteEnd": 87,
+                                "byteStart": 85,
+                                "end": {
+                                    "column": 15,
+                                    "line": 9,
+                                },
+                                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
+                                "start": {
+                                    "column": 13,
+                                    "line": 9,
+                                },
+                            },
+                        },
+                    ],
+                    "labelRenames": [],
+                    "projected": None,
+                    "reason": "inlined token-set rule kw (3 members) into 2 call sites",
+                    "removedRules": [
+                        {
+                            "rule": "kw",
+                            "targetRule": None,
+                        },
+                    ],
+                    "rungs": [],
+                    "source": {
+                        "byteEnd": 255,
+                        "byteStart": 205,
+                        "end": {
+                            "column": 5,
+                            "line": 19,
+                        },
+                        "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
+                        "start": {
+                            "column": 0,
+                            "line": 15,
+                        },
+                    },
+                    "status": "applied",
                 },
-                "end": {
-                  "line": 8,
-                  "column": 8
-                }
-              }
-            },
-            {
-              "caller": "stmt",
-              "alternative": 2,
-              "source": {
-                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
-                "byteStart": 85,
-                "byteEnd": 87,
-                "start": {
-                  "line": 9,
-                  "column": 13
+                {
+                    "alternatives": [],
+                    "boundaryRule": None,
+                    "entryRule": "qualifier",
+                    "grammar": "InlineParser",
+                    "groupingChanges": [],
+                    "inlinedCallSites": [
+                        {
+                            "alternative": 1,
+                            "caller": "target",
+                            "source": {
+                                "byteEnd": 320,
+                                "byteStart": 311,
+                                "end": {
+                                    "column": 15,
+                                    "line": 23,
+                                },
+                                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 23,
+                                },
+                            },
+                        },
+                    ],
+                    "labelRenames": [],
+                    "projected": None,
+                    "reason": "inlined single-use rule qualifier into its call site in target",
+                    "removedRules": [
+                        {
+                            "rule": "qualifier",
+                            "targetRule": None,
+                        },
+                    ],
+                    "rungs": [],
+                    "source": {
+                        "byteEnd": 419,
+                        "byteStart": 391,
+                        "end": {
+                            "column": 5,
+                            "line": 29,
+                        },
+                        "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
+                        "start": {
+                            "column": 0,
+                            "line": 27,
+                        },
+                    },
+                    "status": "applied",
                 },
-                "end": {
-                  "line": 9,
-                  "column": 15
-                }
-              }
-            }
-          ]
+                {
+                    "alternatives": [],
+                    "boundaryRule": None,
+                    "entryRule": "group",
+                    "grammar": "InlineParser",
+                    "groupingChanges": [],
+                    "inlinedCallSites": [
+                        {
+                            "alternative": 4,
+                            "caller": "stmt",
+                            "source": {
+                                "byteEnd": 123,
+                                "byteStart": 118,
+                                "end": {
+                                    "column": 11,
+                                    "line": 11,
+                                },
+                                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 11,
+                                },
+                            },
+                        },
+                    ],
+                    "labelRenames": [],
+                    "projected": None,
+                    "reason": "inlined single-use rule group into its call site in stmt",
+                    "removedRules": [
+                        {
+                            "rule": "group",
+                            "targetRule": None,
+                        },
+                    ],
+                    "rungs": [],
+                    "source": {
+                        "byteEnd": 706,
+                        "byteStart": 672,
+                        "end": {
+                            "column": 5,
+                            "line": 45,
+                        },
+                        "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
+                        "start": {
+                            "column": 0,
+                            "line": 43,
+                        },
+                    },
+                    "status": "applied",
+                },
+                {
+                    "alternatives": [],
+                    "boundaryRule": None,
+                    "entryRule": "marked",
+                    "grammar": "InlineParser",
+                    "groupingChanges": [],
+                    "inlinedCallSites": [
+                        {
+                            "alternative": 3,
+                            "caller": "stmt",
+                            "source": {
+                                "byteEnd": 106,
+                                "byteStart": 100,
+                                "end": {
+                                    "column": 12,
+                                    "line": 10,
+                                },
+                                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 10,
+                                },
+                            },
+                        },
+                    ],
+                    "labelRenames": [],
+                    "projected": None,
+                    "reason": "element labels bind generated accessors",
+                    "removedRules": [],
+                    "rungs": [],
+                    "source": {
+                        "byteEnd": 506,
+                        "byteStart": 473,
+                        "end": {
+                            "column": 5,
+                            "line": 34,
+                        },
+                        "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
+                        "start": {
+                            "column": 0,
+                            "line": 32,
+                        },
+                    },
+                    "status": "declined",
+                },
+                {
+                    "alternatives": [],
+                    "boundaryRule": None,
+                    "entryRule": "badge",
+                    "grammar": "InlineParser",
+                    "groupingChanges": [],
+                    "inlinedCallSites": [
+                        {
+                            "alternative": 1,
+                            "caller": "marked",
+                            "source": {
+                                "byteEnd": 497,
+                                "byteStart": 492,
+                                "end": {
+                                    "column": 17,
+                                    "line": 33,
+                                },
+                                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
+                                "start": {
+                                    "column": 12,
+                                    "line": 33,
+                                },
+                            },
+                        },
+                    ],
+                    "labelRenames": [],
+                    "projected": None,
+                    "reason": "a call site binds a label to the rule context in rule marked",
+                    "removedRules": [],
+                    "rungs": [],
+                    "source": {
+                        "byteEnd": 612,
+                        "byteStart": 579,
+                        "end": {
+                            "column": 5,
+                            "line": 40,
+                        },
+                        "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
+                        "start": {
+                            "column": 0,
+                            "line": 37,
+                        },
+                    },
+                    "status": "declined",
+                },
+                {
+                    "alternatives": [],
+                    "boundaryRule": None,
+                    "entryRule": "opt",
+                    "grammar": "InlineParser",
+                    "groupingChanges": [],
+                    "inlinedCallSites": [
+                        {
+                            "alternative": 4,
+                            "caller": "stmt",
+                            "source": {
+                                "byteEnd": 697,
+                                "byteStart": 694,
+                                "end": {
+                                    "column": 19,
+                                    "line": 44,
+                                },
+                                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
+                                "start": {
+                                    "column": 16,
+                                    "line": 44,
+                                },
+                            },
+                        },
+                    ],
+                    "labelRenames": [],
+                    "projected": None,
+                    "reason": "a nullable body can change decision ownership at the call site",
+                    "removedRules": [],
+                    "rungs": [],
+                    "source": {
+                        "byteEnd": 769,
+                        "byteStart": 747,
+                        "end": {
+                            "column": 5,
+                            "line": 50,
+                        },
+                        "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
+                        "start": {
+                            "column": 0,
+                            "line": 48,
+                        },
+                    },
+                    "status": "declined",
+                },
+            ],
+            "changed": True,
+            "id": 0,
+            "metrics": {
+                "after": {
+                    "alternatives": 23,
+                    "elements": 36,
+                    "rules": 18,
+                },
+                "before": {
+                    "alternatives": 24,
+                    "elements": 37,
+                    "rules": 21,
+                },
+            },
+            "name": "inline-trivial-rules",
+            "safetyClass": "recognition-preserving",
         },
-        {
-          "grammar": "InlineParser",
-          "entryRule": "qualifier",
-          "source": {
-            "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
-            "byteStart": 391,
-            "byteEnd": 419,
-            "start": {
-              "line": 27,
-              "column": 0
-            },
-            "end": {
-              "line": 29,
-              "column": 5
-            }
-          },
-          "status": "applied",
-          "reason": "inlined single-use rule qualifier into its call site in target",
-          "rungs": [],
-          "boundaryRule": null,
-          "projected": null,
-          "removedRules": [
-            {
-              "rule": "qualifier",
-              "targetRule": null
-            }
-          ],
-          "alternatives": [],
-          "labelRenames": [],
-          "groupingChanges": [],
-          "inlinedCallSites": [
-            {
-              "caller": "target",
-              "alternative": 1,
-              "source": {
-                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
-                "byteStart": 311,
-                "byteEnd": 320,
-                "start": {
-                  "line": 23,
-                  "column": 6
-                },
-                "end": {
-                  "line": 23,
-                  "column": 15
-                }
-              }
-            }
-          ]
-        },
-        {
-          "grammar": "InlineParser",
-          "entryRule": "group",
-          "source": {
-            "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
-            "byteStart": 672,
-            "byteEnd": 706,
-            "start": {
-              "line": 43,
-              "column": 0
-            },
-            "end": {
-              "line": 45,
-              "column": 5
-            }
-          },
-          "status": "applied",
-          "reason": "inlined single-use rule group into its call site in stmt",
-          "rungs": [],
-          "boundaryRule": null,
-          "projected": null,
-          "removedRules": [
-            {
-              "rule": "group",
-              "targetRule": null
-            }
-          ],
-          "alternatives": [],
-          "labelRenames": [],
-          "groupingChanges": [],
-          "inlinedCallSites": [
-            {
-              "caller": "stmt",
-              "alternative": 4,
-              "source": {
-                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
-                "byteStart": 118,
-                "byteEnd": 123,
-                "start": {
-                  "line": 11,
-                  "column": 6
-                },
-                "end": {
-                  "line": 11,
-                  "column": 11
-                }
-              }
-            }
-          ]
-        },
-        {
-          "grammar": "InlineParser",
-          "entryRule": "marked",
-          "source": {
-            "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
-            "byteStart": 473,
-            "byteEnd": 506,
-            "start": {
-              "line": 32,
-              "column": 0
-            },
-            "end": {
-              "line": 34,
-              "column": 5
-            }
-          },
-          "status": "declined",
-          "reason": "element labels bind generated accessors",
-          "rungs": [],
-          "boundaryRule": null,
-          "projected": null,
-          "removedRules": [],
-          "alternatives": [],
-          "labelRenames": [],
-          "groupingChanges": [],
-          "inlinedCallSites": [
-            {
-              "caller": "stmt",
-              "alternative": 3,
-              "source": {
-                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
-                "byteStart": 100,
-                "byteEnd": 106,
-                "start": {
-                  "line": 10,
-                  "column": 6
-                },
-                "end": {
-                  "line": 10,
-                  "column": 12
-                }
-              }
-            }
-          ]
-        },
-        {
-          "grammar": "InlineParser",
-          "entryRule": "badge",
-          "source": {
-            "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
-            "byteStart": 579,
-            "byteEnd": 612,
-            "start": {
-              "line": 37,
-              "column": 0
-            },
-            "end": {
-              "line": 40,
-              "column": 5
-            }
-          },
-          "status": "declined",
-          "reason": "a call site binds a label to the rule context in rule marked",
-          "rungs": [],
-          "boundaryRule": null,
-          "projected": null,
-          "removedRules": [],
-          "alternatives": [],
-          "labelRenames": [],
-          "groupingChanges": [],
-          "inlinedCallSites": [
-            {
-              "caller": "marked",
-              "alternative": 1,
-              "source": {
-                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
-                "byteStart": 492,
-                "byteEnd": 497,
-                "start": {
-                  "line": 33,
-                  "column": 12
-                },
-                "end": {
-                  "line": 33,
-                  "column": 17
-                }
-              }
-            }
-          ]
-        },
-        {
-          "grammar": "InlineParser",
-          "entryRule": "opt",
-          "source": {
-            "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
-            "byteStart": 747,
-            "byteEnd": 769,
-            "start": {
-              "line": 48,
-              "column": 0
-            },
-            "end": {
-              "line": 50,
-              "column": 5
-            }
-          },
-          "status": "declined",
-          "reason": "a nullable body can change decision ownership at the call site",
-          "rungs": [],
-          "boundaryRule": null,
-          "projected": null,
-          "removedRules": [],
-          "alternatives": [],
-          "labelRenames": [],
-          "groupingChanges": [],
-          "inlinedCallSites": [
-            {
-              "caller": "stmt",
-              "alternative": 4,
-              "source": {
-                "path": "tests/fixtures/transforms/trivial-inline/Inline.g4",
-                "byteStart": 694,
-                "byteEnd": 697,
-                "start": {
-                  "line": 44,
-                  "column": 16
-                },
-                "end": {
-                  "line": 44,
-                  "column": 19
-                }
-              }
-            }
-          ]
-        }
-      ]
-    }
-  ]
+    ],
+    "reportOnly": False,
+    "version": 1,
 }

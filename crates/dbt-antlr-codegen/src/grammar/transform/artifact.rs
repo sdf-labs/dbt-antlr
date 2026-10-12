@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Konstantin Vyatkin
 use std::collections::BTreeMap;
 
-use super::json::Json;
+use minijinja::Value;
+
 use super::{
     SafetyClass, StructuralMetrics, TransformAlternativeMapping, TransformCallSite,
     TransformCandidateReport, TransformCandidateStatus, TransformLabelMapping, TransformProjection,
@@ -11,6 +12,11 @@ use super::{
 use crate::grammar::frontend::{SourceId, SourceSpan};
 use crate::grammar::source::SourceSet;
 
+/// Renders the optimization manifest with minijinja's built-in `Value`
+/// formatting. The manifest is inspection-only output — nothing parses it
+/// back — so the debug-pretty dump (sorted keys, `True`/`False`/`None`
+/// scalars, Python-literal compatible) suffices and keeps a dedicated JSON
+/// serializer out of the `generator` feature.
 pub(crate) fn render_optimization_manifest(
     report: &TransformReport,
     sources: &SourceSet,
@@ -19,169 +25,151 @@ pub(crate) fn render_optimization_manifest(
     let passes = report
         .entries
         .iter()
-        .map(|entry| optimization_pass_json(entry, report, sources))
-        .collect();
-    Json::Object(vec![
-        ("version", Json::Number(1)),
-        ("reportOnly", Json::Bool(report_only)),
-        ("passes", Json::Array(passes)),
-    ])
-    .to_pretty_string()
+        .map(|entry| optimization_pass_value(entry, report, sources))
+        .collect::<Vec<_>>();
+    let mut manifest = format!(
+        "{:#?}",
+        object(vec![
+            ("version", Value::from(1u64)),
+            ("reportOnly", Value::from(report_only)),
+            ("passes", Value::from_iter(passes)),
+        ])
+    );
+    manifest.push('\n');
+    manifest
 }
 
-fn optimization_pass_json<'a>(
-    entry: &'a TransformReportEntry,
-    report: &'a TransformReport,
-    sources: &'a SourceSet,
-) -> Json<'a> {
+fn optimization_pass_value(
+    entry: &TransformReportEntry,
+    report: &TransformReport,
+    sources: &SourceSet,
+) -> Value {
     let candidates = report
         .candidates
         .iter()
         .filter(|candidate| candidate.pass == entry.id)
-        .map(|candidate| transform_candidate_json(candidate, sources))
-        .collect();
-    Json::Object(vec![
-        ("id", entry.id.index().into()),
-        ("name", Json::string(entry.name)),
-        ("safetyClass", Json::string(safety_name(entry.safety))),
-        ("changed", Json::Bool(entry.changed)),
+        .map(|candidate| transform_candidate_value(candidate, sources))
+        .collect::<Vec<_>>();
+    object(vec![
+        ("id", Value::from(entry.id.index())),
+        ("name", Value::from(entry.name)),
+        ("safetyClass", Value::from(safety_name(entry.safety))),
+        ("changed", Value::from(entry.changed)),
         (
             "metrics",
-            Json::Object(vec![
-                ("before", structural_metrics_json(&entry.before)),
-                ("after", structural_metrics_json(&entry.after)),
+            object(vec![
+                ("before", structural_metrics_value(&entry.before)),
+                ("after", structural_metrics_value(&entry.after)),
             ]),
         ),
-        ("candidates", Json::Array(candidates)),
+        ("candidates", Value::from_iter(candidates)),
     ])
 }
 
-fn structural_metrics_json(metrics: &StructuralMetrics) -> Json<'static> {
-    Json::Object(vec![
-        ("rules", metrics.rules.into()),
-        ("alternatives", metrics.alternatives.into()),
-        ("elements", metrics.elements.into()),
+fn structural_metrics_value(metrics: &StructuralMetrics) -> Value {
+    object(vec![
+        ("rules", Value::from(metrics.rules)),
+        ("alternatives", Value::from(metrics.alternatives)),
+        ("elements", Value::from(metrics.elements)),
     ])
 }
 
-fn transform_candidate_json<'a>(
-    candidate: &'a TransformCandidateReport,
-    sources: &'a SourceSet,
-) -> Json<'a> {
-    Json::Object(vec![
-        ("grammar", Json::string(&candidate.grammar)),
-        ("entryRule", Json::string(&candidate.entry_rule)),
-        ("source", source_json(&candidate.source_span, sources)),
+fn transform_candidate_value(candidate: &TransformCandidateReport, sources: &SourceSet) -> Value {
+    object(vec![
+        ("grammar", Value::from(candidate.grammar.as_str())),
+        ("entryRule", Value::from(candidate.entry_rule.as_str())),
+        ("source", source_value(&candidate.source_span, sources)),
         (
             "status",
-            Json::string(candidate_status_name(candidate.status)),
+            Value::from(candidate_status_name(candidate.status)),
         ),
-        ("reason", Json::string(&candidate.reason)),
+        ("reason", Value::from(candidate.reason.as_str())),
         (
             "rungs",
-            Json::Array(
+            Value::from_iter(
                 candidate
                     .rungs
                     .iter()
-                    .map(|rung| Json::string(rung))
-                    .collect(),
+                    .map(|rung| Value::from(rung.as_str())),
             ),
         ),
         (
             "boundaryRule",
-            option_json(candidate.boundary_rule.as_deref(), Json::string),
+            option(candidate.boundary_rule.as_deref(), Value::from),
         ),
         (
             "projected",
-            option_json(candidate.projection.as_ref(), transform_projection_json),
+            option(candidate.projection.as_ref(), transform_projection_value),
         ),
         (
             "removedRules",
-            Json::Array(
-                candidate
-                    .removed_rules
-                    .iter()
-                    .map(|removed| {
-                        Json::Object(vec![
-                            ("rule", Json::string(&removed.rule)),
-                            (
-                                "targetRule",
-                                option_json(removed.target.as_deref(), Json::string),
-                            ),
-                        ])
-                    })
-                    .collect(),
-            ),
+            Value::from_iter(candidate.removed_rules.iter().map(|removed| {
+                object(vec![
+                    ("rule", Value::from(removed.rule.as_str())),
+                    ("targetRule", option(removed.target.as_deref(), Value::from)),
+                ])
+            })),
         ),
         (
             "alternatives",
-            Json::Array(
+            Value::from_iter(
                 candidate
                     .alternatives
                     .iter()
-                    .map(|mapping| alternative_mapping_json(mapping, sources))
-                    .collect(),
+                    .map(|mapping| alternative_mapping_value(mapping, sources)),
             ),
         ),
         (
             "labelRenames",
-            Json::Array(
+            Value::from_iter(
                 candidate
                     .labels
                     .iter()
-                    .map(|mapping| label_mapping_json(mapping, sources))
-                    .collect(),
+                    .map(|mapping| label_mapping_value(mapping, sources)),
             ),
         ),
         (
             "groupingChanges",
-            Json::Array(
-                candidate
-                    .grouping_changes
-                    .iter()
-                    .map(|rule| {
-                        Json::Object(vec![
-                            ("rule", Json::string(rule)),
-                            ("from", Json::string("flat-loop")),
-                            ("to", Json::string("left-recursive-nesting")),
-                        ])
-                    })
-                    .collect(),
-            ),
+            Value::from_iter(candidate.grouping_changes.iter().map(|rule| {
+                object(vec![
+                    ("rule", Value::from(rule.as_str())),
+                    ("from", Value::from("flat-loop")),
+                    ("to", Value::from("left-recursive-nesting")),
+                ])
+            })),
         ),
         (
             "inlinedCallSites",
-            Json::Array(
+            Value::from_iter(
                 candidate
                     .call_sites
                     .iter()
-                    .map(|site| call_site_json(site, sources))
-                    .collect(),
+                    .map(|site| call_site_value(site, sources)),
             ),
         ),
     ])
 }
 
-fn call_site_json<'a>(site: &'a TransformCallSite, sources: &'a SourceSet) -> Json<'a> {
-    Json::Object(vec![
-        ("caller", Json::string(&site.caller)),
-        ("alternative", site.alternative.into()),
-        ("source", source_json(&site.source_span, sources)),
+fn call_site_value(site: &TransformCallSite, sources: &SourceSet) -> Value {
+    object(vec![
+        ("caller", Value::from(site.caller.as_str())),
+        ("alternative", Value::from(site.alternative)),
+        ("source", source_value(&site.source_span, sources)),
     ])
 }
 
-fn transform_projection_json(projection: &TransformProjection) -> Json<'static> {
-    Json::Object(vec![
+fn transform_projection_value(projection: &TransformProjection) -> Value {
+    object(vec![
         (
             "contextsPerOperand",
-            reduction_json(
+            reduction_value(
                 projection.contexts_per_operand_before,
                 projection.contexts_per_operand_after,
             ),
         ),
         (
             "precedenceDecisions",
-            reduction_json(
+            reduction_value(
                 projection.precedence_decisions_before,
                 projection.precedence_decisions_after,
             ),
@@ -189,78 +177,85 @@ fn transform_projection_json(projection: &TransformProjection) -> Json<'static> 
     ])
 }
 
-fn reduction_json(before: usize, after: usize) -> Json<'static> {
-    Json::Object(vec![
-        ("before", before.into()),
-        ("after", after.into()),
-        ("reduction", before.saturating_sub(after).into()),
+fn reduction_value(before: usize, after: usize) -> Value {
+    object(vec![
+        ("before", Value::from(before)),
+        ("after", Value::from(after)),
+        ("reduction", Value::from(before.saturating_sub(after))),
     ])
 }
 
-fn alternative_mapping_json<'a>(
-    mapping: &'a TransformAlternativeMapping,
-    sources: &'a SourceSet,
-) -> Json<'a> {
-    Json::Object(vec![
-        ("sourceRule", Json::string(&mapping.source_rule)),
-        ("sourceAlternative", mapping.source_alternative.into()),
-        ("source", source_json(&mapping.source_span, sources)),
-        ("targetRule", Json::string(&mapping.target_rule)),
+fn alternative_mapping_value(mapping: &TransformAlternativeMapping, sources: &SourceSet) -> Value {
+    object(vec![
+        ("sourceRule", Value::from(mapping.source_rule.as_str())),
+        ("sourceAlternative", Value::from(mapping.source_alternative)),
+        ("source", source_value(&mapping.source_span, sources)),
+        ("targetRule", Value::from(mapping.target_rule.as_str())),
         (
             "targetAltLabels",
-            Json::Array(
+            Value::from_iter(
                 mapping
                     .target_alternatives
                     .iter()
-                    .map(|label| Json::string(label))
-                    .collect(),
+                    .map(|label| Value::from(label.as_str())),
             ),
         ),
     ])
 }
 
-fn label_mapping_json<'a>(mapping: &'a TransformLabelMapping, sources: &'a SourceSet) -> Json<'a> {
-    Json::Object(vec![
-        ("sourceRule", Json::string(&mapping.source_rule)),
-        ("sourceLabel", Json::string(&mapping.source_label)),
-        ("source", source_json(&mapping.source_span, sources)),
-        ("targetLabel", Json::string(&mapping.target_label)),
+fn label_mapping_value(mapping: &TransformLabelMapping, sources: &SourceSet) -> Value {
+    object(vec![
+        ("sourceRule", Value::from(mapping.source_rule.as_str())),
+        ("sourceLabel", Value::from(mapping.source_label.as_str())),
+        ("source", source_value(&mapping.source_span, sources)),
+        ("targetLabel", Value::from(mapping.target_label.as_str())),
     ])
 }
 
-fn source_json<'a>(span: &SourceSpan, sources: &'a SourceSet) -> Json<'a> {
-    Json::Object(vec![
+fn source_value(span: &SourceSpan, sources: &SourceSet) -> Value {
+    object(vec![
         (
             "path",
-            option_json(sources.logical_path(span.source), |path| {
-                Json::String(path.to_string_lossy())
+            option(sources.logical_path(span.source), |path| {
+                Value::from(path.to_string_lossy().into_owned())
             }),
         ),
-        ("byteStart", span.bytes.start.into()),
-        ("byteEnd", span.bytes.end.into()),
+        ("byteStart", Value::from(span.bytes.start)),
+        ("byteEnd", Value::from(span.bytes.end)),
         (
             "start",
-            option_json(
+            option(
                 sources.line_column(span.source, span.bytes.start),
-                line_column_json,
+                line_column_value,
             ),
         ),
         (
             "end",
-            option_json(
+            option(
                 sources.line_column(span.source, span.bytes.end),
-                line_column_json,
+                line_column_value,
             ),
         ),
     ])
 }
 
-fn line_column_json((line, column): (usize, usize)) -> Json<'static> {
-    Json::Object(vec![("line", line.into()), ("column", column.into())])
+fn line_column_value((line, column): (usize, usize)) -> Value {
+    object(vec![
+        ("line", Value::from(line)),
+        ("column", Value::from(column)),
+    ])
 }
 
-fn option_json<'a, T>(value: Option<T>, render: impl FnOnce(T) -> Json<'a>) -> Json<'a> {
-    value.map_or(Json::Null, render)
+fn object(entries: Vec<(&'static str, Value)>) -> Value {
+    Value::from_iter(
+        entries
+            .into_iter()
+            .map(|(key, value)| (Value::from(key), value)),
+    )
+}
+
+fn option<T>(value: Option<T>, render: impl FnOnce(T) -> Value) -> Value {
+    value.map_or_else(|| Value::from(()), render)
 }
 
 const fn safety_name(safety: SafetyClass) -> &'static str {

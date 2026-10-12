@@ -151,10 +151,10 @@ pub(super) fn fixture(relative: &str) -> PathBuf {
 /// Generates one grammar three ways — unoptimized baseline, applied
 /// optimization, and report-only — asserting each run succeeds, that the
 /// baseline emits no optimization manifest, and that report mode emits only
-/// `optimizations.json`. Returns the three output directories.
+/// `optimizations.txt`. Returns the three output directories.
 ///
 /// `grammar` is a path relative to the crate manifest directory, which the
-/// CLI runs in: rendered source paths in `optimizations.json` are then
+/// CLI runs in: rendered source paths in `optimizations.txt` are then
 /// constant on every platform, keeping the manifest snapshots stable.
 pub(super) fn run_optimization_matrix(
     root: &Path,
@@ -182,7 +182,7 @@ pub(super) fn run_optimization_matrix(
             utf8(&output.stderr)
         );
     }
-    assert!(!baseline.join("optimizations.json").exists());
+    assert!(!baseline.join("optimizations.txt").exists());
     let report_files = fs::read_dir(&report)
         .expect("report directory should exist")
         .map(|entry| {
@@ -193,7 +193,7 @@ pub(super) fn run_optimization_matrix(
                 .into_owned()
         })
         .collect::<Vec<_>>();
-    assert_eq!(report_files, ["optimizations.json"]);
+    assert_eq!(report_files, ["optimizations.txt"]);
     (baseline, optimized, report)
 }
 

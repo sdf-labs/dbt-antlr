@@ -3,7 +3,6 @@
 pub(crate) mod analysis;
 pub(crate) mod artifact;
 pub(crate) mod clone;
-mod json;
 mod registry;
 
 pub(crate) mod passes {

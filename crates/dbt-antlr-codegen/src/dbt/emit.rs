@@ -161,7 +161,7 @@ pub struct EmittedOutput {
     pub diagnostics: Vec<Diagnostic>,
     /// Transform notes for the user (for example `pruned: ...` lines).
     pub optimization_messages: Vec<String>,
-    /// Rendered `optimizations.json` manifest, present when the selected
+    /// Rendered `optimizations.txt` manifest, present when the selected
     /// transforms emit one.
     pub optimization_manifest: Option<String>,
 }

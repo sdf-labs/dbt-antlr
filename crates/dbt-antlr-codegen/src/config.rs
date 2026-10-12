@@ -356,16 +356,19 @@ impl Config {
     }
 }
 
-/// Writes `optimizations.json` next to the generated files when the
+/// Writes `optimizations.txt` next to the generated files when the
 /// selected transforms produced a manifest, and removes a stale manifest
-/// from an earlier optimized run when they did not.
+/// from an earlier optimized run when they did not. Legacy
+/// `optimizations.json` manifests (written by releases that rendered JSON)
+/// are removed as well.
 #[cfg(feature = "generator")]
 fn write_optimization_manifest(
     out_dir: &std::path::Path,
     manifest: Option<String>,
     written: &mut Vec<PathBuf>,
 ) -> Result<(), EmitError> {
-    let path = out_dir.join("optimizations.json");
+    let path = out_dir.join("optimizations.txt");
+    let legacy_path = out_dir.join("optimizations.json");
     match manifest {
         Some(manifest) => {
             std::fs::write(&path, manifest).map_err(|source| EmitError::Write {
@@ -374,13 +377,22 @@ fn write_optimization_manifest(
             })?;
             written.push(path);
         }
-        None => match std::fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
-            Err(source) => return Err(EmitError::Write { path, source }),
-        },
+        None => remove_stale_manifest(&path)?,
     }
+    remove_stale_manifest(&legacy_path)?;
     Ok(())
+}
+
+#[cfg(feature = "generator")]
+fn remove_stale_manifest(path: &std::path::Path) -> Result<(), EmitError> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(EmitError::Write {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
 }
 
 /// Files and non-fatal output of [`Config::generate_detailed`].
