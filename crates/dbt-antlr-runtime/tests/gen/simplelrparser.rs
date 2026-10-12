@@ -27,7 +27,7 @@ use std::sync::LazyLock;
 use std::rc::Rc;
 use std::ops::{DerefMut, Deref};
 
-dbt_antlr_runtime::check_version!("0","1");
+dbt_antlr_runtime::check_version!("0","0");
 pub const SimpleLR_ID:i32=1; 
 pub const SimpleLR_WS:i32=2;
 pub const SimpleLR_EOF:i32=EOF;

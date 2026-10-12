@@ -16,6 +16,8 @@
 
 #![allow(clippy::print_stderr)]
 
+mod common;
+
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -26,13 +28,6 @@ fn grammars_dir() -> PathBuf {
         .join("../dbt-antlr-runtime/grammars")
         .canonicalize()
         .expect("grammars directory exists")
-}
-
-fn golden_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../dbt-antlr-runtime/tests/gen")
-        .canonicalize()
-        .expect("golden directory exists")
 }
 
 fn emit_one(grammar_file: &str, expected_name: &str) -> EmittedFile {
@@ -124,8 +119,7 @@ fn report_exact_diff(expected: &str, actual: &str) -> (usize, usize, usize) {
 
 fn check_golden(grammar_file: &str, emitted_name: &str) {
     let emitted = emit_one(grammar_file, emitted_name);
-    let golden_path = golden_dir().join(emitted_name);
-    let golden = std::fs::read_to_string(&golden_path).expect("golden file readable");
+    let golden = common::read_golden(emitted_name);
 
     // Phase A: whitespace-normalized equality (hard gate).
     let expected_tokens = normalized_tokens(&golden);
