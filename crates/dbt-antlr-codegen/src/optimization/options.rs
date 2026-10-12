@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 /// tree-preserving**! Enabling these transformations may cause the generated
 /// parse tree to deviate from what is implied by the .g4 grammar.
 ///
-/// If enabled, every applied transform is recorded in an `optimizations.json`
+/// If enabled, every applied transform is recorded in an `optimizations.txt`
 /// manifest emitted next to the generated files, so optimization is explicit
 /// and auditable.
 ///

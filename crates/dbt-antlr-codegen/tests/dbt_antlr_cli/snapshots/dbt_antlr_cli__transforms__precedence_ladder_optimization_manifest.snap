@@ -3,609 +3,609 @@ source: crates/dbt-antlr-codegen/tests/dbt_antlr_cli/transforms.rs
 expression: manifest
 ---
 {
-  "version": 1,
-  "reportOnly": false,
-  "passes": [
-    {
-      "id": 0,
-      "name": "collapse-precedence-ladders",
-      "safetyClass": "recognition-preserving",
-      "changed": true,
-      "metrics": {
-        "before": {
-          "rules": 41,
-          "alternatives": 59,
-          "elements": 92
-        },
-        "after": {
-          "rules": 33,
-          "alternatives": 51,
-          "elements": 84
-        }
-      },
-      "candidates": [
+    "passes": [
         {
-          "grammar": "LadderParser",
-          "entryRule": "loosePrefix",
-          "source": {
-            "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-            "byteStart": 1030,
-            "byteEnd": 1078,
-            "start": {
-              "line": 78,
-              "column": 0
+            "candidates": [
+                {
+                    "alternatives": [],
+                    "boundaryRule": "primary",
+                    "entryRule": "loosePrefix",
+                    "grammar": "LadderParser",
+                    "groupingChanges": [],
+                    "inlinedCallSites": [],
+                    "labelRenames": [],
+                    "projected": None,
+                    "reason": "prefix rung loosePrefix is looser than another operator rung and cannot retain that precedence boundary after collapse",
+                    "removedRules": [],
+                    "rungs": [
+                        "loosePrefix",
+                        "power",
+                    ],
+                    "source": {
+                        "byteEnd": 1078,
+                        "byteStart": 1030,
+                        "end": {
+                            "column": 5,
+                            "line": 81,
+                        },
+                        "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                        "start": {
+                            "column": 0,
+                            "line": 78,
+                        },
+                    },
+                    "status": "declined",
+                },
+                {
+                    "alternatives": [
+                        {
+                            "source": {
+                                "byteEnd": 108,
+                                "byteStart": 86,
+                                "end": {
+                                    "column": 28,
+                                    "line": 12,
+                                },
+                                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 12,
+                                },
+                            },
+                            "sourceAlternative": 1,
+                            "sourceRule": "sum",
+                            "targetAltLabels": [
+                                "SumProductBase1",
+                                "SumSumLoop3",
+                            ],
+                            "targetRule": "sum",
+                        },
+                        {
+                            "source": {
+                                "byteEnd": 152,
+                                "byteStart": 130,
+                                "end": {
+                                    "column": 28,
+                                    "line": 16,
+                                },
+                                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 16,
+                                },
+                            },
+                            "sourceAlternative": 1,
+                            "sourceRule": "product",
+                            "targetAltLabels": [
+                                "SumProductBase1",
+                                "SumProductLoop2",
+                            ],
+                            "targetRule": "sum",
+                        },
+                    ],
+                    "boundaryRule": "primary",
+                    "entryRule": "sum",
+                    "grammar": "LadderParser",
+                    "groupingChanges": [
+                        {
+                            "from": "flat-loop",
+                            "rule": "sum",
+                            "to": "left-recursive-nesting",
+                        },
+                        {
+                            "from": "flat-loop",
+                            "rule": "product",
+                            "to": "left-recursive-nesting",
+                        },
+                    ],
+                    "inlinedCallSites": [],
+                    "labelRenames": [],
+                    "projected": {
+                        "contextsPerOperand": {
+                            "after": 2,
+                            "before": 3,
+                            "reduction": 1,
+                        },
+                        "precedenceDecisions": {
+                            "after": 1,
+                            "before": 2,
+                            "reduction": 1,
+                        },
+                    },
+                    "reason": "collapsed 2 precedence rungs into sum",
+                    "removedRules": [
+                        {
+                            "rule": "product",
+                            "targetRule": "sum",
+                        },
+                    ],
+                    "rungs": [
+                        "sum",
+                        "product",
+                    ],
+                    "source": {
+                        "byteEnd": 114,
+                        "byteStart": 76,
+                        "end": {
+                            "column": 5,
+                            "line": 13,
+                        },
+                        "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                        "start": {
+                            "column": 0,
+                            "line": 11,
+                        },
+                    },
+                    "status": "applied",
+                },
+                {
+                    "alternatives": [
+                        {
+                            "source": {
+                                "byteEnd": 250,
+                                "byteStart": 244,
+                                "end": {
+                                    "column": 12,
+                                    "line": 28,
+                                },
+                                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 28,
+                                },
+                            },
+                            "sourceAlternative": 1,
+                            "sourceRule": "directEntry",
+                            "targetAltLabels": [
+                                "DirectEntryRightBase1",
+                            ],
+                            "targetRule": "directEntry",
+                        },
+                        {
+                            "source": {
+                                "byteEnd": 276,
+                                "byteStart": 271,
+                                "end": {
+                                    "column": 11,
+                                    "line": 32,
+                                },
+                                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 32,
+                                },
+                            },
+                            "sourceAlternative": 1,
+                            "sourceRule": "direct",
+                            "targetAltLabels": [
+                                "DirectEntryRightBase1",
+                            ],
+                            "targetRule": "directEntry",
+                        },
+                        {
+                            "source": {
+                                "byteEnd": 299,
+                                "byteStart": 283,
+                                "end": {
+                                    "column": 22,
+                                    "line": 33,
+                                },
+                                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 33,
+                                },
+                            },
+                            "sourceAlternative": 2,
+                            "sourceRule": "direct",
+                            "targetAltLabels": [
+                                "DirectEntryDirectOperator3",
+                            ],
+                            "targetRule": "directEntry",
+                        },
+                        {
+                            "source": {
+                                "byteEnd": 339,
+                                "byteStart": 319,
+                                "end": {
+                                    "column": 26,
+                                    "line": 37,
+                                },
+                                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 37,
+                                },
+                            },
+                            "sourceAlternative": 1,
+                            "sourceRule": "right",
+                            "targetAltLabels": [
+                                "DirectEntryRightBase1",
+                                "DirectEntryRightRight2",
+                            ],
+                            "targetRule": "directEntry",
+                        },
+                    ],
+                    "boundaryRule": "primary",
+                    "entryRule": "directEntry",
+                    "grammar": "LadderParser",
+                    "groupingChanges": [],
+                    "inlinedCallSites": [],
+                    "labelRenames": [],
+                    "projected": {
+                        "contextsPerOperand": {
+                            "after": 2,
+                            "before": 4,
+                            "reduction": 2,
+                        },
+                        "precedenceDecisions": {
+                            "after": 1,
+                            "before": 2,
+                            "reduction": 1,
+                        },
+                    },
+                    "reason": "collapsed 3 precedence rungs into directEntry",
+                    "removedRules": [
+                        {
+                            "rule": "direct",
+                            "targetRule": "directEntry",
+                        },
+                        {
+                            "rule": "right",
+                            "targetRule": "directEntry",
+                        },
+                    ],
+                    "rungs": [
+                        "directEntry",
+                        "direct",
+                        "right",
+                    ],
+                    "source": {
+                        "byteEnd": 256,
+                        "byteStart": 226,
+                        "end": {
+                            "column": 5,
+                            "line": 29,
+                        },
+                        "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                        "start": {
+                            "column": 0,
+                            "line": 27,
+                        },
+                    },
+                    "status": "applied",
+                },
+                {
+                    "alternatives": [
+                        {
+                            "source": {
+                                "byteEnd": 434,
+                                "byteStart": 358,
+                                "end": {
+                                    "column": 82,
+                                    "line": 41,
+                                },
+                                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 41,
+                                },
+                            },
+                            "sourceAlternative": 1,
+                            "sourceRule": "expr",
+                            "targetAltLabels": [
+                                "AtomExpression",
+                                "ExprExprRight6",
+                            ],
+                            "targetRule": "expr",
+                        },
+                        {
+                            "source": {
+                                "byteEnd": 522,
+                                "byteStart": 462,
+                                "end": {
+                                    "column": 66,
+                                    "line": 45,
+                                },
+                                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 45,
+                                },
+                            },
+                            "sourceAlternative": 1,
+                            "sourceRule": "conditionalOr",
+                            "targetAltLabels": [
+                                "AtomExpression",
+                                "ExprConditionalOrLoop5",
+                            ],
+                            "targetRule": "expr",
+                        },
+                        {
+                            "source": {
+                                "byteEnd": 599,
+                                "byteStart": 551,
+                                "end": {
+                                    "column": 54,
+                                    "line": 49,
+                                },
+                                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 49,
+                                },
+                            },
+                            "sourceAlternative": 1,
+                            "sourceRule": "conditionalAnd",
+                            "targetAltLabels": [
+                                "AtomExpression",
+                                "ExprConditionalAndLoop4",
+                            ],
+                            "targetRule": "expr",
+                        },
+                        {
+                            "source": {
+                                "byteEnd": 626,
+                                "byteStart": 622,
+                                "end": {
+                                    "column": 10,
+                                    "line": 53,
+                                },
+                                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 53,
+                                },
+                            },
+                            "sourceAlternative": 1,
+                            "sourceRule": "relation",
+                            "targetAltLabels": [
+                                "AtomExpression",
+                            ],
+                            "targetRule": "expr",
+                        },
+                        {
+                            "source": {
+                                "byteEnd": 699,
+                                "byteStart": 633,
+                                "end": {
+                                    "column": 72,
+                                    "line": 54,
+                                },
+                                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 54,
+                                },
+                            },
+                            "sourceAlternative": 2,
+                            "sourceRule": "relation",
+                            "targetAltLabels": [
+                                "ExprRelationOperator3",
+                            ],
+                            "targetRule": "expr",
+                        },
+                        {
+                            "source": {
+                                "byteEnd": 723,
+                                "byteStart": 718,
+                                "end": {
+                                    "column": 11,
+                                    "line": 58,
+                                },
+                                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 58,
+                                },
+                            },
+                            "sourceAlternative": 1,
+                            "sourceRule": "calc",
+                            "targetAltLabels": [
+                                "AtomExpression",
+                            ],
+                            "targetRule": "expr",
+                        },
+                        {
+                            "source": {
+                                "byteEnd": 766,
+                                "byteStart": 730,
+                                "end": {
+                                    "column": 42,
+                                    "line": 59,
+                                },
+                                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 59,
+                                },
+                            },
+                            "sourceAlternative": 2,
+                            "sourceRule": "calc",
+                            "targetAltLabels": [
+                                "ExprCalcOperator1",
+                            ],
+                            "targetRule": "expr",
+                        },
+                        {
+                            "source": {
+                                "byteEnd": 803,
+                                "byteStart": 773,
+                                "end": {
+                                    "column": 36,
+                                    "line": 60,
+                                },
+                                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 60,
+                                },
+                            },
+                            "sourceAlternative": 3,
+                            "sourceRule": "calc",
+                            "targetAltLabels": [
+                                "ExprCalcOperator2",
+                            ],
+                            "targetRule": "expr",
+                        },
+                        {
+                            "source": {
+                                "byteEnd": 861,
+                                "byteStart": 823,
+                                "end": {
+                                    "column": 44,
+                                    "line": 64,
+                                },
+                                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 64,
+                                },
+                            },
+                            "sourceAlternative": 1,
+                            "sourceRule": "unary",
+                            "targetAltLabels": [
+                                "AtomExpression",
+                            ],
+                            "targetRule": "expr",
+                        },
+                        {
+                            "source": {
+                                "byteEnd": 903,
+                                "byteStart": 868,
+                                "end": {
+                                    "column": 41,
+                                    "line": 65,
+                                },
+                                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 65,
+                                },
+                            },
+                            "sourceAlternative": 2,
+                            "sourceRule": "unary",
+                            "targetAltLabels": [
+                                "LogicalNot",
+                            ],
+                            "targetRule": "expr",
+                        },
+                        {
+                            "source": {
+                                "byteEnd": 941,
+                                "byteStart": 910,
+                                "end": {
+                                    "column": 37,
+                                    "line": 66,
+                                },
+                                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                                "start": {
+                                    "column": 6,
+                                    "line": 66,
+                                },
+                            },
+                            "sourceAlternative": 3,
+                            "sourceRule": "unary",
+                            "targetAltLabels": [
+                                "Negate",
+                            ],
+                            "targetRule": "expr",
+                        },
+                    ],
+                    "boundaryRule": "atom",
+                    "entryRule": "expr",
+                    "grammar": "LadderParser",
+                    "groupingChanges": [
+                        {
+                            "from": "flat-loop",
+                            "rule": "conditionalOr",
+                            "to": "left-recursive-nesting",
+                        },
+                        {
+                            "from": "flat-loop",
+                            "rule": "conditionalAnd",
+                            "to": "left-recursive-nesting",
+                        },
+                    ],
+                    "inlinedCallSites": [],
+                    "labelRenames": [],
+                    "projected": {
+                        "contextsPerOperand": {
+                            "after": 2,
+                            "before": 7,
+                            "reduction": 5,
+                        },
+                        "precedenceDecisions": {
+                            "after": 1,
+                            "before": 6,
+                            "reduction": 5,
+                        },
+                    },
+                    "reason": "collapsed 6 precedence rungs into expr",
+                    "removedRules": [
+                        {
+                            "rule": "conditionalOr",
+                            "targetRule": "expr",
+                        },
+                        {
+                            "rule": "conditionalAnd",
+                            "targetRule": "expr",
+                        },
+                        {
+                            "rule": "relation",
+                            "targetRule": "expr",
+                        },
+                        {
+                            "rule": "calc",
+                            "targetRule": "expr",
+                        },
+                        {
+                            "rule": "unary",
+                            "targetRule": "expr",
+                        },
+                    ],
+                    "rungs": [
+                        "expr",
+                        "conditionalOr",
+                        "conditionalAnd",
+                        "relation",
+                        "calc",
+                        "unary",
+                    ],
+                    "source": {
+                        "byteEnd": 440,
+                        "byteStart": 347,
+                        "end": {
+                            "column": 5,
+                            "line": 42,
+                        },
+                        "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
+                        "start": {
+                            "column": 0,
+                            "line": 40,
+                        },
+                    },
+                    "status": "applied",
+                },
+            ],
+            "changed": True,
+            "id": 0,
+            "metrics": {
+                "after": {
+                    "alternatives": 51,
+                    "elements": 84,
+                    "rules": 33,
+                },
+                "before": {
+                    "alternatives": 59,
+                    "elements": 92,
+                    "rules": 41,
+                },
             },
-            "end": {
-              "line": 81,
-              "column": 5
-            }
-          },
-          "status": "declined",
-          "reason": "prefix rung loosePrefix is looser than another operator rung and cannot retain that precedence boundary after collapse",
-          "rungs": [
-            "loosePrefix",
-            "power"
-          ],
-          "boundaryRule": "primary",
-          "projected": null,
-          "removedRules": [],
-          "alternatives": [],
-          "labelRenames": [],
-          "groupingChanges": [],
-          "inlinedCallSites": []
+            "name": "collapse-precedence-ladders",
+            "safetyClass": "recognition-preserving",
         },
-        {
-          "grammar": "LadderParser",
-          "entryRule": "sum",
-          "source": {
-            "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-            "byteStart": 76,
-            "byteEnd": 114,
-            "start": {
-              "line": 11,
-              "column": 0
-            },
-            "end": {
-              "line": 13,
-              "column": 5
-            }
-          },
-          "status": "applied",
-          "reason": "collapsed 2 precedence rungs into sum",
-          "rungs": [
-            "sum",
-            "product"
-          ],
-          "boundaryRule": "primary",
-          "projected": {
-            "contextsPerOperand": {
-              "before": 3,
-              "after": 2,
-              "reduction": 1
-            },
-            "precedenceDecisions": {
-              "before": 2,
-              "after": 1,
-              "reduction": 1
-            }
-          },
-          "removedRules": [
-            {
-              "rule": "product",
-              "targetRule": "sum"
-            }
-          ],
-          "alternatives": [
-            {
-              "sourceRule": "sum",
-              "sourceAlternative": 1,
-              "source": {
-                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-                "byteStart": 86,
-                "byteEnd": 108,
-                "start": {
-                  "line": 12,
-                  "column": 6
-                },
-                "end": {
-                  "line": 12,
-                  "column": 28
-                }
-              },
-              "targetRule": "sum",
-              "targetAltLabels": [
-                "SumProductBase1",
-                "SumSumLoop3"
-              ]
-            },
-            {
-              "sourceRule": "product",
-              "sourceAlternative": 1,
-              "source": {
-                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-                "byteStart": 130,
-                "byteEnd": 152,
-                "start": {
-                  "line": 16,
-                  "column": 6
-                },
-                "end": {
-                  "line": 16,
-                  "column": 28
-                }
-              },
-              "targetRule": "sum",
-              "targetAltLabels": [
-                "SumProductBase1",
-                "SumProductLoop2"
-              ]
-            }
-          ],
-          "labelRenames": [],
-          "groupingChanges": [
-            {
-              "rule": "sum",
-              "from": "flat-loop",
-              "to": "left-recursive-nesting"
-            },
-            {
-              "rule": "product",
-              "from": "flat-loop",
-              "to": "left-recursive-nesting"
-            }
-          ],
-          "inlinedCallSites": []
-        },
-        {
-          "grammar": "LadderParser",
-          "entryRule": "directEntry",
-          "source": {
-            "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-            "byteStart": 226,
-            "byteEnd": 256,
-            "start": {
-              "line": 27,
-              "column": 0
-            },
-            "end": {
-              "line": 29,
-              "column": 5
-            }
-          },
-          "status": "applied",
-          "reason": "collapsed 3 precedence rungs into directEntry",
-          "rungs": [
-            "directEntry",
-            "direct",
-            "right"
-          ],
-          "boundaryRule": "primary",
-          "projected": {
-            "contextsPerOperand": {
-              "before": 4,
-              "after": 2,
-              "reduction": 2
-            },
-            "precedenceDecisions": {
-              "before": 2,
-              "after": 1,
-              "reduction": 1
-            }
-          },
-          "removedRules": [
-            {
-              "rule": "direct",
-              "targetRule": "directEntry"
-            },
-            {
-              "rule": "right",
-              "targetRule": "directEntry"
-            }
-          ],
-          "alternatives": [
-            {
-              "sourceRule": "directEntry",
-              "sourceAlternative": 1,
-              "source": {
-                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-                "byteStart": 244,
-                "byteEnd": 250,
-                "start": {
-                  "line": 28,
-                  "column": 6
-                },
-                "end": {
-                  "line": 28,
-                  "column": 12
-                }
-              },
-              "targetRule": "directEntry",
-              "targetAltLabels": [
-                "DirectEntryRightBase1"
-              ]
-            },
-            {
-              "sourceRule": "direct",
-              "sourceAlternative": 1,
-              "source": {
-                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-                "byteStart": 271,
-                "byteEnd": 276,
-                "start": {
-                  "line": 32,
-                  "column": 6
-                },
-                "end": {
-                  "line": 32,
-                  "column": 11
-                }
-              },
-              "targetRule": "directEntry",
-              "targetAltLabels": [
-                "DirectEntryRightBase1"
-              ]
-            },
-            {
-              "sourceRule": "direct",
-              "sourceAlternative": 2,
-              "source": {
-                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-                "byteStart": 283,
-                "byteEnd": 299,
-                "start": {
-                  "line": 33,
-                  "column": 6
-                },
-                "end": {
-                  "line": 33,
-                  "column": 22
-                }
-              },
-              "targetRule": "directEntry",
-              "targetAltLabels": [
-                "DirectEntryDirectOperator3"
-              ]
-            },
-            {
-              "sourceRule": "right",
-              "sourceAlternative": 1,
-              "source": {
-                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-                "byteStart": 319,
-                "byteEnd": 339,
-                "start": {
-                  "line": 37,
-                  "column": 6
-                },
-                "end": {
-                  "line": 37,
-                  "column": 26
-                }
-              },
-              "targetRule": "directEntry",
-              "targetAltLabels": [
-                "DirectEntryRightBase1",
-                "DirectEntryRightRight2"
-              ]
-            }
-          ],
-          "labelRenames": [],
-          "groupingChanges": [],
-          "inlinedCallSites": []
-        },
-        {
-          "grammar": "LadderParser",
-          "entryRule": "expr",
-          "source": {
-            "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-            "byteStart": 347,
-            "byteEnd": 440,
-            "start": {
-              "line": 40,
-              "column": 0
-            },
-            "end": {
-              "line": 42,
-              "column": 5
-            }
-          },
-          "status": "applied",
-          "reason": "collapsed 6 precedence rungs into expr",
-          "rungs": [
-            "expr",
-            "conditionalOr",
-            "conditionalAnd",
-            "relation",
-            "calc",
-            "unary"
-          ],
-          "boundaryRule": "atom",
-          "projected": {
-            "contextsPerOperand": {
-              "before": 7,
-              "after": 2,
-              "reduction": 5
-            },
-            "precedenceDecisions": {
-              "before": 6,
-              "after": 1,
-              "reduction": 5
-            }
-          },
-          "removedRules": [
-            {
-              "rule": "conditionalOr",
-              "targetRule": "expr"
-            },
-            {
-              "rule": "conditionalAnd",
-              "targetRule": "expr"
-            },
-            {
-              "rule": "relation",
-              "targetRule": "expr"
-            },
-            {
-              "rule": "calc",
-              "targetRule": "expr"
-            },
-            {
-              "rule": "unary",
-              "targetRule": "expr"
-            }
-          ],
-          "alternatives": [
-            {
-              "sourceRule": "expr",
-              "sourceAlternative": 1,
-              "source": {
-                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-                "byteStart": 358,
-                "byteEnd": 434,
-                "start": {
-                  "line": 41,
-                  "column": 6
-                },
-                "end": {
-                  "line": 41,
-                  "column": 82
-                }
-              },
-              "targetRule": "expr",
-              "targetAltLabels": [
-                "AtomExpression",
-                "ExprExprRight6"
-              ]
-            },
-            {
-              "sourceRule": "conditionalOr",
-              "sourceAlternative": 1,
-              "source": {
-                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-                "byteStart": 462,
-                "byteEnd": 522,
-                "start": {
-                  "line": 45,
-                  "column": 6
-                },
-                "end": {
-                  "line": 45,
-                  "column": 66
-                }
-              },
-              "targetRule": "expr",
-              "targetAltLabels": [
-                "AtomExpression",
-                "ExprConditionalOrLoop5"
-              ]
-            },
-            {
-              "sourceRule": "conditionalAnd",
-              "sourceAlternative": 1,
-              "source": {
-                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-                "byteStart": 551,
-                "byteEnd": 599,
-                "start": {
-                  "line": 49,
-                  "column": 6
-                },
-                "end": {
-                  "line": 49,
-                  "column": 54
-                }
-              },
-              "targetRule": "expr",
-              "targetAltLabels": [
-                "AtomExpression",
-                "ExprConditionalAndLoop4"
-              ]
-            },
-            {
-              "sourceRule": "relation",
-              "sourceAlternative": 1,
-              "source": {
-                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-                "byteStart": 622,
-                "byteEnd": 626,
-                "start": {
-                  "line": 53,
-                  "column": 6
-                },
-                "end": {
-                  "line": 53,
-                  "column": 10
-                }
-              },
-              "targetRule": "expr",
-              "targetAltLabels": [
-                "AtomExpression"
-              ]
-            },
-            {
-              "sourceRule": "relation",
-              "sourceAlternative": 2,
-              "source": {
-                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-                "byteStart": 633,
-                "byteEnd": 699,
-                "start": {
-                  "line": 54,
-                  "column": 6
-                },
-                "end": {
-                  "line": 54,
-                  "column": 72
-                }
-              },
-              "targetRule": "expr",
-              "targetAltLabels": [
-                "ExprRelationOperator3"
-              ]
-            },
-            {
-              "sourceRule": "calc",
-              "sourceAlternative": 1,
-              "source": {
-                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-                "byteStart": 718,
-                "byteEnd": 723,
-                "start": {
-                  "line": 58,
-                  "column": 6
-                },
-                "end": {
-                  "line": 58,
-                  "column": 11
-                }
-              },
-              "targetRule": "expr",
-              "targetAltLabels": [
-                "AtomExpression"
-              ]
-            },
-            {
-              "sourceRule": "calc",
-              "sourceAlternative": 2,
-              "source": {
-                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-                "byteStart": 730,
-                "byteEnd": 766,
-                "start": {
-                  "line": 59,
-                  "column": 6
-                },
-                "end": {
-                  "line": 59,
-                  "column": 42
-                }
-              },
-              "targetRule": "expr",
-              "targetAltLabels": [
-                "ExprCalcOperator1"
-              ]
-            },
-            {
-              "sourceRule": "calc",
-              "sourceAlternative": 3,
-              "source": {
-                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-                "byteStart": 773,
-                "byteEnd": 803,
-                "start": {
-                  "line": 60,
-                  "column": 6
-                },
-                "end": {
-                  "line": 60,
-                  "column": 36
-                }
-              },
-              "targetRule": "expr",
-              "targetAltLabels": [
-                "ExprCalcOperator2"
-              ]
-            },
-            {
-              "sourceRule": "unary",
-              "sourceAlternative": 1,
-              "source": {
-                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-                "byteStart": 823,
-                "byteEnd": 861,
-                "start": {
-                  "line": 64,
-                  "column": 6
-                },
-                "end": {
-                  "line": 64,
-                  "column": 44
-                }
-              },
-              "targetRule": "expr",
-              "targetAltLabels": [
-                "AtomExpression"
-              ]
-            },
-            {
-              "sourceRule": "unary",
-              "sourceAlternative": 2,
-              "source": {
-                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-                "byteStart": 868,
-                "byteEnd": 903,
-                "start": {
-                  "line": 65,
-                  "column": 6
-                },
-                "end": {
-                  "line": 65,
-                  "column": 41
-                }
-              },
-              "targetRule": "expr",
-              "targetAltLabels": [
-                "LogicalNot"
-              ]
-            },
-            {
-              "sourceRule": "unary",
-              "sourceAlternative": 3,
-              "source": {
-                "path": "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
-                "byteStart": 910,
-                "byteEnd": 941,
-                "start": {
-                  "line": 66,
-                  "column": 6
-                },
-                "end": {
-                  "line": 66,
-                  "column": 37
-                }
-              },
-              "targetRule": "expr",
-              "targetAltLabels": [
-                "Negate"
-              ]
-            }
-          ],
-          "labelRenames": [],
-          "groupingChanges": [
-            {
-              "rule": "conditionalOr",
-              "from": "flat-loop",
-              "to": "left-recursive-nesting"
-            },
-            {
-              "rule": "conditionalAnd",
-              "from": "flat-loop",
-              "to": "left-recursive-nesting"
-            }
-          ],
-          "inlinedCallSites": []
-        }
-      ]
-    }
-  ]
+    ],
+    "reportOnly": False,
+    "version": 1,
 }

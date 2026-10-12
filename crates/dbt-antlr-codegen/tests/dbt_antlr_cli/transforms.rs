@@ -17,12 +17,12 @@ fn precedence_ladder_optimization_is_explicit_auditable_and_recognition_preservi
         "--report-precedence-ladders",
     );
 
-    let manifest = fs::read_to_string(optimized.join("optimizations.json"))
+    let manifest = fs::read_to_string(optimized.join("optimizations.txt"))
         .expect("applied optimization manifest should be emitted");
     insta::assert_snapshot!("precedence_ladder_optimization_manifest", manifest);
-    let dry_run_manifest = fs::read_to_string(report.join("optimizations.json"))
+    let dry_run_manifest = fs::read_to_string(report.join("optimizations.txt"))
         .expect("dry-run optimization manifest should be emitted");
-    assert!(dry_run_manifest.contains("\"reportOnly\": true"));
+    assert!(dry_run_manifest.contains("\"reportOnly\": True"));
     assert!(dry_run_manifest.contains("\"status\": \"eligible\""));
     assert!(!dry_run_manifest.contains("\"status\": \"applied\""));
 
@@ -369,7 +369,9 @@ fn unoptimized_regeneration_removes_stale_precedence_manifest() {
         utf8(&optimized.stdout),
         utf8(&optimized.stderr)
     );
-    assert!(out.join("optimizations.json").is_file());
+    assert!(out.join("optimizations.txt").is_file());
+    let legacy = out.join("optimizations.json");
+    fs::write(&legacy, "{}").expect("legacy manifest should be writable");
 
     let baseline = run_dbt_antlr(&[grammar.as_os_str(), OsStr::new("-o"), out.as_os_str()]);
     assert!(
@@ -378,7 +380,8 @@ fn unoptimized_regeneration_removes_stale_precedence_manifest() {
         utf8(&baseline.stdout),
         utf8(&baseline.stderr)
     );
-    assert!(!out.join("optimizations.json").exists());
+    assert!(!out.join("optimizations.txt").exists());
+    assert!(!legacy.exists());
     let parser = fs::read_to_string(out.join("ladderparser.rs"))
         .expect("unoptimized parser should be emitted");
     assert!(generated_parser_has_rule(&parser, "conditionalOr"));
@@ -416,9 +419,9 @@ fn embedded_actions_keep_potentially_referenced_ladder_rules() {
     let parser =
         fs::read_to_string(out.join("actionladderparser.rs")).expect("parser should be emitted");
     assert!(generated_parser_has_rule(&parser, "low"));
-    let manifest = fs::read_to_string(out.join("optimizations.json"))
+    let manifest = fs::read_to_string(out.join("optimizations.txt"))
         .expect("optimization manifest should be emitted");
-    assert!(manifest.contains("\"changed\": false"), "{manifest}");
+    assert!(manifest.contains("\"changed\": False"), "{manifest}");
     assert_generated_modules_compile(temp.path(), &out);
 }
 
@@ -455,9 +458,9 @@ fn embedded_rule_attributes_keep_potentially_referenced_ladder_contexts() {
     let parser =
         fs::read_to_string(out.join("attributeladderparser.rs")).expect("parser should be emitted");
     assert!(generated_parser_has_rule(&parser, "low"));
-    let manifest = fs::read_to_string(out.join("optimizations.json"))
+    let manifest = fs::read_to_string(out.join("optimizations.txt"))
         .expect("optimization manifest should be emitted");
-    assert!(manifest.contains("\"changed\": false"), "{manifest}");
+    assert!(manifest.contains("\"changed\": False"), "{manifest}");
     // No compile check here: the `returns` clause type is outside the
     // template's `rustTypeInitMap`, so the emitted context initializer is
     // the Java tool's `null` placeholder (faithful to the upstream
@@ -476,12 +479,12 @@ fn trivial_rule_inlining_is_explicit_auditable_and_recognition_preserving() {
         "--report-trivial-rules",
     );
 
-    let manifest = fs::read_to_string(optimized.join("optimizations.json"))
+    let manifest = fs::read_to_string(optimized.join("optimizations.txt"))
         .expect("applied optimization manifest should be emitted");
     insta::assert_snapshot!("trivial_inline_optimization_manifest", manifest);
-    let dry_run_manifest = fs::read_to_string(report.join("optimizations.json"))
+    let dry_run_manifest = fs::read_to_string(report.join("optimizations.txt"))
         .expect("dry-run optimization manifest should be emitted");
-    assert!(dry_run_manifest.contains("\"reportOnly\": true"));
+    assert!(dry_run_manifest.contains("\"reportOnly\": True"));
     assert!(dry_run_manifest.contains("\"status\": \"eligible\""));
     assert!(dry_run_manifest.contains("\"status\": \"declined\""));
     assert!(!dry_run_manifest.contains("\"status\": \"applied\""));
