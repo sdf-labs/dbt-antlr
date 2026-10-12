@@ -27,7 +27,7 @@ use std::sync::LazyLock;
 use std::rc::Rc;
 use std::ops::{DerefMut, Deref};
 
-dbt_antlr_runtime::check_version!("0","1");
+dbt_antlr_runtime::check_version!("0","0");
 pub const ReferenceToATN_ID:i32=1; 
 pub const ReferenceToATN_ATN:i32=2; 
 pub const ReferenceToATN_WS:i32=3;

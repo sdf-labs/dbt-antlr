@@ -16,6 +16,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: write # dispatch the CI workflow onto release PR branches
 
 jobs:
   release-plz:
@@ -35,3 +36,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      # GitHub never runs pull_request workflows for PRs opened by
+      # GITHUB_TOKEN (anti-recursion), so release PRs would otherwise get no
+      # CI. workflow_dispatch is the one exception GITHUB_TOKEN can trigger;
+      # the dispatched run attaches to the release branch head commit and
+      # shows up in the release PR checks.
+      - name: Run CI on the open release PR
+        run: |
+          gh pr list --state open --json headRefName \
+            --jq '.[].headRefName | select(startswith("release-plz-"))' \
+            | while read -r branch; do
+                gh workflow run ci.yml --ref "$branch"
+                echo "dispatched CI on $branch"
+              done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

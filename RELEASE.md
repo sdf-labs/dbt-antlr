@@ -29,6 +29,12 @@ g4-parser, then dbt-antlr-codegen).
    order, tags the release commit (`dbt-antlr-runtime-vX.Y.Z`,
    `dbt-antlr-g4-parser-vX.Y.Z`, or `dbt-antlr-codegen-vX.Y.Z`), and creates the
    GitHub release.
+3. Wait for the checks on the release PR before merging. GitHub does not
+   run `pull_request` workflows on PRs opened by `GITHUB_TOKEN`
+   (anti-recursion), so the Release-plz workflow dispatches the CI workflow
+   onto the release branch after every refresh; the run attaches to the
+   release branch head commit and appears in the release PR checks.
+
 Binary distribution is currently disabled; see below.
 
 ## Binary distribution (currently disabled)
@@ -65,4 +71,6 @@ the same major and a minor >= the generated one, so additive runtime releases
 never break previously generated code. Only bump the runtime's minor in a way
 generated code depends on (new APIs the templates emit against) together with
 a tool release; the template renders the version from the runtime the tool
-was built against, so no manual template edits are needed.
+was built against, so no manual template edits are needed. The committed
+test goldens pin the stamp to a zero minor floor (`gen_test_grammars.sh`
+rewrites it on regeneration), so releases never churn the goldens.

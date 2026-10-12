@@ -19,3 +19,12 @@ for grammar in ANTLRv4Lexer ANTLRv4Parser; do
 done
 
 rm -f "$SCRIPT_DIR/src/generated/antlrv4parserbaselistener.rs"
+
+# The emitted check_version! call stamps the runtime major/minor at
+# generation time, where the minor is a compatibility floor. Pin the checked
+# in recognizers to the current major with a zero minor floor so that minor
+# releases do not break the fixpoint check. Revisit when the major version
+# changes.
+MAJOR="$(sed -n 's/^version = "\([0-9]*\)\..*/\1/p' "$WORKSPACE_ROOT/Cargo.toml" | head -1)"
+perl -pi -e 's/check_version!\("[0-9]+","[0-9]+"\)/check_version!("'"$MAJOR"'","0")/' \
+    "$SCRIPT_DIR"/src/generated/*.rs
