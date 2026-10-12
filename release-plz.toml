@@ -8,17 +8,25 @@
 # release commit, and creates the GitHub release.
 
 
+[workspace]
+# `codegen:` commits deliver user-facing tool features: they bump the minor
+# version (also on 0.x, where `feat` alone would only bump patch).
+custom_minor_increment_regex = "^codegen"
+
 [[package]]
 name = "dbt-antlr-runtime"
+version_group = "dbt-antlr"
 git_tag_name = "dbt-antlr-runtime-v{{ version }}"
 git_release_enable = true
 
 [[package]]
 name = "dbt-antlr-g4-parser"
+version_group = "dbt-antlr"
 git_tag_name = "dbt-antlr-g4-parser-v{{ version }}"
 git_release_enable = true
 
 [[package]]
 name = "dbt-antlr-codegen"
+version_group = "dbt-antlr"
 git_tag_name = "dbt-antlr-codegen-v{{ version }}"
 git_release_enable = true
