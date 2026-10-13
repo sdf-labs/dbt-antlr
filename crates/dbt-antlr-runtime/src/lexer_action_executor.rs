@@ -58,6 +58,11 @@ impl<'ephemeral> LexerActionExecutor<'ephemeral> {
         }
     }
 
+    #[cfg(feature = "static-dfa-build")]
+    pub(crate) fn actions(&self) -> &'ephemeral [LexerAction<'ephemeral>] {
+        self.lexer_actions
+    }
+
     pub fn fix_offset_before_match(
         &self,
         arena: &'ephemeral bumpalo::Bump,

@@ -1338,7 +1338,9 @@ use dbt_antlr_runtime::token_factory::{CommonTokenFactory, TokenFactory};
 use dbt_antlr_runtime::rule_context::{BaseRuleContext,EmptyNodeKind,EmptyCustomRuleContext,EmptyRuleNode};
 use dbt_antlr_runtime::vocabulary::{Vocabulary,VocabularyImpl};
 
-use std::ops::{DerefMut, Deref};
+{% if lexer.staticTables %}use dbt_antlr_runtime::static_lexer_dfa::StaticLexerTables;
+
+{% endif %}use std::ops::{DerefMut, Deref};
 use std::sync::LazyLock;
 
 {{ Lexer(lexer, lexer.atn, lexer.actionFuncs, lexer.sempredFuncs, none, namedActions) }}
@@ -1429,7 +1431,7 @@ where
     fn get_atn_simulator_man(&self) -> &'static ATNSimulatorManager { &ATN_SIMULATOR_MANAGER }
 }
 
-{{ SerializedATN(atn) }}
+{% if lexer.staticTables %}{{ StaticLexerTables(lexer.staticTables, atn) }}{% else %}{{ SerializedATN(atn) }}{% endif %}
 {%- endmacro -%}
 {%- macro SerializedATN(model) -%}
 static ATN_SIMULATOR_MANAGER: LazyLock<ATNSimulatorManager> = LazyLock::new(|| ATNSimulatorManager::new(&_ATN));
@@ -1437,6 +1439,25 @@ static _ATN: LazyLock<ATN> =
     LazyLock::new(|| ATNDeserializer::new(None).deserialize(&mut _serializedATN.iter()));
 static _serializedATN: LazyLock<Vec<i32>> = LazyLock::new(|| vec![
     {{ model.serialized | wrap_list(", ", 4, "    ", 4) }}
+]);
+{%- endmacro -%}
+{#- StaticLexerTables replaces SerializedATN for `--static-lexer-dfa` lexers: the
+    `_STATIC_LEXER_TABLE_*` statics carry the static DFA word stream. When
+    every mode compiled and no edge escapes (`omitAtn`), the ATN statics are
+    elided and the simulator manager runs on the tables alone; otherwise the
+    ATN stays for the lazy fallback of escape edges. -#}
+{%- macro StaticLexerTables(model, atn) -%}
+{% if model.omitAtn %}static ATN_SIMULATOR_MANAGER: LazyLock<ATNSimulatorManager> = LazyLock::new(|| ATNSimulatorManager::new_static_lexer(&_STATIC_LEXER_TABLES));
+{% else %}static ATN_SIMULATOR_MANAGER: LazyLock<ATNSimulatorManager> = LazyLock::new(|| ATNSimulatorManager::new_with_static_lexer_tables(&_ATN, &_STATIC_LEXER_TABLES));
+static _ATN: LazyLock<ATN> =
+    LazyLock::new(|| ATNDeserializer::new(None).deserialize(&mut _serializedATN.iter()));
+static _serializedATN: LazyLock<Vec<i32>> = LazyLock::new(|| vec![
+    {{ atn.serialized | wrap_list(", ", 4, "    ", 4) }}
+]);
+{% endif %}static _STATIC_LEXER_TABLES: LazyLock<StaticLexerTables> =
+    LazyLock::new(|| StaticLexerTables::from_words(&_STATIC_LEXER_TABLE_WORDS).expect("invalid static lexer DFA table words; regenerate the lexer"));
+static _STATIC_LEXER_TABLE_WORDS: LazyLock<Vec<u32>> = LazyLock::new(|| vec![
+    {{ model.words | wrap_list(", ", 4, "    ", 4) }}
 ]);
 {%- endmacro -%}
 {#- Using a type to init value map, try to init a type; if not in table

@@ -171,6 +171,21 @@ pub struct SerializedAtnModel {
     pub serialized: Vec<i32>,
 }
 
+/// Static lexer DFA table payload of a `--static-lexer-dfa` lexer build.
+///
+/// `Some` on [`LexerModel::static_tables`] only when the flag is on; the
+/// templates then emit the `_STATIC_LEXER_TABLE_*` statics and, when
+/// `omit_atn` holds (every mode compiled, no escape edges), elide the
+/// `_serializedATN`/`_ATN` statics entirely.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StaticLexerTablesModel {
+    /// Word stream of the `static_dfa_build` format (version 1).
+    pub words: Vec<u32>,
+    /// Whether the generated lexer needs no ATN at runtime.
+    pub omit_atn: bool,
+}
+
 /// Packed parser-ATN words of the vendored packed format (`PATN` v3).
 ///
 /// This intentionally replaces the Java `SerializedATN` model for parsers:
@@ -757,4 +772,6 @@ pub struct LexerModel {
     pub action_funcs: Vec<RuleActionFunctionModel>,
     pub sempred_funcs: Vec<RuleActionFunctionModel>,
     pub atn: SerializedAtnModel,
+    /// Static lexer DFA tables (`--static-lexer-dfa`); `None` with the flag off.
+    pub static_tables: Option<StaticLexerTablesModel>,
 }

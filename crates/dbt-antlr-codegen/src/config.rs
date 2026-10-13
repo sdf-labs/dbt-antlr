@@ -56,6 +56,7 @@ pub struct Config {
     gen_listener: bool,
     gen_visitor: bool,
     cargo_directives: bool,
+    static_lexer_dfa: bool,
     optimization: OptimizationOptions,
     pinned_release_version: Option<String>,
     pinned_release_sha256: Option<String>,
@@ -72,6 +73,7 @@ impl Config {
             gen_listener: true,
             gen_visitor: false,
             cargo_directives: true,
+            static_lexer_dfa: false,
             optimization: OptimizationOptions::default(),
             pinned_release_version: None,
             pinned_release_sha256: None,
@@ -116,6 +118,15 @@ impl Config {
     /// Default: `true`.
     pub const fn cargo_directives(&mut self, print: bool) -> &mut Self {
         self.cargo_directives = print;
+        self
+    }
+
+    /// Toggles static lexer DFA table generation (the command line's
+    /// `--static-lexer-dfa`; lexer scope only for now). Default: `false`.
+    /// With the flag off the generated output is byte-identical to a run
+    /// without it.
+    pub const fn static_lexer_dfa(&mut self, enabled: bool) -> &mut Self {
+        self.static_lexer_dfa = enabled;
         self
     }
 
@@ -307,6 +318,7 @@ impl Config {
         out_dir: &std::path::Path,
     ) -> Result<Generation, EmitError> {
         let _ = (version, out_dir);
+        let _ = (self.static_lexer_dfa,);
         let _ = (&self.pinned_release_sha256, &self.pinned_release_base_url);
         Err(EmitError::Config(
             "pinned_release requires the `download` feature of dbt-antlr-codegen".to_owned(),
@@ -325,6 +337,7 @@ impl Config {
                 self.gen_listener,
                 self.gen_visitor,
                 &self.optimization,
+                self.static_lexer_dfa,
             )?;
             for file in &output.files {
                 let path = out_dir.join(&file.name);

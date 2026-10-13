@@ -48,6 +48,8 @@ generator = [
   "dep:minijinja",
   "dep:petgraph",
   "dep:serde",
+  # The `--static-lexer-dfa` lexer table builder runs at generation time.
+  "dbt-antlr-runtime/static-dfa-build",
 ]
 [dependencies]
 dbt-antlr-g4-parser = { workspace = true, optional = true }
