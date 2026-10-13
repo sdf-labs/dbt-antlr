@@ -3,6 +3,8 @@
 /difftest
 /perftest
 
+PLAN-*.md
+
 # Emacs
 *~
 \#*#
