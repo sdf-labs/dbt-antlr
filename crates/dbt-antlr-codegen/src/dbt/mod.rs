@@ -16,6 +16,7 @@ mod lexer_factory;
 mod listener_factory;
 pub mod model;
 mod parser_factory;
+mod static_lexer_dfa;
 pub mod template;
 
 pub use emit::{

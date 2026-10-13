@@ -328,4 +328,11 @@ impl<'ephemeral> LexerATNConfig<'ephemeral> {
     pub fn has_passed_through_non_greedy_decision(&self) -> bool {
         (self.lexer_action_executor & 1) != 0
     }
+
+    /// Sets the non-greedy bit directly. The static lexer DFA resume path
+    /// uses it to rebuild a config with the exact serialized flag
+    /// (`with_state` can only set the bit, never clear it).
+    pub(crate) fn set_passed_through_non_greedy_decision(&mut self, v: bool) {
+        self.lexer_action_executor = (self.lexer_action_executor & !1) | (v as usize);
+    }
 }

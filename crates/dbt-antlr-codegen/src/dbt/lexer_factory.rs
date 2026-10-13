@@ -11,7 +11,7 @@
 use crate::dbt::model::{
     ActionChunkModel, ChunkContextModel, IndexedActionModel, LexerFileContext, LexerModel,
     NamedActionsModel, OutputFileModel, RuleActionFunctionModel, SerializedAtnModel,
-    TokenConstantModel,
+    StaticLexerTablesModel, TokenConstantModel,
 };
 use crate::grammar::atn::CompiledLexer;
 use crate::grammar::model::{Block, ElementKind, GrammarUnit, RecognizerModel, Rule};
@@ -73,9 +73,12 @@ pub(crate) fn rule_context_struct_name(rule_name: &str) -> String {
 /// Builds the full `LexerFile` render context for one compiled lexer unit.
 ///
 /// `grammar_file_name` is the name that lands in the `fileHeader` comment.
+/// `static_tables` carries the `--static-lexer-dfa` table payload (`None` with
+/// the flag off, which renders the lexer exactly as without the flag).
 pub(crate) fn build_lexer_file_context(
     compiled: &CompiledLexer,
     grammar_file_name: &str,
+    static_tables: Option<StaticLexerTablesModel>,
 ) -> LexerFileContext {
     let unit = &compiled.semantic.unit;
     let recognizer = &compiled.semantic.recognizer;
@@ -110,6 +113,7 @@ pub(crate) fn build_lexer_file_context(
         atn: SerializedAtnModel {
             serialized: compiled.runtime_artifact.atn_words.clone(),
         },
+        static_tables,
     };
 
     LexerFileContext {
