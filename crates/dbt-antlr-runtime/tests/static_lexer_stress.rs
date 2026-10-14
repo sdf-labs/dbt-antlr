@@ -409,10 +409,13 @@ fn clickhouse_static_lexer_stress() {
     for (index, mode) in build.modes.iter().enumerate() {
         println!(
             "mode {index}: present={} states={} escapes={:?} continuations={}",
-            mode.present, mode.num_states, mode.escape_counts, mode.num_continuations
+            mode.table.is_some(),
+            mode.num_states,
+            mode.escape_counts,
+            mode.num_continuations
         );
         assert!(
-            mode.present,
+            mode.table.is_some(),
             "mode {index} builds a table: {:?}",
             mode.failure
         );

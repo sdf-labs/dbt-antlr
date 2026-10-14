@@ -808,6 +808,12 @@ impl StaticLexerTables {
         StaticLexerTables { modes }
     }
 
+    /// The inverse of `from_modes`: unpacks into the per-mode tables.
+    #[cfg(feature = "static-dfa-build")]
+    pub(crate) fn into_modes(self) -> Vec<Option<StaticLexerDFA>> {
+        self.modes
+    }
+
     /// Encodes the tables as a word stream: the exact inverse of
     /// [`Self::from_words`]. Generated code embeds the words.
     ///
@@ -1942,10 +1948,14 @@ mod tests {
                 let name = path.display();
                 let decoded = StaticLexerTables::from_words(&build.words)
                     .unwrap_or_else(|e| panic!("{name}: the builder's words decode: {e}"));
-                assert_eq!(
-                    decoded, build.tables,
-                    "{name}: from_words(to_words(tables)) == tables"
-                );
+                assert_eq!(decoded.num_modes(), build.modes.len(), "{name}: mode count");
+                for m in 0..build.modes.len() {
+                    assert_eq!(
+                        decoded.mode(m),
+                        build.table(m),
+                        "{name}: from_words(to_words(tables)) == tables (mode {m})"
+                    );
+                }
                 assert_eq!(
                     decoded.to_words(),
                     build.words,
@@ -1964,9 +1974,8 @@ mod tests {
             let atn = compile_tables(&fixture(name));
             let build = StaticLexerDfaBuilder::new().build(&atn);
             let decoded = StaticLexerTables::from_words(&build.words).expect("decode");
-            for m in 0..build.tables.num_modes() {
-                let (Some(committed), Some(decoded)) = (build.tables.mode(m), decoded.mode(m))
-                else {
+            for m in 0..build.modes.len() {
+                let (Some(committed), Some(decoded)) = (build.table(m), decoded.mode(m)) else {
                     continue;
                 };
                 for s in 0..committed.num_states() as u16 {

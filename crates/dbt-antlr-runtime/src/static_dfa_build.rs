@@ -16,8 +16,9 @@
 //! ATN action indices, and continuations as [`PendingContinuation`]. State
 //! and continuation interning dedupe by structural content: every config set
 //! is finalized first through a [`PredictionContextCache`] and a build-side
-//! [`BuildStore`] (one per mode, mirroring the per-mode scratch `Bump`), so
-//! contexts are hash-consed and executors and semantic contexts interned.
+//! [`BuildStore`] (one per mode; its arena backs both the scratch and the
+//! finalized configs), so contexts are hash-consed and executors and
+//! semantic contexts interned.
 //! [`ModeBuild::commit`] then lays out the walker's own [`StaticLexerDFA`]:
 //! `u16` packing with the `NO_EDGE`/`ESCAPE`/`ACCEPT_BIT` sentinels, the
 //! dense 129-wide low rows, the hi-class compression, the deduplicated
@@ -97,24 +98,31 @@ const ASCII_MAX: i32 = 127;
 const MAX_TABLE_STATE_COUNT: usize = 0x7FFE;
 const MAX_CONTEXT_DEPTH: u32 = 32;
 
-/// The result of [`StaticLexerDfaBuilder::build`]: the committed structural
-/// tables, their word-stream encoding, and structured diagnostics per mode.
+/// The result of [`StaticLexerDfaBuilder::build`]: the word-stream encoding
+/// of the committed tables, and the per-mode build outcomes (each carrying
+/// its committed table).
 #[derive(Debug)]
 pub struct StaticLexerDfaBuild {
-    /// The committed tables, one entry per lexer mode.
-    pub tables: StaticLexerTables,
-    /// The word-stream encoding of `tables` (`StaticLexerTables::to_words`),
-    /// in the format of the [`crate::static_lexer_dfa`] module documentation.
+    /// The word-stream encoding of the tables of `modes`
+    /// (`StaticLexerTables::to_words`), in the format of the
+    /// [`crate::static_lexer_dfa`] module documentation.
     pub words: Vec<u32>,
-    /// Per-mode build results, in mode order.
-    pub modes: Vec<ModeBuildInfo>,
+    /// Per-mode build outcomes, in mode order.
+    pub modes: Vec<ModeBuildOutcome>,
 }
 
-/// The build result of one mode.
-#[derive(Debug, Clone)]
-pub struct ModeBuildInfo {
-    /// Whether the mode has a table in the word stream.
-    pub present: bool,
+impl StaticLexerDfaBuild {
+    /// The committed table of one mode, when the mode has one.
+    pub fn table(&self, mode: usize) -> Option<&StaticLexerDFA> {
+        self.modes.get(mode)?.table.as_ref()
+    }
+}
+
+/// The build outcome of one mode.
+#[derive(Debug)]
+pub struct ModeBuildOutcome {
+    /// The committed table of the mode; `None` when the mode has no table.
+    pub table: Option<StaticLexerDFA>,
     /// Why the mode has no table.
     pub failure: Option<ModeFailure>,
     /// The number of states of the table.
@@ -191,29 +199,29 @@ impl StaticLexerDfaBuilder {
     /// Builds the tables of every lexer mode of `atn`.
     pub fn build(&self, atn: &ATN) -> StaticLexerDfaBuild {
         let num_modes = atn.mode_to_start_state.len();
-        let mut dfa_tables = Vec::with_capacity(num_modes);
         let mut modes = Vec::with_capacity(num_modes);
         for mode in 0..num_modes {
-            let (table, info) = self.build_mode(atn, mode);
-            dfa_tables.push(table);
-            modes.push(info);
+            modes.push(self.build_mode(atn, mode));
         }
-        let tables = StaticLexerTables::from_modes(dfa_tables);
+        let tables = StaticLexerTables::from_modes(
+            modes
+                .iter_mut()
+                .map(|outcome| outcome.table.take())
+                .collect(),
+        );
         let words = tables.to_words();
-        StaticLexerDfaBuild {
-            tables,
-            words,
-            modes,
+        for (outcome, table) in modes.iter_mut().zip(tables.into_modes()) {
+            outcome.table = table;
         }
+        StaticLexerDfaBuild { words, modes }
     }
 
-    fn build_mode(&self, atn: &ATN, mode_index: usize) -> (Option<StaticLexerDFA>, ModeBuildInfo) {
-        // One store and one context cache per mode, mirroring the per-mode
-        // scratch `Bump`. The store arena backs the finalized configs of the
-        // mode build, so the store must outlive the `run_mode_build` call.
+    fn build_mode(&self, atn: &ATN, mode_index: usize) -> ModeBuildOutcome {
+        // One store and one context cache per mode. The store arena backs
+        // both the scratch configs and the finalized configs of the mode
+        // build, so the store must outlive the `run_mode_build` call.
         let store = BuildStore::new();
         let cache = PredictionContextCache::new();
-        let scratch = bumpalo::Bump::new();
         // SAFETY: `store` and `cache` are stack locals of this function. Both
         // are declared before the `run_mode_build` call, neither moves, and
         // both drop only after the call returns, so they outlive every `&'sc`
@@ -229,7 +237,7 @@ impl StaticLexerDfaBuilder {
             },
             store: unsafe { std::mem::transmute::<&BuildStore<'static>, &BuildStore>(&store) },
         };
-        self.run_mode_build(atn, mode_index, fin, &scratch)
+        self.run_mode_build(atn, mode_index, fin)
     }
 
     /// Runs the build of one mode. The `'sc` lifetime ties the finalized
@@ -240,13 +248,12 @@ impl StaticLexerDfaBuilder {
         atn: &ATN,
         mode_index: usize,
         fin: Finalizer<'sc>,
-        scratch: &bumpalo::Bump,
-    ) -> (Option<StaticLexerDFA>, ModeBuildInfo) {
+    ) -> ModeBuildOutcome {
         let mut mode = ModeBuild::new(self.max_states_per_mode.min(MAX_TABLE_STATE_COUNT));
 
         let start_state = atn.mode_to_start_state[mode_index];
         let mut env = BuildEnv::default();
-        let start_set = start_state_core(atn, start_state.as_ref(), &mut env, scratch);
+        let start_set = start_state_core(atn, start_state.as_ref(), &mut env, fin.store.arena());
         let start_configs = fin.finalize_all(start_set.get_items().cloned());
         let failure = if env.predicate_crossed {
             Some(ModeFailure::StartClosurePredicate)
@@ -261,38 +268,37 @@ impl StaticLexerDfaBuilder {
             None
         };
         if let Some(failure) = failure {
-            return (None, ModeBuildInfo::absent(failure));
+            return ModeBuildOutcome::absent(failure);
         }
         if intern(&mut mode, atn, start_configs).is_none() {
-            return (
-                None,
-                ModeBuildInfo::absent(ModeFailure::StartStateBudgetExceeded),
-            );
+            return ModeBuildOutcome::absent(ModeFailure::StartStateBudgetExceeded);
         }
 
         let mut cursor = 0;
         while cursor < mode.states.len() {
             let source = mode.states[cursor].configs.clone();
-            let rows = compute_state_rows(&mut mode, atn, fin, &source, scratch);
+            let rows = compute_state_rows(&mut mode, atn, fin, &source);
             mode.rows.push(rows);
             cursor += 1;
         }
 
-        let info = ModeBuildInfo {
-            present: true,
+        let num_states = mode.states.len();
+        let num_continuations = mode.continuations.len();
+        let escape_counts = mode.counts;
+        ModeBuildOutcome {
+            table: Some(mode.commit(atn)),
             failure: None,
-            num_states: mode.states.len(),
-            num_continuations: mode.continuations.len(),
-            escape_counts: mode.counts,
-        };
-        (Some(mode.commit(atn)), info)
+            num_states,
+            num_continuations,
+            escape_counts,
+        }
     }
 }
 
-impl ModeBuildInfo {
+impl ModeBuildOutcome {
     fn absent(failure: ModeFailure) -> Self {
-        ModeBuildInfo {
-            present: false,
+        ModeBuildOutcome {
+            table: None,
             failure: Some(failure),
             num_states: 0,
             num_continuations: 0,
@@ -319,13 +325,13 @@ impl LexerClosureEnv for BuildEnv {
     }
 }
 
-/// The build-side [`FinalizeStore`]: a bump arena that backs the finalized
-/// configs of one mode, plus interning maps for lexer action executors and
-/// semantic contexts. Config identity after finalization is structural:
-/// contexts are hash-consed by the [`PredictionContextCache`] of the mode,
-/// executors and semantic contexts intern here. One store per mode, mirroring
-/// the per-mode scratch `Bump`: the arena must live exactly as long as the
-/// [`ModeBuild`] that borrows it.
+/// The build-side [`FinalizeStore`]: a bump arena that backs both the scratch
+/// and the finalized configs of one mode, plus interning maps for lexer
+/// action executors and semantic contexts. Config identity after
+/// finalization is structural: contexts are hash-consed by the
+/// [`PredictionContextCache`] of the mode, executors and semantic contexts
+/// intern here. One store per mode: the arena must live exactly as long as
+/// the [`ModeBuild`] that borrows it.
 #[derive(Debug)]
 struct BuildStore<'sc> {
     executors: RefCell<HashSet<&'sc LexerActionExecutor<'sc>>>,
@@ -778,10 +784,9 @@ fn compute_edge<'sc>(
     fin: Finalizer<'sc>,
     source: &[LexerATNConfig<'sc>],
     t: i32,
-    scratch: &bumpalo::Bump,
 ) -> EdgeEntry {
     let mut env = BuildEnv::default();
-    let mut reach = MutableLexerATNConfigSet::new(scratch);
+    let mut reach = MutableLexerATNConfigSet::new(fin.store.arena());
     let mut capture = ReachCapture::default();
     reachable_core(
         atn,
@@ -791,7 +796,7 @@ fn compute_edge<'sc>(
         t,
         &mut env,
         Some(&mut capture),
-        scratch,
+        fin.store.arena(),
     );
     let closed = fin.finalize_all(reach.get_items().cloned());
 
@@ -929,9 +934,8 @@ fn compute_state_rows<'sc>(
     atn: &ATN,
     fin: Finalizer<'sc>,
     source: &[LexerATNConfig<'sc>],
-    scratch: &bumpalo::Bump,
 ) -> StateRows {
-    let eof = compute_edge(mode, atn, fin, source, EOF, scratch);
+    let eof = compute_edge(mode, atn, fin, source, EOF);
     let mut bounds = BTreeSet::from([0, MAX_SYMBOL + 1]);
     for config in source {
         for tr in config.get_state().get_transitions() {
@@ -943,7 +947,7 @@ fn compute_state_rows<'sc>(
     for b in bounds {
         if lo < b {
             let hi = b - 1;
-            let edge = compute_edge(mode, atn, fin, source, lo, scratch);
+            let edge = compute_edge(mode, atn, fin, source, lo);
             if edge == EdgeEntry::None {
                 lo = b;
                 continue;
@@ -1284,8 +1288,8 @@ mod accel_integration_tests {
                 .deserialize(&mut lexer.lexer_atn_words.as_ref().expect("lexer words").iter());
             let build = super::StaticLexerDfaBuilder::new().build(&atn);
             let mut tagged = 0;
-            for m in 0..build.tables.num_modes() {
-                let Some(table) = build.tables.mode(m) else {
+            for m in 0..build.modes.len() {
+                let Some(table) = build.table(m) else {
                     continue;
                 };
                 for s in 0..table.num_states() as u16 {
