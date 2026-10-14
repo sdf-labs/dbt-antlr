@@ -1,9 +1,8 @@
 use std::fmt::{Debug, Error, Formatter};
 use std::hash::{Hash, Hasher};
 
-use crate::atn_config_set::{ConfigSet, LexerATNConfigSet};
 use crate::atn_state::ATNStateRef;
-use crate::dfa::DFAStateStore;
+use crate::dfa::FinalizeStore;
 use crate::lexer_action_executor::LexerActionExecutor;
 use crate::prediction_context::PredictionContextRef;
 use crate::semantic_context::SemanticContext;
@@ -103,17 +102,14 @@ impl<'ephemeral> ATNConfig<'ephemeral> {
         }
     }
 
-    pub(crate) fn finalize<'sim, CS>(
+    pub(crate) fn finalize<'sim>(
         self,
         cache: &'sim PredictionContextCache,
-        dfa: &DFAStateStore<'sim, CS>,
-    ) -> ATNConfig<'sim>
-    where
-        CS: ConfigSet<'sim>,
-    {
+        store: &impl FinalizeStore<'sim>,
+    ) -> ATNConfig<'sim> {
         ATNConfig {
             context: self.context.map(|c| cache.get_shared_context(&c)),
-            semantic_context: dfa.alloc_semantic_context(|| self.semantic_context.promote(dfa))
+            semantic_context: store.alloc_semantic_context(|| self.semantic_context.promote(store))
                 as &'sim _,
             ..self
         }
@@ -245,14 +241,14 @@ impl<'ephemeral> LexerATNConfig<'ephemeral> {
     pub(crate) fn finalize<'sim>(
         self,
         cache: &'sim PredictionContextCache,
-        dfa: &DFAStateStore<'sim, LexerATNConfigSet<'sim>>,
+        store: &impl FinalizeStore<'sim>,
     ) -> LexerATNConfig<'sim> {
         let has_passed_through_non_greedy_decision = self.has_passed_through_non_greedy_decision();
         let lexer_action_executor = self
             .get_lexer_executor()
-            .map(|ex| dfa.alloc_lexer_action_executor(|| ex.promote(dfa)));
+            .map(|ex| store.alloc_lexer_action_executor(|| ex.promote(store)));
         LexerATNConfig {
-            base: self.base.finalize(cache, dfa),
+            base: self.base.finalize(cache, store),
             lexer_action_executor: lexer_action_executor
                 .map_or(0, |ex| (ex as *const LexerActionExecutor) as usize)
                 | (has_passed_through_non_greedy_decision as usize),

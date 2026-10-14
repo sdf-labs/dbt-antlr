@@ -1,6 +1,10 @@
 //! Integration tests for the compile-time static lexer DFA builder
 //! (`static-dfa-build` feature). Grammars live in `tests/static_lexer/` and
 //! are compiled to lexer ATN words through `dbt-antlr-codegen`'s `atn-export`.
+//!
+//! The per-grammar expectations assert directly on the committed
+//! [`StaticLexerDFA`] tables of `build.tables`. A test-only word-stream
+//! decoder (`check_invariants`) keeps the wire format itself covered.
 #![cfg(feature = "static-dfa-build")]
 
 use std::path::PathBuf;
@@ -9,9 +13,12 @@ use dbt_antlr_runtime::atn::ATN;
 use dbt_antlr_runtime::atn_deserializer::ATNDeserializer;
 use dbt_antlr_runtime::int_stream::EOF;
 use dbt_antlr_runtime::static_dfa_build::{
-    ModeFailure, StaticLexerDfaBuild, StaticLexerDfaBuilder, ACCEPT_BIT,
-    BEHIND_POSITION_INDEPENDENT, CONTINUATION_MOVED_CONFIGS, CONTINUATION_SOURCE_SET, ESCAPE,
-    NO_CONTINUATION, NO_EDGE, STATE_MASK, STATIC_DFA_FORMAT_VERSION, STATIC_DFA_MAGIC,
+    ModeFailure, StaticLexerDfaBuild, StaticLexerDfaBuilder,
+};
+use dbt_antlr_runtime::static_lexer_dfa::{
+    StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, BEHIND_POSITION_INDEPENDENT,
+    CONTINUATION_MOVED_CONFIGS, CONTINUATION_SOURCE_SET, ESCAPE, NO_CONTINUATION, NO_EDGE,
+    STATE_MASK, STATIC_DFA_FORMAT_VERSION, STATIC_DFA_MAGIC,
 };
 
 fn grammar_path(name: &str) -> PathBuf {
@@ -36,6 +43,42 @@ fn build(grammar: &str) -> (ATN, StaticLexerDfaBuild) {
     build_with(grammar, &StaticLexerDfaBuilder::new())
 }
 
+// ======= Structural helpers over the committed tables =======
+
+/// Follows `text` from `from`; every edge must be a plain edge.
+fn walk(dfa: &StaticLexerDFA, from: u16, text: &str) -> u16 {
+    let mut s = from;
+    for c in text.chars() {
+        let entry = dfa.edge_entry(s, c as i32);
+        assert!(
+            entry != NO_EDGE && entry != ESCAPE,
+            "walk: edge on {c:?} from state {s} must be a plain edge, got {entry:#06x}"
+        );
+        s = entry & STATE_MASK;
+    }
+    s
+}
+
+/// The sorted, deduplicated accept token types of the mode.
+fn accept_types(dfa: &StaticLexerDFA) -> Vec<i32> {
+    let mut types: Vec<i32> = (0..dfa.num_states() as u16)
+        .map(|s| dfa.accept_type(s))
+        .filter(|&t| t >= 0)
+        .collect();
+    types.sort_unstable();
+    types.dedup();
+    types
+}
+
+/// True when no edge of the mode escapes (symbol edges and EOF edges).
+fn has_no_escapes(dfa: &StaticLexerDFA) -> bool {
+    (0..dfa.num_states() as u16).all(|s| {
+        dfa.edge_entry(s, EOF) != ESCAPE
+            && dfa.escape_continuation(s, EOF) == NO_CONTINUATION
+            && dfa.escape_ranges(s).is_empty()
+    })
+}
+
 // ======= Test-only decoder for the version-1 word stream =======
 
 #[derive(Debug, Default)]
@@ -44,15 +87,11 @@ struct DecodedMode {
     num_states: usize,
     start_state: u32,
     accept_type: Vec<i32>,
-    accept_actions: Vec<i32>,
     eof: Vec<u16>,
     low: Vec<[u16; 128]>,
     class_starts: Vec<i32>,
     hi_rows: Vec<Vec<(u32, u32, u16)>>,
     row_of: Vec<u32>,
-    action_lists: Vec<u32>,
-    accel: Vec<u32>,
-    escape_eof: Vec<u32>,
     escape_rows: Vec<Vec<(i32, i32, u32)>>,
     continuations: Vec<DecodedCont>,
 }
@@ -119,7 +158,9 @@ fn decode_mode(r: &mut Reader) -> DecodedMode {
     mode.start_state = r.next();
     let n = mode.num_states;
     mode.accept_type = (0..n).map(|_| r.next_i32()).collect();
-    mode.accept_actions = (0..n).map(|_| r.next_i32()).collect();
+    for _ in 0..n {
+        r.next(); // accept action list offsets
+    }
     mode.eof = (0..n).map(|_| r.next() as u16).collect();
     mode.low = (0..n)
         .map(|_| {
@@ -151,11 +192,11 @@ fn decode_mode(r: &mut Reader) -> DecodedMode {
         mode.row_of = (0..n).map(|_| r.next()).collect();
     }
     let num_action_ints = r.next() as usize;
-    mode.action_lists = r.take(num_action_ints).to_vec();
+    r.take(num_action_ints);
     let num_accel_ints = r.next() as usize;
-    mode.accel = r.take(num_accel_ints).to_vec();
+    r.take(num_accel_ints);
     for _ in 0..n {
-        mode.escape_eof.push(r.next());
+        r.next(); // EOF escape index
         let num_ranges = r.next() as usize;
         let mut ranges = Vec::new();
         for _ in 0..num_ranges {
@@ -221,32 +262,6 @@ impl DecodedMode {
         entry
     }
 
-    /// Follows `text` from `from`; every edge must be a plain edge.
-    fn walk(&self, from: u16, text: &str) -> u16 {
-        let mut s = from;
-        for c in text.chars() {
-            let entry = self.edge(s, c as i32);
-            assert!(
-                entry != NO_EDGE && entry != ESCAPE,
-                "walk: edge on {c:?} from state {s} must be a plain edge, got {entry:#06x}"
-            );
-            s = entry & STATE_MASK;
-        }
-        s
-    }
-
-    fn accept_types(&self) -> Vec<i32> {
-        let mut types: Vec<i32> = self
-            .accept_type
-            .iter()
-            .copied()
-            .filter(|&t| t >= 0)
-            .collect();
-        types.sort_unstable();
-        types.dedup();
-        types
-    }
-
     fn escape_range(&self, state: u16, symbol: i32) -> Option<u32> {
         self.escape_rows[state as usize]
             .iter()
@@ -255,12 +270,19 @@ impl DecodedMode {
     }
 }
 
-/// Structural invariants that must hold for every build.
-fn check_invariants(build: &StaticLexerDfaBuild, atn: &ATN) -> Vec<DecodedMode> {
+/// Wire-level codec coverage: the word stream decodes with the runtime
+/// decoder and re-encodes word for word, and the test-only decoder below
+/// checks the structural invariants of every section against the build
+/// diagnostics and the committed tables.
+fn check_invariants(build: &StaticLexerDfaBuild, atn: &ATN) {
+    let decoded = StaticLexerTables::from_words(&build.words).expect("builder words decode");
+    assert_eq!(decoded.to_words(), build.words, "word stream round-trips");
+
     let modes = decode(&build.words);
     assert_eq!(modes.len(), build.modes.len());
-    for (mode, info) in modes.iter().zip(&build.modes) {
+    for (index, (mode, info)) in modes.iter().zip(&build.modes).enumerate() {
         assert_eq!(mode.present, info.present);
+        assert_eq!(build.tables.mode(index).is_some(), info.present);
         if !mode.present {
             assert!(info.failure.is_some());
             continue;
@@ -270,15 +292,22 @@ fn check_invariants(build: &StaticLexerDfaBuild, atn: &ATN) -> Vec<DecodedMode> 
         assert!((mode.start_state as usize) < mode.num_states);
         assert_eq!(mode.continuations.len(), info.num_continuations);
 
-        for (s, row) in mode.low.iter().enumerate() {
-            for (sym, &entry) in row.iter().enumerate() {
-                check_entry(mode, s, sym as i32, entry);
-            }
-            check_entry(mode, s, EOF, mode.eof[s]);
-        }
-        for (s, &row_idx) in mode.row_of.iter().enumerate() {
-            for &(lo_class, _, entry) in &mode.hi_rows[row_idx as usize] {
-                check_entry(mode, s, mode.class_starts[lo_class as usize], entry);
+        let committed = build.tables.mode(index).expect("present mode");
+        // Every section of the word stream agrees with the committed
+        // table: EOF and the dense low row, plus one probe per hi class
+        // (the target is constant within a class by construction).
+        for s in 0..mode.num_states {
+            let mut symbols: Vec<i32> = (0..=127).collect();
+            symbols.push(EOF);
+            symbols.extend(mode.class_starts.iter().copied());
+            for symbol in symbols {
+                let entry = mode.edge(s as u16, symbol);
+                check_entry(mode, s, symbol, entry);
+                assert_eq!(
+                    entry,
+                    committed.edge_entry(s as u16, symbol),
+                    "edge entry of the committed table matches the word stream"
+                );
             }
         }
         for cont in &mode.continuations {
@@ -301,7 +330,6 @@ fn check_invariants(build: &StaticLexerDfaBuild, atn: &ATN) -> Vec<DecodedMode> 
             }
         }
     }
-    modes
 }
 
 fn check_entry(mode: &DecodedMode, state: usize, symbol: i32, entry: u16) {
@@ -336,40 +364,34 @@ fn check_entry(mode: &DecodedMode, state: usize, symbol: i32, entry: u16) {
 #[test]
 fn csv_is_fully_static() {
     let (atn, build) = build("CSV.g4");
-    let modes = check_invariants(&build, &atn);
-    assert_eq!(modes.len(), 1);
-    let mode = &modes[0];
-    assert!(mode.present);
+    check_invariants(&build, &atn);
+    assert_eq!(build.tables.num_modes(), 1);
+    assert!(build.modes[0].present);
     assert_eq!(build.modes[0].escape_counts, Default::default());
-    assert!(mode.continuations.is_empty());
-    assert!(mode.escape_rows.iter().all(|r| r.is_empty()));
-    assert!(mode.eof.iter().all(|&e| e == NO_EDGE));
-    assert!(mode.low.iter().flatten().all(|&e| e != ESCAPE));
+    let dfa = build.tables.mode(0).expect("mode 0");
+    assert_eq!(dfa.num_continuations(), 0);
+    assert!(has_no_escapes(dfa));
 
     // Token types: CSV.g4 is a combined grammar, so the literals of the
     // parser rules take token types 1..=3 (',', '\r', '\n'); the lexer rules
     // follow: WS = 4, TEXT = 5, STRING = 6.
-    assert_eq!(mode.accept_types(), vec![1, 2, 3, 4, 5, 6]);
+    assert_eq!(accept_types(dfa), vec![1, 2, 3, 4, 5, 6]);
 
     // The STRING accept: '"' ... '"' — walk a minimal string.
-    let s = mode.walk(mode.start_state as u16, "\"a\"");
-    assert_eq!(mode.accept_type[s as usize], 6);
+    let s = walk(dfa, dfa.start_state(), "\"a\"");
+    assert_eq!(dfa.accept_type(s), 6);
 
     // The TEXT state loops on hi symbols.
-    let text = mode.walk(mode.start_state as u16, "x");
-    assert_eq!(mode.accept_type[text as usize], 5);
-    let entry = mode.edge(text, 0x400); // a hi symbol: TEXT loops
+    let text = walk(dfa, dfa.start_state(), "x");
+    assert_eq!(dfa.accept_type(text), 5);
+    let entry = dfa.edge_entry(text, 0x400); // a hi symbol: TEXT loops
     assert_ne!(entry, NO_EDGE);
     assert_eq!(entry & STATE_MASK, text);
 
     // The WS action list is channel(HIDDEN): one (0, 1, 0) triple.
-    let ws = mode.walk(mode.start_state as u16, " ");
-    assert_eq!(mode.accept_type[ws as usize], 4);
-    let offset = mode.accept_actions[ws as usize];
-    assert!(offset >= 0);
-    let lists = &mode.action_lists[offset as usize..];
-    assert_eq!(lists[0], 1, "one action");
-    assert_eq!(&lists[1..4], &[0, 1, 0], "channel(HIDDEN)");
+    let ws = walk(dfa, dfa.start_state(), " ");
+    assert_eq!(dfa.accept_type(ws), 4);
+    assert_eq!(dfa.accept_action_triples(ws), vec![(0, 1, 0)]);
 }
 
 #[test]
@@ -377,6 +399,7 @@ fn csv_build_is_deterministic() {
     let (_, a) = build("CSV.g4");
     let (_, b) = build("CSV.g4");
     assert_eq!(a.words, b.words);
+    assert_eq!(a.tables, b.tables);
 }
 
 // ======= Spike: predicate and recursion escapes =======
@@ -384,10 +407,9 @@ fn csv_build_is_deterministic() {
 #[test]
 fn spike_escape_coordinates() {
     let (atn, build) = build("Spike.g4");
-    let modes = check_invariants(&build, &atn);
-    assert_eq!(modes.len(), 1);
-    let mode = &modes[0];
-    assert!(mode.present);
+    check_invariants(&build, &atn);
+    assert_eq!(build.tables.num_modes(), 1);
+    let dfa = build.tables.mode(0).expect("mode 0");
     let counts = build.modes[0].escape_counts;
     assert!(counts.predicate >= 1, "predicate escape exists");
     assert!(counts.recursive_context >= 1, "recursion escape exists");
@@ -396,24 +418,20 @@ fn spike_escape_coordinates() {
     // The predicate escape: 't' after "le" (`KWLET: 'let' {p}?`). The move
     // step of that edge reaches the KWLET accept under the assumed-true
     // predicate, so skip_alt fires and the continuation is source-set.
-    let le = mode.walk(mode.start_state as u16, "le");
-    assert_eq!(mode.edge(le, 't' as i32), ESCAPE);
-    let cont = mode
-        .escape_range(le, 't' as i32)
-        .expect("escape range for 't'");
-    assert_eq!(
-        mode.continuations[cont as usize].kind,
-        CONTINUATION_SOURCE_SET
-    );
-    assert!(!mode.continuations[cont as usize].configs.is_empty());
+    let le = walk(dfa, dfa.start_state(), "le");
+    assert_eq!(dfa.edge_entry(le, 't' as i32), ESCAPE);
+    let cont = dfa.escape_continuation(le, 't' as i32);
+    assert_ne!(cont, NO_CONTINUATION, "escape range for 't'");
+    assert_eq!(dfa.continuation_kind(cont), CONTINUATION_SOURCE_SET);
+    assert!(dfa.continuation_num_configs(cont) > 0);
 
     // The recursion escape: '*' of a nested `/*`. Walk "/*", then repeat
     // "/*" until the '*' edge escapes; it must escape within a few levels.
-    let mut s = mode.walk(mode.start_state as u16, "/*");
+    let mut s = walk(dfa, dfa.start_state(), "/*");
     let mut escaped = None;
     for _ in 0..4 {
-        let slash = mode.walk(s, "/");
-        let entry = mode.edge(slash, '*' as i32);
+        let slash = walk(dfa, s, "/");
+        let entry = dfa.edge_entry(slash, '*' as i32);
         if entry == ESCAPE {
             escaped = Some(slash);
             break;
@@ -422,29 +440,24 @@ fn spike_escape_coordinates() {
         s = entry & STATE_MASK;
     }
     let slash = escaped.expect("nested comment '*' escapes");
-    let cont = mode
-        .escape_range(slash, '*' as i32)
-        .expect("escape range for nested '*'");
-    let cont = &mode.continuations[cont as usize];
-    assert_eq!(cont.kind, CONTINUATION_MOVED_CONFIGS);
-    assert!(!cont.configs.is_empty());
+    let cont = dfa.escape_continuation(slash, '*' as i32);
+    assert_ne!(cont, NO_CONTINUATION, "escape range for nested '*'");
+    assert_eq!(dfa.continuation_kind(cont), CONTINUATION_MOVED_CONFIGS);
+    assert!(dfa.continuation_num_configs(cont) > 0);
 
     // Both continuation kinds exist in the pool.
-    assert!(mode
-        .continuations
-        .iter()
-        .any(|c| c.kind == CONTINUATION_MOVED_CONFIGS));
-    assert!(mode
-        .continuations
-        .iter()
-        .any(|c| c.kind == CONTINUATION_SOURCE_SET));
+    let kinds: Vec<u32> = (0..dfa.num_continuations() as u32)
+        .map(|i| dfa.continuation_kind(i))
+        .collect();
+    assert!(kinds.contains(&CONTINUATION_MOVED_CONFIGS));
+    assert!(kinds.contains(&CONTINUATION_SOURCE_SET));
 
     // Non-nested comment bodies stay static: after "/*", '/' and the loop
     // characters are plain edges.
-    let body = mode.walk(mode.start_state as u16, "/*");
-    let slash = mode.walk(body, "/");
-    assert_ne!(mode.edge(body, 'a' as i32), ESCAPE);
-    assert_ne!(mode.edge(body, 'a' as i32), NO_EDGE);
+    let body = walk(dfa, dfa.start_state(), "/*");
+    let slash = walk(dfa, body, "/");
+    assert_ne!(dfa.edge_entry(body, 'a' as i32), ESCAPE);
+    assert_ne!(dfa.edge_entry(body, 'a' as i32), NO_EDGE);
     let _ = slash;
 }
 
@@ -453,6 +466,7 @@ fn spike_build_is_deterministic() {
     let (_, a) = build("Spike.g4");
     let (_, b) = build("Spike.g4");
     assert_eq!(a.words, b.words);
+    assert_eq!(a.tables, b.tables);
 }
 
 // ======= MiniModes: modes and hi classes =======
@@ -460,37 +474,30 @@ fn spike_build_is_deterministic() {
 #[test]
 fn modes_grammar_builds_all_modes() {
     let (atn, build) = build("MiniModes.g4");
-    let modes = check_invariants(&build, &atn);
-    assert_eq!(modes.len(), 2);
-    assert!(modes.iter().all(|m| m.present));
+    check_invariants(&build, &atn);
+    assert_eq!(build.tables.num_modes(), 2);
+    assert!(build.modes.iter().all(|m| m.present));
 
     // Mode 0 (DEFAULT_MODE): TEXT is ~[<]+, so hi classes exist and cover
     // everything above 127.
-    let default_mode = &modes[0];
-    assert!(!default_mode.class_starts.is_empty());
-    let text = default_mode.walk(default_mode.start_state as u16, "x");
-    let entry = default_mode.edge(text, 0x10FFFF);
+    let default_mode = build.tables.mode(0).expect("mode 0");
+    assert!(default_mode.num_classes() > 0);
+    let text = walk(default_mode, default_mode.start_state(), "x");
+    let entry = default_mode.edge_entry(text, 0x10FFFF);
     assert_ne!(entry, NO_EDGE);
     assert_eq!(entry & STATE_MASK, text);
 
     // The '<' accept of mode 0 pushes mode 1: pushMode(INSIDE) is action
     // triple (5, 1, 0).
-    let lt = default_mode.walk(default_mode.start_state as u16, "<");
-    let offset = default_mode.accept_actions[lt as usize];
-    assert!(offset >= 0);
-    let lists = &default_mode.action_lists[offset as usize..];
-    assert_eq!(lists[0], 1, "one action");
-    assert_eq!(&lists[1..4], &[5, 1, 0], "pushMode(INSIDE)");
+    let lt = walk(default_mode, default_mode.start_state(), "<");
+    assert_eq!(default_mode.accept_action_triples(lt), vec![(5, 1, 0)]);
 
     // Mode 1 (INSIDE): NAME accept, and '>' pops. popMode is (4, 0, 0).
-    let inside = &modes[1];
-    let name = inside.walk(inside.start_state as u16, "abc");
-    assert!(name != inside.start_state as u16);
-    let gt = inside.walk(inside.start_state as u16, ">");
-    let offset = inside.accept_actions[gt as usize];
-    assert!(offset >= 0);
-    let lists = &inside.action_lists[offset as usize..];
-    assert_eq!(&lists[1..4], &[4, 0, 0], "popMode");
+    let inside = build.tables.mode(1).expect("mode 1");
+    let name = walk(inside, inside.start_state(), "abc");
+    assert!(name != inside.start_state());
+    let gt = walk(inside, inside.start_state(), ">");
+    assert_eq!(inside.accept_action_triples(gt), vec![(4, 0, 0)]);
 }
 
 // ======= CustomAction: position-dependent action escape =======
@@ -498,10 +505,9 @@ fn modes_grammar_builds_all_modes() {
 #[test]
 fn custom_action_escapes() {
     let (atn, build) = build("CustomAction.g4");
-    let modes = check_invariants(&build, &atn);
-    assert_eq!(modes.len(), 1);
-    let mode = &modes[0];
-    assert!(mode.present);
+    check_invariants(&build, &atn);
+    assert_eq!(build.tables.num_modes(), 1);
+    let dfa = build.tables.mode(0).expect("mode 0");
     let counts = build.modes[0].escape_counts;
     assert!(counts.custom_action >= 1, "custom action escape exists");
     assert_eq!(counts.predicate, 0);
@@ -510,15 +516,11 @@ fn custom_action_escapes() {
     // The closure of the edge on 't' after "cus" crosses the custom action
     // of `CUST: 'cust' {..} 'x'`. The same closure also reaches the ID accept,
     // so skip_alt fires and the continuation is source-set.
-    let cus = mode.walk(mode.start_state as u16, "cus");
-    assert_eq!(mode.edge(cus, 't' as i32), ESCAPE);
-    let cont = mode
-        .escape_range(cus, 't' as i32)
-        .expect("escape range for 't'");
-    assert_eq!(
-        mode.continuations[cont as usize].kind,
-        CONTINUATION_SOURCE_SET
-    );
+    let cus = walk(dfa, dfa.start_state(), "cus");
+    assert_eq!(dfa.edge_entry(cus, 't' as i32), ESCAPE);
+    let cont = dfa.escape_continuation(cus, 't' as i32);
+    assert_ne!(cont, NO_CONTINUATION, "escape range for 't'");
+    assert_eq!(dfa.continuation_kind(cont), CONTINUATION_SOURCE_SET);
 }
 
 // ======= Budget: forced per-edge budget escapes =======
@@ -529,17 +531,17 @@ fn budget_overflow_escapes_without_continuation() {
         "CSV.g4",
         &StaticLexerDfaBuilder::new().with_max_states_per_mode(1),
     );
-    let modes = check_invariants(&build, &atn);
-    let mode = &modes[0];
-    assert!(mode.present);
-    assert_eq!(mode.num_states, 1);
+    check_invariants(&build, &atn);
+    assert!(build.modes[0].present);
+    let dfa = build.tables.mode(0).expect("mode 0");
+    assert_eq!(dfa.num_states(), 1);
     assert!(build.modes[0].escape_counts.budget > 0);
     // Budget escapes carry no continuation: the pool stays empty.
-    assert!(mode.continuations.is_empty());
+    assert_eq!(dfa.num_continuations(), 0);
     assert_eq!(build.modes[0].num_continuations, 0);
     // Every escape range of the start state has the NO_CONTINUATION index.
-    assert!(!mode.escape_rows[0].is_empty());
-    for &(_, _, cont) in &mode.escape_rows[0] {
+    assert!(!dfa.escape_ranges(0).is_empty());
+    for (_, _, cont) in dfa.escape_ranges(0) {
         assert_eq!(cont, NO_CONTINUATION);
     }
 }
@@ -550,8 +552,8 @@ fn zero_budget_fails_the_mode() {
         "CSV.g4",
         &StaticLexerDfaBuilder::new().with_max_states_per_mode(0),
     );
-    let modes = check_invariants(&build, &atn);
-    assert!(!modes[0].present);
+    check_invariants(&build, &atn);
+    assert!(!build.modes[0].present);
     assert_eq!(
         build.modes[0].failure,
         Some(ModeFailure::StartStateBudgetExceeded)
@@ -563,25 +565,24 @@ fn zero_budget_fails_the_mode() {
 #[test]
 fn eof_edges_are_compiled() {
     let (atn, build) = build("EofLexer.g4");
-    let modes = check_invariants(&build, &atn);
-    assert_eq!(modes.len(), 1);
-    let mode = &modes[0];
-    assert!(mode.present);
+    check_invariants(&build, &atn);
+    assert_eq!(build.tables.num_modes(), 1);
+    let dfa = build.tables.mode(0).expect("mode 0");
     assert_eq!(build.modes[0].escape_counts, Default::default());
 
     // After "ab", the EOF edge reaches the AB accept: AB = 1.
-    let ab = mode.walk(mode.start_state as u16, "ab");
-    let entry = mode.edge(ab, EOF);
+    let ab = walk(dfa, dfa.start_state(), "ab");
+    let entry = dfa.edge_entry(ab, EOF);
     assert_ne!(entry, NO_EDGE);
     assert_ne!(entry, ESCAPE);
     assert_eq!(entry & ACCEPT_BIT, ACCEPT_BIT);
-    assert_eq!(mode.accept_type[(entry & STATE_MASK) as usize], 1);
+    assert_eq!(dfa.accept_type(entry & STATE_MASK), 1);
 
     // EOF from the start state and after "a" alone is no edge: 'a' matches
     // the A rule and stops there.
-    assert_eq!(mode.edge(mode.start_state as u16, EOF), NO_EDGE);
+    assert_eq!(dfa.edge_entry(dfa.start_state(), EOF), NO_EDGE);
     assert_eq!(
-        mode.edge(mode.walk(mode.start_state as u16, "a"), EOF),
+        dfa.edge_entry(walk(dfa, dfa.start_state(), "a"), EOF),
         NO_EDGE
     );
 }
@@ -591,9 +592,13 @@ fn eof_edges_are_compiled() {
 #[test]
 fn xml_lexer_builds_with_escapes() {
     let (atn, build) = build("XMLLexer.g4");
-    let modes = check_invariants(&build, &atn);
-    assert_eq!(modes.len(), 3, "DEFAULT_MODE, INSIDE, PROC_INSTR");
-    assert!(modes.iter().all(|m| m.present));
+    check_invariants(&build, &atn);
+    assert_eq!(
+        build.tables.num_modes(),
+        3,
+        "DEFAULT_MODE, INSIDE, PROC_INSTR"
+    );
+    assert!(build.modes.iter().all(|m| m.present));
     let counts: Vec<_> = build.modes.iter().map(|m| m.escape_counts).collect();
     assert!(counts.iter().any(|c| c.predicate > 0), "COMMENT predicate");
     assert!(
@@ -603,21 +608,18 @@ fn xml_lexer_builds_with_escapes() {
     assert!(counts.iter().all(|&c| c.budget == 0));
 
     // NameStartChar has wide ranges above 127: hi classes exist in INSIDE.
-    assert!(modes.iter().any(|m| !m.class_starts.is_empty()));
+    assert!((0..build.tables.num_modes())
+        .any(|m| { build.tables.mode(m).expect("present mode").num_classes() > 0 }));
 
     // `more` is a position-independent action and compiles statically:
     // SPECIAL_OPEN ends in `more, pushMode(PROC_INSTR)`, triples (3, 0, 0)
     // and (5, 2, 0).
-    let default_mode = &modes[0];
-    let special = default_mode.walk(default_mode.start_state as u16, "<?x");
-    let offset = default_mode.accept_actions[special as usize];
-    assert!(offset >= 0);
-    let lists = &default_mode.action_lists[offset as usize..];
-    assert_eq!(lists[0], 2, "two actions");
-    assert_eq!(&lists[1..4], &[3, 0, 0], "more");
-    assert_eq!(&lists[4..7], &[5, 2, 0], "pushMode(PROC_INSTR)");
-
-    assert!(modes.iter().all(|m| m.present));
+    let default_mode = build.tables.mode(0).expect("mode 0");
+    let special = walk(default_mode, default_mode.start_state(), "<?x");
+    assert_eq!(
+        default_mode.accept_action_triples(special),
+        vec![(3, 0, 0), (5, 2, 0)]
+    );
 }
 
 // ======= Start-closure failures: one ModeFailure variant each =======
@@ -625,9 +627,9 @@ fn xml_lexer_builds_with_escapes() {
 #[test]
 fn start_closure_predicate_fails_the_mode() {
     let (atn, build) = build("StartPred.g4");
-    let modes = check_invariants(&build, &atn);
-    assert_eq!(modes.len(), 1);
-    assert!(!modes[0].present);
+    check_invariants(&build, &atn);
+    assert_eq!(build.tables.num_modes(), 1);
+    assert!(!build.modes[0].present);
     assert_eq!(
         build.modes[0].failure,
         Some(ModeFailure::StartClosurePredicate)
@@ -637,9 +639,9 @@ fn start_closure_predicate_fails_the_mode() {
 #[test]
 fn start_closure_custom_action_fails_the_mode() {
     let (atn, build) = build("StartAction.g4");
-    let modes = check_invariants(&build, &atn);
-    assert_eq!(modes.len(), 1);
-    assert!(!modes[0].present);
+    check_invariants(&build, &atn);
+    assert_eq!(build.tables.num_modes(), 1);
+    assert!(!build.modes[0].present);
     assert_eq!(
         build.modes[0].failure,
         Some(ModeFailure::StartClosureCustomAction)
@@ -649,9 +651,9 @@ fn start_closure_custom_action_fails_the_mode() {
 #[test]
 fn start_closure_recursive_context_fails_the_mode() {
     let (atn, build) = build("StartRecurse.g4");
-    let modes = check_invariants(&build, &atn);
-    assert_eq!(modes.len(), 1);
-    assert!(!modes[0].present);
+    check_invariants(&build, &atn);
+    assert_eq!(build.tables.num_modes(), 1);
+    assert!(!build.modes[0].present);
     assert_eq!(
         build.modes[0].failure,
         Some(ModeFailure::StartClosureRecursiveContext)
@@ -663,10 +665,9 @@ fn start_closure_recursive_context_fails_the_mode() {
 #[test]
 fn eof_edge_escapes_on_guarded_eof() {
     let (atn, build) = build("EofEscape.g4");
-    let modes = check_invariants(&build, &atn);
-    assert_eq!(modes.len(), 1);
-    let mode = &modes[0];
-    assert!(mode.present);
+    check_invariants(&build, &atn);
+    assert_eq!(build.tables.num_modes(), 1);
+    let dfa = build.tables.mode(0).expect("mode 0");
     let counts = build.modes[0].escape_counts;
     assert_eq!(counts.predicate, 1);
     assert_eq!(counts.custom_action, 0);
@@ -674,20 +675,22 @@ fn eof_edge_escapes_on_guarded_eof() {
     assert_eq!(counts.budget, 0);
 
     // The 'a' edge is static: the predicate sits behind the EOF match.
-    let s = mode.walk(mode.start_state as u16, "a");
-    assert_eq!(mode.edge(s, EOF), ESCAPE);
+    let s = walk(dfa, dfa.start_state(), "a");
+    assert_eq!(dfa.edge_entry(s, EOF), ESCAPE);
 
     // The moved EOF config reaches the A accept under the assumed-true
     // predicate, so skip_alt fires and the continuation is source-set.
-    let cont = mode.escape_eof[s as usize];
+    let cont = dfa.escape_continuation(s, EOF);
     assert_ne!(cont, NO_CONTINUATION);
-    let cont = &mode.continuations[cont as usize];
-    assert_eq!(cont.kind, CONTINUATION_SOURCE_SET);
-    assert!(!cont.configs.is_empty());
+    assert_eq!(dfa.continuation_kind(cont), CONTINUATION_SOURCE_SET);
+    assert!(dfa.continuation_num_configs(cont) > 0);
 
     // The start state has no EOF edge at all.
-    assert_eq!(mode.edge(mode.start_state as u16, EOF), NO_EDGE);
-    assert_eq!(mode.escape_eof[mode.start_state as usize], NO_CONTINUATION);
+    assert_eq!(dfa.edge_entry(dfa.start_state(), EOF), NO_EDGE);
+    assert_eq!(
+        dfa.escape_continuation(dfa.start_state(), EOF),
+        NO_CONTINUATION
+    );
 }
 
 // ======= Dump helper (manual inspection) =======
@@ -696,19 +699,22 @@ fn eof_edge_escapes_on_guarded_eof() {
 #[ignore]
 fn dump_spike() {
     let (atn, build) = build("Spike.g4");
-    let modes = check_invariants(&build, &atn);
-    let mode = &modes[0];
-    eprintln!("states: {}", mode.num_states);
-    for s in 0..mode.num_states as u16 {
+    check_invariants(&build, &atn);
+    let dfa = build.tables.mode(0).expect("mode 0");
+    eprintln!("states: {}", dfa.num_states());
+    for s in 0..dfa.num_states() as u16 {
         let mut edges = Vec::new();
         for sym in 0..=127i32 {
-            let entry = mode.edge(s, sym);
+            let entry = dfa.edge_entry(s, sym);
             if entry == NO_EDGE {
                 continue;
             }
             let c = char::from_u32(sym as u32).unwrap();
             if entry == ESCAPE {
-                edges.push(format!("{c:?}->ESC(c{:?})", mode.escape_range(s, sym)));
+                edges.push(format!(
+                    "{c:?}->ESC(c{:?})",
+                    dfa.escape_continuation(s, sym)
+                ));
             } else {
                 edges.push(format!(
                     "{c:?}->{}{}",
@@ -718,19 +724,18 @@ fn dump_spike() {
             }
         }
         eprintln!(
-            "  s{s} accept={} actions_off={} edges: {}",
-            mode.accept_type[s as usize],
-            mode.accept_actions[s as usize],
+            "  s{s} accept={} actions={:?} edges: {}",
+            dfa.accept_type(s),
+            dfa.accept_action_triples(s),
             edges.join(" ")
         );
     }
-    eprintln!("continuations: {}", mode.continuations.len());
-    for (i, c) in mode.continuations.iter().enumerate() {
+    eprintln!("continuations: {}", dfa.num_continuations());
+    for i in 0..dfa.num_continuations() as u32 {
         eprintln!(
-            "  c{i} kind={} ctxs={:?} configs={}",
-            c.kind,
-            c.ctxs,
-            c.configs.len()
+            "  c{i} kind={} configs={}",
+            dfa.continuation_kind(i),
+            dfa.continuation_num_configs(i)
         );
     }
     eprintln!("escape counts: {:?}", build.modes[0].escape_counts);

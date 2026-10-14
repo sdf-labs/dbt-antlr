@@ -4,10 +4,27 @@
 //! lazy [`crate::lexer_atn_simulator::LexerATNSimulator`] runs at runtime. It
 //! drives the move and closure code of the simulator itself, so maximal munch,
 //! rule priority, non-greedy loops, and action accumulation match the lazy
-//! path by construction. The result is one static DFA table per lexer mode,
-//! serialized as a `Vec<u32>` word stream. Generated code embeds the words.
-//! A table walker (a later phase) tokenizes from the words without ATN
-//! simulation.
+//! path by construction. The result is one [`StaticLexerDFA`] table per lexer
+//! mode plus the `Vec<u32>` word stream that generated code embeds
+//! ([`StaticLexerTables::to_words`]). The walker's `match_static` tokenizes
+//! from the tables without ATN simulation.
+//!
+//! # Build structure
+//!
+//! The build carries structural data only. [`ModeBuild`] holds finalized
+//! [`LexerATNConfig`] sets, structured edges ([`EdgeEntry`]), accept data as
+//! ATN action indices, and continuations as [`PendingContinuation`]. State
+//! and continuation interning dedupe by structural content: every config set
+//! is finalized first through a [`PredictionContextCache`] and a build-side
+//! [`BuildStore`] (one per mode, mirroring the per-mode scratch `Bump`), so
+//! contexts are hash-consed and executors and semantic contexts interned.
+//! [`ModeBuild::commit`] then lays out the walker's own [`StaticLexerDFA`]:
+//! `u16` packing with the `NO_EDGE`/`ESCAPE`/`ACCEPT_BIT` sentinels, the
+//! dense 129-wide low rows, the hi-class compression, the deduplicated
+//! accept action tables, the accel classification, the escape ranges, and
+//! the continuation pool. The word-stream encoding of the tables lives with
+//! the decoder: `StaticLexerTables::to_words` in [`crate::static_lexer_dfa`],
+//! whose module documentation is the authoritative wire-format contract.
 //!
 //! # Escape edges
 //!
@@ -37,72 +54,6 @@
 //! (`CONTINUATION_SOURCE_SET`). Eligibility is per edge. A whole mode fails
 //! only when the start-state closure itself escapes.
 //!
-//! # Word stream format (version 1)
-//!
-//! One `i32` value per `u32` word, except where noted. Sizes and indices are
-//! `u32`. Symbols are `i32` values in `0..=0x10FFFF`. All multi-word sections
-//! use the order of this list:
-//!
-//! - Preamble: `MAGIC`, `STATIC_DFA_FORMAT_VERSION`, the total word count of
-//!   the stream, `num_modes`.
-//! - Per mode: `present` flag (0 or 1). A mode with `present == 0` has no more
-//!   words.
-//! - `num_states`, `start_state`.
-//! - `accept_type[num_states]`: token type per state, `-1` when the state is
-//!   not an accept state.
-//! - `accept_actions[num_states]`: word offset of the accept action list of
-//!   the state in the action-list section, `-1` when empty.
-//! - `eof[num_states]`: the EOF edge entry of each state.
-//! - `low[num_states * 128]`: the edge entries of each state for the symbols
-//!   `0..=127`, in symbol order per state.
-//! - Hi-class section: `num_classes`, then, when `num_classes > 0`,
-//!   `class_starts[num_classes]`, `num_rows`, `num_row_triples`,
-//!   `row_offsets[num_rows + 1]` (in triples), `num_row_triples` times
-//!   `(lo_class, hi_class, target_entry)`, and `row_of[num_states]`. Class `i`
-//!   covers the symbols in `class_starts[i]..class_starts[i + 1]`, or up to
-//!   `0x10FFFF` for the last class. `class_starts[0]` is 128, and the bounds
-//!   are the union of the hi-edge bounds of the mode. The target of a state is
-//!   constant within a class. Rows are deduplicated by content. The
-//!   deserializer derives the direct symbol-to-class map from `class_starts`;
-//!   the stream carries no expanded map.
-//! - Action-list section: `num_action_list_ints`, then the concatenated lists.
-//!   A list is `len`, then `len` times the ATN encoding `(type, data1, data2)`
-//!   of one lexer action. Lists are deduplicated by content.
-//! - Accel section: `num_accel_ints`, then the run-acceleration entries. An
-//!   entry is `(state, ACCEL_POSITIVE, w0, w1, w2, w3)` for a 128-bit bitmap
-//!   of self-looping ASCII symbols, or `(state, ACCEL_EXCLUSION, nl_in_set,
-//!   n_needles, needle0, needle1, needle2)` with zero-padded needles. The
-//!   bitmap never contains `'\n'`. A `\n` that loops is an exclusion needle
-//!   with `nl_in_set = 1`, so the walker keeps line and column exact.
-//! - Escape rows: per state, `eof_escape`, `num_ranges`, then `num_ranges`
-//!   times `(lo_symbol, hi_symbol, continuation_index)`. The ranges are the
-//!   sorted, disjoint symbol intervals whose edge escapes. Edges with a plain
-//!   target and edges that do not exist have no range. `eof_escape` is
-//!   meaningful only when the EOF edge entry is `ESCAPE`. A continuation
-//!   index of `NO_CONTINUATION` marks a budget escape.
-//! - Continuation pool: `num_continuations`, then per continuation `kind`,
-//!   `nctx`, `nctx` times `(ctx_kind, parent_local, return_state)`, `nconfigs`,
-//!   and `nconfigs` times `(state, flags, alt, ctx_local, nactions)`, with
-//!   `nactions` times `(action_index, behind)` after each config.
-//!
-//! Edge entries are `target | ACCEPT_BIT` when the target state is an accept
-//! state, `target` otherwise, `NO_EDGE` when the edge does not exist, or
-//! `ESCAPE` for an escape edge. Escape edges never carry `ACCEPT_BIT`. State
-//! ids stay below `0x7FFE`, so `ACCEPT_BIT | state` peaks at `0xFFFD`.
-//!
-//! In a continuation, `kind` is `CONTINUATION_MOVED_CONFIGS` (0) for the
-//! post-move, pre-closure configs of the escape edge, or
-//! `CONTINUATION_SOURCE_SET` (1) for the source configs of the state. The
-//! context table is topological: local id 0 is the empty context, and entry
-//! `i` has local id `i + 1` with parents that refer to smaller ids. `ctx_kind`
-//! is 0 (singleton); lexer contexts are always empty or singleton chains. In
-//! `flags`, bit 0 is `passed_through_non_greedy`, bit 1 is
-//! `alt_reached_accept` (meaningful for kind 0 only; the resume recomputes the
-//! flag for kind 1), and bit 2 is reserved. `behind` is the count of consumed
-//! symbols between the action and the escape edge, or
-//! `BEHIND_POSITION_INDEPENDENT` for a position-independent action. This
-//! builder only emits `BEHIND_POSITION_INDEPENDENT`.
-//!
 //! # EOF edges
 //!
 //! EOF consumes no input. The builder computes EOF edges with the
@@ -114,23 +65,28 @@
 //!
 //! The build is deterministic: identical input ATNs produce identical words.
 
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-pub use crate::static_lexer_dfa::{
-    ACCEL_EXCLUSION, ACCEL_POSITIVE, ACCEPT_BIT, BEHIND_POSITION_INDEPENDENT,
-    CONTINUATION_MOVED_CONFIGS, CONTINUATION_SOURCE_SET, ESCAPE, NO_CONTINUATION, NO_EDGE,
-    STATE_MASK, STATIC_DFA_FORMAT_VERSION, STATIC_DFA_MAGIC,
-};
-
+use crate::arena::{is_ref_in_arena, is_slice_in_arena};
 use crate::atn::ATN;
 use crate::atn_config::LexerATNConfig;
 use crate::atn_config_set::MutableLexerATNConfigSet;
 use crate::atn_state::ATNStateType;
+use crate::dfa::FinalizeStore;
 use crate::int_stream::EOF;
+use crate::lexer_action::{LexerAction, LexerIndexedCustomAction};
+use crate::lexer_action_executor::LexerActionExecutor;
 use crate::lexer_atn_simulator::{reachable_core, start_state_core, LexerClosureEnv, ReachCapture};
 use crate::prediction_context::PredictionContextRef;
-use crate::static_lexer_dfa::Accel;
+use crate::semantic_context::SemanticContext;
+use crate::static_lexer_dfa::{
+    class_map, dense_hi_rows, Accel, ContinuationConfig, EscapeRange, LexerContinuation,
+    StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, ASCII_ROW, CONTINUATION_MOVED_CONFIGS,
+    CONTINUATION_SOURCE_SET, ESCAPE, LOW_ROW, NO_CONTINUATION, NO_EDGE,
+};
 use crate::transition::{Transition, TransitionType};
+use crate::PredictionContextCache;
 
 /// The default per-mode state budget, equal to the dbt `LexerDFABuilder`
 /// default.
@@ -141,11 +97,14 @@ const ASCII_MAX: i32 = 127;
 const MAX_TABLE_STATE_COUNT: usize = 0x7FFE;
 const MAX_CONTEXT_DEPTH: u32 = 32;
 
-/// The result of [`StaticLexerDfaBuilder::build`]: the serialized tables and
-/// structured diagnostics per mode.
+/// The result of [`StaticLexerDfaBuilder::build`]: the committed structural
+/// tables, their word-stream encoding, and structured diagnostics per mode.
 #[derive(Debug)]
 pub struct StaticLexerDfaBuild {
-    /// The word stream, in the format of the module documentation.
+    /// The committed tables, one entry per lexer mode.
+    pub tables: StaticLexerTables,
+    /// The word-stream encoding of `tables` (`StaticLexerTables::to_words`),
+    /// in the format of the [`crate::static_lexer_dfa`] module documentation.
     pub words: Vec<u32>,
     /// Per-mode build results, in mode order.
     pub modes: Vec<ModeBuildInfo>,
@@ -232,54 +191,89 @@ impl StaticLexerDfaBuilder {
     /// Builds the tables of every lexer mode of `atn`.
     pub fn build(&self, atn: &ATN) -> StaticLexerDfaBuild {
         let num_modes = atn.mode_to_start_state.len();
-        let mut words = vec![
-            STATIC_DFA_MAGIC,
-            STATIC_DFA_FORMAT_VERSION,
-            0,
-            num_modes as u32,
-        ];
+        let mut dfa_tables = Vec::with_capacity(num_modes);
         let mut modes = Vec::with_capacity(num_modes);
         for mode in 0..num_modes {
-            modes.push(self.build_mode(atn, mode, &mut words));
+            let (table, info) = self.build_mode(atn, mode);
+            dfa_tables.push(table);
+            modes.push(info);
         }
-        words[2] = words.len() as u32;
-        StaticLexerDfaBuild { words, modes }
+        let tables = StaticLexerTables::from_modes(dfa_tables);
+        let words = tables.to_words();
+        StaticLexerDfaBuild {
+            tables,
+            words,
+            modes,
+        }
     }
 
-    fn build_mode(&self, atn: &ATN, mode_index: usize, out: &mut Vec<u32>) -> ModeBuildInfo {
+    fn build_mode(&self, atn: &ATN, mode_index: usize) -> (Option<StaticLexerDFA>, ModeBuildInfo) {
+        // One store and one context cache per mode, mirroring the per-mode
+        // scratch `Bump`. The store arena backs the finalized configs of the
+        // mode build, so the store must outlive the `run_mode_build` call.
+        let store = BuildStore::new();
+        let cache = PredictionContextCache::new();
         let scratch = bumpalo::Bump::new();
+        // SAFETY: `store` and `cache` are stack locals of this function. Both
+        // are declared before the `run_mode_build` call, neither moves, and
+        // both drop only after the call returns, so they outlive every `&'sc`
+        // reference that `fin` hands out. The scoped `'sc` parameter of
+        // `run_mode_build` binds the fabricated references to the call scope:
+        // inside the callee `'sc` is opaque and cannot unify with `'static`,
+        // so no finalized config or interned reference can escape the scope.
+        let fin = Finalizer {
+            cache: unsafe {
+                std::mem::transmute::<&PredictionContextCache<'static>, &PredictionContextCache>(
+                    &cache,
+                )
+            },
+            store: unsafe { std::mem::transmute::<&BuildStore<'static>, &BuildStore>(&store) },
+        };
+        self.run_mode_build(atn, mode_index, fin, &scratch)
+    }
+
+    /// Runs the build of one mode. The `'sc` lifetime ties the finalized
+    /// configs to the store and cache of the caller. It is opaque in this
+    /// body, so nothing that borrows from them can escape the call.
+    fn run_mode_build<'sc>(
+        &self,
+        atn: &ATN,
+        mode_index: usize,
+        fin: Finalizer<'sc>,
+        scratch: &bumpalo::Bump,
+    ) -> (Option<StaticLexerDFA>, ModeBuildInfo) {
         let mut mode = ModeBuild::new(self.max_states_per_mode.min(MAX_TABLE_STATE_COUNT));
 
         let start_state = atn.mode_to_start_state[mode_index];
         let mut env = BuildEnv::default();
-        let start_set = start_state_core(atn, start_state.as_ref(), &mut env, &scratch);
-        let start_configs: Vec<_> = start_set.get_items().cloned().collect();
-        let start_key = key_of_configs(&mut mode.ctx_arena, atn, &start_configs);
+        let start_set = start_state_core(atn, start_state.as_ref(), &mut env, scratch);
+        let start_configs = fin.finalize_all(start_set.get_items().cloned());
         let failure = if env.predicate_crossed {
             Some(ModeFailure::StartClosurePredicate)
-        } else if start_key.custom_action {
+        } else if has_position_dependent_action(&start_configs) {
             Some(ModeFailure::StartClosureCustomAction)
-        } else if start_key.recursive_context {
+        } else if start_configs
+            .iter()
+            .any(|c| has_recursive_context(c.get_context()))
+        {
             Some(ModeFailure::StartClosureRecursiveContext)
         } else {
             None
         };
         if let Some(failure) = failure {
-            out.push(0);
-            return ModeBuildInfo::absent(failure);
+            return (None, ModeBuildInfo::absent(failure));
         }
-        match intern(&mut mode, atn, start_key.configs, start_configs) {
-            Some(_) => {}
-            None => {
-                out.push(0);
-                return ModeBuildInfo::absent(ModeFailure::StartStateBudgetExceeded);
-            }
+        if intern(&mut mode, atn, start_configs).is_none() {
+            return (
+                None,
+                ModeBuildInfo::absent(ModeFailure::StartStateBudgetExceeded),
+            );
         }
 
         let mut cursor = 0;
         while cursor < mode.states.len() {
             let source = mode.states[cursor].configs.clone();
-            let rows = compute_state_rows(&mut mode, atn, &source, &scratch);
+            let rows = compute_state_rows(&mut mode, atn, fin, &source, scratch);
             mode.rows.push(rows);
             cursor += 1;
         }
@@ -291,9 +285,7 @@ impl StaticLexerDfaBuilder {
             num_continuations: mode.continuations.len(),
             escape_counts: mode.counts,
         };
-        out.push(1);
-        serialize_mode(&mode, out);
-        info
+        (Some(mode.commit(atn)), info)
     }
 }
 
@@ -327,47 +319,159 @@ impl LexerClosureEnv for BuildEnv {
     }
 }
 
-/// Arena of singleton context chains for state identity. Id 0 is the empty
-/// context. Entry `i` has id `i + 1`.
-#[derive(Debug, Default)]
-struct CtxArena {
-    nodes: Vec<(u32, i32)>,
-    intern: HashMap<(u32, i32), u32>,
+/// The build-side [`FinalizeStore`]: a bump arena that backs the finalized
+/// configs of one mode, plus interning maps for lexer action executors and
+/// semantic contexts. Config identity after finalization is structural:
+/// contexts are hash-consed by the [`PredictionContextCache`] of the mode,
+/// executors and semantic contexts intern here. One store per mode, mirroring
+/// the per-mode scratch `Bump`: the arena must live exactly as long as the
+/// [`ModeBuild`] that borrows it.
+#[derive(Debug)]
+struct BuildStore<'sc> {
+    executors: RefCell<HashSet<&'sc LexerActionExecutor<'sc>>>,
+    semantic_contexts: RefCell<HashSet<&'sc SemanticContext<'sc>>>,
+    // Drop order: fields drop in declaration order, and `arena` backs the
+    // references in the sets above, so `arena` must stay the last field.
+    arena: Box<bumpalo::Bump>,
 }
 
-impl CtxArena {
-    fn push(&mut self, parent: u32, return_state: i32) -> u32 {
-        if let Some(&id) = self.intern.get(&(parent, return_state)) {
-            return id;
+impl<'sc> BuildStore<'sc> {
+    fn new() -> Self {
+        BuildStore {
+            executors: RefCell::new(HashSet::new()),
+            semantic_contexts: RefCell::new(HashSet::new()),
+            arena: Box::new(bumpalo::Bump::new()),
         }
-        let id = (self.nodes.len() + 1) as u32;
-        self.nodes.push((parent, return_state));
-        self.intern.insert((parent, return_state), id);
-        id
     }
 
-    /// True when the chain has a repeated return state or is deeper than
-    /// [`MAX_CONTEXT_DEPTH`].
-    fn has_recursive_context(&self, mut id: u32) -> bool {
-        let mut seen = HashSet::new();
-        let mut depth = 0;
-        while id != 0 {
-            depth += 1;
-            let (parent, return_state) = self.nodes[id as usize - 1];
-            if depth > MAX_CONTEXT_DEPTH || !seen.insert(return_state) {
-                return true;
-            }
-            id = parent;
-        }
-        false
+    fn arena(&self) -> &'sc bumpalo::Bump {
+        // SAFETY: self-reference cast, the same pattern as `DFAStateStore`.
+        // The caller keeps the store alive as long as the mode build that
+        // holds the handed-out references.
+        unsafe { std::mem::transmute::<&bumpalo::Bump, &'sc bumpalo::Bump>(&self.arena) }
     }
 }
 
-/// Interns the context chain of a config and returns its arena id.
-fn intern_ctx(arena: &mut CtxArena, ctx: Option<PredictionContextRef>) -> u32 {
-    let mut return_states = Vec::new();
-    let mut cur = ctx;
-    while let Some(c) = cur {
+impl<'sc> FinalizeStore<'sc> for BuildStore<'sc> {
+    fn alloc_semantic_context(
+        &self,
+        f: impl FnOnce() -> SemanticContext<'sc>,
+    ) -> &'sc SemanticContext<'sc> {
+        let value = f();
+        let mut interned = self.semantic_contexts.borrow_mut();
+        if let Some(&existing) = interned.get(&value) {
+            return existing;
+        }
+        let reference = self.arena().alloc(value);
+        interned.insert(reference);
+        reference
+    }
+
+    fn contains_semantic_context_slice(&self, slice: &[SemanticContext]) -> bool {
+        is_slice_in_arena(slice, self.arena())
+    }
+
+    fn alloc_semantic_context_slice<I>(&self, iter: I) -> &'sc [SemanticContext<'sc>]
+    where
+        I: IntoIterator<Item = SemanticContext<'sc>>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        self.arena().alloc_slice_fill_iter(iter)
+    }
+
+    fn alloc_lexer_action_slice(
+        &self,
+        len: usize,
+        f: impl FnMut(usize) -> LexerAction<'sc>,
+    ) -> &'sc [LexerAction<'sc>] {
+        self.arena().alloc_slice_fill_with(len, f)
+    }
+
+    fn contains_lexer_action_slice(&self, slice: &[LexerAction]) -> bool {
+        is_slice_in_arena(slice, self.arena())
+    }
+
+    fn alloc_lexer_action_executor(
+        &self,
+        f: impl FnOnce() -> LexerActionExecutor<'sc>,
+    ) -> &'sc LexerActionExecutor<'sc> {
+        let value = f();
+        let mut interned = self.executors.borrow_mut();
+        if let Some(&existing) = interned.get(&value) {
+            return existing;
+        }
+        let reference = self.arena().alloc(value);
+        interned.insert(reference);
+        reference
+    }
+
+    fn alloc_lexer_indexed_custom_action(
+        &self,
+        f: impl FnOnce() -> LexerIndexedCustomAction<'sc>,
+    ) -> &'sc LexerIndexedCustomAction<'sc> {
+        self.arena().alloc(f())
+    }
+
+    fn contains_lexer_indexed_custom_action(&self, action: &LexerIndexedCustomAction) -> bool {
+        is_ref_in_arena(action, self.arena())
+    }
+
+    fn alloc_config_slice<AC, I>(&self, iter: I) -> &'sc [AC]
+    where
+        I: IntoIterator<Item = AC>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        self.arena().alloc_slice_fill_iter(iter)
+    }
+}
+
+/// Finalizes scratch configs into the build store of a mode. After
+/// finalization, config equality is exact: contexts are hash-consed
+/// (pointer-unique for structural equality), executors and semantic contexts
+/// are interned.
+#[derive(Clone, Copy)]
+struct Finalizer<'sc> {
+    cache: &'sc PredictionContextCache<'sc>,
+    store: &'sc BuildStore<'sc>,
+}
+
+impl<'sc> Finalizer<'sc> {
+    fn finalize_all<'a>(
+        &self,
+        configs: impl IntoIterator<Item = LexerATNConfig<'a>>,
+    ) -> Vec<LexerATNConfig<'sc>> {
+        configs
+            .into_iter()
+            .map(|c| c.finalize(self.cache, self.store))
+            .collect()
+    }
+
+    fn finalize_pairs<'a>(
+        &self,
+        configs: impl IntoIterator<Item = (LexerATNConfig<'a>, bool)>,
+    ) -> Vec<(LexerATNConfig<'sc>, bool)> {
+        configs
+            .into_iter()
+            .map(|(c, flag)| (c.finalize(self.cache, self.store), flag))
+            .collect()
+    }
+}
+
+/// True when a config of the set accumulated a position-dependent (custom)
+/// lexer action.
+fn has_position_dependent_action(configs: &[LexerATNConfig<'_>]) -> bool {
+    configs.iter().any(|c| {
+        c.get_lexer_executor()
+            .is_some_and(|ex| ex.actions().iter().any(LexerAction::is_position_dependent))
+    })
+}
+
+/// True when the context chain has a repeated return state or is deeper than
+/// [`MAX_CONTEXT_DEPTH`]. Lexer contexts are empty or singleton chains.
+fn has_recursive_context(mut ctx: Option<PredictionContextRef>) -> bool {
+    let mut seen = HashSet::new();
+    let mut depth = 0;
+    while let Some(c) = ctx {
         if c.is_empty() {
             break;
         }
@@ -376,70 +480,18 @@ fn intern_ctx(arena: &mut CtxArena, ctx: Option<PredictionContextRef>) -> u32 {
             1,
             "lexer prediction contexts are singleton chains"
         );
-        return_states.push(c.get_return_state(0).get_state_number());
-        cur = c.get_parent(0);
+        depth += 1;
+        if depth > MAX_CONTEXT_DEPTH || !seen.insert(c.get_return_state(0).get_state_number()) {
+            return true;
+        }
+        ctx = c.get_parent(0);
     }
-    let mut id = 0;
-    for &return_state in return_states.iter().rev() {
-        id = arena.push(id, return_state);
-    }
-    id
-}
-
-/// The identity of one lexer config for state interning.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ConfigKey {
-    state: i32,
-    alt: i32,
-    ctx: u32,
-    non_greedy: bool,
-    actions: Vec<i32>,
-}
-
-/// The identity of a config set, plus the escape signals found on the way.
-#[derive(Debug)]
-struct ConfigSetKey {
-    configs: Vec<ConfigKey>,
-    custom_action: bool,
-    recursive_context: bool,
-}
-
-fn key_of_configs(
-    ctx_arena: &mut CtxArena,
-    atn: &ATN,
-    configs: &[LexerATNConfig<'_>],
-) -> ConfigSetKey {
-    let mut keys = Vec::with_capacity(configs.len());
-    let mut custom_action = false;
-    let mut recursive_context = false;
-    for config in configs {
-        let ctx = intern_ctx(ctx_arena, config.get_context());
-        recursive_context |= ctx_arena.has_recursive_context(ctx);
-        let actions = match config_actions(atn, config) {
-            Ok(actions) => actions,
-            Err(()) => {
-                custom_action = true;
-                Vec::new()
-            }
-        };
-        keys.push(ConfigKey {
-            state: config.get_state().get_state_number(),
-            alt: config.get_alt(),
-            ctx,
-            non_greedy: config.has_passed_through_non_greedy_decision(),
-            actions,
-        });
-    }
-    ConfigSetKey {
-        configs: keys,
-        custom_action,
-        recursive_context,
-    }
+    false
 }
 
 /// The ATN indices of the actions of the executor of a config. Fails on a
 /// position-dependent action.
-fn config_actions(atn: &ATN, config: &LexerATNConfig<'_>) -> Result<Vec<i32>, ()> {
+fn config_action_indices(atn: &ATN, config: &LexerATNConfig<'_>) -> Result<Vec<u32>, ()> {
     let mut actions = Vec::new();
     if let Some(executor) = config.get_lexer_executor() {
         for action in executor.actions() {
@@ -451,19 +503,35 @@ fn config_actions(atn: &ATN, config: &LexerATNConfig<'_>) -> Result<Vec<i32>, ()
                 .iter()
                 .position(|a| a == action)
                 .expect("config actions come from the ATN lexer action list");
-            actions.push(index as i32);
+            actions.push(index as u32);
         }
     }
     Ok(actions)
 }
 
-/// One table state: the closed config set in insertion order and the accept
-/// data.
+/// One table state: the finalized closed config set in insertion order and
+/// the accept data. `accept_actions` holds the ATN indices of the actions of
+/// the accept config. Conversion to `LexerAction<'static>` clones happens in
+/// [`ModeBuild::commit`]; the `(type, data1, data2)` triples exist only in
+/// the word stream.
 #[derive(Debug)]
 struct StateData<'sc> {
     configs: Vec<LexerATNConfig<'sc>>,
     accept_type: i32,
-    accept_actions: Vec<(i32, i32, i32)>,
+    accept_actions: Vec<u32>,
+}
+
+/// The structured target of one edge. Packing (`NO_EDGE`, `ESCAPE`, the
+/// `ACCEPT_BIT` or-ing) happens only in [`ModeBuild::commit`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EdgeEntry {
+    /// The edge does not exist.
+    None,
+    /// The edge targets the table state with the given id.
+    Target(u32),
+    /// The edge escapes to the lazy simulator. `Some` names the continuation
+    /// pool index. `None` is a budget escape and carries no continuation.
+    Escape(Option<u32>),
 }
 
 /// One edge interval of a state. Covers `lo..=hi`, both inclusive.
@@ -471,30 +539,58 @@ struct StateData<'sc> {
 struct EdgeInterval {
     lo: i32,
     hi: i32,
-    entry: u16,
-    /// The continuation index when `entry == ESCAPE`.
-    escape: u32,
+    entry: EdgeEntry,
 }
 
 /// The edges of one state: the EOF edge and the sorted, disjoint symbol
 /// intervals that have an edge.
 #[derive(Debug)]
 struct StateRows {
-    eof_entry: u16,
-    /// The continuation index when `eof_entry == ESCAPE`.
-    eof_escape: u32,
+    eof: EdgeEntry,
     intervals: Vec<EdgeInterval>,
 }
 
-/// The in-progress build of one mode.
+/// The kind of a [`PendingContinuation`]. The tag values come from
+/// [`ContinuationKind::tag`] at commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum ContinuationKind {
+    /// The post-move, pre-closure configs of the escape edge.
+    MovedConfigs,
+    /// The source configs of the state. The resume re-runs the full move
+    /// step, because the build-time move pruned a config.
+    SourceSet,
+}
+
+impl ContinuationKind {
+    fn tag(self) -> u32 {
+        match self {
+            ContinuationKind::MovedConfigs => CONTINUATION_MOVED_CONFIGS,
+            ContinuationKind::SourceSet => CONTINUATION_SOURCE_SET,
+        }
+    }
+}
+
+/// A continuation in structural form: the finalized configs and the
+/// `alt_reached_accept` flag of each. Conversion to the pool entry (the
+/// local context table, the [`ContinuationConfig`] structs) happens in
+/// [`ModeBuild::commit`]. The derived `Hash` and `Eq` dedupe continuations
+/// by structural content: after finalization the `LexerATNConfig` equality
+/// is exact.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PendingContinuation<'sc> {
+    kind: ContinuationKind,
+    configs: Vec<(LexerATNConfig<'sc>, bool)>,
+}
+
+/// The in-progress build of one mode. The `'sc` lifetime ties the finalized
+/// configs to the [`BuildStore`] of the mode.
 #[derive(Debug)]
 struct ModeBuild<'sc> {
     states: Vec<StateData<'sc>>,
     rows: Vec<StateRows>,
-    ids: HashMap<Vec<ConfigKey>, u32>,
-    ctx_arena: CtxArena,
-    continuations: Vec<Vec<u32>>,
-    cont_ids: HashMap<Vec<u32>, u32>,
+    ids: HashMap<Vec<LexerATNConfig<'sc>>, u32>,
+    continuations: Vec<PendingContinuation<'sc>>,
+    cont_ids: HashMap<PendingContinuation<'sc>, u32>,
     counts: EscapeCounts,
     max_states: usize,
 }
@@ -505,7 +601,6 @@ impl<'sc> ModeBuild<'sc> {
             states: Vec::new(),
             rows: Vec::new(),
             ids: HashMap::new(),
-            ctx_arena: CtxArena::default(),
             continuations: Vec::new(),
             cont_ids: HashMap::new(),
             counts: EscapeCounts::default(),
@@ -521,22 +616,170 @@ impl<'sc> ModeBuild<'sc> {
             EscapeReason::Budget => self.counts.budget += 1,
         }
     }
+
+    /// Dedupes a continuation by structural content and returns its pool
+    /// index.
+    fn intern_continuation(&mut self, cont: PendingContinuation<'sc>) -> u32 {
+        if let Some(&id) = self.cont_ids.get(&cont) {
+            return id;
+        }
+        let id = self.continuations.len() as u32;
+        self.cont_ids.insert(cont.clone(), id);
+        self.continuations.push(cont);
+        id
+    }
+
+    /// Converts the structural build into the walker's own table form. All
+    /// layout happens here: `u16` edge packing with the
+    /// `NO_EDGE`/`ESCAPE`/`ACCEPT_BIT` sentinels, the dense 129-wide low
+    /// rows (column 0 is the EOF edge), the hi-class compression, the
+    /// deduplicated accept action tables, the accel classification, the
+    /// escape ranges, and the continuation pool.
+    fn commit(self, atn: &ATN) -> StaticLexerDFA {
+        let num_states = self.states.len();
+        let accept_type: Vec<i32> = self.states.iter().map(|s| s.accept_type).collect();
+
+        // Low rows: column 0 is the EOF edge, columns 1..=128 are the
+        // symbols 0..=127.
+        let mut low = vec![NO_EDGE; num_states * LOW_ROW];
+        for (s, rows) in self.rows.iter().enumerate() {
+            low[s * LOW_ROW] = pack_entry(&accept_type, rows.eof);
+            for iv in &rows.intervals {
+                if iv.lo <= ASCII_MAX {
+                    let entry = pack_entry(&accept_type, iv.entry);
+                    for c in iv.lo..=iv.hi.min(ASCII_MAX) {
+                        low[s * LOW_ROW + 1 + c as usize] = entry;
+                    }
+                }
+            }
+        }
+
+        // Hi-class compression: the class bounds are the union of the
+        // hi-edge bounds of the mode; rows dedupe by content; `class_of`
+        // derives from the class starts (the loader's invariant).
+        let class_bounds = collect_class_starts(&self.rows);
+        let num_classes = class_bounds.len();
+        let mut class_starts = Vec::new();
+        let mut class_of = Vec::new();
+        let mut hi_rows = Vec::new();
+        let mut row_of = Vec::new();
+        if num_classes > 0 {
+            class_starts = class_bounds.iter().map(|&s| s as u32).collect();
+            class_of = class_map(&class_starts);
+            let mut rows: Vec<Vec<(u32, u32, u16)>> = Vec::new();
+            let mut row_ids: HashMap<Vec<(u32, u32, u16)>, u32> = HashMap::new();
+            row_of = Vec::with_capacity(num_states);
+            for state_rows in &self.rows {
+                let runs = class_runs(&class_bounds, &hi_clipped(&accept_type, state_rows));
+                let id = *row_ids.entry(runs).or_insert_with_key(|runs| {
+                    rows.push(runs.clone());
+                    (rows.len() - 1) as u32
+                });
+                row_of.push(id);
+            }
+            hi_rows = dense_hi_rows(&rows, num_classes);
+        }
+
+        // Accept action tables: `LexerAction` clones from the ATN, the
+        // lists deduplicated by content (the loader's invariant).
+        let mut actions: Vec<LexerAction<'static>> = Vec::new();
+        let mut list_ids: HashMap<Vec<LexerAction<'static>>, (u32, u32)> = HashMap::new();
+        let mut accept_actions = Vec::with_capacity(num_states);
+        for state in &self.states {
+            if state.accept_actions.is_empty() {
+                accept_actions.push((0, 0));
+                continue;
+            }
+            let list: Vec<LexerAction<'static>> = state
+                .accept_actions
+                .iter()
+                .map(|&index| atn.lexer_actions[index as usize].clone())
+                .collect();
+            let entry = list_ids.entry(list).or_insert_with_key(|list| {
+                let start = actions.len() as u32;
+                actions.extend(list.iter().cloned());
+                (start, list.len() as u32)
+            });
+            accept_actions.push(*entry);
+        }
+
+        // Run acceleration over the committed rows: the packed 128-wide
+        // low row plus the pre-compression hi intervals.
+        let mut accel_tag = vec![0u8; num_states];
+        let mut accel_data = Vec::new();
+        for (s, rows) in self.rows.iter().enumerate() {
+            let low_row: &[u16; ASCII_ROW] = low[s * LOW_ROW + 1..(s + 1) * LOW_ROW]
+                .try_into()
+                .expect("the low row holds EOF plus ASCII_ROW symbols");
+            if let Some(accel) =
+                Accel::from_dfa_state(s as u16, low_row, &hi_clipped(&accept_type, rows))
+            {
+                accel_data.push(accel);
+                assert!(
+                    accel_data.len() <= u8::MAX as usize,
+                    "a mode has at most {} accel payloads (the tag is a u8)",
+                    u8::MAX
+                );
+                accel_tag[s] = accel_data.len() as u8;
+            }
+        }
+
+        // Escape ranges: the sorted, disjoint intervals whose edge escapes.
+        let mut eof_escape = Vec::with_capacity(num_states);
+        let mut escape_off = Vec::with_capacity(num_states + 1);
+        let mut escape_ranges = Vec::new();
+        escape_off.push(0);
+        for rows in &self.rows {
+            eof_escape.push(continuation_of(rows.eof));
+            for iv in &rows.intervals {
+                if let EdgeEntry::Escape(cont) = iv.entry {
+                    escape_ranges.push(EscapeRange {
+                        lo: iv.lo,
+                        hi: iv.hi,
+                        continuation: cont.unwrap_or(NO_CONTINUATION),
+                    });
+                }
+            }
+            escape_off.push(escape_ranges.len() as u32);
+        }
+
+        let continuations = self
+            .continuations
+            .iter()
+            .map(|cont| commit_continuation(atn, cont))
+            .collect();
+
+        StaticLexerDFA {
+            start_state: 0,
+            low,
+            class_of,
+            hi_rows,
+            row_of,
+            num_classes,
+            class_starts,
+            accept_type,
+            accept_actions,
+            actions,
+            accel_tag,
+            accel_data,
+            eof_escape,
+            escape_off,
+            escape_ranges,
+            continuations,
+        }
+    }
 }
 
-#[derive(Debug)]
-struct EdgeOutcome {
-    entry: u16,
-    escape: u32,
-}
-
-/// Runs move+closure for one edge of a state and classifies the result.
+/// Runs move+closure for one edge of a state, finalizes the closed configs
+/// into the build store, and classifies the edge.
 fn compute_edge<'sc>(
     mode: &mut ModeBuild<'sc>,
     atn: &ATN,
+    fin: Finalizer<'sc>,
     source: &[LexerATNConfig<'sc>],
     t: i32,
-    scratch: &'sc bumpalo::Bump,
-) -> EdgeOutcome {
+    scratch: &bumpalo::Bump,
+) -> EdgeEntry {
     let mut env = BuildEnv::default();
     let mut reach = MutableLexerATNConfigSet::new(scratch);
     let mut capture = ReachCapture::default();
@@ -550,74 +793,60 @@ fn compute_edge<'sc>(
         Some(&mut capture),
         scratch,
     );
-    let closed: Vec<LexerATNConfig<'sc>> = reach.get_items().cloned().collect();
-    let key = key_of_configs(&mut mode.ctx_arena, atn, &closed);
+    let closed = fin.finalize_all(reach.get_items().cloned());
 
     let reason = if env.predicate_crossed {
         Some(EscapeReason::Predicate)
-    } else if key.custom_action {
+    } else if has_position_dependent_action(&closed) {
         Some(EscapeReason::CustomAction)
-    } else if key.recursive_context {
+    } else if closed
+        .iter()
+        .any(|c| has_recursive_context(c.get_context()))
+    {
         Some(EscapeReason::RecursiveContext)
     } else {
         None
     };
 
     if let Some(reason) = reason {
-        // An empty build-time reach is a real NO_EDGE: with no pruning
+        // An empty build-time reach is a real no-edge: with no pruning
         // activity, the runtime closure is a subset of the build-time closure
         // (predicates can only remove configs), so it stays empty. With
         // pruning activity, pruned configs can move at runtime: escape.
         if closed.is_empty() && !capture.pruning_activity {
-            return EdgeOutcome {
-                entry: NO_EDGE,
-                escape: NO_CONTINUATION,
-            };
+            return EdgeEntry::None;
         }
         mode.count_escape(reason);
         let cont = if capture.pruning_activity {
-            let source_configs: Vec<(LexerATNConfig<'sc>, bool)> =
-                source.iter().map(|c| (c.clone(), false)).collect();
-            serialize_continuation(mode, atn, CONTINUATION_SOURCE_SET, &source_configs)
+            mode.intern_continuation(PendingContinuation {
+                kind: ContinuationKind::SourceSet,
+                configs: source.iter().map(|c| (c.clone(), false)).collect(),
+            })
         } else {
-            serialize_continuation(mode, atn, CONTINUATION_MOVED_CONFIGS, &capture.moved)
+            mode.intern_continuation(PendingContinuation {
+                kind: ContinuationKind::MovedConfigs,
+                configs: fin
+                    .finalize_pairs(capture.moved.iter().map(|(c, flag)| (c.clone(), *flag))),
+            })
         };
-        return EdgeOutcome {
-            entry: ESCAPE,
-            escape: cont,
-        };
+        return EdgeEntry::Escape(Some(cont));
     }
 
     if closed.is_empty() {
-        return EdgeOutcome {
-            entry: NO_EDGE,
-            escape: NO_CONTINUATION,
-        };
+        return EdgeEntry::None;
     }
-    match intern(mode, atn, key.configs, closed) {
-        Some(target) => {
-            let mut entry = target as u16;
-            if mode.states[target as usize].accept_type >= 0 {
-                entry |= ACCEPT_BIT;
-            }
-            EdgeOutcome {
-                entry,
-                escape: NO_CONTINUATION,
-            }
-        }
+    match intern(mode, atn, closed) {
+        Some(target) => EdgeEntry::Target(target),
         None => {
             mode.count_escape(EscapeReason::Budget);
-            EdgeOutcome {
-                entry: ESCAPE,
-                escape: NO_CONTINUATION,
-            }
+            EdgeEntry::Escape(None)
         }
     }
 }
 
 /// The accept data of a closed config set: the first rule-stop config in
 /// insertion order decides, mirroring `DFA::add_lexer_state`.
-fn accept_of(atn: &ATN, configs: &[LexerATNConfig<'_>]) -> (i32, Vec<(i32, i32, i32)>) {
+fn accept_of(atn: &ATN, configs: &[LexerATNConfig<'_>]) -> (i32, Vec<u32>) {
     let Some(accept) = configs
         .iter()
         .find(|c| c.get_state().state_type() == ATNStateType::RuleStop)
@@ -626,23 +855,19 @@ fn accept_of(atn: &ATN, configs: &[LexerATNConfig<'_>]) -> (i32, Vec<(i32, i32, 
     };
     let rule = accept.get_state().get_rule_index();
     let accept_type = atn.rule_to_token_type[rule as usize];
-    let actions = config_actions(atn, accept)
-        .expect("interned states hold no position-dependent actions")
-        .into_iter()
-        .map(|index| atn.lexer_actions[index as usize].to_serialized())
-        .collect();
+    let actions = config_action_indices(atn, accept)
+        .expect("interned states hold no position-dependent actions");
     (accept_type, actions)
 }
 
-/// Interns a closed config set as a table state. Returns `None` when the
-/// state budget is spent.
+/// Interns a finalized closed config set as a table state. Returns `None`
+/// when the state budget is spent.
 fn intern<'sc>(
     mode: &mut ModeBuild<'sc>,
     atn: &ATN,
-    key: Vec<ConfigKey>,
     configs: Vec<LexerATNConfig<'sc>>,
 ) -> Option<u32> {
-    if let Some(&id) = mode.ids.get(&key) {
+    if let Some(&id) = mode.ids.get(configs.as_slice()) {
         return Some(id);
     }
     if mode.states.len() >= mode.max_states {
@@ -650,75 +875,13 @@ fn intern<'sc>(
     }
     let id = mode.states.len() as u32;
     let (accept_type, accept_actions) = accept_of(atn, &configs);
+    mode.ids.insert(configs.clone(), id);
     mode.states.push(StateData {
         configs,
         accept_type,
         accept_actions,
     });
-    mode.ids.insert(key, id);
     Some(id)
-}
-
-/// Serializes one continuation and deduplicates it by content.
-fn serialize_continuation(
-    mode: &mut ModeBuild,
-    atn: &ATN,
-    kind: u32,
-    configs: &[(LexerATNConfig<'_>, bool)],
-) -> u32 {
-    let mut ctx_entries: Vec<(u32, i32)> = Vec::new();
-    let mut local_ids: HashMap<u32, u32> = HashMap::from([(0, 0)]);
-    let mut config_words: Vec<u32> = Vec::new();
-    for (config, alt_reached_accept) in configs.iter().map(|(c, f)| (c, *f)) {
-        let global = intern_ctx(&mut mode.ctx_arena, config.get_context());
-        let mut chain = Vec::new();
-        let mut id = global;
-        while id != 0 {
-            chain.push(id);
-            id = mode.ctx_arena.nodes[id as usize - 1].0;
-        }
-        chain.reverse();
-        let mut parent_local = 0;
-        for gid in chain {
-            if let Some(&local) = local_ids.get(&gid) {
-                parent_local = local;
-                continue;
-            }
-            let (_, return_state) = mode.ctx_arena.nodes[gid as usize - 1];
-            ctx_entries.push((parent_local, return_state));
-            let local = ctx_entries.len() as u32;
-            local_ids.insert(gid, local);
-            parent_local = local;
-        }
-        let mut flags = u32::from(config.has_passed_through_non_greedy_decision());
-        if alt_reached_accept {
-            flags |= 0b10;
-        }
-        let actions = config_actions(atn, config)
-            .expect("escape continuations hold no position-dependent actions");
-        config_words.push(config.get_state().get_state_number() as u32);
-        config_words.push(flags);
-        config_words.push(config.get_alt() as u32);
-        config_words.push(parent_local);
-        config_words.push(actions.len() as u32);
-        for action in actions {
-            config_words.push(action as u32);
-            config_words.push(BEHIND_POSITION_INDEPENDENT);
-        }
-    }
-    let mut body = vec![kind, ctx_entries.len() as u32];
-    for &(parent, return_state) in &ctx_entries {
-        body.extend([0, parent, return_state as u32]);
-    }
-    body.push(configs.len() as u32);
-    body.extend(config_words);
-    if let Some(&id) = mode.cont_ids.get(&body) {
-        return id;
-    }
-    let id = mode.continuations.len() as u32;
-    mode.cont_ids.insert(body.clone(), id);
-    mode.continuations.push(body);
-    id
 }
 
 /// Adds the cut points of the match set of one transition to `bounds`. A
@@ -764,10 +927,11 @@ fn add_interval_bounds(a: i32, b: i32, bounds: &mut BTreeSet<i32>) {
 fn compute_state_rows<'sc>(
     mode: &mut ModeBuild<'sc>,
     atn: &ATN,
+    fin: Finalizer<'sc>,
     source: &[LexerATNConfig<'sc>],
-    scratch: &'sc bumpalo::Bump,
+    scratch: &bumpalo::Bump,
 ) -> StateRows {
-    let eof = compute_edge(mode, atn, source, EOF, scratch);
+    let eof = compute_edge(mode, atn, fin, source, EOF, scratch);
     let mut bounds = BTreeSet::from([0, MAX_SYMBOL + 1]);
     for config in source {
         for tr in config.get_state().get_transitions() {
@@ -779,13 +943,13 @@ fn compute_state_rows<'sc>(
     for b in bounds {
         if lo < b {
             let hi = b - 1;
-            let edge = compute_edge(mode, atn, source, lo, scratch);
-            if edge.entry == NO_EDGE {
+            let edge = compute_edge(mode, atn, fin, source, lo, scratch);
+            if edge == EdgeEntry::None {
                 lo = b;
                 continue;
             }
             if let Some(last) = intervals.last_mut() {
-                if last.entry == edge.entry && last.escape == edge.escape && last.hi + 1 == lo {
+                if last.entry == edge && last.hi + 1 == lo {
                     last.hi = hi;
                     lo = b;
                     continue;
@@ -794,39 +958,51 @@ fn compute_state_rows<'sc>(
             intervals.push(EdgeInterval {
                 lo,
                 hi,
-                entry: edge.entry,
-                escape: edge.escape,
+                entry: edge,
             });
         }
         lo = b;
     }
-    StateRows {
-        eof_entry: eof.entry,
-        eof_escape: eof.escape,
-        intervals,
-    }
+    StateRows { eof, intervals }
 }
 
-/// The dense row of a state for the symbols `0..=127`.
-fn low_row_of(rows: &StateRows) -> [u16; 128] {
-    let mut row = [NO_EDGE; 128];
-    for iv in &rows.intervals {
-        if iv.lo <= ASCII_MAX {
-            let hi = iv.hi.min(ASCII_MAX);
-            for c in iv.lo..=hi {
-                row[c as usize] = iv.entry;
+/// The packed table entry of a structured edge: the target id or-ed with
+/// the `ACCEPT_BIT` of the target state, `NO_EDGE`, or `ESCAPE`.
+fn pack_entry(accept_type: &[i32], entry: EdgeEntry) -> u16 {
+    match entry {
+        EdgeEntry::None => NO_EDGE,
+        EdgeEntry::Target(target) => {
+            let mut packed = target as u16;
+            if accept_type[target as usize] >= 0 {
+                packed |= ACCEPT_BIT;
             }
+            packed
         }
+        EdgeEntry::Escape(_) => ESCAPE,
     }
-    row
 }
 
-/// The edges of a state for the symbols above 127, clipped to start at 128.
-fn hi_clipped(rows: &StateRows) -> Vec<(i32, i32, u16)> {
+/// The continuation pool index of an escape edge, or `NO_CONTINUATION`.
+fn continuation_of(entry: EdgeEntry) -> u32 {
+    match entry {
+        EdgeEntry::Escape(Some(cont)) => cont,
+        _ => NO_CONTINUATION,
+    }
+}
+
+/// The edges of a state for the symbols above 127, clipped to start at 128
+/// and packed to table entries.
+fn hi_clipped(accept_type: &[i32], rows: &StateRows) -> Vec<(i32, i32, u16)> {
     rows.intervals
         .iter()
         .filter(|iv| iv.hi > ASCII_MAX)
-        .map(|iv| (iv.lo.max(ASCII_MAX + 1), iv.hi, iv.entry))
+        .map(|iv| {
+            (
+                iv.lo.max(ASCII_MAX + 1),
+                iv.hi,
+                pack_entry(accept_type, iv.entry),
+            )
+        })
         .collect()
 }
 
@@ -874,154 +1050,121 @@ fn class_runs(class_starts: &[i32], hi: &[(i32, i32, u16)]) -> Vec<(u32, u32, u1
     runs
 }
 
-/// Writes one present mode to the word stream, in the section order of the
-/// module documentation.
-fn serialize_mode(mode: &ModeBuild, out: &mut Vec<u32>) {
-    let num_states = mode.states.len();
-    out.push(num_states as u32);
-    out.push(0); // start_state: the start state is interned first.
-
-    let mut action_lists: Vec<u32> = Vec::new();
-    let mut action_list_ids: HashMap<&[(i32, i32, i32)], u32> = HashMap::new();
-    let mut accept_action_offsets = Vec::with_capacity(num_states);
-    for state in &mode.states {
-        if state.accept_actions.is_empty() {
-            accept_action_offsets.push(-1);
-            continue;
+/// Converts a structural continuation to the walker's pool entry: the
+/// continuation-local topological context table and the [`ContinuationConfig`]
+/// structs. Local id 0 is the empty context. Entry `i` has local id `i + 1`,
+/// and parents refer to smaller ids. `(parent_local, return_state)` keys the
+/// local dedup map: after finalization the pair names a context node exactly.
+fn commit_continuation(atn: &ATN, cont: &PendingContinuation) -> LexerContinuation {
+    let mut ctxs: Vec<(u32, i32)> = Vec::new();
+    let mut local_ids: HashMap<(u32, i32), u32> = HashMap::new();
+    let mut configs = Vec::with_capacity(cont.configs.len());
+    for (config, alt_reached_accept) in &cont.configs {
+        let mut chain = Vec::new();
+        let mut cur = config.get_context();
+        while let Some(c) = cur {
+            if c.is_empty() {
+                break;
+            }
+            assert_eq!(
+                c.length(),
+                1,
+                "lexer prediction contexts are singleton chains"
+            );
+            chain.push(c.get_return_state(0).get_state_number());
+            cur = c.get_parent(0);
         }
-        let offset = *action_list_ids
-            .entry(&state.accept_actions)
-            .or_insert_with(|| {
-                let offset = action_lists.len() as u32;
-                action_lists.push(state.accept_actions.len() as u32);
-                for &(ty, d1, d2) in &state.accept_actions {
-                    action_lists.extend([ty as u32, d1 as u32, d2 as u32]);
-                }
-                offset
-            });
-        accept_action_offsets.push(offset as i32);
-    }
-    for state in &mode.states {
-        out.push(state.accept_type as u32);
-    }
-    for offset in accept_action_offsets {
-        out.push(offset as u32);
-    }
-
-    let low_rows: Vec<[u16; 128]> = mode.rows.iter().map(low_row_of).collect();
-    for rows in &mode.rows {
-        out.push(u32::from(rows.eof_entry));
-    }
-    for low in &low_rows {
-        out.extend(low.iter().map(|&entry| u32::from(entry)));
-    }
-
-    serialize_hi_classes(mode, out);
-
-    out.push(action_lists.len() as u32);
-    out.extend(action_lists);
-
-    let mut accel = Vec::new();
-    for (s, (rows, low)) in mode.rows.iter().zip(&low_rows).enumerate() {
-        if let Some(descriptor) = Accel::from_dfa_state(s as u16, low, &hi_clipped(rows)) {
-            accel.extend(descriptor.to_serialized(s as u16));
+        chain.reverse();
+        let mut parent_local = 0;
+        for return_state in chain {
+            if let Some(&local) = local_ids.get(&(parent_local, return_state)) {
+                parent_local = local;
+                continue;
+            }
+            ctxs.push((parent_local, return_state));
+            let local = ctxs.len() as u32;
+            local_ids.insert((parent_local, return_state), local);
+            parent_local = local;
         }
-    }
-    out.push(accel.len() as u32);
-    out.extend(accel);
-
-    for rows in &mode.rows {
-        out.push(rows.eof_escape);
-        let escapes = rows.intervals.iter().filter(|iv| iv.entry == ESCAPE);
-        out.push(escapes.clone().count() as u32);
-        for iv in escapes {
-            out.push(iv.lo as u32);
-            out.push(iv.hi as u32);
-            out.push(iv.escape);
-        }
-    }
-
-    out.push(mode.continuations.len() as u32);
-    for body in &mode.continuations {
-        out.extend_from_slice(body);
-    }
-}
-
-/// Writes the class-compressed hi-edge section of one mode.
-fn serialize_hi_classes(mode: &ModeBuild, out: &mut Vec<u32>) {
-    let class_starts = collect_class_starts(&mode.rows);
-    out.push(class_starts.len() as u32);
-    if class_starts.is_empty() {
-        return;
-    }
-    out.extend(class_starts.iter().map(|&s| s as u32));
-
-    let mut rows: Vec<Vec<(u32, u32, u16)>> = Vec::new();
-    let mut row_ids: HashMap<Vec<(u32, u32, u16)>, u32> = HashMap::new();
-    let mut row_of = Vec::with_capacity(mode.rows.len());
-    for state_rows in &mode.rows {
-        let runs = class_runs(&class_starts, &hi_clipped(state_rows));
-        let id = *row_ids.entry(runs).or_insert_with_key(|runs| {
-            rows.push(runs.clone());
-            (rows.len() - 1) as u32
+        let actions = config_action_indices(atn, config)
+            .expect("escape continuations hold no position-dependent actions");
+        configs.push(ContinuationConfig {
+            state: config.get_state().get_state_number(),
+            alt: config.get_alt(),
+            ctx: parent_local,
+            non_greedy: config.has_passed_through_non_greedy_decision(),
+            alt_reached_accept: *alt_reached_accept,
+            actions,
         });
-        row_of.push(id);
     }
-
-    out.push(rows.len() as u32);
-    out.push(rows.iter().map(Vec::len).sum::<usize>() as u32);
-    let mut offset = 0;
-    let mut row_offsets = Vec::with_capacity(rows.len() + 1);
-    for row in &rows {
-        row_offsets.push(offset);
-        offset += row.len() as u32;
+    LexerContinuation {
+        kind: cont.kind.tag(),
+        ctxs,
+        configs,
     }
-    row_offsets.push(offset);
-    out.extend(row_offsets);
-    for row in &rows {
-        for &(lo_class, hi_class, entry) in row {
-            out.extend([lo_class, hi_class, u32::from(entry)]);
-        }
-    }
-    out.extend(row_of);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::atn_deserializer::ATNDeserializer;
+    use crate::atn_state::ATNStateRef;
+    use crate::prediction_context::PredictionContext;
+    use crate::static_lexer_dfa::{ACCEL_EXCLUSION, ACCEL_POSITIVE};
+
+    fn push_ctx<'a>(
+        scratch: &'a bumpalo::Bump,
+        parent: Option<PredictionContextRef<'a>>,
+        return_state: ATNStateRef,
+    ) -> PredictionContextRef<'a> {
+        PredictionContextRef::from(
+            &*scratch.alloc(PredictionContext::new_singleton(parent, return_state)),
+        )
+    }
 
     #[test]
-    fn ctx_arena_detects_recursion() {
-        let mut arena = CtxArena::default();
-        let a = arena.push(0, 10);
-        let b = arena.push(a, 20);
-        assert!(!arena.has_recursive_context(b));
-        let c = arena.push(b, 10);
-        assert!(arena.has_recursive_context(c));
-        let mut deep = 0;
+    fn recursive_context_detection() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/static_lexer/XMLLexer.g4");
+        let units = dbt_antlr_codegen::atn_export::compile_atn_data(&path, &[]).expect("compile");
+        let lexer = units
+            .iter()
+            .find(|u| u.lexer_atn_words.is_some())
+            .expect("lexer unit");
+        let atn = ATNDeserializer::new(None)
+            .deserialize(&mut lexer.lexer_atn_words.as_ref().expect("lexer words").iter());
+        let scratch = bumpalo::Bump::new();
+
+        let a = push_ctx(
+            &scratch,
+            Some(PredictionContextRef::new_empty()),
+            atn.make_state_ref(10),
+        );
+        let b = push_ctx(&scratch, Some(a), atn.make_state_ref(20));
+        assert!(!has_recursive_context(Some(b)));
+        let c = push_ctx(&scratch, Some(b), atn.make_state_ref(10));
+        assert!(has_recursive_context(Some(c)));
+        let mut deep = PredictionContextRef::new_empty();
         for i in 0..33 {
-            deep = arena.push(deep, 100 + i);
+            deep = push_ctx(&scratch, Some(deep), atn.make_state_ref(100 + i));
         }
-        assert!(arena.has_recursive_context(deep));
+        assert!(has_recursive_context(Some(deep)));
     }
 
     #[test]
     fn class_starts_cover_hi_edge_bounds() {
         let rows = vec![StateRows {
-            eof_entry: NO_EDGE,
-            eof_escape: NO_CONTINUATION,
+            eof: EdgeEntry::None,
             intervals: vec![
                 EdgeInterval {
                     lo: 65,
                     hi: 200,
-                    entry: 3,
-                    escape: NO_CONTINUATION,
+                    entry: EdgeEntry::Target(3),
                 },
                 EdgeInterval {
                     lo: 0x1000,
                     hi: 0x2000,
-                    entry: 4,
-                    escape: NO_CONTINUATION,
+                    entry: EdgeEntry::Target(4),
                 },
             ],
         }];
@@ -1034,13 +1177,11 @@ mod tests {
         assert_eq!(class_index(&starts, MAX_SYMBOL), 3);
 
         let no_hi = vec![StateRows {
-            eof_entry: NO_EDGE,
-            eof_escape: NO_CONTINUATION,
+            eof: EdgeEntry::None,
             intervals: vec![EdgeInterval {
                 lo: 65,
                 hi: 90,
-                entry: 3,
-                escape: NO_CONTINUATION,
+                entry: EdgeEntry::Target(3),
             }],
         }];
         assert!(collect_class_starts(&no_hi).is_empty());
@@ -1124,11 +1265,10 @@ mod tests {
 #[cfg(test)]
 mod accel_integration_tests {
     use crate::atn_deserializer::ATNDeserializer;
-    use crate::static_lexer_dfa::StaticLexerTables;
 
     /// End-to-end pin: real grammars produce tables whose accel section is
-    /// actually populated, and the loader decodes nonzero per-state tags
-    /// (the walker's `run_scan` path depends on this).
+    /// actually populated, so the walker's `run_scan` path has per-state
+    /// tags to work with.
     #[test]
     fn real_grammars_emit_accel_tags() {
         for grammar in ["CSV", "Spike", "XMLLexer"] {
@@ -1143,10 +1283,9 @@ mod accel_integration_tests {
             let atn = ATNDeserializer::new(None)
                 .deserialize(&mut lexer.lexer_atn_words.as_ref().expect("lexer words").iter());
             let build = super::StaticLexerDfaBuilder::new().build(&atn);
-            let tables = StaticLexerTables::from_words(&build.words).expect("decode");
             let mut tagged = 0;
-            for m in 0..tables.num_modes() {
-                let Some(table) = tables.mode(m) else {
+            for m in 0..build.tables.num_modes() {
+                let Some(table) = build.tables.mode(m) else {
                     continue;
                 };
                 for s in 0..table.num_states() as u16 {

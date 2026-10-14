@@ -2,8 +2,7 @@ use std::cmp::Ordering;
 
 use hashbrown::{DefaultHashBuilder, HashSet};
 
-use crate::atn_config_set::ConfigSet;
-use crate::dfa::DFAStateStore;
+use crate::dfa::FinalizeStore;
 use crate::parser::Parser;
 use crate::token_factory::TokenFactory;
 use crate::tree::TreeNode;
@@ -230,19 +229,16 @@ impl<'ephemeral> SemanticContext<'ephemeral> {
         }
     }
 
-    pub(crate) fn promote<'sim, CS>(&self, dfa: &DFAStateStore<'sim, CS>) -> SemanticContext<'sim>
-    where
-        CS: ConfigSet<'sim> + 'sim,
-    {
+    pub(crate) fn promote<'sim>(&self, store: &impl FinalizeStore<'sim>) -> SemanticContext<'sim> {
         match self {
-            SemanticContext::And(ops) if !dfa.contains_semantic_context_slice(ops) => {
+            SemanticContext::And(ops) if !store.contains_semantic_context_slice(ops) => {
                 let promoted: &[_] =
-                    dfa.alloc_semantic_context_slice(ops.iter().map(|it| it.promote(dfa)));
+                    store.alloc_semantic_context_slice(ops.iter().map(|it| it.promote(store)));
                 SemanticContext::And(promoted)
             }
-            SemanticContext::Or(ops) if !dfa.contains_semantic_context_slice(ops) => {
+            SemanticContext::Or(ops) if !store.contains_semantic_context_slice(ops) => {
                 let promoted: &[_] =
-                    dfa.alloc_semantic_context_slice(ops.iter().map(|it| it.promote(dfa)));
+                    store.alloc_semantic_context_slice(ops.iter().map(|it| it.promote(store)));
                 SemanticContext::Or(promoted)
             }
             _ => unsafe { std::mem::transmute::<Self, SemanticContext<'sim>>(self.clone()) },
