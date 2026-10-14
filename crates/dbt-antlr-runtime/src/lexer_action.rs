@@ -12,7 +12,7 @@ pub(crate) const LEXER_ACTION_TYPE_SKIP: i32 = 6;
 pub(crate) const LEXER_ACTION_TYPE_TYPE: i32 = 7;
 
 #[allow(clippy::enum_variant_names)]
-#[derive(Clone, Default, Eq, PartialEq, Debug, Hash)]
+#[derive(Clone, Default, Eq, Debug, Hash)]
 pub(crate) enum LexerAction<'ephemeral> {
     Channel(i32),
     Custom {
@@ -35,7 +35,62 @@ pub(crate) struct LexerIndexedCustomAction<'ephemeral> {
     pub(crate) action: LexerAction<'ephemeral>,
 }
 
+// Lifetime-agnostic equality: `IndexedCustom` compares by pointed-to value
+// (offset + action recursively), matching the derived `Hash`, which hashes
+// through the reference.
+impl<'a, 'b> PartialEq<LexerAction<'b>> for LexerAction<'a> {
+    fn eq(&self, other: &LexerAction<'b>) -> bool {
+        match (self, other) {
+            (&LexerAction::Channel(a), &LexerAction::Channel(b)) => a == b,
+            (
+                &LexerAction::Custom {
+                    rule_index: a_rule,
+                    action_index: a_action,
+                },
+                &LexerAction::Custom {
+                    rule_index: b_rule,
+                    action_index: b_action,
+                },
+            ) => a_rule == b_rule && a_action == b_action,
+            (&LexerAction::Mode(a), &LexerAction::Mode(b)) => a == b,
+            (LexerAction::More, LexerAction::More) => true,
+            (LexerAction::PopMode, LexerAction::PopMode) => true,
+            (&LexerAction::PushMode(a), &LexerAction::PushMode(b)) => a == b,
+            (LexerAction::Skip, LexerAction::Skip) => true,
+            (&LexerAction::Type(a), &LexerAction::Type(b)) => a == b,
+            (LexerAction::IndexedCustom(a), LexerAction::IndexedCustom(b)) => {
+                a.offset == b.offset && a.action == b.action
+            }
+            _ => false,
+        }
+    }
+}
+
 impl<'ephemeral> LexerAction<'ephemeral> {
+    /// The ATN `(type, data1, data2)` encoding of this action, the inverse
+    /// of [`Self::from_serialized`].
+    ///
+    /// Panics on `IndexedCustom`: a position-fixed action has no ATN
+    /// encoding (serialize the underlying custom action instead).
+    pub(crate) fn to_serialized(&self) -> (i32, i32, i32) {
+        match self {
+            &LexerAction::Channel(channel) => (LEXER_ACTION_TYPE_CHANNEL, channel, 0),
+            &LexerAction::Custom {
+                rule_index,
+                action_index,
+            } => (LEXER_ACTION_TYPE_CUSTOM, rule_index, action_index),
+            &LexerAction::Mode(mode) => (LEXER_ACTION_TYPE_MODE, mode, 0),
+            LexerAction::More => (LEXER_ACTION_TYPE_MORE, 0, 0),
+            LexerAction::PopMode => (LEXER_ACTION_TYPE_POP_MODE, 0, 0),
+            &LexerAction::PushMode(mode) => (LEXER_ACTION_TYPE_PUSH_MODE, mode, 0),
+            LexerAction::Skip => (LEXER_ACTION_TYPE_SKIP, 0, 0),
+            &LexerAction::Type(ttype) => (LEXER_ACTION_TYPE_TYPE, ttype, 0),
+            LexerAction::IndexedCustom(_) => {
+                unreachable!("position-fixed actions have no ATN encoding")
+            }
+        }
+    }
+
     /// Rebuilds one action from its ATN `(type, data1, data2)` encoding.
     ///
     /// Panics on an unknown action type: the encoding is produced together
