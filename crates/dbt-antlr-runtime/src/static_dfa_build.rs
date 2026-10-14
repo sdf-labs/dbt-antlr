@@ -127,7 +127,6 @@ use crate::atn_config::LexerATNConfig;
 use crate::atn_config_set::MutableLexerATNConfigSet;
 use crate::atn_state::ATNStateType;
 use crate::int_stream::EOF;
-use crate::lexer_action::LexerAction;
 use crate::lexer_atn_simulator::{reachable_core, start_state_core, LexerClosureEnv, ReachCapture};
 use crate::prediction_context::PredictionContextRef;
 use crate::transition::{Transition, TransitionType};
@@ -232,8 +231,6 @@ impl StaticLexerDfaBuilder {
 
     /// Builds the tables of every lexer mode of `atn`.
     pub fn build(&self, atn: &ATN) -> StaticLexerDfaBuild {
-        let atn_triples: Vec<(i32, i32, i32)> =
-            atn.lexer_actions.iter().map(action_triple).collect();
         let num_modes = atn.mode_to_start_state.len();
         let mut words = vec![
             STATIC_DFA_MAGIC,
@@ -243,19 +240,13 @@ impl StaticLexerDfaBuilder {
         ];
         let mut modes = Vec::with_capacity(num_modes);
         for mode in 0..num_modes {
-            modes.push(self.build_mode(atn, &atn_triples, mode, &mut words));
+            modes.push(self.build_mode(atn, mode, &mut words));
         }
         words[2] = words.len() as u32;
         StaticLexerDfaBuild { words, modes }
     }
 
-    fn build_mode(
-        &self,
-        atn: &ATN,
-        atn_triples: &[(i32, i32, i32)],
-        mode_index: usize,
-        out: &mut Vec<u32>,
-    ) -> ModeBuildInfo {
+    fn build_mode(&self, atn: &ATN, mode_index: usize, out: &mut Vec<u32>) -> ModeBuildInfo {
         let scratch = bumpalo::Bump::new();
         let mut mode = ModeBuild::new(self.max_states_per_mode.min(MAX_TABLE_STATE_COUNT));
 
@@ -263,7 +254,7 @@ impl StaticLexerDfaBuilder {
         let mut env = BuildEnv::default();
         let start_set = start_state_core(atn, start_state.as_ref(), &mut env, &scratch);
         let start_configs: Vec<_> = start_set.get_items().cloned().collect();
-        let start_key = key_of_configs(&mut mode.ctx_arena, atn_triples, &start_configs);
+        let start_key = key_of_configs(&mut mode.ctx_arena, atn, &start_configs);
         let failure = if env.predicate_crossed {
             Some(ModeFailure::StartClosurePredicate)
         } else if start_key.custom_action {
@@ -277,13 +268,7 @@ impl StaticLexerDfaBuilder {
             out.push(0);
             return ModeBuildInfo::absent(failure);
         }
-        match intern(
-            &mut mode,
-            atn,
-            atn_triples,
-            start_key.configs,
-            start_configs,
-        ) {
+        match intern(&mut mode, atn, start_key.configs, start_configs) {
             Some(_) => {}
             None => {
                 out.push(0);
@@ -294,7 +279,7 @@ impl StaticLexerDfaBuilder {
         let mut cursor = 0;
         while cursor < mode.states.len() {
             let source = mode.states[cursor].configs.clone();
-            let rows = compute_state_rows(&mut mode, atn, atn_triples, &source, &scratch);
+            let rows = compute_state_rows(&mut mode, atn, &source, &scratch);
             mode.rows.push(rows);
             cursor += 1;
         }
@@ -421,7 +406,7 @@ struct ConfigSetKey {
 
 fn key_of_configs(
     ctx_arena: &mut CtxArena,
-    atn_triples: &[(i32, i32, i32)],
+    atn: &ATN,
     configs: &[LexerATNConfig<'_>],
 ) -> ConfigSetKey {
     let mut keys = Vec::with_capacity(configs.len());
@@ -430,7 +415,7 @@ fn key_of_configs(
     for config in configs {
         let ctx = intern_ctx(ctx_arena, config.get_context());
         recursive_context |= ctx_arena.has_recursive_context(ctx);
-        let actions = match config_actions(atn_triples, config) {
+        let actions = match config_actions(atn, config) {
             Ok(actions) => actions,
             Err(()) => {
                 custom_action = true;
@@ -454,45 +439,22 @@ fn key_of_configs(
 
 /// The ATN indices of the actions of the executor of a config. Fails on a
 /// position-dependent action.
-fn config_actions(
-    atn_triples: &[(i32, i32, i32)],
-    config: &LexerATNConfig<'_>,
-) -> Result<Vec<i32>, ()> {
+fn config_actions(atn: &ATN, config: &LexerATNConfig<'_>) -> Result<Vec<i32>, ()> {
     let mut actions = Vec::new();
     if let Some(executor) = config.get_lexer_executor() {
         for action in executor.actions() {
             if action.is_position_dependent() {
                 return Err(());
             }
-            let triple = action_triple(action);
-            let index = atn_triples
+            let index = atn
+                .lexer_actions
                 .iter()
-                .position(|&t| t == triple)
+                .position(|a| a == action)
                 .expect("config actions come from the ATN lexer action list");
             actions.push(index as i32);
         }
     }
     Ok(actions)
-}
-
-/// The ATN `(type, data1, data2)` encoding of one lexer action.
-fn action_triple(action: &LexerAction<'_>) -> (i32, i32, i32) {
-    match action {
-        &LexerAction::Channel(channel) => (0, channel, 0),
-        &LexerAction::Custom {
-            rule_index,
-            action_index,
-        } => (1, rule_index, action_index),
-        &LexerAction::Mode(mode) => (2, mode, 0),
-        LexerAction::More => (3, 0, 0),
-        LexerAction::PopMode => (4, 0, 0),
-        &LexerAction::PushMode(mode) => (5, mode, 0),
-        LexerAction::Skip => (6, 0, 0),
-        &LexerAction::Type(ttype) => (7, ttype, 0),
-        LexerAction::IndexedCustom(_) => {
-            unreachable!("build-time executors hold no fixed custom actions")
-        }
-    }
 }
 
 /// One table state: the closed config set in insertion order and the accept
@@ -571,7 +533,6 @@ struct EdgeOutcome {
 fn compute_edge<'sc>(
     mode: &mut ModeBuild<'sc>,
     atn: &ATN,
-    atn_triples: &[(i32, i32, i32)],
     source: &[LexerATNConfig<'sc>],
     t: i32,
     scratch: &'sc bumpalo::Bump,
@@ -590,7 +551,7 @@ fn compute_edge<'sc>(
         scratch,
     );
     let closed: Vec<LexerATNConfig<'sc>> = reach.get_items().cloned().collect();
-    let key = key_of_configs(&mut mode.ctx_arena, atn_triples, &closed);
+    let key = key_of_configs(&mut mode.ctx_arena, atn, &closed);
 
     let reason = if env.predicate_crossed {
         Some(EscapeReason::Predicate)
@@ -617,14 +578,9 @@ fn compute_edge<'sc>(
         let cont = if capture.pruning_activity {
             let source_configs: Vec<(LexerATNConfig<'sc>, bool)> =
                 source.iter().map(|c| (c.clone(), false)).collect();
-            serialize_continuation(mode, atn_triples, CONTINUATION_SOURCE_SET, &source_configs)
+            serialize_continuation(mode, atn, CONTINUATION_SOURCE_SET, &source_configs)
         } else {
-            serialize_continuation(
-                mode,
-                atn_triples,
-                CONTINUATION_MOVED_CONFIGS,
-                &capture.moved,
-            )
+            serialize_continuation(mode, atn, CONTINUATION_MOVED_CONFIGS, &capture.moved)
         };
         return EdgeOutcome {
             entry: ESCAPE,
@@ -638,7 +594,7 @@ fn compute_edge<'sc>(
             escape: NO_CONTINUATION,
         };
     }
-    match intern(mode, atn, atn_triples, key.configs, closed) {
+    match intern(mode, atn, key.configs, closed) {
         Some(target) => {
             let mut entry = target as u16;
             if mode.states[target as usize].accept_type >= 0 {
@@ -661,11 +617,7 @@ fn compute_edge<'sc>(
 
 /// The accept data of a closed config set: the first rule-stop config in
 /// insertion order decides, mirroring `DFA::add_lexer_state`.
-fn accept_of(
-    atn: &ATN,
-    atn_triples: &[(i32, i32, i32)],
-    configs: &[LexerATNConfig<'_>],
-) -> (i32, Vec<(i32, i32, i32)>) {
+fn accept_of(atn: &ATN, configs: &[LexerATNConfig<'_>]) -> (i32, Vec<(i32, i32, i32)>) {
     let Some(accept) = configs
         .iter()
         .find(|c| c.get_state().state_type() == ATNStateType::RuleStop)
@@ -674,10 +626,10 @@ fn accept_of(
     };
     let rule = accept.get_state().get_rule_index();
     let accept_type = atn.rule_to_token_type[rule as usize];
-    let actions = config_actions(atn_triples, accept)
+    let actions = config_actions(atn, accept)
         .expect("interned states hold no position-dependent actions")
         .into_iter()
-        .map(|index| atn_triples[index as usize])
+        .map(|index| atn.lexer_actions[index as usize].to_serialized())
         .collect();
     (accept_type, actions)
 }
@@ -687,7 +639,6 @@ fn accept_of(
 fn intern<'sc>(
     mode: &mut ModeBuild<'sc>,
     atn: &ATN,
-    atn_triples: &[(i32, i32, i32)],
     key: Vec<ConfigKey>,
     configs: Vec<LexerATNConfig<'sc>>,
 ) -> Option<u32> {
@@ -698,7 +649,7 @@ fn intern<'sc>(
         return None;
     }
     let id = mode.states.len() as u32;
-    let (accept_type, accept_actions) = accept_of(atn, atn_triples, &configs);
+    let (accept_type, accept_actions) = accept_of(atn, &configs);
     mode.states.push(StateData {
         configs,
         accept_type,
@@ -711,7 +662,7 @@ fn intern<'sc>(
 /// Serializes one continuation and deduplicates it by content.
 fn serialize_continuation(
     mode: &mut ModeBuild,
-    atn_triples: &[(i32, i32, i32)],
+    atn: &ATN,
     kind: u32,
     configs: &[(LexerATNConfig<'_>, bool)],
 ) -> u32 {
@@ -743,7 +694,7 @@ fn serialize_continuation(
         if alt_reached_accept {
             flags |= 0b10;
         }
-        let actions = config_actions(atn_triples, config)
+        let actions = config_actions(atn, config)
             .expect("escape continuations hold no position-dependent actions");
         config_words.push(config.get_state().get_state_number() as u32);
         config_words.push(flags);
@@ -813,11 +764,10 @@ fn add_interval_bounds(a: i32, b: i32, bounds: &mut BTreeSet<i32>) {
 fn compute_state_rows<'sc>(
     mode: &mut ModeBuild<'sc>,
     atn: &ATN,
-    atn_triples: &[(i32, i32, i32)],
     source: &[LexerATNConfig<'sc>],
     scratch: &'sc bumpalo::Bump,
 ) -> StateRows {
-    let eof = compute_edge(mode, atn, atn_triples, source, EOF, scratch);
+    let eof = compute_edge(mode, atn, source, EOF, scratch);
     let mut bounds = BTreeSet::from([0, MAX_SYMBOL + 1]);
     for config in source {
         for tr in config.get_state().get_transitions() {
@@ -829,7 +779,7 @@ fn compute_state_rows<'sc>(
     for b in bounds {
         if lo < b {
             let hi = b - 1;
-            let edge = compute_edge(mode, atn, atn_triples, source, lo, scratch);
+            let edge = compute_edge(mode, atn, source, lo, scratch);
             if edge.entry == NO_EDGE {
                 lo = b;
                 continue;
