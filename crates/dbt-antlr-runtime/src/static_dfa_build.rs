@@ -129,6 +129,7 @@ use crate::atn_state::ATNStateType;
 use crate::int_stream::EOF;
 use crate::lexer_atn_simulator::{reachable_core, start_state_core, LexerClosureEnv, ReachCapture};
 use crate::prediction_context::PredictionContextRef;
+use crate::static_lexer_dfa::Accel;
 use crate::transition::{Transition, TransitionType};
 
 /// The default per-mode state budget, equal to the dbt `LexerDFABuilder`
@@ -139,7 +140,6 @@ const MAX_SYMBOL: i32 = 0x10FFFF;
 const ASCII_MAX: i32 = 127;
 const MAX_TABLE_STATE_COUNT: usize = 0x7FFE;
 const MAX_CONTEXT_DEPTH: u32 = 32;
-const MIN_ACCEL_LOOP_BYTES: usize = 12;
 
 /// The result of [`StaticLexerDfaBuilder::build`]: the serialized tables and
 /// structured diagnostics per mode.
@@ -874,56 +874,6 @@ fn class_runs(class_starts: &[i32], hi: &[(i32, i32, u16)]) -> Vec<(u32, u32, u1
     runs
 }
 
-/// The serialized accel entry of one state, or empty. A port of the dbt
-/// `LexerDFABuilder#computeAccel` classification.
-fn accel_words(s: usize, low: &[u16; 128], hi: &[(i32, i32, u16)]) -> Vec<u32> {
-    let mut bitmap = 0u128;
-    let mut count = 0usize;
-    for (c, &entry) in low.iter().enumerate() {
-        if entry != NO_EDGE && entry != ESCAPE && (entry & STATE_MASK) as usize == s {
-            bitmap |= 1u128 << c;
-            count += 1;
-        }
-    }
-    if count == 0 {
-        return Vec::new();
-    }
-    let nl_loops = bitmap & (1 << b'\n') != 0;
-    let all_hi_loop = hi.len() == 1
-        && hi[0].0 == ASCII_MAX + 1
-        && hi[0].1 == MAX_SYMBOL
-        && hi[0].2 != NO_EDGE
-        && hi[0].2 != ESCAPE
-        && (hi[0].2 & STATE_MASK) as usize == s;
-    if all_hi_loop {
-        let mut needles: Vec<u32> = (0..128u32).filter(|&c| bitmap & (1 << c) == 0).collect();
-        if nl_loops {
-            needles.push(u32::from(b'\n'));
-        }
-        if (1..=3).contains(&needles.len()) {
-            let n = needles.len() as u32;
-            needles.resize(3, 0);
-            let mut words = vec![s as u32, ACCEL_EXCLUSION, u32::from(nl_loops), n];
-            words.extend(needles);
-            return words;
-        }
-    }
-    if nl_loops {
-        bitmap &= !(1u128 << b'\n');
-    }
-    if count - usize::from(nl_loops) < MIN_ACCEL_LOOP_BYTES {
-        return Vec::new();
-    }
-    vec![
-        s as u32,
-        ACCEL_POSITIVE,
-        bitmap as u32,
-        (bitmap >> 32) as u32,
-        (bitmap >> 64) as u32,
-        (bitmap >> 96) as u32,
-    ]
-}
-
 /// Writes one present mode to the word stream, in the section order of the
 /// module documentation.
 fn serialize_mode(mode: &ModeBuild, out: &mut Vec<u32>) {
@@ -973,7 +923,9 @@ fn serialize_mode(mode: &ModeBuild, out: &mut Vec<u32>) {
 
     let mut accel = Vec::new();
     for (s, (rows, low)) in mode.rows.iter().zip(&low_rows).enumerate() {
-        accel.extend(accel_words(s, low, &hi_clipped(rows)));
+        if let Some(descriptor) = Accel::from_dfa_state(s as u16, low, &hi_clipped(rows)) {
+            accel.extend(descriptor.to_serialized(s as u16));
+        }
     }
     out.push(accel.len() as u32);
     out.extend(accel);
@@ -1112,9 +1064,17 @@ mod tests {
         low[b'a' as usize] = NO_EDGE;
         low[b'b' as usize] = NO_EDGE;
         let hi = vec![(128, MAX_SYMBOL, 2u16)];
-        let words = accel_words(2, &low, &hi);
+        let accel = Accel::from_dfa_state(2, &low, &hi).expect("exclusion run");
         assert_eq!(
-            words,
+            accel,
+            Accel::Exclusion {
+                needles: *b"ab\n",
+                n: 3,
+                nl_in_set: true,
+            }
+        );
+        assert_eq!(
+            accel.to_serialized(2),
             vec![
                 2,
                 ACCEL_EXCLUSION,
@@ -1134,7 +1094,13 @@ mod tests {
         for c in 0..13u8 {
             low[c as usize] = 1;
         }
-        let words = accel_words(1, &low, &[]);
+        let accel = Accel::from_dfa_state(1, &low, &[]).expect("positive run");
+        let Accel::Positive(positive) = accel else {
+            panic!("expected a positive accel, got {accel:?}");
+        };
+        assert_eq!(positive.bitmap & (1 << b'\n'), 0);
+        assert_eq!(positive.bitmap.count_ones(), 12);
+        let words = accel.to_serialized(1);
         assert_eq!(words.len(), 6);
         assert_eq!(words[0], 1);
         assert_eq!(words[1], ACCEL_POSITIVE);
@@ -1142,8 +1108,7 @@ mod tests {
         for i in 0..4 {
             bitmap |= u128::from(words[2 + i]) << (i * 32);
         }
-        assert_eq!(bitmap & (1 << b'\n'), 0);
-        assert_eq!(bitmap.count_ones(), 12);
+        assert_eq!(bitmap, positive.bitmap);
     }
 
     #[test]
@@ -1152,7 +1117,7 @@ mod tests {
         for c in b'0'..=b'9' {
             low[c as usize] = 3;
         }
-        assert!(accel_words(3, &low, &[]).is_empty());
+        assert_eq!(Accel::from_dfa_state(3, &low, &[]), None);
     }
 }
 

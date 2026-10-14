@@ -205,6 +205,102 @@ impl PositiveAccel {
     }
 }
 
+/// Fewer self-looping bytes than this never get an accel descriptor: the
+/// run-scan setup costs more than the per-char table chase it saves.
+#[cfg(feature = "static-dfa-build")]
+const MIN_ACCEL_LOOP_BYTES: usize = 12;
+
+impl Accel {
+    /// Classifies the run-acceleration descriptor of one DFA state from its
+    /// serialized edge rows: the 128-wide low row plus the hi-interval list
+    /// `(lo, hi, entry)`. A port of the dbt `LexerDFABuilder#computeAccel`
+    /// classification. `None` when the state has no worthwhile run.
+    #[cfg(feature = "static-dfa-build")]
+    pub(crate) fn from_dfa_state(
+        s: u16,
+        low: &[u16; 128],
+        hi: &[(i32, i32, u16)],
+    ) -> Option<Accel> {
+        let mut bitmap = 0u128;
+        let mut count = 0usize;
+        for (c, &entry) in low.iter().enumerate() {
+            if entry != NO_EDGE && entry != ESCAPE && (entry & STATE_MASK) == s {
+                bitmap |= 1u128 << c;
+                count += 1;
+            }
+        }
+        if count == 0 {
+            return None;
+        }
+        let nl_loops = bitmap & (1 << b'\n') != 0;
+        let all_hi_loop = if let &[(lo, hi, entry)] = hi {
+            lo == ASCII_ROW as i32
+                && hi == MAX_SYMBOL as i32
+                && entry != NO_EDGE
+                && entry != ESCAPE
+                && (entry & STATE_MASK) == s
+        } else {
+            false
+        };
+        if all_hi_loop {
+            let mut needles: Vec<u8> = (0..128u8).filter(|&c| bitmap & (1 << c) == 0).collect();
+            if nl_loops {
+                needles.push(b'\n');
+            }
+            if (1..=3).contains(&needles.len()) {
+                let n = needles.len() as u8;
+                let mut arr = [0u8; 3];
+                arr[..needles.len()].copy_from_slice(&needles);
+                return Some(Accel::Exclusion {
+                    needles: arr,
+                    n,
+                    nl_in_set: nl_loops,
+                });
+            }
+        }
+        if nl_loops {
+            bitmap &= !(1u128 << b'\n');
+        }
+        if count - usize::from(nl_loops) < MIN_ACCEL_LOOP_BYTES {
+            return None;
+        }
+        Some(Accel::Positive(PositiveAccel::new(bitmap)))
+    }
+
+    /// The serialized accel entry of this descriptor for state `s`:
+    /// `(state, tag, payload...)`, in the section layout of the word-stream
+    /// documentation.
+    #[cfg(feature = "static-dfa-build")]
+    pub(crate) fn to_serialized(self, s: u16) -> Vec<u32> {
+        match self {
+            Accel::Positive(positive) => {
+                let bitmap = positive.bitmap;
+                vec![
+                    u32::from(s),
+                    ACCEL_POSITIVE,
+                    bitmap as u32,
+                    (bitmap >> 32) as u32,
+                    (bitmap >> 64) as u32,
+                    (bitmap >> 96) as u32,
+                ]
+            }
+            Accel::Exclusion {
+                needles,
+                n,
+                nl_in_set,
+            } => vec![
+                u32::from(s),
+                ACCEL_EXCLUSION,
+                u32::from(nl_in_set),
+                u32::from(n),
+                u32::from(needles[0]),
+                u32::from(needles[1]),
+                u32::from(needles[2]),
+            ],
+        }
+    }
+}
+
 /// Failure while decoding a static lexer DFA word stream.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StaticLexerError {

@@ -72,6 +72,7 @@ impl<'ephemeral> LexerAction<'ephemeral> {
     ///
     /// Panics on `IndexedCustom`: a position-fixed action has no ATN
     /// encoding (serialize the underlying custom action instead).
+    #[cfg(feature = "static-dfa-build")]
     pub(crate) fn to_serialized(&self) -> (i32, i32, i32) {
         match self {
             &LexerAction::Channel(channel) => (LEXER_ACTION_TYPE_CHANNEL, channel, 0),
