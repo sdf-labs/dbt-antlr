@@ -1,19 +1,94 @@
-//! Runtime side of the static lexer DFA: the word-stream deserializer and
-//! the table representation that the walker in
-//! [`crate::lexer_atn_simulator::LexerATNSimulator`] tokenizes from.
+//! Runtime side of the static lexer DFA: the table representation that the
+//! walker in [`crate::lexer_atn_simulator::LexerATNSimulator`] tokenizes
+//! from, and the word-stream codec that carries the tables from the
+//! compile-time builder to generated code.
 //!
-//! The word-stream format (preamble `0x53444641`, version 1, per-mode
-//! sections) is the contract of the `static_dfa_build` module documentation;
-//! generated code embeds the words, and [`StaticLexerTables::from_words`]
-//! decodes them. The decoder validates the stream fully at load: after a
-//! successful load, the walker indexes the tables without bounds checks.
+//! The builder (the `static_dfa_build` module, feature `static-dfa-build`)
+//! runs the subset construction and commits each mode to the walker's own
+//! [`StaticLexerDFA`]. [`StaticLexerTables::to_words`] (same feature)
+//! encodes the tables as the word stream that generated code embeds;
+//! [`StaticLexerTables::from_words`] decodes the words, with full
+//! validation at load: after a successful load, the walker indexes the
+//! tables without bounds checks. `to_words` is the exact inverse of
+//! `from_words`.
 //!
 //! The runtime form expands the serialized low rows into dense per-state
 //! rows (column 0 is the EOF edge, columns 1..=128 are symbols 0..=127),
-//! derives the direct symbol-to-class map from the class starts, expands the
-//! deduplicated class rows, and decodes the continuation pool into an owned
-//! form ready for the resume path.
+//! derives the direct symbol-to-class map from the class starts, expands
+//! the deduplicated class rows, and decodes the continuation pool into an
+//! owned form ready for the resume path.
+//!
+//! # Word stream format (version 1)
+//!
+//! One `i32` value per `u32` word, except where noted. Sizes and indices
+//! are `u32`. Symbols are `i32` values in `0..=0x10FFFF`. All multi-word
+//! sections use the order of this list:
+//!
+//! - Preamble: `MAGIC`, `STATIC_DFA_FORMAT_VERSION`, the total word count
+//!   of the stream, `num_modes`.
+//! - Per mode: `present` flag (0 or 1). A mode with `present == 0` has no
+//!   more words.
+//! - `num_states`, `start_state`.
+//! - `accept_type[num_states]`: token type per state, `-1` when the state
+//!   is not an accept state.
+//! - `accept_actions[num_states]`: word offset of the accept action list
+//!   of the state in the action-list section, `-1` when empty.
+//! - `eof[num_states]`: the EOF edge entry of each state.
+//! - `low[num_states * 128]`: the edge entries of each state for the
+//!   symbols `0..=127`, in symbol order per state.
+//! - Hi-class section: `num_classes`, then, when `num_classes > 0`,
+//!   `class_starts[num_classes]`, `num_rows`, `num_row_triples`,
+//!   `row_offsets[num_rows + 1]` (in triples), `num_row_triples` times
+//!   `(lo_class, hi_class, target_entry)`, and `row_of[num_states]`.
+//!   Class `i` covers the symbols in `class_starts[i]..class_starts[i + 1]`,
+//!   or up to `0x10FFFF` for the last class. `class_starts[0]` is 128, and
+//!   the bounds are the union of the hi-edge bounds of the mode. The target
+//!   of a state is constant within a class. Rows are deduplicated by
+//!   content. The deserializer derives the direct symbol-to-class map from
+//!   `class_starts`; the stream carries no expanded map.
+//! - Action-list section: `num_action_list_ints`, then the concatenated
+//!   lists. A list is `len`, then `len` times the ATN encoding
+//!   `(type, data1, data2)` of one lexer action. Lists are deduplicated by
+//!   content.
+//! - Accel section: `num_accel_ints`, then the run-acceleration entries.
+//!   An entry is `(state, ACCEL_POSITIVE, w0, w1, w2, w3)` for a 128-bit
+//!   bitmap of self-looping ASCII symbols, or `(state, ACCEL_EXCLUSION,
+//!   nl_in_set, n_needles, needle0, needle1, needle2)` with zero-padded
+//!   needles. The bitmap never contains `'\n'`. A `\n` that loops is an
+//!   exclusion needle with `nl_in_set = 1`, so the walker keeps line and
+//!   column exact.
+//! - Escape rows: per state, `eof_escape`, `num_ranges`, then `num_ranges`
+//!   times `(lo_symbol, hi_symbol, continuation_index)`. The ranges are
+//!   the sorted, disjoint symbol intervals whose edge escapes. Edges with a
+//!   plain target and edges that do not exist have no range. `eof_escape`
+//!   is meaningful only when the EOF edge entry is `ESCAPE`. A
+//!   continuation index of `NO_CONTINUATION` marks a budget escape.
+//! - Continuation pool: `num_continuations`, then per continuation `kind`,
+//!   `nctx`, `nctx` times `(ctx_kind, parent_local, return_state)`,
+//!   `nconfigs`, and `nconfigs` times `(state, flags, alt, ctx_local,
+//!   nactions)`, with `nactions` times `(action_index, behind)` after each
+//!   config.
+//!
+//! Edge entries are `target | ACCEPT_BIT` when the target state is an
+//! accept state, `target` otherwise, `NO_EDGE` when the edge does not
+//! exist, or `ESCAPE` for an escape edge. Escape edges never carry
+//! `ACCEPT_BIT`. State ids stay below `0x7FFE`, so `ACCEPT_BIT | state`
+//! peaks at `0xFFFD`.
+//!
+//! In a continuation, `kind` is `CONTINUATION_MOVED_CONFIGS` (0) for the
+//! post-move, pre-closure configs of the escape edge, or
+//! `CONTINUATION_SOURCE_SET` (1) for the source configs of the state. The
+//! context table is topological: local id 0 is the empty context, and
+//! entry `i` has local id `i + 1` with parents that refer to smaller ids.
+//! `ctx_kind` is 0 (singleton); lexer contexts are always empty or
+//! singleton chains. In `flags`, bit 0 is `passed_through_non_greedy`,
+//! bit 1 is `alt_reached_accept` (meaningful for kind 0 only; the resume
+//! recomputes the flag for kind 1), and bit 2 is reserved. `behind` is the
+//! count of consumed symbols between the action and the escape edge, or
+//! `BEHIND_POSITION_INDEPENDENT` for a position-independent action. The
+//! builder only emits `BEHIND_POSITION_INDEPENDENT`.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Formatter;
 
@@ -63,72 +138,75 @@ const MAX_STATE_COUNT: usize = 0x7FFE;
 /// mode that the builder could not compile has no table; the walker runs
 /// the lazy path for it.
 #[derive(Debug)]
+#[cfg_attr(feature = "static-dfa-build", derive(PartialEq))]
 pub struct StaticLexerTables {
-    modes: Vec<Option<StaticLexerDFA>>,
+    pub(crate) modes: Vec<Option<StaticLexerDFA>>,
 }
 
 /// The table of one lexer mode.
 #[derive(Debug)]
+#[cfg_attr(feature = "static-dfa-build", derive(PartialEq))]
 pub struct StaticLexerDFA {
-    start_state: u16,
+    pub(crate) start_state: u16,
     /// `num_states * LOW_ROW` dense targets: column 0 is the EOF edge,
     /// columns 1..=128 are the symbols 0..=127.
-    low: Vec<u16>,
+    pub(crate) low: Vec<u16>,
     /// Direct symbol-to-class map for the symbols `ASCII_ROW..=MAX_SYMBOL`
     /// (empty when the mode has no edges past 127).
-    class_of: Vec<u16>,
+    pub(crate) class_of: Vec<u16>,
     /// Deduplicated dense class rows: the hi-edge row of state `s` is
     /// `hi_rows[row_of[s] * num_classes..][..num_classes]`.
-    hi_rows: Vec<u16>,
+    pub(crate) hi_rows: Vec<u16>,
     /// State-to-row map into `hi_rows`.
-    row_of: Vec<u32>,
+    pub(crate) row_of: Vec<u32>,
     /// Row width of `hi_rows`: the symbol-class count of the mode.
-    num_classes: usize,
+    pub(crate) num_classes: usize,
     /// Class bounds of the mode; class `i` covers
     /// `class_starts[i]..class_starts[i + 1]`. Used only by load-time
     /// validation; the walker goes through `class_of`.
-    class_starts: Vec<u32>,
+    pub(crate) class_starts: Vec<u32>,
     /// Token type per accept state; -1 when the state is not an accept
     /// state. 0 is a real accept type: rules with a `more`/`type(...)`
     /// command get no token type assigned by the tool.
-    accept_type: Vec<i32>,
+    pub(crate) accept_type: Vec<i32>,
     /// `(offset, len)` of the accept action list of each state in
     /// `actions`; `(0, 0)` when empty.
-    accept_actions: Vec<(u32, u32)>,
-    /// The decoded accept action lists of all states, concatenated. The
-    /// loader rejects position-dependent actions here, so the walker can
-    /// run them with plain `LexerAction::execute` calls.
-    actions: Vec<LexerAction<'static>>,
+    pub(crate) accept_actions: Vec<(u32, u32)>,
+    /// The accept action lists of all states, concatenated and
+    /// deduplicated by content. Only position-independent actions appear
+    /// here, so the walker can run them with plain `LexerAction::execute`
+    /// calls.
+    pub(crate) actions: Vec<LexerAction<'static>>,
     /// Run-acceleration flavor tag per state: 0 = none, else the index of
     /// the payload in `accel_data` + 1.
-    accel_tag: Vec<u8>,
+    pub(crate) accel_tag: Vec<u8>,
     /// Run-acceleration payloads (see [`Accel`]), accelerated states only.
-    accel_data: Vec<Accel>,
+    pub(crate) accel_data: Vec<Accel>,
     /// Continuation index of the EOF escape edge of each state.
     /// `NO_CONTINUATION` marks a budget escape, or no EOF escape at all.
-    eof_escape: Vec<u32>,
+    pub(crate) eof_escape: Vec<u32>,
     /// Start offsets of the per-state escape ranges in `escape_ranges`;
     /// `num_states + 1` entries.
-    escape_off: Vec<u32>,
+    pub(crate) escape_off: Vec<u32>,
     /// The escape ranges of all states, concatenated: the sorted, disjoint
     /// symbol intervals whose edge escapes.
-    escape_ranges: Vec<EscapeRange>,
+    pub(crate) escape_ranges: Vec<EscapeRange>,
     /// The continuation pool of the mode, decoded for the resume path.
-    continuations: Vec<LexerContinuation>,
+    pub(crate) continuations: Vec<LexerContinuation>,
 }
 
 /// One escape range: the edges on the symbols `lo..=hi` escape to the
 /// continuation `continuation` (`NO_CONTINUATION` for a budget escape).
-#[derive(Debug, Clone, Copy)]
-struct EscapeRange {
-    lo: i32,
-    hi: i32,
-    continuation: u32,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EscapeRange {
+    pub(crate) lo: i32,
+    pub(crate) hi: i32,
+    pub(crate) continuation: u32,
 }
 
 /// One continuation of the pool: everything the resume path needs to
 /// rebuild the configs of an escape edge.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct LexerContinuation {
     /// `CONTINUATION_MOVED_CONFIGS` or `CONTINUATION_SOURCE_SET`.
     pub(crate) kind: u32,
@@ -139,7 +217,7 @@ pub(crate) struct LexerContinuation {
 }
 
 /// One config of a continuation.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct ContinuationConfig {
     /// ATN state number.
     pub(crate) state: i32,
@@ -723,6 +801,38 @@ impl StaticLexerTables {
         self.modes.len()
     }
 
+    /// Assembles the tables from per-mode build results: the builder side
+    /// of the type ([`Self::from_words`] is the wire side).
+    #[cfg(feature = "static-dfa-build")]
+    pub(crate) fn from_modes(modes: Vec<Option<StaticLexerDFA>>) -> Self {
+        StaticLexerTables { modes }
+    }
+
+    /// Encodes the tables as a word stream: the exact inverse of
+    /// [`Self::from_words`]. Generated code embeds the words.
+    ///
+    /// (Feature `static-dfa-build`: only the builder produces tables.)
+    #[cfg(feature = "static-dfa-build")]
+    pub fn to_words(&self) -> Vec<u32> {
+        let mut out = vec![
+            STATIC_DFA_MAGIC,
+            STATIC_DFA_FORMAT_VERSION,
+            0,
+            self.modes.len() as u32,
+        ];
+        for mode in &self.modes {
+            match mode {
+                None => out.push(0),
+                Some(dfa) => {
+                    out.push(1);
+                    dfa.write_mode(&mut out);
+                }
+            }
+        }
+        out[2] = out.len() as u32;
+        out
+    }
+
     /// Checks the ATN-relative references of the continuation pool against
     /// `atn`: config states, context return states, and action indices.
     ///
@@ -762,8 +872,20 @@ impl StaticLexerTables {
     }
 }
 
+// The accessors the walker's hot path shares with builders, tests, and
+// codegen come in cfg pairs: `pub` under the `static-dfa-build` feature,
+// `pub(crate)` without it. (A macro cannot share the body: `self` does not
+// cross macro boundaries.)
 impl StaticLexerDFA {
     /// The state the walk of a token starts in.
+    #[cfg(feature = "static-dfa-build")]
+    #[inline]
+    pub fn start_state(&self) -> u16 {
+        self.start_state
+    }
+
+    /// The state the walk of a token starts in.
+    #[cfg(not(feature = "static-dfa-build"))]
     #[inline]
     pub(crate) fn start_state(&self) -> u16 {
         self.start_state
@@ -779,6 +901,40 @@ impl StaticLexerDFA {
     /// serialized targets are validated at load time), `row_of` entries are
     /// validated in range at load time, and class ids are smaller than
     /// `num_classes` by construction.
+    #[cfg(feature = "static-dfa-build")]
+    #[inline]
+    pub fn edge_entry(&self, s: u16, t: i32) -> u16 {
+        // Column 0 is EOF (`t = -1` wraps to 0), columns 1..=128 are symbols
+        // 0..=127; everything else takes the class-map path.
+        let col = (t as u32).wrapping_add(1) as usize;
+        if col < LOW_ROW {
+            return unsafe { *self.low.get_unchecked(s as usize * LOW_ROW + col) };
+        }
+        // Two direct loads: symbol to class, class to target. The length
+        // check also covers modes without hi edges (an empty class map) and
+        // symbols beyond MAX_SYMBOL.
+        let i = t as usize - ASCII_ROW;
+        if i >= self.class_of.len() {
+            return NO_EDGE;
+        }
+        unsafe {
+            let class = *self.class_of.get_unchecked(i) as usize;
+            let row = *self.row_of.get_unchecked(s as usize) as usize;
+            *self.hi_rows.get_unchecked(row * self.num_classes + class)
+        }
+    }
+
+    /// Raw edge entry of state `s` on input symbol `t` (`-1` = EOF):
+    /// `NO_EDGE` when there is no edge, `ESCAPE` for an escape edge, else
+    /// `target | ACCEPT_BIT?` (the bit marks accept states, so the per-char
+    /// walk loop needs only this one table load per input symbol).
+    ///
+    /// No bounds checks apart from the class-map length: every `s` the
+    /// walker produces is a valid state id (the start state and all
+    /// serialized targets are validated at load time), `row_of` entries are
+    /// validated in range at load time, and class ids are smaller than
+    /// `num_classes` by construction.
+    #[cfg(not(feature = "static-dfa-build"))]
     #[inline]
     pub(crate) fn edge_entry(&self, s: u16, t: i32) -> u16 {
         // Column 0 is EOF (`t = -1` wraps to 0), columns 1..=128 are symbols
@@ -805,6 +961,17 @@ impl StaticLexerDFA {
     /// state.
     ///
     /// Same unchecked-index safety argument as [`StaticLexerDFA::edge_entry`].
+    #[cfg(feature = "static-dfa-build")]
+    #[inline]
+    pub fn accept_type(&self, s: u16) -> i32 {
+        unsafe { *self.accept_type.get_unchecked(s as usize) }
+    }
+
+    /// Token type produced when accepting in state `s`; -1 = not an accept
+    /// state.
+    ///
+    /// Same unchecked-index safety argument as [`StaticLexerDFA::edge_entry`].
+    #[cfg(not(feature = "static-dfa-build"))]
     #[inline]
     pub(crate) fn accept_type(&self, s: u16) -> i32 {
         unsafe { *self.accept_type.get_unchecked(s as usize) }
@@ -826,12 +993,6 @@ impl StaticLexerDFA {
     ///
     /// Same unchecked-index safety argument as [`StaticLexerDFA::edge_entry`].
     #[inline]
-    /// Number of table states of this mode.
-    #[cfg(test)]
-    pub(crate) fn num_states(&self) -> usize {
-        self.row_of.len()
-    }
-
     pub(crate) fn accel_tag(&self, s: u16) -> u8 {
         unsafe { *self.accel_tag.get_unchecked(s as usize) }
     }
@@ -850,6 +1011,24 @@ impl StaticLexerDFA {
     /// does not escape or the escape is a budget escape.
     ///
     /// Same unchecked-index safety argument as [`StaticLexerDFA::edge_entry`].
+    #[cfg(feature = "static-dfa-build")]
+    pub fn escape_continuation(&self, s: u16, symbol: i32) -> u32 {
+        if symbol == EOF {
+            return unsafe { *self.eof_escape.get_unchecked(s as usize) };
+        }
+        // Valid tables have a range for every ESCAPE entry (checked at
+        // load); the restart-on-budget-escape path treats a miss as a
+        // budget escape, which stays correct.
+        self.escape_range(s, symbol)
+            .map_or(NO_CONTINUATION, |r| r.continuation)
+    }
+
+    /// The continuation index of the escape edge of state `s` on `symbol`
+    /// (EOF = -1 takes the EOF escape). `NO_CONTINUATION` when the edge
+    /// does not escape or the escape is a budget escape.
+    ///
+    /// Same unchecked-index safety argument as [`StaticLexerDFA::edge_entry`].
+    #[cfg(not(feature = "static-dfa-build"))]
     pub(crate) fn escape_continuation(&self, s: u16, symbol: i32) -> u32 {
         if symbol == EOF {
             return unsafe { *self.eof_escape.get_unchecked(s as usize) };
@@ -889,6 +1068,240 @@ impl StaticLexerDFA {
     pub(crate) fn continuation(&self, index: u32) -> &LexerContinuation {
         unsafe { self.continuations.get_unchecked(index as usize) }
     }
+}
+
+/// Structural inspection of a committed table, for tests and future
+/// codegen. The walker uses the hot-path accessors above; nothing here is
+/// on it.
+#[cfg(feature = "static-dfa-build")]
+impl StaticLexerDFA {
+    /// Number of table states of this mode.
+    pub fn num_states(&self) -> usize {
+        self.accept_type.len()
+    }
+
+    /// Number of hi-symbol classes of this mode (0 = no edges past 127).
+    pub fn num_classes(&self) -> usize {
+        self.num_classes
+    }
+
+    /// Number of continuations of this mode.
+    pub fn num_continuations(&self) -> usize {
+        self.continuations.len()
+    }
+
+    /// The kind of continuation `index`: `CONTINUATION_MOVED_CONFIGS` or
+    /// `CONTINUATION_SOURCE_SET`.
+    pub fn continuation_kind(&self, index: u32) -> u32 {
+        self.continuations[index as usize].kind
+    }
+
+    /// The number of configs of continuation `index`.
+    pub fn continuation_num_configs(&self, index: u32) -> usize {
+        self.continuations[index as usize].configs.len()
+    }
+
+    /// The accept action list of state `s` as ATN `(type, data1, data2)`
+    /// triples, in order.
+    pub fn accept_action_triples(&self, s: u16) -> Vec<(i32, i32, i32)> {
+        self.accept_actions(s)
+            .iter()
+            .map(LexerAction::to_serialized)
+            .collect()
+    }
+
+    /// The escape ranges of state `s` as `(lo, hi, continuation)` triples,
+    /// sorted and disjoint (`NO_CONTINUATION` marks a budget escape).
+    pub fn escape_ranges(&self, s: u16) -> Vec<(i32, i32, u32)> {
+        let row = &self.escape_ranges
+            [self.escape_off[s as usize] as usize..self.escape_off[s as usize + 1] as usize];
+        row.iter().map(|r| (r.lo, r.hi, r.continuation)).collect()
+    }
+}
+
+/// The encode side of the word-stream codec: [`StaticLexerTables::to_words`]
+/// and its per-section writers. The section order is the one of the module
+/// documentation; the output is the exact inverse of [`StaticLexerTables::from_words`].
+#[cfg(feature = "static-dfa-build")]
+impl StaticLexerDFA {
+    /// Writes one present mode section.
+    fn write_mode(&self, out: &mut Vec<u32>) {
+        let num_states = self.accept_type.len();
+        out.push(num_states as u32);
+        out.push(u32::from(self.start_state));
+        out.extend(self.accept_type.iter().map(|&t| t as u32));
+
+        // Accept action lists, deduplicated by content in state order.
+        let mut action_lists: Vec<u32> = Vec::new();
+        let mut list_ids: HashMap<&[LexerAction], u32> = HashMap::new();
+        let mut offsets = Vec::with_capacity(num_states);
+        for &(off, len) in &self.accept_actions {
+            if len == 0 {
+                offsets.push(-1i32);
+                continue;
+            }
+            let list = &self.actions[off as usize..(off + len) as usize];
+            let offset = match list_ids.get(list) {
+                Some(&offset) => offset,
+                None => {
+                    let offset = action_lists.len() as u32;
+                    action_lists.push(len);
+                    for action in list {
+                        let (ty, d1, d2) = action.to_serialized();
+                        action_lists.extend([ty as u32, d1 as u32, d2 as u32]);
+                    }
+                    list_ids.insert(list, offset);
+                    offset
+                }
+            };
+            offsets.push(offset as i32);
+        }
+        out.extend(offsets.iter().map(|&o| o as u32));
+
+        for s in 0..num_states {
+            out.push(u32::from(self.low[s * LOW_ROW]));
+        }
+        for s in 0..num_states {
+            out.extend(
+                self.low[s * LOW_ROW + 1..(s + 1) * LOW_ROW]
+                    .iter()
+                    .map(|&entry| u32::from(entry)),
+            );
+        }
+
+        self.write_hi_classes(out);
+
+        out.push(action_lists.len() as u32);
+        out.extend(action_lists);
+
+        let mut accel = Vec::new();
+        for (s, &tag) in self.accel_tag.iter().enumerate() {
+            if tag != 0 {
+                accel.extend(self.accel_data[tag as usize - 1].to_serialized(s as u16));
+            }
+        }
+        out.push(accel.len() as u32);
+        out.extend(accel);
+
+        for s in 0..num_states {
+            out.push(self.eof_escape[s]);
+            let ranges =
+                &self.escape_ranges[self.escape_off[s] as usize..self.escape_off[s + 1] as usize];
+            out.push(ranges.len() as u32);
+            for range in ranges {
+                out.extend([range.lo as u32, range.hi as u32, range.continuation]);
+            }
+        }
+
+        out.push(self.continuations.len() as u32);
+        for cont in &self.continuations {
+            out.push(cont.kind);
+            out.push(cont.ctxs.len() as u32);
+            for &(parent, return_state) in &cont.ctxs {
+                out.extend([0, parent, return_state as u32]);
+            }
+            out.push(cont.configs.len() as u32);
+            for config in &cont.configs {
+                let flags =
+                    u32::from(config.non_greedy) | (u32::from(config.alt_reached_accept) << 1);
+                out.extend([
+                    config.state as u32,
+                    flags,
+                    config.alt as u32,
+                    config.ctx,
+                    config.actions.len() as u32,
+                ]);
+                for &action in &config.actions {
+                    out.extend([action, BEHIND_POSITION_INDEPENDENT]);
+                }
+            }
+        }
+    }
+
+    /// Writes the class-compressed hi-edge section: the deduplicated dense
+    /// rows are re-expressed as `(lo_class, hi_class, target)` runs.
+    fn write_hi_classes(&self, out: &mut Vec<u32>) {
+        out.push(self.num_classes as u32);
+        if self.num_classes == 0 {
+            return;
+        }
+        out.extend(self.class_starts.iter().copied());
+        let num_rows = self.hi_rows.len() / self.num_classes;
+        let row_runs: Vec<Vec<(u32, u32, u16)>> = (0..num_rows)
+            .map(|row| {
+                dense_row_runs(&self.hi_rows[row * self.num_classes..(row + 1) * self.num_classes])
+            })
+            .collect();
+        out.push(num_rows as u32);
+        out.push(row_runs.iter().map(Vec::len).sum::<usize>() as u32);
+        let mut offset = 0;
+        for runs in &row_runs {
+            out.push(offset);
+            offset += runs.len() as u32;
+        }
+        out.push(offset);
+        for runs in &row_runs {
+            for &(lo, hi, entry) in runs {
+                out.extend([lo, hi, u32::from(entry)]);
+            }
+        }
+        out.extend(self.row_of.iter().copied());
+    }
+}
+
+/// The `(lo_class, hi_class, entry)` runs of a dense class row: maximal
+/// spans of equal entries; `NO_EDGE` gaps have no run.
+#[cfg(feature = "static-dfa-build")]
+fn dense_row_runs(dense: &[u16]) -> Vec<(u32, u32, u16)> {
+    let mut runs = Vec::new();
+    let mut c = 0;
+    while c < dense.len() {
+        let entry = dense[c];
+        if entry == NO_EDGE {
+            c += 1;
+            continue;
+        }
+        let start = c;
+        c += 1;
+        while c < dense.len() && dense[c] == entry {
+            c += 1;
+        }
+        runs.push((start as u32, (c - 1) as u32, entry));
+    }
+    runs
+}
+
+/// The direct symbol-to-class map for the symbols `ASCII_ROW..=MAX_SYMBOL`:
+/// class `i` covers `class_starts[i]..class_starts[i + 1]`, or up to
+/// `MAX_SYMBOL` for the last class. Both producers of [`StaticLexerDFA`]
+/// (the loader and the build-time commit) derive the map from the class
+/// starts with this one function.
+pub(crate) fn class_map(class_starts: &[u32]) -> Vec<u16> {
+    let mut class_of = vec![0u16; (MAX_SYMBOL - ASCII_ROW as u32 + 1) as usize];
+    for (c, &start) in class_starts.iter().enumerate() {
+        let from = (start - ASCII_ROW as u32) as usize;
+        let to = if c + 1 < class_starts.len() {
+            (class_starts[c + 1] - ASCII_ROW as u32) as usize
+        } else {
+            class_of.len()
+        };
+        class_of[from..to].fill(c as u16);
+    }
+    class_of
+}
+
+/// Expands per-row `(lo_class, hi_class, target)` runs into dense
+/// `num_classes`-wide rows, `NO_EDGE`-filled. Both producers of
+/// [`StaticLexerDFA`] (the loader and the build-time commit) expand rows
+/// with this one function.
+pub(crate) fn dense_hi_rows(row_runs: &[Vec<(u32, u32, u16)>], num_classes: usize) -> Vec<u16> {
+    let mut hi_rows = vec![NO_EDGE; row_runs.len() * num_classes];
+    for (row, runs) in row_runs.iter().enumerate() {
+        for &(lo, hi, target) in runs {
+            hi_rows[row * num_classes + lo as usize..=row * num_classes + hi as usize].fill(target);
+        }
+    }
+    hi_rows
 }
 
 /// Cursor over the word stream with bounds-checked reads.
@@ -1079,16 +1492,7 @@ fn read_hi_classes(
     }
 
     // Class i covers [starts[i], starts[i+1] or MAX_SYMBOL + 1).
-    let mut class_of = vec![0u16; (MAX_SYMBOL - ASCII_ROW as u32 + 1) as usize];
-    for (c, &start) in class_starts.iter().enumerate() {
-        let from = (start - ASCII_ROW as u32) as usize;
-        let to = if c + 1 < num_classes {
-            (class_starts[c + 1] - ASCII_ROW as u32) as usize
-        } else {
-            class_of.len()
-        };
-        class_of[from..to].fill(c as u16);
-    }
+    let class_of = class_map(&class_starts);
 
     let num_rows = r.next()? as usize;
     let num_row_triples = r.next()? as usize;
@@ -1102,8 +1506,9 @@ fn read_hi_classes(
     {
         return Err(StaticLexerError::InvalidRowOffsets { mode });
     }
-    let mut hi_rows = vec![NO_EDGE; num_rows * num_classes];
+    let mut row_runs = Vec::with_capacity(num_rows);
     for row in 0..num_rows {
+        let mut runs = Vec::with_capacity(row_offsets[row + 1] - row_offsets[row]);
         let mut prev_hi = None;
         for _ in row_offsets[row]..row_offsets[row + 1] {
             let lo = r.next()?;
@@ -1113,10 +1518,11 @@ fn read_hi_classes(
                 return Err(StaticLexerError::InvalidClassRange { mode, row });
             }
             prev_hi = Some(hi);
-            let target = check_edge(mode, target, num_states, accept_type)?;
-            hi_rows[row * num_classes + lo as usize..=row * num_classes + hi as usize].fill(target);
+            runs.push((lo, hi, check_edge(mode, target, num_states, accept_type)?));
         }
+        row_runs.push(runs);
     }
+    let hi_rows = dense_hi_rows(&row_runs, num_classes);
     let mut row_of = Vec::with_capacity(num_states);
     for _ in 0..num_states {
         let row = r.next()?;
@@ -1133,9 +1539,11 @@ fn read_hi_classes(
 }
 
 /// Reads the action-list section of one mode and decodes the accept action
-/// list of every state into the flat `actions` table. Position-dependent
-/// actions cannot appear in accept lists (the accept execution has no
-/// match offset for them), so a custom action is a format error here.
+/// list of every state into the flat `actions` table, deduplicated by
+/// content (the same invariant the build-time commit produces). Position-
+/// dependent actions cannot appear in accept lists (the accept execution
+/// has no match offset for them), so a custom action is a format error
+/// here.
 fn read_action_lists(
     r: &mut Reader,
     mode: usize,
@@ -1147,6 +1555,7 @@ fn read_action_lists(
         words.push(r.next()?);
     }
     let mut actions = Vec::new();
+    let mut list_ids: HashMap<&[u32], (u32, u32)> = HashMap::new();
     let mut lists = Vec::with_capacity(accept_action_offsets.len());
     for (s, &offset) in accept_action_offsets.iter().enumerate() {
         if offset < 0 {
@@ -1162,6 +1571,10 @@ fn read_action_lists(
             .checked_mul(3)
             .and_then(|n| words.get(offset + 1..offset + 1 + n))
             .ok_or(StaticLexerError::InvalidActionList { mode, state: s })?;
+        if let Some(&list) = list_ids.get(triples) {
+            lists.push(list);
+            continue;
+        }
         let start = actions.len() as u32;
         for &[ty, d1, d2] in triples.as_chunks::<3>().0 {
             let (ty, d1, d2) = (ty as i32, d1 as i32, d2 as i32);
@@ -1174,7 +1587,9 @@ fn read_action_lists(
             }
             actions.push(LexerAction::from_serialized(ty, d1, d2));
         }
-        lists.push((start, len as u32));
+        let list = (start, len as u32);
+        list_ids.insert(triples, list);
+        lists.push(list);
     }
     Ok(ActionLists {
         actions,
@@ -1456,5 +1871,124 @@ impl StaticLexerDFA {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "static-dfa-build"))]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::*;
+    use crate::atn_deserializer::ATNDeserializer;
+    use crate::static_dfa_build::StaticLexerDfaBuilder;
+
+    fn fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/static_lexer")
+            .join(name)
+    }
+
+    fn gen_grammar(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("grammars")
+            .join(name)
+    }
+
+    fn compile_tables(path: &Path) -> ATN {
+        let units = dbt_antlr_codegen::atn_export::compile_atn_data(path, &[]).expect("compile");
+        let words = units
+            .iter()
+            .find_map(|u| u.lexer_atn_words.clone())
+            .expect("lexer unit");
+        ATNDeserializer::new(None).deserialize(&mut words.iter())
+    }
+
+    /// The word-stream codec round-trips over every fixture grammar plus
+    /// the generated-code witnesses (CSV, XMLLexer, SpikeLexer): decoding
+    /// the encoded tables gives the tables back, and re-encoding a decoded
+    /// stream reproduces it word for word.
+    #[test]
+    fn word_stream_round_trip() {
+        let mut grammars: Vec<PathBuf> = [
+            "CSV.g4",
+            "CustomAction.g4",
+            "EofChain.g4",
+            "EofEscape.g4",
+            "EofLexer.g4",
+            "MiniModes.g4",
+            "Spike.g4",
+            "StartAction.g4",
+            "StartPred.g4",
+            "StartRecurse.g4",
+            "XMLLexer.g4",
+        ]
+        .into_iter()
+        .map(fixture)
+        .collect();
+        grammars.extend(
+            ["CSV.g4", "XMLLexer.g4", "SpikeLexer.g4"]
+                .into_iter()
+                .map(gen_grammar),
+        );
+
+        for path in grammars {
+            let atn = compile_tables(&path);
+            for builder in [
+                StaticLexerDfaBuilder::new(),
+                // Budget escapes (NO_CONTINUATION) round-trip too.
+                StaticLexerDfaBuilder::new().with_max_states_per_mode(3),
+            ] {
+                let build = builder.build(&atn);
+                let name = path.display();
+                let decoded = StaticLexerTables::from_words(&build.words)
+                    .unwrap_or_else(|e| panic!("{name}: the builder's words decode: {e}"));
+                assert_eq!(
+                    decoded, build.tables,
+                    "{name}: from_words(to_words(tables)) == tables"
+                );
+                assert_eq!(
+                    decoded.to_words(),
+                    build.words,
+                    "{name}: to_words(from_words(words)) == words"
+                );
+            }
+        }
+    }
+
+    /// The two producers of [`StaticLexerDFA`] agree: the committed tables
+    /// and the decoded tables resolve every edge, accept, and escape the
+    /// same way.
+    #[test]
+    fn commit_and_decode_agree() {
+        for name in ["Spike.g4", "XMLLexer.g4", "EofEscape.g4"] {
+            let atn = compile_tables(&fixture(name));
+            let build = StaticLexerDfaBuilder::new().build(&atn);
+            let decoded = StaticLexerTables::from_words(&build.words).expect("decode");
+            for m in 0..build.tables.num_modes() {
+                let (Some(committed), Some(decoded)) = (build.tables.mode(m), decoded.mode(m))
+                else {
+                    continue;
+                };
+                for s in 0..committed.num_states() as u16 {
+                    for symbol in [EOF, 0, b'a' as i32, 127, 128, 0x1000, 0x10FFFF] {
+                        assert_eq!(
+                            committed.edge_entry(s, symbol),
+                            decoded.edge_entry(s, symbol),
+                            "{name} mode {m} state {s} symbol {symbol}"
+                        );
+                        assert_eq!(
+                            committed.escape_continuation(s, symbol),
+                            decoded.escape_continuation(s, symbol),
+                            "{name} mode {m} state {s} symbol {symbol}"
+                        );
+                    }
+                    assert_eq!(committed.accept_type(s), decoded.accept_type(s));
+                    assert_eq!(
+                        committed.accept_action_triples(s),
+                        decoded.accept_action_triples(s)
+                    );
+                }
+            }
+        }
     }
 }

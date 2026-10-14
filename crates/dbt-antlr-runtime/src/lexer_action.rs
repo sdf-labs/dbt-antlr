@@ -1,6 +1,7 @@
 use std::hash::Hash;
 
-use crate::{atn_config_set::ConfigSet, dfa::DFAStateStore, lexer::Lexer};
+use crate::dfa::FinalizeStore;
+use crate::lexer::Lexer;
 
 pub(crate) const LEXER_ACTION_TYPE_CHANNEL: i32 = 0;
 pub(crate) const LEXER_ACTION_TYPE_CUSTOM: i32 = 1;
@@ -155,23 +156,20 @@ impl<'ephemeral> LexerAction<'ephemeral> {
         }
     }
 
-    pub(crate) fn promote<'sim, CS>(&self, dfa: &DFAStateStore<'sim, CS>) -> LexerAction<'sim>
-    where
-        CS: ConfigSet<'sim> + 'sim,
-    {
+    pub(crate) fn promote<'sim>(&self, store: &impl FinalizeStore<'sim>) -> LexerAction<'sim> {
         match self {
             LexerAction::IndexedCustom(action)
-                if dfa.contains_lexer_indexed_custom_action(action) =>
+                if store.contains_lexer_indexed_custom_action(action) =>
             {
                 // Safety: the action is already in the target arena, so can
                 // live as long as the target lifetime:
                 unsafe { std::mem::transmute::<Self, LexerAction<'sim>>(self.clone()) }
             }
             LexerAction::IndexedCustom(action) => {
-                LexerAction::IndexedCustom(dfa.alloc_lexer_indexed_custom_action(|| {
+                LexerAction::IndexedCustom(store.alloc_lexer_indexed_custom_action(|| {
                     LexerIndexedCustomAction {
                         offset: action.offset,
-                        action: action.action.promote(dfa),
+                        action: action.action.promote(store),
                     }
                 }))
             }
