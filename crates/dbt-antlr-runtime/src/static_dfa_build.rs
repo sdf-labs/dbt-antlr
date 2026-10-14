@@ -1205,3 +1205,43 @@ mod tests {
         assert!(accel_words(3, &low, &[]).is_empty());
     }
 }
+
+#[cfg(test)]
+mod accel_integration_tests {
+    use crate::atn_deserializer::ATNDeserializer;
+    use crate::static_lexer_dfa::StaticLexerTables;
+
+    /// End-to-end pin: real grammars produce tables whose accel section is
+    /// actually populated, and the loader decodes nonzero per-state tags
+    /// (the walker's `run_scan` path depends on this).
+    #[test]
+    fn real_grammars_emit_accel_tags() {
+        for grammar in ["CSV", "Spike", "XMLLexer"] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(format!("tests/static_lexer/{grammar}.g4"));
+            let units =
+                dbt_antlr_codegen::atn_export::compile_atn_data(&path, &[]).expect("compile");
+            let lexer = units
+                .iter()
+                .find(|u| u.lexer_atn_words.is_some())
+                .expect("lexer unit");
+            let atn = ATNDeserializer::new(None)
+                .deserialize(&mut lexer.lexer_atn_words.as_ref().expect("lexer words").iter());
+            let build = super::StaticLexerDfaBuilder::new().build(&atn);
+            let tables = StaticLexerTables::from_words(&build.words).expect("decode");
+            let mut tagged = 0;
+            for m in 0..tables.num_modes() {
+                let Some(table) = tables.mode(m) else {
+                    continue;
+                };
+                for s in 0..table.num_states() as u16 {
+                    if table.accel_tag(s) != 0 {
+                        tagged += 1;
+                    }
+                }
+            }
+            assert!(tagged > 0, "{grammar}: no accel tags emitted");
+            eprintln!("{grammar}: {tagged} accel-tagged states");
+        }
+    }
+}
