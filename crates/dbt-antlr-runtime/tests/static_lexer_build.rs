@@ -3,7 +3,7 @@
 //! are compiled to lexer ATN words through `dbt-antlr-codegen`'s `atn-export`.
 //!
 //! The per-grammar expectations assert directly on the committed
-//! [`StaticLexerDFA`] tables of `build.tables`. A test-only word-stream
+//! [`StaticLexerDFA`] tables of `build.modes`. A test-only word-stream
 //! decoder (`check_invariants`) keeps the wire format itself covered.
 #![cfg(feature = "static-dfa-build")]
 
@@ -281,8 +281,8 @@ fn check_invariants(build: &StaticLexerDfaBuild, atn: &ATN) {
     let modes = decode(&build.words);
     assert_eq!(modes.len(), build.modes.len());
     for (index, (mode, info)) in modes.iter().zip(&build.modes).enumerate() {
-        assert_eq!(mode.present, info.present);
-        assert_eq!(build.tables.mode(index).is_some(), info.present);
+        assert_eq!(mode.present, info.table.is_some());
+        assert_eq!(build.table(index).is_some(), info.table.is_some());
         if !mode.present {
             assert!(info.failure.is_some());
             continue;
@@ -292,7 +292,7 @@ fn check_invariants(build: &StaticLexerDfaBuild, atn: &ATN) {
         assert!((mode.start_state as usize) < mode.num_states);
         assert_eq!(mode.continuations.len(), info.num_continuations);
 
-        let committed = build.tables.mode(index).expect("present mode");
+        let committed = build.table(index).expect("present mode");
         // Every section of the word stream agrees with the committed
         // table: EOF and the dense low row, plus one probe per hi class
         // (the target is constant within a class by construction).
@@ -365,10 +365,10 @@ fn check_entry(mode: &DecodedMode, state: usize, symbol: i32, entry: u16) {
 fn csv_is_fully_static() {
     let (atn, build) = build("CSV.g4");
     check_invariants(&build, &atn);
-    assert_eq!(build.tables.num_modes(), 1);
-    assert!(build.modes[0].present);
+    assert_eq!(build.modes.len(), 1);
+    assert!(build.modes[0].table.is_some());
     assert_eq!(build.modes[0].escape_counts, Default::default());
-    let dfa = build.tables.mode(0).expect("mode 0");
+    let dfa = build.table(0).expect("mode 0");
     assert_eq!(dfa.num_continuations(), 0);
     assert!(has_no_escapes(dfa));
 
@@ -399,7 +399,11 @@ fn csv_build_is_deterministic() {
     let (_, a) = build("CSV.g4");
     let (_, b) = build("CSV.g4");
     assert_eq!(a.words, b.words);
-    assert_eq!(a.tables, b.tables);
+    assert!(a
+        .modes
+        .iter()
+        .zip(&b.modes)
+        .all(|(x, y)| x.table == y.table));
 }
 
 // ======= Spike: predicate and recursion escapes =======
@@ -408,8 +412,8 @@ fn csv_build_is_deterministic() {
 fn spike_escape_coordinates() {
     let (atn, build) = build("Spike.g4");
     check_invariants(&build, &atn);
-    assert_eq!(build.tables.num_modes(), 1);
-    let dfa = build.tables.mode(0).expect("mode 0");
+    assert_eq!(build.modes.len(), 1);
+    let dfa = build.table(0).expect("mode 0");
     let counts = build.modes[0].escape_counts;
     assert!(counts.predicate >= 1, "predicate escape exists");
     assert!(counts.recursive_context >= 1, "recursion escape exists");
@@ -466,7 +470,11 @@ fn spike_build_is_deterministic() {
     let (_, a) = build("Spike.g4");
     let (_, b) = build("Spike.g4");
     assert_eq!(a.words, b.words);
-    assert_eq!(a.tables, b.tables);
+    assert!(a
+        .modes
+        .iter()
+        .zip(&b.modes)
+        .all(|(x, y)| x.table == y.table));
 }
 
 // ======= MiniModes: modes and hi classes =======
@@ -475,12 +483,12 @@ fn spike_build_is_deterministic() {
 fn modes_grammar_builds_all_modes() {
     let (atn, build) = build("MiniModes.g4");
     check_invariants(&build, &atn);
-    assert_eq!(build.tables.num_modes(), 2);
-    assert!(build.modes.iter().all(|m| m.present));
+    assert_eq!(build.modes.len(), 2);
+    assert!(build.modes.iter().all(|m| m.table.is_some()));
 
     // Mode 0 (DEFAULT_MODE): TEXT is ~[<]+, so hi classes exist and cover
     // everything above 127.
-    let default_mode = build.tables.mode(0).expect("mode 0");
+    let default_mode = build.table(0).expect("mode 0");
     assert!(default_mode.num_classes() > 0);
     let text = walk(default_mode, default_mode.start_state(), "x");
     let entry = default_mode.edge_entry(text, 0x10FFFF);
@@ -493,7 +501,7 @@ fn modes_grammar_builds_all_modes() {
     assert_eq!(default_mode.accept_action_triples(lt), vec![(5, 1, 0)]);
 
     // Mode 1 (INSIDE): NAME accept, and '>' pops. popMode is (4, 0, 0).
-    let inside = build.tables.mode(1).expect("mode 1");
+    let inside = build.table(1).expect("mode 1");
     let name = walk(inside, inside.start_state(), "abc");
     assert!(name != inside.start_state());
     let gt = walk(inside, inside.start_state(), ">");
@@ -506,8 +514,8 @@ fn modes_grammar_builds_all_modes() {
 fn custom_action_escapes() {
     let (atn, build) = build("CustomAction.g4");
     check_invariants(&build, &atn);
-    assert_eq!(build.tables.num_modes(), 1);
-    let dfa = build.tables.mode(0).expect("mode 0");
+    assert_eq!(build.modes.len(), 1);
+    let dfa = build.table(0).expect("mode 0");
     let counts = build.modes[0].escape_counts;
     assert!(counts.custom_action >= 1, "custom action escape exists");
     assert_eq!(counts.predicate, 0);
@@ -532,8 +540,8 @@ fn budget_overflow_escapes_without_continuation() {
         &StaticLexerDfaBuilder::new().with_max_states_per_mode(1),
     );
     check_invariants(&build, &atn);
-    assert!(build.modes[0].present);
-    let dfa = build.tables.mode(0).expect("mode 0");
+    assert!(build.modes[0].table.is_some());
+    let dfa = build.table(0).expect("mode 0");
     assert_eq!(dfa.num_states(), 1);
     assert!(build.modes[0].escape_counts.budget > 0);
     // Budget escapes carry no continuation: the pool stays empty.
@@ -553,7 +561,7 @@ fn zero_budget_fails_the_mode() {
         &StaticLexerDfaBuilder::new().with_max_states_per_mode(0),
     );
     check_invariants(&build, &atn);
-    assert!(!build.modes[0].present);
+    assert!(build.modes[0].table.is_none());
     assert_eq!(
         build.modes[0].failure,
         Some(ModeFailure::StartStateBudgetExceeded)
@@ -566,8 +574,8 @@ fn zero_budget_fails_the_mode() {
 fn eof_edges_are_compiled() {
     let (atn, build) = build("EofLexer.g4");
     check_invariants(&build, &atn);
-    assert_eq!(build.tables.num_modes(), 1);
-    let dfa = build.tables.mode(0).expect("mode 0");
+    assert_eq!(build.modes.len(), 1);
+    let dfa = build.table(0).expect("mode 0");
     assert_eq!(build.modes[0].escape_counts, Default::default());
 
     // After "ab", the EOF edge reaches the AB accept: AB = 1.
@@ -593,12 +601,8 @@ fn eof_edges_are_compiled() {
 fn xml_lexer_builds_with_escapes() {
     let (atn, build) = build("XMLLexer.g4");
     check_invariants(&build, &atn);
-    assert_eq!(
-        build.tables.num_modes(),
-        3,
-        "DEFAULT_MODE, INSIDE, PROC_INSTR"
-    );
-    assert!(build.modes.iter().all(|m| m.present));
+    assert_eq!(build.modes.len(), 3, "DEFAULT_MODE, INSIDE, PROC_INSTR");
+    assert!(build.modes.iter().all(|m| m.table.is_some()));
     let counts: Vec<_> = build.modes.iter().map(|m| m.escape_counts).collect();
     assert!(counts.iter().any(|c| c.predicate > 0), "COMMENT predicate");
     assert!(
@@ -608,13 +612,14 @@ fn xml_lexer_builds_with_escapes() {
     assert!(counts.iter().all(|&c| c.budget == 0));
 
     // NameStartChar has wide ranges above 127: hi classes exist in INSIDE.
-    assert!((0..build.tables.num_modes())
-        .any(|m| { build.tables.mode(m).expect("present mode").num_classes() > 0 }));
+    assert!(
+        (0..build.modes.len()).any(|m| { build.table(m).expect("present mode").num_classes() > 0 })
+    );
 
     // `more` is a position-independent action and compiles statically:
     // SPECIAL_OPEN ends in `more, pushMode(PROC_INSTR)`, triples (3, 0, 0)
     // and (5, 2, 0).
-    let default_mode = build.tables.mode(0).expect("mode 0");
+    let default_mode = build.table(0).expect("mode 0");
     let special = walk(default_mode, default_mode.start_state(), "<?x");
     assert_eq!(
         default_mode.accept_action_triples(special),
@@ -628,8 +633,8 @@ fn xml_lexer_builds_with_escapes() {
 fn start_closure_predicate_fails_the_mode() {
     let (atn, build) = build("StartPred.g4");
     check_invariants(&build, &atn);
-    assert_eq!(build.tables.num_modes(), 1);
-    assert!(!build.modes[0].present);
+    assert_eq!(build.modes.len(), 1);
+    assert!(build.modes[0].table.is_none());
     assert_eq!(
         build.modes[0].failure,
         Some(ModeFailure::StartClosurePredicate)
@@ -640,8 +645,8 @@ fn start_closure_predicate_fails_the_mode() {
 fn start_closure_custom_action_fails_the_mode() {
     let (atn, build) = build("StartAction.g4");
     check_invariants(&build, &atn);
-    assert_eq!(build.tables.num_modes(), 1);
-    assert!(!build.modes[0].present);
+    assert_eq!(build.modes.len(), 1);
+    assert!(build.modes[0].table.is_none());
     assert_eq!(
         build.modes[0].failure,
         Some(ModeFailure::StartClosureCustomAction)
@@ -652,8 +657,8 @@ fn start_closure_custom_action_fails_the_mode() {
 fn start_closure_recursive_context_fails_the_mode() {
     let (atn, build) = build("StartRecurse.g4");
     check_invariants(&build, &atn);
-    assert_eq!(build.tables.num_modes(), 1);
-    assert!(!build.modes[0].present);
+    assert_eq!(build.modes.len(), 1);
+    assert!(build.modes[0].table.is_none());
     assert_eq!(
         build.modes[0].failure,
         Some(ModeFailure::StartClosureRecursiveContext)
@@ -666,8 +671,8 @@ fn start_closure_recursive_context_fails_the_mode() {
 fn eof_edge_escapes_on_guarded_eof() {
     let (atn, build) = build("EofEscape.g4");
     check_invariants(&build, &atn);
-    assert_eq!(build.tables.num_modes(), 1);
-    let dfa = build.tables.mode(0).expect("mode 0");
+    assert_eq!(build.modes.len(), 1);
+    let dfa = build.table(0).expect("mode 0");
     let counts = build.modes[0].escape_counts;
     assert_eq!(counts.predicate, 1);
     assert_eq!(counts.custom_action, 0);
@@ -700,7 +705,7 @@ fn eof_edge_escapes_on_guarded_eof() {
 fn dump_spike() {
     let (atn, build) = build("Spike.g4");
     check_invariants(&build, &atn);
-    let dfa = build.tables.mode(0).expect("mode 0");
+    let dfa = build.table(0).expect("mode 0");
     eprintln!("states: {}", dfa.num_states());
     for s in 0..dfa.num_states() as u16 {
         let mut edges = Vec::new();

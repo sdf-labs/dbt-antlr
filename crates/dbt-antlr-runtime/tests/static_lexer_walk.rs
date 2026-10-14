@@ -535,7 +535,7 @@ fn run_corpus(
 #[test]
 fn csv_static_matches_lazy() {
     let fixture = compile(GrammarKind::Csv, &StaticLexerDfaBuilder::new());
-    assert!(fixture.build.modes[0].present);
+    assert!(fixture.build.modes[0].table.is_some());
     assert_eq!(
         fixture.build.modes[0].escape_counts,
         Default::default(),
@@ -610,7 +610,7 @@ fn spike_escapes_match_lazy() {
 #[test]
 fn mini_modes_match_lazy() {
     let fixture = compile(GrammarKind::MiniModes, &StaticLexerDfaBuilder::new());
-    assert!(fixture.build.modes.iter().all(|m| m.present));
+    assert!(fixture.build.modes.iter().all(|m| m.table.is_some()));
     let corpus = [
         "text<name>more",
         "<abc>",
@@ -774,7 +774,7 @@ fn start_closure_failures_fall_back_to_lazy() {
     ] {
         let fixture = compile(kind, &StaticLexerDfaBuilder::new());
         assert!(
-            fixture.build.modes.iter().all(|m| !m.present),
+            fixture.build.modes.iter().all(|m| !m.table.is_some()),
             "{kind:?} has no table"
         );
         let fragments = ["x", "a", "y", " ", "\n", "@"];
@@ -825,7 +825,7 @@ fn eof_escape_matches_lazy() {
 #[test]
 fn eof_chain_accepts_match_lazy() {
     let fixture = compile(GrammarKind::EofChain, &StaticLexerDfaBuilder::new());
-    assert!(fixture.build.modes[0].present);
+    assert!(fixture.build.modes[0].table.is_some());
     let corpus = ["a", "b", "ab", "ba", "aa", "", " "];
     let fragments = ["a", "b", " ", "\n"];
     let (escapes, restarts) =
@@ -851,7 +851,7 @@ fn budget_escape_restarts_match_lazy() {
         GrammarKind::Csv,
         &StaticLexerDfaBuilder::new().with_max_states_per_mode(1),
     );
-    assert!(fixture.build.modes[0].present);
+    assert!(fixture.build.modes[0].table.is_some());
     assert!(fixture.build.modes[0].escape_counts.budget > 0);
     let corpus = ["a,b\n", "\"x\",y\n", "héllo,中\n", "@\n", "", " ", "a b\n"];
     let fragments = ["a", ",", "\"", "\n", " ", "é", "@"];
