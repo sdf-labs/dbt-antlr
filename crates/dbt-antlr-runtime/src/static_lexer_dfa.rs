@@ -730,6 +730,12 @@ impl StaticLexerDFA {
     ///
     /// Same unchecked-index safety argument as [`StaticLexerDFA::edge_entry`].
     #[inline]
+    /// Number of table states of this mode.
+    #[cfg(test)]
+    pub(crate) fn num_states(&self) -> usize {
+        self.row_of.len()
+    }
+
     pub(crate) fn accel_tag(&self, s: u16) -> u8 {
         unsafe { *self.accel_tag.get_unchecked(s as usize) }
     }
