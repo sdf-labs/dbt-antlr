@@ -21,7 +21,6 @@ use crate::atn_simulator::ParserATNSimulatorManager;
 use crate::atn_state::{
     ATNState, ATNStateType, RuleStartState, StarLoopEntryState, ATNSTATE_INVALID_STATE_NUMBER,
 };
-use crate::char_stream::CharStream;
 use crate::error_strategy::{DefaultErrorStrategy, ErrorStrategy, ErrorStrategyDelegate};
 use crate::errors::{ANTLRError, ANTLRErrorKind};
 use crate::interpreter_rule_context::{
@@ -660,17 +659,11 @@ where
                 .get_offending_token()
                 .expect("recognition error has an offending token");
             let text = offending_token.get_text().to_owned();
-            let line = offending_token.get_line();
-            let column = offending_token.get_char_position_in_line();
-            let err_token = self.base.get_token_factory().create(
-                None::<&mut dyn CharStream<'input>>,
+            let err_token = self.base.get_token_factory().create_conjured(
                 expected_token_type,
-                Some(text),
+                text,
                 TOKEN_DEFAULT_CHANNEL,
-                -1,
-                -1, // invalid start/stop
-                line,
-                column,
+                offending_token,
             );
             let node = TreeNode::create_error_node(self.base.arena, err_token);
             if node.is_null() {

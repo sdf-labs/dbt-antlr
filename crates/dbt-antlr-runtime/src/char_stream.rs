@@ -51,6 +51,33 @@ pub trait CharStream<'input>: IntStream {
         let _ = index;
         None
     }
+
+    #[doc(hidden)]
+    #[inline]
+    fn get_data_str(&self) -> Option<&'input str> {
+        None
+    }
+
+    #[doc(hidden)]
+    #[inline]
+    fn get_line(&self, byte_offset: isize) -> u32 {
+        let end = byte_offset.max(0).min(self.size());
+        let prefix = self.get_text(0, end);
+        let bytes = prefix.as_bytes();
+        let len = (byte_offset.max(0) as usize).min(bytes.len());
+        1 + memchr::memchr_iter(b'\n', &bytes[..len]).count() as u32
+    }
+
+    #[doc(hidden)]
+    #[inline]
+    fn get_char_position_in_line(&self, byte_offset: isize) -> i32 {
+        let end = byte_offset.max(0).min(self.size());
+        let prefix = self.get_text(0, end);
+        let bytes = prefix.as_bytes();
+        let len = (byte_offset.max(0) as usize).min(bytes.len());
+        let line_start = memchr::memrchr(b'\n', &bytes[..len]).map_or(0, |i| i + 1);
+        prefix[line_start..len].chars().count() as i32
+    }
 }
 
 #[allow(clippy::len_without_is_empty)]

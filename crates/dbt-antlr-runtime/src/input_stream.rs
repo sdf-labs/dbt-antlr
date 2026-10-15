@@ -1,8 +1,10 @@
 //! Input to lexer
 use std::borrow::Cow;
+use std::sync::OnceLock;
 
 use crate::char_stream::{CharStream, InputData};
 use crate::int_stream::IntStream;
+use crate::token::LineIndex;
 
 /// Default rust target input stream.
 ///
@@ -16,6 +18,7 @@ pub struct InputStream<'input> {
     name: String,
     data_raw: &'input str,
     index: isize,
+    line_index: OnceLock<LineIndex>,
 }
 
 impl<'input> CharStream<'input> for InputStream<'input> {
@@ -51,87 +54,31 @@ impl<'input> CharStream<'input> for InputStream<'input> {
     fn bytes_at(&self, index: isize) -> Option<&'input [u8]> {
         self.data_raw.as_bytes().get(index as usize..)
     }
+
+    #[inline]
+    fn get_data_str(&self) -> Option<&'input str> {
+        Some(self.data_raw)
+    }
+
+    #[inline]
+    fn get_line(&self, byte_offset: isize) -> u32 {
+        self.line_index
+            .get_or_init(|| LineIndex::new(self.data_raw))
+            .line(byte_offset.max(0) as u32)
+    }
+
+    #[inline]
+    fn get_char_position_in_line(&self, byte_offset: isize) -> i32 {
+        self.line_index
+            .get_or_init(|| LineIndex::new(self.data_raw))
+            .char_position_in_line(self.data_raw, byte_offset.max(0) as u32)
+    }
 }
-
-// /// `InputStream` over byte slice
-// pub type ByteStream<'a> = InputStream<&'a [u8]>;
-// /// InputStream which treats the input as a series of Unicode code points that fit into `u8`
-// pub type CodePoint8BitCharStream<'a> = InputStream<&'a [u8]>;
-// /// InputStream which treats the input as a series of Unicode code points that fit into `u16`
-// pub type CodePoint16BitCharStream<'a> = InputStream<&'a [u16]>;
-// /// InputStream which treats the input as a series of Unicode code points
-// pub type CodePoint32BitCharStream<'a> = InputStream<&'a [u32]>;
-
-// impl<'a, T> CharStream<Cow<'a, [T]>> for InputStream<&'a [T]>
-// where
-//     [T]: InputData,
-// {
-//     #[inline]
-//     fn get_text(&self, a: isize, b: isize) -> Cow<'a, [T]> {
-//         Cow::Borrowed(self.get_text_inner(a, b))
-//     }
-// }
-
-// impl<T> CharStream<String> for InputStream<&[T]>
-// where
-//     [T]: InputData,
-// {
-//     fn get_text(&self, a: isize, b: isize) -> String {
-//         self.get_text_inner(a, b).to_display()
-//     }
-// }
-
-// impl<'b, T> CharStream<Cow<'b, str>> for InputStream<&[T]>
-// where
-//     [T]: InputData,
-// {
-//     #[inline]
-//     fn get_text(&self, a: isize, b: isize) -> Cow<'b, str> {
-//         self.get_text_inner(a, b).to_display().into()
-//     }
-// }
-
-// impl<'a, T> CharStream<&'a [T]> for InputStream<&'a [T]>
-// where
-//     [T]: InputData,
-// {
-//     #[inline]
-//     fn get_text(&self, a: isize, b: isize) -> &'a [T] {
-//         self.get_text_inner(a, b)
-//     }
-// }
-
-// impl<Data: ?Sized + InputData> InputStream<Box<Data>> {
-//     fn get_text_owned(&self, start: isize, stop: isize) -> Data::Owned {
-//         let start = start as usize;
-//         let stop = self.data_raw.offset(stop, 1).unwrap_or(stop) as usize;
-
-//         if stop < self.data_raw.len() {
-//             &self.data_raw[start..stop]
-//         } else {
-//             &self.data_raw[start..]
-//         }
-//         .to_owned()
-//     }
-
-//     /// Creates new `InputStream` over owned data
-//     pub fn new_owned(data: Box<Data>) -> Self {
-//         Self {
-//             name: "<empty>".to_string(),
-//             data_raw: data,
-//             index: 0,
-//         }
-//     }
-// }
 
 impl<'input> InputStream<'input> {
     fn get_text_inner(&self, start: isize, stop: isize) -> &'input str {
-        // println!("get text {}..{} of {:?}",start,stop,self.data_raw.to_display());
         let start = start as usize;
         let stop = self.data_raw.offset(stop, 1).unwrap_or(stop) as usize;
-        // println!("justed range {}..{} ",start,stop);
-        // let start = self.data_raw.offset(0,start).unwrap() as usize;
-        // let stop = self.data_raw.offset(0,stop + 1).unwrap() as usize;
 
         if stop < self.data_raw.len() {
             &self.data_raw[start..stop]
@@ -142,13 +89,11 @@ impl<'input> InputStream<'input> {
 
     /// Creates new `InputStream` over borrowed data
     pub fn new(data_raw: &'input str) -> Self {
-        // let data_raw = data_raw.as_ref();
-        // let data = data_raw.to_indexed_vec();
         Self {
             name: "<empty>".to_owned(),
             data_raw,
             index: 0,
-            // phantom: Default::default(),
+            line_index: OnceLock::new(),
         }
     }
 

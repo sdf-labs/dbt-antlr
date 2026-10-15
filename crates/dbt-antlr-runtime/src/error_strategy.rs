@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::atn_simulator::IATNSimulator;
 use crate::atn_state::*;
-use crate::char_stream::{CharStream, InputData};
+use crate::char_stream::InputData;
 use crate::dfa::ScopeExt;
 use crate::errors::{
     ANTLRError, ANTLRErrorKind, FailedPredicateError, InputMisMatchError, NoViableAltError,
@@ -264,16 +264,11 @@ where
                 .get_input_stream()
                 .run(|it| it.get((it.index() - 1).max(0)).borrow());
         }
-        let (line, column) = (curr.get_line(), curr.get_char_position_in_line());
-        recognizer.get_token_factory().create(
-            None::<&mut dyn CharStream>,
+        recognizer.get_token_factory().create_conjured(
             expected_token_type,
-            Some(token_text),
+            token_text,
             TOKEN_DEFAULT_CHANNEL,
-            -1,
-            -1,
-            line,
-            column,
+            curr,
         )
         // Token::to_owned(token.borrow())
         // .modify_with(|it| it.text = token_text)

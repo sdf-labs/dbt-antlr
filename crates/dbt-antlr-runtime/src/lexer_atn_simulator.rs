@@ -1,7 +1,4 @@
 //! Implementation of lexer automata(DFA)
-use std::cell::Cell;
-use std::rc::Rc;
-
 use crate::atn::ATN;
 use crate::atn_config::LexerATNConfig;
 use crate::atn_config_set::{LexerATNConfigSet, MutableLexerATNConfigSet};
@@ -16,7 +13,7 @@ use crate::dfa::static_lexer_dfa::{
 use crate::dfa::{DFAState, ProposedDFAState, DFA};
 use crate::errors::ANTLRError;
 use crate::int_stream::{IntStream, EOF};
-use crate::lexer::{Lexer, LexerPosition, LEXER_MAX_CHAR_VALUE, LEXER_MIN_CHAR_VALUE};
+use crate::lexer::{Lexer, LEXER_MAX_CHAR_VALUE, LEXER_MIN_CHAR_VALUE};
 use crate::lexer_action_executor::LexerActionExecutor;
 use crate::prediction_context::PredictionContextRef;
 use crate::prediction_context::{PredictionContext, PredictionContextCache};
@@ -24,7 +21,6 @@ use crate::token::TOKEN_EOF;
 
 use crate::token_factory::TokenFactory;
 use crate::transition::{Transition, TransitionType};
-use crate::utils::cell_update;
 
 // todo rewrite this to be actually usable
 #[doc(hidden)]
@@ -39,10 +35,6 @@ pub trait ILexerATNSimulator<'sim>: IATNSimulator<'sim, LexerATNConfigSet<'sim>>
         'input: 'arena,
         Input: CharStream<'input>,
         TF: TokenFactory<'input, 'arena> + 'arena;
-    fn get_char_position_in_line(&self) -> i32;
-    fn set_char_position_in_line(&mut self, column: i32);
-    fn get_line(&self) -> u32;
-    fn set_line(&mut self, line: u32);
     fn consume<T: IntStream + ?Sized>(&self, input: &mut T);
     #[cold]
     fn recover(&mut self, _re: ANTLRError, input: &mut impl IntStream) {
@@ -58,7 +50,6 @@ pub struct LexerATNSimulator<'sim> {
     base: BaseATNSimulator<'sim, LexerATNConfigSet<'sim>>,
 
     start_index: isize,
-    pub(crate) current_pos: Rc<LexerPosition>,
     mode: usize,
     prev_accept: Option<ResolvedAccept<'sim>>,
     static_tables: Option<&'static StaticLexerTables>,
@@ -78,7 +69,6 @@ impl<'sim> ILexerATNSimulator<'sim> for LexerATNSimulator<'sim> {
     fn match_token<'input, 'arena, Input, TF>(
         &mut self,
         mode: usize,
-        //        input:&mut dyn CharStream,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
     ) -> Result<i32, ANTLRError>
     where
@@ -90,7 +80,6 @@ impl<'sim> ILexerATNSimulator<'sim> for LexerATNSimulator<'sim> {
 
         self.mode = mode;
         let mark = lexer.input().mark();
-        //        println!("start matching on mode {}",mode);
         let result = (|| {
             self.start_index = lexer.input().index();
             self.prev_accept = None;
@@ -108,36 +97,10 @@ impl<'sim> ILexerATNSimulator<'sim> for LexerATNSimulator<'sim> {
         result
     }
 
-    fn get_char_position_in_line(&self) -> i32 {
-        self.current_pos.char_position_in_line.get()
+    #[inline]
+    fn consume<T: IntStream + ?Sized>(&self, input: &mut T) {
+        input.consume();
     }
-
-    fn set_char_position_in_line(&mut self, column: i32) {
-        self.current_pos.char_position_in_line.set(column)
-    }
-
-    fn get_line(&self) -> u32 {
-        self.current_pos.line.get()
-    }
-
-    fn set_line(&mut self, line: u32) {
-        self.current_pos.line.set(line)
-    }
-
-    fn consume<T: IntStream + ?Sized>(&self, _input: &mut T) {
-        let ch = _input.la(1);
-        if ch == '\n' as i32 {
-            cell_update(&self.current_pos.line, |x| x + 1);
-            self.current_pos.char_position_in_line.set(0);
-        } else {
-            cell_update(&self.current_pos.char_position_in_line, |x| x + 1);
-        }
-        _input.consume();
-    }
-
-    //    fn get_recog(&self) -> Rc<RefCell<Box<Recognizer>>>{
-    //        Rc::clone(&self.recog)
-    //    }
 }
 
 impl<'sim> IATNSimulator<'sim, LexerATNConfigSet<'sim>> for LexerATNSimulator<'sim> {
@@ -168,10 +131,6 @@ impl<'sim> LexerATNSimulator<'sim> {
             static_tables: base.static_lexer_tables,
             base,
             start_index: 0,
-            current_pos: Rc::new(LexerPosition {
-                line: Cell::new(0),
-                char_position_in_line: Cell::new(0),
-            }),
             mode: 0,
             prev_accept: None,
             escape_count: 0,
@@ -213,7 +172,6 @@ impl<'sim> LexerATNSimulator<'sim> {
         match dfa.s0() {
             None => self.match_atn(lexer, dfa, scratch),
             Some(s0) => self.exec_atn(s0, lexer, dfa, scratch),
-            //                Err(_) => panic!("dfa rwlock error")
         }
     }
 
@@ -241,18 +199,14 @@ impl<'sim> LexerATNSimulator<'sim> {
         TF: TokenFactory<'input, 'arena> + 'arena,
     {
         let start_index = self.start_index;
-        let start_line = self.current_pos.line.get();
-        let start_column = self.current_pos.char_position_in_line.get();
-        let mut line = start_line;
-        let mut column = start_column;
         let mut s = table.start_state();
-        // (index, line, column, state) of the most recent accept state.
+        // (index, state) of the most recent accept state.
         // Accept states are marked by accept_type >= 0 (not != 0): a rule
         // with a `more`/`type(...)` command accepts with token type 0 (the
         // tool assigns such rules no token type), so a zero-length match at
         // the start state of a mode still counts as an accept.
-        let mut prev_accept: Option<(isize, u32, i32, u16)> = if table.accept_type(s) >= 0 {
-            Some((start_index, line, column, s))
+        let mut prev_accept: Option<(isize, u16)> = if table.accept_type(s) >= 0 {
+            Some((start_index, s))
         } else {
             None
         };
@@ -261,9 +215,7 @@ impl<'sim> LexerATNSimulator<'sim> {
         // chain and restarts the token lazily past the bound.
         let mut eof_chain = 0u32;
 
-        // The walk itself only reads the input; line/column are tracked in
-        // locals and written back to the shared position cells once, at the
-        // end. With a random-access input (InputStream) hold a local byte
+        // With a random-access input (InputStream) hold a local byte
         // cursor and peek the next input byte directly - one load +
         // high-bit test for ASCII - instead of a `la(1)` decode plus a
         // `consume()` walk per char; other streams take the cursor-based
@@ -287,10 +239,6 @@ impl<'sim> LexerATNSimulator<'sim> {
                         table,
                         s,
                         symbol,
-                        start_line,
-                        start_column,
-                        line,
-                        column,
                         cursor,
                         prev_accept,
                         lexer,
@@ -300,12 +248,6 @@ impl<'sim> LexerATNSimulator<'sim> {
                 let target = entry & STATE_MASK;
                 if symbol != EOF {
                     eof_chain = 0;
-                    if symbol == '\n' as i32 {
-                        line += 1;
-                        column = 0;
-                    } else {
-                        column += 1;
-                    }
                     cursor += if symbol < 0x80 {
                         1
                     } else {
@@ -314,11 +256,11 @@ impl<'sim> LexerATNSimulator<'sim> {
                 } else {
                     eof_chain += 1;
                     if eof_chain > MAX_STATIC_EOF_EDGES {
-                        return self.restart_token_lazy(lexer, start_line, start_column, scratch);
+                        return self.restart_token_lazy(lexer, scratch);
                     }
                 }
                 if entry & ACCEPT_BIT != 0 {
-                    prev_accept = Some((cursor, line, column, target));
+                    prev_accept = Some((cursor, target));
                     if symbol == EOF {
                         break;
                     }
@@ -331,14 +273,14 @@ impl<'sim> LexerATNSimulator<'sim> {
                     if tag != 0 {
                         let accel = table.accel_payload(tag);
                         let start = cursor as usize;
-                        let c = run_scan(hay, start, accel, &mut line, &mut column);
+                        let c = run_scan(hay, start, accel);
                         if c > start {
                             cursor = c as isize;
                             // The entry's accept bit is s's: on an
                             // accept state the run end is the
                             // maximal-munch accept.
                             if entry & ACCEPT_BIT != 0 {
-                                prev_accept = Some((cursor, line, column, s));
+                                prev_accept = Some((cursor, s));
                             }
                             symbol = match hay.get(c) {
                                 Some(&b) if b < 0x80 => b as i32,
@@ -361,10 +303,6 @@ impl<'sim> LexerATNSimulator<'sim> {
                         table,
                         s,
                         symbol,
-                        start_line,
-                        start_column,
-                        line,
-                        column,
                         lexer.input().index(),
                         prev_accept,
                         lexer,
@@ -374,21 +312,15 @@ impl<'sim> LexerATNSimulator<'sim> {
                 let target = entry & STATE_MASK;
                 if symbol != EOF {
                     eof_chain = 0;
-                    if symbol == '\n' as i32 {
-                        line += 1;
-                        column = 0;
-                    } else {
-                        column += 1;
-                    }
                     lexer.input().consume();
                 } else {
                     eof_chain += 1;
                     if eof_chain > MAX_STATIC_EOF_EDGES {
-                        return self.restart_token_lazy(lexer, start_line, start_column, scratch);
+                        return self.restart_token_lazy(lexer, scratch);
                     }
                 }
                 if entry & ACCEPT_BIT != 0 {
-                    prev_accept = Some((lexer.input().index(), line, column, target));
+                    prev_accept = Some((lexer.input().index(), target));
                     if symbol == EOF {
                         break;
                     }
@@ -399,10 +331,8 @@ impl<'sim> LexerATNSimulator<'sim> {
         }
 
         match prev_accept {
-            Some((index, accept_line, accept_column, state)) => {
+            Some((index, state)) => {
                 lexer.input().seek(index);
-                self.current_pos.line.set(accept_line);
-                self.current_pos.char_position_in_line.set(accept_column);
                 // Position-independent lexer actions only (skip, mode,
                 // channel, type, ...): the loader rejects everything else
                 // in accept lists, and their execution needs no match
@@ -414,10 +344,6 @@ impl<'sim> LexerATNSimulator<'sim> {
                 Ok(table.accept_type(state))
             }
             None => {
-                // Match the lazy path: on failure the position stays where
-                // the walk stopped.
-                self.current_pos.line.set(line);
-                self.current_pos.char_position_in_line.set(column);
                 if symbol == EOF && lexer.input().index() == start_index {
                     return Ok(TOKEN_EOF);
                 }
@@ -427,12 +353,10 @@ impl<'sim> LexerATNSimulator<'sim> {
     }
 
     /// Handles an ESCAPE edge hit by [`LexerATNSimulator::match_static`]:
-    /// positions the input at the unconsumed escape symbol, writes the walk
-    /// position back into the shared cells (predicates read the input
-    /// through the lexer), carries the best accept so far into
-    /// `self.prev_accept`, and resumes the lazy simulation from the edge's
-    /// continuation. A budget escape has no continuation and restarts the
-    /// token on the lazy path from the token start.
+    /// positions the input at the unconsumed escape symbol, carries the best
+    /// accept so far into `self.prev_accept`, and resumes the lazy simulation
+    /// from the edge's continuation. A budget escape has no continuation and
+    /// restarts the token on the lazy path from the token start.
     #[cold]
     #[allow(clippy::too_many_arguments)]
     fn static_escape<'scratch, 'input, 'arena, Input, TF>(
@@ -440,12 +364,8 @@ impl<'sim> LexerATNSimulator<'sim> {
         table: &'static StaticLexerDFA,
         state: u16,
         symbol: i32,
-        start_line: u32,
-        start_column: i32,
-        line: u32,
-        column: i32,
         cursor: isize,
-        prev_accept: Option<(isize, u32, i32, u16)>,
+        prev_accept: Option<(isize, u16)>,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
         scratch: &'scratch bumpalo::Bump,
     ) -> Result<i32, ANTLRError>
@@ -456,14 +376,10 @@ impl<'sim> LexerATNSimulator<'sim> {
     {
         self.escape_count += 1;
         lexer.input().seek(cursor);
-        self.current_pos.line.set(line);
-        self.current_pos.char_position_in_line.set(column);
-        self.prev_accept = prev_accept.map(|(index, line, column, state)| {
+        self.prev_accept = prev_accept.map(|(index, state)| {
             let actions = table.accept_actions(state);
             ResolvedAccept {
                 index,
-                line,
-                column,
                 prediction: table.accept_type(state),
                 executor: if actions.is_empty() {
                     None
@@ -474,7 +390,7 @@ impl<'sim> LexerATNSimulator<'sim> {
         });
         let continuation = table.escape_continuation(state, symbol);
         if continuation == NO_CONTINUATION {
-            return self.restart_token_lazy(lexer, start_line, start_column, scratch);
+            return self.restart_token_lazy(lexer, scratch);
         }
         self.match_token_from_continuation(table.continuation(continuation), symbol, lexer, scratch)
     }
@@ -486,8 +402,6 @@ impl<'sim> LexerATNSimulator<'sim> {
     fn restart_token_lazy<'scratch, 'input, 'arena, Input, TF>(
         &mut self,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
-        start_line: u32,
-        start_column: i32,
         scratch: &'scratch bumpalo::Bump,
     ) -> Result<i32, ANTLRError>
     where
@@ -497,12 +411,9 @@ impl<'sim> LexerATNSimulator<'sim> {
     {
         self.restart_count += 1;
         lexer.input().seek(self.start_index);
-        self.current_pos.line.set(start_line);
-        self.current_pos.char_position_in_line.set(start_column);
         self.prev_accept = None;
         self.match_token_lazy(lexer, scratch)
     }
-
     /// Resumes the lazy simulation at an escape edge. Rebuilds the
     /// serialized configs of the continuation, closes them with real
     /// predicate evaluation (the input is at the unconsumed escape symbol),
@@ -805,8 +716,6 @@ impl<'sim> LexerATNSimulator<'sim> {
         //        println!("fail_or_accept");
         if let Some(accept) = self.prev_accept.take() {
             lexer.input().seek(accept.index);
-            self.current_pos.line.set(accept.line);
-            self.current_pos.char_position_in_line.set(accept.column);
 
             match accept.executor {
                 Some(AcceptExecutor::Lazy(x)) => x.execute(lexer, self.start_index),
@@ -852,7 +761,6 @@ impl<'sim> LexerATNSimulator<'sim> {
 
     fn evaluate_predicate<'input, 'arena, Input, TF, T: Lexer<'input, 'arena, Input, TF>>(
         &self,
-        //        input: &mut dyn CharStream,
         rule_index: i32,
         pred_index: i32,
         speculative: bool,
@@ -867,16 +775,12 @@ impl<'sim> LexerATNSimulator<'sim> {
             return lexer.sempred(None, rule_index, pred_index);
         }
 
-        let saved_column = self.current_pos.char_position_in_line.get();
-        let saved_line = self.current_pos.line.get();
         let index = lexer.input().index();
         let marker = lexer.input().mark();
         self.consume(lexer.input());
 
         let result = lexer.sempred(None, rule_index, pred_index);
 
-        self.current_pos.char_position_in_line.set(saved_column);
-        self.current_pos.line.set(saved_line);
         lexer.input().seek(index);
         lexer.input().release(marker);
         result
@@ -893,8 +797,6 @@ impl<'sim> LexerATNSimulator<'sim> {
             // accepts the static walker carries.
             self.prev_accept = Some(ResolvedAccept {
                 index: input.index(),
-                line: self.current_pos.line.get(),
-                column: self.current_pos.char_position_in_line.get(),
                 prediction: dfa_state.prediction(),
                 executor: dfa_state.lexer_action_executor().map(AcceptExecutor::Lazy),
             });
@@ -964,8 +866,6 @@ const MAX_STATIC_EOF_EDGES: u32 = 8;
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ResolvedAccept<'sim> {
     index: isize,
-    line: u32,
-    column: i32,
     prediction: i32,
     executor: Option<AcceptExecutor<'sim>>,
 }
@@ -979,37 +879,13 @@ pub(crate) enum AcceptExecutor<'sim> {
     Static(&'static [crate::lexer_action::LexerAction<'static>]),
 }
 
-/// Number of input chars (not bytes) in `span`: the byte count for pure
-/// ASCII (one SWAR high-bit pass), an exact UTF-8 char count otherwise.
-/// `span`'s boundaries are char boundaries: the run scans that produce
-/// spans only stop at ASCII needle bytes, which never occur inside a
-/// multibyte char.
-#[inline]
-fn span_columns(span: &[u8]) -> i32 {
-    let (chunks, remainder) = span.as_chunks::<8>();
-    let non_ascii = chunks
-        .iter()
-        .any(|&c| u64::from_le_bytes(c) & 0x8080_8080_8080_8080 != 0)
-        || remainder.iter().any(|b| b & 0x80 != 0);
-    if non_ascii {
-        // SAFETY: `span` is a subslice of a UTF-8 input with boundaries on
-        // char boundaries (see above).
-        unsafe { std::str::from_utf8_unchecked(span) }
-            .chars()
-            .count() as i32
-    } else {
-        span.len() as i32
-    }
-}
-
 /// Consume a maximal run of self-looping bytes of an accelerated state,
-/// starting at byte index `c` in `hay`; update `line`/`column` and return
-/// the index of the first byte that does not loop.
+/// starting at byte index `c` in `hay`, and return the index of the first
+/// byte that does not loop.
 #[inline(never)]
-fn run_scan(hay: &[u8], mut c: usize, accel: Accel, line: &mut u32, column: &mut i32) -> usize {
+fn run_scan(hay: &[u8], mut c: usize, accel: Accel) -> usize {
     match accel {
         Accel::Positive(bitmap) => {
-            let start = c;
             while c < hay.len() {
                 let b = hay[c];
                 if b < 0x80 && (bitmap >> b) & 1 != 0 {
@@ -1018,7 +894,6 @@ fn run_scan(hay: &[u8], mut c: usize, accel: Accel, line: &mut u32, column: &mut
                     break;
                 }
             }
-            *column += (c - start) as i32;
         }
         Accel::Exclusion {
             needles,
@@ -1033,18 +908,12 @@ fn run_scan(hay: &[u8], mut c: usize, accel: Accel, line: &mut u32, column: &mut
                     _ => memchr::memchr3(needles[0], needles[1], needles[2], rest),
                 };
                 match found {
-                    None => {
-                        *column += span_columns(&hay[c..]);
-                        return hay.len();
-                    }
+                    None => return hay.len(),
                     Some(i) => {
-                        *column += span_columns(&hay[c..c + i]);
                         c += i;
                         if nl_in_set && hay[c] == b'\n' {
                             // '\n' loops here: consume it and resume.
                             c += 1;
-                            *line += 1;
-                            *column = 0;
                         } else {
                             return c;
                         }

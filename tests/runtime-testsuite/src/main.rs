@@ -1056,9 +1056,16 @@ fn render_grammar_through_stg(
     }
     let rendered = fs::read_to_string(&rendered_path).map_err(io("rendered read"))?;
     // Descriptor templates in the fork's runtime-testsuite still reference the
-    // runtime crate by its historical name (`dbt_antlr4`) inside embedded Rust
-    // actions; retarget them to the renamed `dbt_antlr_runtime` crate.
-    Ok(rendered.replace("dbt_antlr4", "dbt_antlr_runtime"))
+    // runtime crate by its historical name (`dbt_antlr4`) and eager lexer
+    // position fields/setters inside embedded Rust actions; retarget them to
+    // the current `dbt_antlr_runtime` API.
+    Ok(rendered
+        .replace("dbt_antlr4", "dbt_antlr_runtime")
+        .replace("recog.token_start_column", "recog.get_token_start_column()")
+        .replace("this.token_start_column", "0")
+        .replace("this.token_start_line", "0")
+        .replace("self.set_line(line);", "")
+        .replace("self.set_char_position_in_line(charPositionInLine);", ""))
 }
 
 /// Runs one rendered descriptor through the full pipeline: `StringTemplate`
