@@ -73,8 +73,8 @@ pub(crate) fn rule_context_struct_name(rule_name: &str) -> String {
 /// Builds the full `LexerFile` render context for one compiled lexer unit.
 ///
 /// `grammar_file_name` is the name that lands in the `fileHeader` comment.
-/// `static_tables` carries the `--static-lexer-dfa` table payload (`None` with
-/// the flag off, which renders the lexer exactly as without the flag).
+/// `static_tables` carries the precomputed static DFA tables (enabled by
+/// `--static-lexer-dfa` cli flag)
 pub(crate) fn build_lexer_file_context(
     compiled: &CompiledLexer,
     grammar_file_name: &str,

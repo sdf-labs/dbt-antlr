@@ -173,10 +173,9 @@ pub struct SerializedAtnModel {
 
 /// Static lexer DFA table payload of a `--static-lexer-dfa` lexer build.
 ///
-/// `Some` on [`LexerModel::static_tables`] only when the flag is on; the
-/// templates then emit the `_STATIC_LEXER_TABLE_*` statics and, when
-/// `omit_atn` holds (every mode compiled, no escape edges), elide the
-/// `_serializedATN`/`_ATN` statics entirely.
+/// Materialized through the emission templates as the `_STATIC_LEXER_TABLE_*`
+/// statics and, when `omit_atn` is true (set when every mode fully resolves, no
+/// escape edges), elide the `_serializedATN`/`_ATN` statics entirely.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StaticLexerTablesModel {

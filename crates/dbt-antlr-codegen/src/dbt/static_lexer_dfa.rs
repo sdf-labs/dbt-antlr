@@ -18,7 +18,7 @@
 use std::path::{Path, PathBuf};
 
 use dbt_antlr_runtime::atn_deserializer::ATNDeserializer;
-use dbt_antlr_runtime::static_dfa_build::{
+use dbt_antlr_runtime::dfa::static_dfa_build::{
     DEFAULT_MAX_STATES_PER_MODE, EscapeCounts, ModeFailure, StaticLexerDfaBuild,
     StaticLexerDfaBuilder,
 };

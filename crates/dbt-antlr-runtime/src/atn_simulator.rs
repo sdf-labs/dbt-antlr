@@ -6,10 +6,10 @@ use std::vec::Vec;
 
 use crate::atn::ATN;
 use crate::atn_config_set::{ATNConfigSet, ConfigSet, LexerATNConfigSet};
+use crate::dfa::static_lexer_dfa::StaticLexerTables;
 use crate::dfa::{EdgeSetStore, DFA};
 use crate::errors::ANTLRError;
 use crate::prediction_context::PredictionContextCache;
-use crate::static_lexer_dfa::StaticLexerTables;
 use crate::Arena;
 
 pub type LexerATNSimulatorManager = ATNSimulatorMan<LexerATNConfigSet<'static>>;
@@ -139,7 +139,7 @@ impl<CS: ConfigSet<'static> + 'static> ATNSimulatorMan<CS> {
     /// (`--static-lexer-dfa`): simulators built from this manager tokenize
     /// through the table walker, with the ATN kept for the lazy fallback of
     /// escape edges and modes without a table. See
-    /// [`crate::static_lexer_dfa::StaticLexerTables`].
+    /// [`crate::dfa::static_lexer_dfa::StaticLexerTables`].
     ///
     /// Panics when the tables reference invalid ATN states or lexer actions.
     pub fn new_with_static_lexer_tables(

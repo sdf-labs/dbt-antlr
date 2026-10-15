@@ -8,6 +8,11 @@ use crate::atn_config_set::{LexerATNConfigSet, MutableLexerATNConfigSet};
 use crate::atn_simulator::{BaseATNSimulator, IATNSimulator};
 use crate::atn_state::{ATNState, ATNStateRef, ATNStateType};
 use crate::char_stream::CharStream;
+use crate::dfa::static_lexer_dfa::{
+    Accel, LexerContinuation, StaticLexerDFA, StaticLexerTables, ACCEPT_BIT,
+    CONTINUATION_MOVED_CONFIGS, CONTINUATION_SOURCE_SET, ESCAPE, NO_CONTINUATION, NO_EDGE,
+    STATE_MASK,
+};
 use crate::dfa::{DFAState, ProposedDFAState, DFA};
 use crate::errors::ANTLRError;
 use crate::int_stream::{IntStream, EOF};
@@ -15,11 +20,6 @@ use crate::lexer::{Lexer, LexerPosition, LEXER_MAX_CHAR_VALUE, LEXER_MIN_CHAR_VA
 use crate::lexer_action_executor::LexerActionExecutor;
 use crate::prediction_context::PredictionContextRef;
 use crate::prediction_context::{PredictionContext, PredictionContextCache};
-use crate::static_lexer_dfa::{
-    Accel, LexerContinuation, StaticLexerDFA, StaticLexerTables, ACCEPT_BIT,
-    CONTINUATION_MOVED_CONFIGS, CONTINUATION_SOURCE_SET, ESCAPE, NO_CONTINUATION, NO_EDGE,
-    STATE_MASK,
-};
 use crate::token::TOKEN_EOF;
 
 use crate::token_factory::TokenFactory;
@@ -218,7 +218,7 @@ impl<'sim> LexerATNSimulator<'sim> {
     }
 
     /// Token matching driven by a statically-precomputed lexer DFA table
-    /// (see [`crate::static_lexer_dfa`]): one dense table lookup per input
+    /// (see [`crate::dfa::static_lexer_dfa`]): one dense table lookup per input
     /// symbol, no ATN simulation, no lazily-built DFA states. Mirrors
     /// `exec_atn` + `fail_or_accept` exactly (maximal munch, accept fallback
     /// with position restore, lexer actions at accept, EOF handling); the

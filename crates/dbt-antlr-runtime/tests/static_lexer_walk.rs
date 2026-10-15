@@ -22,6 +22,11 @@ use dbt_antlr_runtime::atn::ATN;
 use dbt_antlr_runtime::atn_deserializer::ATNDeserializer;
 use dbt_antlr_runtime::atn_simulator::LexerATNSimulatorManager;
 use dbt_antlr_runtime::char_stream::CharStream;
+use dbt_antlr_runtime::dfa::static_dfa_build::{StaticLexerDfaBuild, StaticLexerDfaBuilder};
+use dbt_antlr_runtime::dfa::static_lexer_dfa::{
+    StaticLexerError, StaticLexerTables, ACCEL_EXCLUSION, ACCEL_POSITIVE, ACCEPT_BIT, ESCAPE,
+    NO_CONTINUATION, NO_EDGE, STATIC_DFA_FORMAT_VERSION, STATIC_DFA_MAGIC,
+};
 use dbt_antlr_runtime::error_listener::ErrorListener;
 use dbt_antlr_runtime::errors::ANTLRError;
 use dbt_antlr_runtime::input_stream::InputStream;
@@ -29,11 +34,6 @@ use dbt_antlr_runtime::int_stream::IntStream;
 use dbt_antlr_runtime::lexer::{BaseLexer, LexerRecog};
 use dbt_antlr_runtime::recognizer::{Actions, Recognizer};
 use dbt_antlr_runtime::rule_context::EmptyRuleNode;
-use dbt_antlr_runtime::static_dfa_build::{StaticLexerDfaBuild, StaticLexerDfaBuilder};
-use dbt_antlr_runtime::static_lexer_dfa::{
-    StaticLexerError, StaticLexerTables, ACCEL_EXCLUSION, ACCEL_POSITIVE, ACCEPT_BIT, ESCAPE,
-    NO_CONTINUATION, NO_EDGE, STATIC_DFA_FORMAT_VERSION, STATIC_DFA_MAGIC,
-};
 use dbt_antlr_runtime::token::{CommonToken, Token, TOKEN_EOF};
 use dbt_antlr_runtime::token_factory::CommonTokenFactory;
 use dbt_antlr_runtime::vocabulary::{Vocabulary, VocabularyImpl};

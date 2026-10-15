@@ -19,12 +19,12 @@
 //! [`BuildStore`] (one per mode; its arena backs both the scratch and the
 //! finalized configs), so contexts are hash-consed and executors and
 //! semantic contexts interned.
-//! [`ModeBuild::commit`] then lays out the walker's own [`StaticLexerDFA`]:
+//! [`ModeBuild::finalize`] then lays out the walker's own [`StaticLexerDFA`]:
 //! `u16` packing with the `NO_EDGE`/`ESCAPE`/`ACCEPT_BIT` sentinels, the
 //! dense 129-wide low rows, the hi-class compression, the deduplicated
 //! accept action tables, the accel classification, the escape ranges, and
 //! the continuation pool. The word-stream encoding of the tables lives with
-//! the decoder: `StaticLexerTables::to_words` in [`crate::static_lexer_dfa`],
+//! the decoder: `StaticLexerTables::to_words` in [`crate::dfa::static_lexer_dfa`],
 //! whose module documentation is the authoritative wire-format contract.
 //!
 //! # Escape edges
@@ -74,6 +74,11 @@ use crate::atn::ATN;
 use crate::atn_config::LexerATNConfig;
 use crate::atn_config_set::MutableLexerATNConfigSet;
 use crate::atn_state::ATNStateType;
+use crate::dfa::static_lexer_dfa::{
+    class_map, dense_hi_rows, Accel, ContinuationConfig, EscapeRange, LexerContinuation,
+    StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, CONTINUATION_MOVED_CONFIGS,
+    CONTINUATION_SOURCE_SET, ESCAPE, LOW_ROW, NO_CONTINUATION, NO_EDGE,
+};
 use crate::dfa::FinalizeStore;
 use crate::int_stream::EOF;
 use crate::lexer_action::{LexerAction, LexerIndexedCustomAction};
@@ -81,16 +86,10 @@ use crate::lexer_action_executor::LexerActionExecutor;
 use crate::lexer_atn_simulator::{reachable_core, start_state_core, LexerClosureEnv, ReachCapture};
 use crate::prediction_context::PredictionContextRef;
 use crate::semantic_context::SemanticContext;
-use crate::static_lexer_dfa::{
-    class_map, dense_hi_rows, Accel, ContinuationConfig, EscapeRange, LexerContinuation,
-    StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, CONTINUATION_MOVED_CONFIGS,
-    CONTINUATION_SOURCE_SET, ESCAPE, LOW_ROW, NO_CONTINUATION, NO_EDGE,
-};
 use crate::transition::{Transition, TransitionType};
 use crate::PredictionContextCache;
 
-/// The default per-mode state budget, equal to the dbt `LexerDFABuilder`
-/// default.
+/// The default per-mode DFA state budget
 pub const DEFAULT_MAX_STATES_PER_MODE: usize = 30000;
 
 const MAX_SYMBOL: i32 = 0x10FFFF;
@@ -105,7 +104,7 @@ const MAX_CONTEXT_DEPTH: u32 = 32;
 pub struct StaticLexerDfaBuild {
     /// The word-stream encoding of the tables of `modes`
     /// (`StaticLexerTables::to_words`), in the format of the
-    /// [`crate::static_lexer_dfa`] module documentation.
+    /// [`crate::dfa::static_lexer_dfa`] module documentation.
     pub words: Vec<u32>,
     /// Per-mode build outcomes, in mode order.
     pub modes: Vec<ModeBuildOutcome>,
@@ -704,8 +703,7 @@ impl<'sc> ModeBuild<'sc> {
             accept_actions.push(*entry);
         }
 
-        // Run acceleration over the committed rows: the packed 128-wide
-        // low row plus the pre-compression hi intervals.
+        // Run acceleration over the structural rows.
         let mut accel_tag = vec![0u8; num_states];
         let mut accel_data = Vec::new();
         for (s, rows) in self.rows.iter().enumerate() {
@@ -1166,8 +1164,8 @@ mod tests {
     use super::*;
     use crate::atn_deserializer::ATNDeserializer;
     use crate::atn_state::ATNStateRef;
+    use crate::dfa::static_lexer_dfa::{ACCEL_EXCLUSION, ACCEL_POSITIVE};
     use crate::prediction_context::PredictionContext;
-    use crate::static_lexer_dfa::{ACCEL_EXCLUSION, ACCEL_POSITIVE};
 
     fn push_ctx<'a>(
         scratch: &'a bumpalo::Bump,
