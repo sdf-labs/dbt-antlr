@@ -6,6 +6,7 @@ use std::vec::Vec;
 
 use crate::atn::ATN;
 use crate::atn_config_set::{ATNConfigSet, ConfigSet, LexerATNConfigSet};
+use crate::dfa::static_lexer_dfa::StaticLexerTables;
 use crate::dfa::{EdgeSetStore, DFA};
 use crate::errors::ANTLRError;
 use crate::prediction_context::PredictionContextCache;
@@ -28,6 +29,7 @@ where
     CS: ConfigSet<'sim> + 'sim,
 {
     pub atn: &'static ATN,
+    pub(crate) static_lexer_tables: Option<&'static StaticLexerTables>,
     shared_context_cache: Arc<NotifyOnDrop<PredictionContextCache<'sim>>>,
     decision_to_dfa: Arc<NotifyOnDrop<Vec<DFA<'sim, CS>>>>,
     allocation_limit_bytes: usize,
@@ -110,6 +112,7 @@ where
     CS: ConfigSet<'static> + 'static,
 {
     atn: &'static ATN,
+    static_lexer_tables: Option<&'static StaticLexerTables>,
     allocation_limit_bytes: AtomicUsize,
     is_resetting: AtomicBool,
     shared_context_cache: RwLock<Arc<NotifyOnDrop<PredictionContextCache<'static>>>>,
@@ -129,6 +132,44 @@ where
 
 impl<CS: ConfigSet<'static> + 'static> ATNSimulatorMan<CS> {
     pub fn new(atn: &'static ATN) -> Self {
+        Self::with_parts(atn, None)
+    }
+
+    /// Manager for a generated lexer with static DFA tables
+    /// (`--static-lexer-dfa`): simulators built from this manager tokenize
+    /// through the table walker, with the ATN kept for the lazy fallback of
+    /// escape edges and modes without a table. See
+    /// [`crate::dfa::static_lexer_dfa::StaticLexerTables`].
+    ///
+    /// Panics when the tables reference invalid ATN states or lexer actions.
+    pub fn new_with_static_lexer_tables(
+        atn: &'static ATN,
+        tables: &'static StaticLexerTables,
+    ) -> Self {
+        tables.validate_for_atn(atn);
+        Self::with_parts(atn, Some(tables))
+    }
+
+    /// Manager for an ATN-less lexer: one whose grammar the tool proved
+    /// fully static (`--static-lexer-dfa`) and whose generated code therefore
+    /// embeds only the static lexer tables, no ATN. The simulator built
+    /// from this manager tokenizes off `tables` alone; its `atn` is a
+    /// shared empty sentinel and its lazy DFA vec is empty, so any
+    /// (unreachable) attempt to drive it down the general simulator path
+    /// fails instead of silently mis-tokenizing.
+    ///
+    /// Panics when the tables carry ATN-relative references (escape
+    /// continuations).
+    pub fn new_static_lexer(tables: &'static StaticLexerTables) -> Self {
+        let atn = empty_lexer_atn();
+        tables.validate_for_atn(atn);
+        Self::with_parts(atn, Some(tables))
+    }
+
+    fn with_parts(
+        atn: &'static ATN,
+        static_lexer_tables: Option<&'static StaticLexerTables>,
+    ) -> Self {
         let context_cache_sentinel = SentinelGuard::new();
         let decision_to_dfa_sentinel = SentinelGuard::new();
         let decision_to_dfa = NotifyOnDrop::new(make_dfa_vec::<CS>(atn), &decision_to_dfa_sentinel);
@@ -137,6 +178,7 @@ impl<CS: ConfigSet<'static> + 'static> ATNSimulatorMan<CS> {
 
         Self {
             atn,
+            static_lexer_tables,
             allocation_limit_bytes: AtomicUsize::new(0),
             is_resetting: AtomicBool::new(false),
             shared_context_cache: RwLock::new(Arc::new(shared_context_cache)),
@@ -156,6 +198,7 @@ impl<CS: ConfigSet<'static> + 'static> ATNSimulatorMan<CS> {
 
         BaseATNSimulator {
             atn: self.atn,
+            static_lexer_tables: self.static_lexer_tables,
             shared_context_cache: unsafe {
                 std::mem::transmute::<
                     Arc<NotifyOnDrop<PredictionContextCache<'_>>>,
@@ -231,6 +274,16 @@ impl<CS: ConfigSet<'static> + 'static> ATNSimulatorMan<CS> {
 
         self.is_resetting.store(false, Ordering::Release);
     }
+}
+
+/// ATN sentinel for [`ATNSimulatorMan::new_static_lexer`]: a valid but
+/// empty lexer ATN (no states, no decisions, no modes), so the lazy-DFA
+/// machinery has nothing to work with and every ATN-driven code path
+/// fails fast instead of silently mis-tokenizing.
+fn empty_lexer_atn() -> &'static ATN {
+    static EMPTY_LEXER_ATN: std::sync::LazyLock<ATN> =
+        std::sync::LazyLock::new(|| ATN::new_atn(crate::atn_type::ATNType::Lexer, 0));
+    &EMPTY_LEXER_ATN
 }
 
 fn make_dfa_vec<'x, CS: ConfigSet<'x>>(atn: &'static ATN) -> Vec<DFA<'x, CS>> {

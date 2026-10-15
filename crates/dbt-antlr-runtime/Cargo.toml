@@ -24,6 +24,7 @@ workspace = true
 arena-allocation-limit = []
 recursion-limit = []
 atn-dump = []
+static-dfa-build = []
 
 [dependencies]
 uuid = "1.16.0"
@@ -36,8 +37,20 @@ bumpalo = { version = "3.20.2", features = [
   "collections",
   "boxed",
 ] }
+memchr = { workspace = true }
 stacker = { version = "0.1.23", optional = true }
 
 [dev-dependencies]
 serial_test = "3.4.0"
 dbt-antlr-runtime = { path = ".", features = ["atn-dump"] }
+dbt-antlr-codegen = { path = "../dbt-antlr-codegen", default-features = false, features = [
+    "atn-export",
+] }
+
+[[test]]
+name = "static_lexer_walk"
+required-features = ["static-dfa-build"]
+
+[[test]]
+name = "static_lexer_stress"
+required-features = ["static-dfa-build"]

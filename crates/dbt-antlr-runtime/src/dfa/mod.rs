@@ -24,6 +24,9 @@ use crate::vocabulary::Vocabulary;
 
 mod dfa_serializer;
 mod dfa_state;
+#[cfg(feature = "static-dfa-build")]
+pub mod static_dfa_build;
+pub mod static_lexer_dfa;
 
 use bit_set::BitSet;
 pub use dfa_serializer::DFASerializer;
@@ -606,6 +609,51 @@ where
 
 type StateStoreRoots<'sim, CS> = [*mut MaybeUninit<DFAState<'sim, CS>>; MAX_NUM_CHUNKS as usize];
 
+/// The shared allocation surface for ATNConfig finalization and value promotion.
+///
+/// This trait exists so that [`ATNConfig`]/[`LexerATNConfig`] structs can be
+/// shared between the runtime and the toolside static DFA builder: on the
+/// runtime side it's implemented by [`DFAStateStore`]; on the tool side it's
+/// implemented by [`BuildStore`] (gated by feature `static-dfa-build`)
+pub(crate) trait FinalizeStore<'sim> {
+    fn alloc_semantic_context(
+        &self,
+        f: impl FnOnce() -> SemanticContext<'sim>,
+    ) -> &'sim SemanticContext<'sim>;
+
+    fn contains_semantic_context_slice(&self, slice: &[SemanticContext]) -> bool;
+
+    fn alloc_semantic_context_slice<I>(&self, iter: I) -> &'sim [SemanticContext<'sim>]
+    where
+        I: IntoIterator<Item = SemanticContext<'sim>>,
+        I::IntoIter: ExactSizeIterator;
+
+    fn alloc_lexer_action_slice(
+        &self,
+        len: usize,
+        f: impl FnMut(usize) -> LexerAction<'sim>,
+    ) -> &'sim [LexerAction<'sim>];
+
+    fn contains_lexer_action_slice(&self, slice: &[LexerAction]) -> bool;
+
+    fn alloc_lexer_action_executor(
+        &self,
+        f: impl FnOnce() -> LexerActionExecutor<'sim>,
+    ) -> &'sim LexerActionExecutor<'sim>;
+
+    fn alloc_lexer_indexed_custom_action(
+        &self,
+        f: impl FnOnce() -> LexerIndexedCustomAction<'sim>,
+    ) -> &'sim LexerIndexedCustomAction<'sim>;
+
+    fn contains_lexer_indexed_custom_action(&self, action: &LexerIndexedCustomAction) -> bool;
+
+    fn alloc_config_slice<AC, I>(&self, iter: I) -> &'sim [AC]
+    where
+        I: IntoIterator<Item = AC>,
+        I::IntoIter: ExactSizeIterator;
+}
+
 #[derive(Debug)]
 pub struct DFAStateStore<'sim, CS>
 where
@@ -780,14 +828,6 @@ where
         is_ref_in_arena(action, self.lexer_store())
     }
 
-    pub(crate) fn alloc_config_slice<I>(&self, iter: I) -> &'sim [CS::ConfigType]
-    where
-        I: IntoIterator<Item = CS::ConfigType>,
-        I::IntoIter: ExactSizeIterator,
-    {
-        self.config_store().alloc_slice_fill_iter(iter)
-    }
-
     pub(crate) fn alloc_pred_prediction_slice<I>(&self, iter: I) -> &'sim [PredPrediction<'sim>]
     where
         I: IntoIterator<Item = PredPrediction<'sim>>,
@@ -804,6 +844,68 @@ where
 
     pub fn allocated_bytes(&self) -> usize {
         self.arena.allocated_bytes() + self.allocated_chunk_bytes
+    }
+}
+
+impl<'sim, CS> FinalizeStore<'sim> for DFAStateStore<'sim, CS>
+where
+    CS: ConfigSet<'sim> + 'sim,
+{
+    fn alloc_semantic_context(
+        &self,
+        f: impl FnOnce() -> SemanticContext<'sim>,
+    ) -> &'sim SemanticContext<'sim> {
+        DFAStateStore::alloc_semantic_context(self, f)
+    }
+
+    fn contains_semantic_context_slice(&self, slice: &[SemanticContext]) -> bool {
+        DFAStateStore::contains_semantic_context_slice(self, slice)
+    }
+
+    fn alloc_semantic_context_slice<I>(&self, iter: I) -> &'sim [SemanticContext<'sim>]
+    where
+        I: IntoIterator<Item = SemanticContext<'sim>>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        DFAStateStore::alloc_semantic_context_slice(self, iter)
+    }
+
+    fn alloc_lexer_action_slice(
+        &self,
+        len: usize,
+        f: impl FnMut(usize) -> LexerAction<'sim>,
+    ) -> &'sim [LexerAction<'sim>] {
+        DFAStateStore::alloc_lexer_action_slice(self, len, f)
+    }
+
+    fn contains_lexer_action_slice(&self, slice: &[LexerAction]) -> bool {
+        DFAStateStore::contains_lexer_action_slice(self, slice)
+    }
+
+    fn alloc_lexer_action_executor(
+        &self,
+        f: impl FnOnce() -> LexerActionExecutor<'sim>,
+    ) -> &'sim LexerActionExecutor<'sim> {
+        DFAStateStore::alloc_lexer_action_executor(self, f)
+    }
+
+    fn alloc_lexer_indexed_custom_action(
+        &self,
+        f: impl FnOnce() -> LexerIndexedCustomAction<'sim>,
+    ) -> &'sim LexerIndexedCustomAction<'sim> {
+        DFAStateStore::alloc_lexer_indexed_custom_action(self, f)
+    }
+
+    fn contains_lexer_indexed_custom_action(&self, action: &LexerIndexedCustomAction) -> bool {
+        DFAStateStore::contains_lexer_indexed_custom_action(self, action)
+    }
+
+    fn alloc_config_slice<AC, I>(&self, iter: I) -> &'sim [AC]
+    where
+        I: IntoIterator<Item = AC>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        self.config_store().alloc_slice_fill_iter(iter)
     }
 }
 

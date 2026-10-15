@@ -8,7 +8,7 @@ use hashbrown::HashTable;
 
 use crate::atn_config::{ATNConfig, ATNConfigType, LexerATNConfig};
 use crate::atn_config_set::{ATNConfigSet, ImmutableStore, LexerATNConfigSet};
-use crate::dfa::DFAStateStore;
+use crate::dfa::{DFAStateStore, FinalizeStore};
 use crate::parser_atn_simulator::MergeCache;
 use crate::prediction_context::PredictionContext;
 use crate::semantic_context::SemanticContext;
@@ -22,6 +22,10 @@ pub trait MutableConfigSet<'ephemeral>: PartialEq + Eq + Hash {
 
     fn eq_config_set(&self, other: &Self::FinalizedType<'_>) -> bool;
 
+    // `finalize` stays on the concrete `DFAStateStore`: `MutableConfigSet` is
+    // a public trait, so its method cannot name the crate-private
+    // `FinalizeStore`. The method delegates through `FinalizeStore`
+    // internally, so set-level finalization shares the generic code path.
     fn finalize<'sim>(
         self,
         cache: &'sim PredictionContextCache<'sim>,
@@ -545,14 +549,14 @@ impl<'ephemeral> ScratchStore<'ephemeral, ATNConfig<'ephemeral>> {
     fn finalize<'sim>(
         self,
         cache: &'sim PredictionContextCache,
-        dfa: &DFAStateStore<'sim, ATNConfigSet<'sim>>,
+        store: &impl FinalizeStore<'sim>,
     ) -> ImmutableStore<'sim, ATNConfig<'sim>> {
         let cached_hash = self.hash_code();
 
         ImmutableStore {
             cached_hash,
-            configs: dfa
-                .alloc_config_slice(self.configs.into_iter().map(|c| c.finalize(cache, dfa))),
+            configs: store
+                .alloc_config_slice(self.configs.into_iter().map(|c| c.finalize(cache, store))),
         }
     }
 }
@@ -561,14 +565,14 @@ impl<'ephemeral> ScratchStore<'ephemeral, LexerATNConfig<'ephemeral>> {
     fn finalize<'sim>(
         self,
         cache: &'sim PredictionContextCache,
-        dfa: &DFAStateStore<'sim, LexerATNConfigSet<'sim>>,
+        store: &impl FinalizeStore<'sim>,
     ) -> ImmutableStore<'sim, LexerATNConfig<'sim>> {
         let cached_hash = self.hash_code();
 
         ImmutableStore {
             cached_hash,
-            configs: dfa
-                .alloc_config_slice(self.configs.into_iter().map(|c| c.finalize(cache, dfa))),
+            configs: store
+                .alloc_config_slice(self.configs.into_iter().map(|c| c.finalize(cache, store))),
         }
     }
 }

@@ -10,6 +10,7 @@
 //!   -visitor          generate visitor (+base visitor)
 //!   -no-listener      do not generate listener (+base listener)
 //!   -Dkey=value       ignored with a warning (compat)
+//!   --static-lexer-dfa            precompute static lexer DFA tables (lexer scope only)
 //!   --entry-rule <NAME>           mark NAME as a parser entry rule (repeatable)
 //!   --prune-unreachable-rules     delete parser rules unreachable from the entry rules
 //!   --inline-trivial-rules        inline trivial pure parser rules into their callers
@@ -30,6 +31,7 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   -visitor          generate visitor (+base visitor)
   -no-listener      do not generate listener (+base listener)
   -Dkey=value       ignored with a warning (compat)
+  --static-lexer-dfa            precompute static lexer DFA tables (lexer scope only)
   --entry-rule <NAME>           mark NAME as a parser entry rule (repeatable)
   --prune-unreachable-rules     delete parser rules unreachable from the entry rules
   --inline-trivial-rules        inline trivial pure parser rules into their callers
@@ -46,6 +48,7 @@ struct CliArgs {
     lib_dirs: Vec<PathBuf>,
     gen_listener: bool,
     gen_visitor: bool,
+    static_lexer_dfa: bool,
     entry_rules: Vec<String>,
     prune_unreachable: bool,
     inline_trivial: bool,
@@ -60,6 +63,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let mut lib_dirs = Vec::new();
     let mut gen_listener = true;
     let mut gen_visitor = false;
+    let mut static_lexer_dfa = false;
     let mut entry_rules = Vec::new();
     let mut prune_unreachable = false;
     let mut inline_trivial = false;
@@ -82,6 +86,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
             "-no-visitor" => gen_visitor = false,
             "-listener" => gen_listener = true,
             "-no-listener" => gen_listener = false,
+            "--static-lexer-dfa" => static_lexer_dfa = true,
             "--entry-rule" => {
                 entry_rules.push(value_after(arg, args, &mut index)?);
             }
@@ -120,6 +125,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         lib_dirs,
         gen_listener,
         gen_visitor,
+        static_lexer_dfa,
         entry_rules,
         prune_unreachable,
         inline_trivial,
@@ -183,6 +189,7 @@ pub fn run(
         .listener(cli.gen_listener)
         .visitor(cli.gen_visitor)
         .cargo_directives(false)
+        .static_lexer_dfa(cli.static_lexer_dfa)
         .prune_unreachable_rules(cli.prune_unreachable)
         .inline_trivial_rules(cli.inline_trivial)
         .report_trivial_rules(cli.report_trivial)
@@ -232,6 +239,14 @@ mod tests {
         assert_eq!(cli.out_dir, std::path::PathBuf::from("."));
         assert!(cli.gen_listener);
         assert!(!cli.gen_visitor);
+    }
+
+    #[test]
+    fn static_lexer_dfa_flag_parses() {
+        let cli = parse(&["--static-lexer-dfa", "T.g4"]).expect("flag parses");
+        assert!(cli.static_lexer_dfa);
+        let cli = parse(&["T.g4"]).expect("minimal command line parses");
+        assert!(!cli.static_lexer_dfa);
     }
 
     #[test]

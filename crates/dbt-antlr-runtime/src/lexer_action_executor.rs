@@ -2,9 +2,8 @@ use std::hash::{Hash, Hasher};
 
 use fxhash::{hash64, FxHasher64};
 
-use crate::atn_config_set::ConfigSet;
 use crate::char_stream::CharStream;
-use crate::dfa::DFAStateStore;
+use crate::dfa::FinalizeStore;
 use crate::lexer::Lexer;
 use crate::lexer_action::{LexerAction, LexerIndexedCustomAction};
 use crate::token_factory::TokenFactory;
@@ -58,6 +57,11 @@ impl<'ephemeral> LexerActionExecutor<'ephemeral> {
         }
     }
 
+    #[cfg(feature = "static-dfa-build")]
+    pub(crate) fn actions(&self) -> &'ephemeral [LexerAction<'ephemeral>] {
+        self.lexer_actions
+    }
+
     pub fn fix_offset_before_match(
         &self,
         arena: &'ephemeral bumpalo::Bump,
@@ -106,21 +110,18 @@ impl<'ephemeral> LexerActionExecutor<'ephemeral> {
         }
     }
 
-    pub(crate) fn promote<'sim, CS>(
+    pub(crate) fn promote<'sim>(
         &self,
-        dfa: &DFAStateStore<'sim, CS>,
-    ) -> LexerActionExecutor<'sim>
-    where
-        CS: ConfigSet<'sim> + 'sim,
-    {
-        if dfa.contains_lexer_action_slice(self.lexer_actions) {
+        store: &impl FinalizeStore<'sim>,
+    ) -> LexerActionExecutor<'sim> {
+        if store.contains_lexer_action_slice(self.lexer_actions) {
             // Safety: the actions are already in the target arena, so can
             // live as long as the target lifetime:
             return unsafe { std::mem::transmute::<Self, LexerActionExecutor<'sim>>(self.clone()) };
         }
 
-        let promoted_actions = dfa.alloc_lexer_action_slice(self.lexer_actions.len(), |i| {
-            self.lexer_actions[i].promote(dfa)
+        let promoted_actions = store.alloc_lexer_action_slice(self.lexer_actions.len(), |i| {
+            self.lexer_actions[i].promote(store)
         });
         LexerActionExecutor {
             lexer_actions: promoted_actions,

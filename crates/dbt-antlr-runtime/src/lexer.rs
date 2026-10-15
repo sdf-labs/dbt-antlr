@@ -6,7 +6,7 @@ use std::fmt::{Debug, Formatter};
 
 use std::rc::Rc;
 
-use crate::atn_simulator::LexerATNSimulatorManager;
+use crate::atn_simulator::{IATNSimulator, LexerATNSimulatorManager};
 use crate::char_stream::CharStream;
 use crate::error_listener::{ConsoleErrorListener, ErrorListener};
 use crate::errors::ANTLRError;
@@ -449,10 +449,12 @@ where
     }
 
     fn get_dfa_string(&self) -> String {
+        // ATN-elided lexers (fully static `--static-lexer-dfa` output) have an
+        // empty decision-to-DFA vec: render as empty instead of panicking.
         self.get_interpreter()
             .unwrap()
-            .get_dfa_for_mode(LEXER_DEFAULT_MODE)
-            .to_lexer_string()
+            .decision_to_dfa(LEXER_DEFAULT_MODE)
+            .map_or_else(String::new, |dfa| dfa.to_lexer_string())
     }
 }
 
