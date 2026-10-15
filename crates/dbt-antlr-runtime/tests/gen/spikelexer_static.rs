@@ -21,7 +21,7 @@ use dbt_antlr_runtime::dfa::static_lexer_dfa::StaticLexerTables;
 use std::ops::{DerefMut, Deref};
 use std::sync::LazyLock;
 
-dbt_antlr_runtime::check_version!("0","2");
+dbt_antlr_runtime::check_version!("0","3");
 pub const COMMENT:i32=1; 
 pub const KWLET:i32=2; 
 pub const ID:i32=3; 
