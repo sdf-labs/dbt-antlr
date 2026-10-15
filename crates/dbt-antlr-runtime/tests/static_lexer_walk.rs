@@ -1015,10 +1015,10 @@ fn accel_stream(accel_section: &[u32]) -> Vec<u32> {
     words
 }
 
-fn exclusion_accel_stream(nl_in_set: u32, needles: &[u32]) -> Vec<u32> {
+fn exclusion_accel_stream(needles: &[u32]) -> Vec<u32> {
     let mut padded = needles.to_vec();
     padded.resize(3, 0);
-    let mut accel = vec![7, 0, ACCEL_EXCLUSION, nl_in_set, needles.len() as u32];
+    let mut accel = vec![6, 0, ACCEL_EXCLUSION, needles.len() as u32];
     accel.extend(padded);
     accel_stream(&accel)
 }
@@ -1030,36 +1030,29 @@ fn positive_accel_stream(bitmap: u128) -> Vec<u32> {
 }
 
 #[test]
-fn exclusion_accel_with_newline_needle_decodes() {
-    let words = exclusion_accel_stream(1, &[u32::from(b'"'), u32::from(b'\n')]);
+fn exclusion_accel_decodes() {
+    let words = exclusion_accel_stream(&[u32::from(b'"'), u32::from(b'\r')]);
     assert!(StaticLexerTables::from_words(&words).is_ok());
 }
 
 #[test]
-fn exclusion_accel_without_newline_needle_is_a_clean_error() {
-    let words = exclusion_accel_stream(0, &[u32::from(b'"'), u32::from(b'\r')]);
+fn exclusion_accel_empty_needles_is_a_clean_error() {
+    let words = exclusion_accel_stream(&[]);
     let err = StaticLexerTables::from_words(&words).err().unwrap();
     assert_eq!(err, StaticLexerError::InvalidAccelNeedles { mode: 0 });
 }
 
 #[test]
 fn exclusion_accel_needle_past_127_is_a_clean_error() {
-    let words = exclusion_accel_stream(0, &[u32::from(b'\n'), 0x80]);
+    let words = exclusion_accel_stream(&[u32::from(b'\n'), 0x80]);
     let err = StaticLexerTables::from_words(&words).err().unwrap();
     assert_eq!(err, StaticLexerError::InvalidAccelNeedles { mode: 0 });
 }
 
 #[test]
-fn positive_accel_bitmap_without_newline_decodes() {
-    let words = positive_accel_stream((1u128 << b'a') | (1u128 << b'z'));
+fn positive_accel_bitmap_decodes() {
+    let words = positive_accel_stream((1u128 << b'a') | (1u128 << b'z') | (1u128 << b'\n'));
     assert!(StaticLexerTables::from_words(&words).is_ok());
-}
-
-#[test]
-fn positive_accel_bitmap_with_newline_is_a_clean_error() {
-    let words = positive_accel_stream((1u128 << b'a') | (1u128 << b'\n'));
-    let err = StaticLexerTables::from_words(&words).err().unwrap();
-    assert_eq!(err, StaticLexerError::InvalidAccelBitmap { mode: 0 });
 }
 
 #[test]

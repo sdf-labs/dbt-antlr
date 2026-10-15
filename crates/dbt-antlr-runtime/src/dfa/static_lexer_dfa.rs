@@ -53,10 +53,7 @@
 //! - Accel section: `num_accel_ints`, then the run-acceleration entries.
 //!   An entry is `(state, ACCEL_POSITIVE, w0, w1, w2, w3)` for a 128-bit
 //!   bitmap of self-looping ASCII symbols, or `(state, ACCEL_EXCLUSION,
-//!   nl_in_set, n_needles, needle0, needle1, needle2)` with zero-padded
-//!   needles. The bitmap never contains `'\n'`. A `\n` that loops is an
-//!   exclusion needle with `nl_in_set = 1`, so the walker keeps line and
-//!   column exact.
+//!   n_needles, needle0, needle1, needle2)` with zero-padded needles.
 //! - Escape rows: per state, `eof_escape`, `num_ranges`, then `num_ranges`
 //!   times `(lo_symbol, hi_symbol, continuation_index)`. The ranges are
 //!   the sorted, disjoint symbol intervals whose edge escapes. Edges with a
@@ -240,20 +237,16 @@ pub(crate) struct ContinuationConfig {
 /// run with a single scan instead of the per-char table chase. Both
 /// flavors re-express the per-char walk exactly: a run ends on the first
 /// byte that does not loop, which the normal table step then handles.
-/// `\n` is never inside a positive bitmap and is always a needle in the
-/// exclusion flavor, so line/column tracking stays exact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Accel {
-    /// Run over the ASCII bytes set in the bitmap (`\n` never set).
+    /// Run over the ASCII bytes set in the bitmap
     Positive(u128),
-    /// Run over all input except the first `n` of `needles` (every symbol
-    /// past 127 loops). `nl_in_set`: `\n` is among the needles but loops; a
-    /// `\n` hit means consume-newline-and-continue, not exit-run.
-    Exclusion {
-        needles: [u8; 3],
-        n: u8,
-        nl_in_set: bool,
-    },
+    /// Run over all input until the first occurance of the needle char
+    Exclude(u8),
+    /// Run over all input until the first occurance of either needles
+    Exclude2(u8, u8),
+    /// Run over all input until the first occurance of any of the 3 needles
+    Exclude3(u8, u8, u8),
 }
 
 impl Accel {
@@ -273,19 +266,29 @@ impl Accel {
                     (bitmap >> 96) as u32,
                 ]
             }
-            Accel::Exclusion {
-                needles,
-                n,
-                nl_in_set,
-            } => vec![
-                u32::from(s),
-                ACCEL_EXCLUSION,
-                u32::from(nl_in_set),
-                u32::from(n),
-                u32::from(needles[0]),
-                u32::from(needles[1]),
-                u32::from(needles[2]),
-            ],
+            Accel::Exclude(n0) => {
+                vec![u32::from(s), ACCEL_EXCLUSION, 1, u32::from(n0), 0, 0]
+            }
+            Accel::Exclude2(n0, n1) => {
+                vec![
+                    u32::from(s),
+                    ACCEL_EXCLUSION,
+                    2,
+                    u32::from(n0),
+                    u32::from(n1),
+                    0,
+                ]
+            }
+            Accel::Exclude3(n0, n1, n2) => {
+                vec![
+                    u32::from(s),
+                    ACCEL_EXCLUSION,
+                    3,
+                    u32::from(n0),
+                    u32::from(n1),
+                    u32::from(n2),
+                ]
+            }
         }
     }
 }
@@ -425,16 +428,8 @@ pub enum StaticLexerError {
         /// The tag value.
         value: u32,
     },
-    /// A positive accel bitmap contains `'\n'`; the walker keeps line and
-    /// column exact by scanning newlines per char.
-    InvalidAccelBitmap {
-        /// The mode index.
-        mode: usize,
-    },
-    /// An exclusion accel entry has a needle count outside `1..=3`, a
-    /// needle byte past 127, or no `'\n'` needle (the walker scans runs
-    /// vectorized; a `'\n'` outside the needles would pass without a line
-    /// update).
+    /// An exclusion accel entry has a needle count outside `1..=3` or a
+    /// needle byte past 127.
     InvalidAccelNeedles {
         /// The mode index.
         mode: usize,
@@ -599,9 +594,6 @@ impl fmt::Display for StaticLexerError {
             }
             StaticLexerError::InvalidAccelTag { mode, value } => {
                 write!(f, "mode {mode}: unknown accel tag {value}")
-            }
-            StaticLexerError::InvalidAccelBitmap { mode } => {
-                write!(f, "mode {mode}: positive accel bitmap contains '\\n'")
             }
             StaticLexerError::InvalidAccelNeedles { mode } => {
                 write!(f, "mode {mode}: invalid exclusion accel needles")
@@ -1516,8 +1508,8 @@ fn read_action_lists(
 
 /// Reads the run-acceleration section of one mode: a flattened list of
 /// fixed-stride entries, `(state, ACCEL_POSITIVE, w0..w3)` or `(state,
-/// ACCEL_EXCLUSION, nl_in_set, n_needles, n0..n2)`, expanded into one
-/// descriptor per state.
+/// ACCEL_EXCLUSION, n_needles, n0..n2)`, expanded into one descriptor per
+/// state.
 fn read_accel(
     r: &mut Reader,
     mode: usize,
@@ -1536,40 +1528,28 @@ fn read_accel(
                 for limb in 0..4 {
                     bitmap |= (r.next()? as u128) << (limb * 32);
                 }
-                if bitmap & (1 << b'\n') != 0 {
-                    return Err(StaticLexerError::InvalidAccelBitmap { mode });
-                }
                 read += 6;
                 Accel::Positive(bitmap)
             }
             ACCEL_EXCLUSION => {
-                let nl_in_set = match r.next()? {
-                    0 => false,
-                    1 => true,
-                    value => {
-                        return Err(StaticLexerError::InvalidAccelTag { mode, value });
-                    }
-                };
                 let n = r.next()?;
                 let mut needle_words = [0; 3];
                 for slot in needle_words.iter_mut() {
                     *slot = r.next()?;
                 }
-                if !(1..=3).contains(&n)
-                    || needle_words[..n as usize].iter().any(|&w| w >= 0x80)
-                    || !needle_words[..n as usize].contains(&(b'\n' as u32))
-                {
+                if !(1..=3).contains(&n) || needle_words[..n as usize].iter().any(|&w| w >= 0x80) {
                     return Err(StaticLexerError::InvalidAccelNeedles { mode });
                 }
-                read += 7;
-                Accel::Exclusion {
-                    needles: [
+                read += 6;
+                match n {
+                    1 => Accel::Exclude(needle_words[0] as u8),
+                    2 => Accel::Exclude2(needle_words[0] as u8, needle_words[1] as u8),
+                    3 => Accel::Exclude3(
                         needle_words[0] as u8,
                         needle_words[1] as u8,
                         needle_words[2] as u8,
-                    ],
-                    n: n as u8,
-                    nl_in_set,
+                    ),
+                    _ => unreachable!(),
                 }
             }
             value => {
