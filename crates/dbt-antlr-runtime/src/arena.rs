@@ -1,7 +1,9 @@
 #![allow(clippy::mut_from_ref)]
+use std::cell::RefCell;
+
 use crate::{
     cast_unchecked,
-    token::Token,
+    token::{SourceInfo, Token},
     tree::{NodeInner, NodeKindType, TreeNode},
 };
 
@@ -10,8 +12,19 @@ pub struct Arena {
     tokens: bumpalo::Bump,
     contexts: bumpalo::Bump,
     payloads: bumpalo::Bump,
+    source_infos: RefCell<Vec<*mut SourceInfo<'static>>>,
     #[cfg(feature = "arena-allocation-limit")]
     limit_bytes: usize,
+}
+
+impl Drop for Arena {
+    fn drop(&mut self) {
+        for &mut ptr in self.source_infos.get_mut() {
+            unsafe {
+                std::ptr::drop_in_place(ptr);
+            }
+        }
+    }
 }
 
 macro_rules! check_allocation_limit {
@@ -52,6 +65,7 @@ impl Arena {
             tokens: bumpalo::Bump::new(),
             contexts: bumpalo::Bump::new(),
             payloads: bumpalo::Bump::new(),
+            source_infos: RefCell::new(Vec::new()),
             #[cfg(feature = "arena-allocation-limit")]
             limit_bytes: get_default_arena_alloc_limit(),
         }
@@ -72,6 +86,20 @@ impl Arena {
         self.tokens.alloc_str(value.as_str())
     }
 
+    pub(crate) fn alloc_in_tokens<T>(&self, value: T) -> &T {
+        self.tokens.alloc(value)
+    }
+
+    pub(crate) fn alloc_source_info<'a, 'input>(
+        &'a self,
+        value: SourceInfo<'input>,
+    ) -> &'a SourceInfo<'input> {
+        let ptr = self.tokens.alloc(value);
+        self.source_infos
+            .borrow_mut()
+            .push((ptr as *mut SourceInfo<'input>).cast::<SourceInfo<'static>>());
+        ptr
+    }
     pub fn alloc_labeled_node<'input, 'a, N, I, Tok>(
         &self,
         value: I,
