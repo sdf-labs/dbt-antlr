@@ -90,7 +90,7 @@ use crate::transition::{Transition, TransitionType};
 use crate::PredictionContextCache;
 
 /// The default per-mode DFA state budget
-pub const DEFAULT_MAX_STATES_PER_MODE: usize = 30000;
+pub const DEFAULT_MAX_STATES_PER_MODE: usize = 4096;
 
 const MAX_SYMBOL: i32 = 0x10FFFF;
 const ASCII_MAX: i32 = 127;
@@ -766,64 +766,52 @@ impl<'sc> ModeBuild<'sc> {
 
 /// The run-acceleration descriptor of one state, classified from its structural
 /// edges: the intervals whose entry loops back to the state. `None` when the
-/// state has no worthwhile run. `\n` is never inside a positive bitmap and is
-/// always a needle in the exclusion flavor, so line/column tracking stays
-/// exact.
+/// state has no worthwhile run.
 fn compute_accel(state: u32, rows: &StateRows) -> Option<Accel> {
-    let loops = |symbol: i32| {
-        rows.intervals
-            .iter()
-            .find(|iv| iv.lo <= symbol && symbol <= iv.hi)
-            .is_some_and(|iv| matches!(iv.entry, EdgeEntry::Target(target) if target == state))
-    };
     let mut bitmap = 0u128;
-    let mut count = 0usize;
-    for c in 0..=ASCII_MAX {
-        if loops(c) {
-            bitmap |= 1u128 << c;
-            count += 1;
+    let mut hi_covered_to = ASCII_MAX;
+    for iv in &rows.intervals {
+        if !matches!(iv.entry, EdgeEntry::Target(target) if target == state) {
+            continue;
+        }
+        if iv.lo <= ASCII_MAX {
+            let lo = iv.lo.max(0) as u32;
+            let hi = iv.hi.min(ASCII_MAX) as u32;
+            let len = hi - lo + 1;
+            bitmap |= (u128::MAX >> (128 - len)) << lo;
+        }
+        if iv.hi > ASCII_MAX && iv.lo <= hi_covered_to + 1 {
+            hi_covered_to = hi_covered_to.max(iv.hi);
         }
     }
-    if count == 0 {
+    if bitmap == 0 {
         return None;
     }
-    let nl_loops = bitmap & (1 << b'\n') != 0;
+
     // The exclusion flavor requires every symbol above 127 to loop, all the
     // way to MAX_SYMBOL.
-    let all_hi_loop = {
-        let mut hi = rows.intervals.iter().filter(|iv| iv.hi > ASCII_MAX);
-        let first = hi.next();
-        hi.next().is_none()
-            && first.is_some_and(|iv| {
-                iv.lo <= ASCII_MAX + 1
-                    && iv.hi == MAX_SYMBOL
-                    && matches!(iv.entry, EdgeEntry::Target(target) if target == state)
-            })
-    };
-    if all_hi_loop {
-        let mut needles: Vec<u8> = (0..=ASCII_MAX as u8)
-            .filter(|&c| bitmap & (1 << c) == 0)
-            .collect();
-        if nl_loops {
-            needles.push(b'\n');
-        }
-        if (1..=3).contains(&needles.len()) {
-            let n = needles.len() as u8;
-            let mut needle_arr = [0u8; 3];
-            needle_arr[..needles.len()].copy_from_slice(&needles);
-            return Some(Accel::Exclusion {
-                needles: needle_arr,
-                n,
-                nl_in_set: nl_loops,
-            });
+    if hi_covered_to == MAX_SYMBOL {
+        let mut excluded = !bitmap;
+        match excluded.count_ones() {
+            1 => return Some(Accel::Exclude(excluded.trailing_zeros() as u8)),
+            2 => {
+                let n1 = excluded.trailing_zeros() as u8;
+                excluded &= excluded - 1;
+                let n2 = excluded.trailing_zeros() as u8;
+                return Some(Accel::Exclude2(n1, n2));
+            }
+            3 => {
+                let n1 = excluded.trailing_zeros() as u8;
+                excluded &= excluded - 1;
+                let n2 = excluded.trailing_zeros() as u8;
+                excluded &= excluded - 1;
+                let n3 = excluded.trailing_zeros() as u8;
+                return Some(Accel::Exclude3(n1, n2, n3));
+            }
+            _ => (),
         }
     }
-    if nl_loops {
-        // A positive run is identifier/number-shaped, so newline never
-        // self-loops: keep the bitmap a plain byte set instead of tracking
-        // lines through the scan.
-        return None;
-    }
+
     Some(Accel::Positive(bitmap))
 }
 
@@ -1263,32 +1251,16 @@ mod tests {
     }
 
     #[test]
-    fn accel_exclusion_with_newline_needle() {
-        // State 2 loops on every symbol except 'a' and 'b'; '\n' loops too.
+    fn accel_exclusion_needles() {
         let rows = rows(vec![
             (0, i32::from(b'a') - 1, EdgeEntry::Target(2)),
             (i32::from(b'b') + 1, MAX_SYMBOL, EdgeEntry::Target(2)),
         ]);
         let accel = compute_accel(2, &rows).expect("exclusion run");
-        assert_eq!(
-            accel,
-            Accel::Exclusion {
-                needles: *b"ab\n",
-                n: 3,
-                nl_in_set: true,
-            }
-        );
+        assert_eq!(accel, Accel::Exclude2(b'a', b'b'));
         assert_eq!(
             accel.to_serialized(2),
-            vec![
-                2,
-                ACCEL_EXCLUSION,
-                1,
-                3,
-                u32::from(b'a'),
-                u32::from(b'b'),
-                u32::from(b'\n')
-            ]
+            vec![2, ACCEL_EXCLUSION, 2, u32::from(b'a'), u32::from(b'b'), 0]
         );
     }
 
@@ -1318,10 +1290,17 @@ mod tests {
     }
 
     #[test]
-    fn accel_none_when_newline_loops() {
-        // '\n' self-loops: never a positive accel, and the exclusion flavor
-        // needs every symbol above 127 to loop, which none does here.
+    fn accel_positive_when_newline_loops() {
         let rows = rows(vec![(0, 20, EdgeEntry::Target(3))]);
+        assert_eq!(
+            compute_accel(3, &rows),
+            Some(Accel::Positive((1u128 << 21) - 1))
+        );
+    }
+
+    #[test]
+    fn accel_none_when_no_ascii_loops() {
+        let rows = rows(vec![(128, MAX_SYMBOL, EdgeEntry::Target(3))]);
         assert_eq!(compute_accel(3, &rows), None);
     }
 }

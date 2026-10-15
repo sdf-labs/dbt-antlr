@@ -895,30 +895,19 @@ fn run_scan(hay: &[u8], mut c: usize, accel: Accel) -> usize {
                 }
             }
         }
-        Accel::Exclusion {
-            needles,
-            n,
-            nl_in_set,
-        } => {
-            loop {
-                let rest = &hay[c..];
-                let found = match n {
-                    1 => memchr::memchr(needles[0], rest),
-                    2 => memchr::memchr2(needles[0], needles[1], rest),
-                    _ => memchr::memchr3(needles[0], needles[1], needles[2], rest),
-                };
-                match found {
-                    None => return hay.len(),
-                    Some(i) => {
-                        c += i;
-                        if nl_in_set && hay[c] == b'\n' {
-                            // '\n' loops here: consume it and resume.
-                            c += 1;
-                        } else {
-                            return c;
-                        }
-                    }
+        _ => {
+            let rest = &hay[c..];
+            let found = match accel {
+                Accel::Exclude(needle) => memchr::memchr(needle, rest),
+                Accel::Exclude2(needle1, needle2) => memchr::memchr2(needle1, needle2, rest),
+                Accel::Exclude3(needle1, needle2, needle3) => {
+                    memchr::memchr3(needle1, needle2, needle3, rest)
                 }
+                _ => unreachable!(),
+            };
+            match found {
+                None => c = hay.len(),
+                Some(i) => c += i,
             }
         }
     }
