@@ -83,7 +83,7 @@ use crate::prediction_context::PredictionContextRef;
 use crate::semantic_context::SemanticContext;
 use crate::static_lexer_dfa::{
     class_map, dense_hi_rows, Accel, ContinuationConfig, EscapeRange, LexerContinuation,
-    PositiveAccel, StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, CONTINUATION_MOVED_CONFIGS,
+    StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, CONTINUATION_MOVED_CONFIGS,
     CONTINUATION_SOURCE_SET, ESCAPE, LOW_ROW, NO_CONTINUATION, NO_EDGE,
 };
 use crate::transition::{Transition, TransitionType};
@@ -709,7 +709,7 @@ impl<'sc> ModeBuild<'sc> {
         let mut accel_tag = vec![0u8; num_states];
         let mut accel_data = Vec::new();
         for (s, rows) in self.rows.iter().enumerate() {
-            if let Some(accel) = compute_accel(s as u16, rows) {
+            if let Some(accel) = compute_accel(s as u32, rows) {
                 accel_data.push(accel);
                 assert!(
                     accel_data.len() <= u8::MAX as usize,
@@ -766,20 +766,17 @@ impl<'sc> ModeBuild<'sc> {
     }
 }
 
-/// The run-acceleration descriptor of one state, classified from its
-/// structural edges: the intervals whose entry loops back to the state. A
-/// port of the dbt `LexerDFABuilder#computeAccel` classification. `None`
-/// when the state has no worthwhile run. `\n` is never inside a positive
-/// bitmap and is always a needle in the exclusion flavor, so line/column
-/// tracking stays exact.
-fn compute_accel(state: u16, rows: &StateRows) -> Option<Accel> {
+/// The run-acceleration descriptor of one state, classified from its structural
+/// edges: the intervals whose entry loops back to the state. `None` when the
+/// state has no worthwhile run. `\n` is never inside a positive bitmap and is
+/// always a needle in the exclusion flavor, so line/column tracking stays
+/// exact.
+fn compute_accel(state: u32, rows: &StateRows) -> Option<Accel> {
     let loops = |symbol: i32| {
         rows.intervals
             .iter()
             .find(|iv| iv.lo <= symbol && symbol <= iv.hi)
-            .is_some_and(
-                |iv| matches!(iv.entry, EdgeEntry::Target(target) if target == u32::from(state)),
-            )
+            .is_some_and(|iv| matches!(iv.entry, EdgeEntry::Target(target) if target == state))
     };
     let mut bitmap = 0u128;
     let mut count = 0usize;
@@ -793,9 +790,8 @@ fn compute_accel(state: u16, rows: &StateRows) -> Option<Accel> {
         return None;
     }
     let nl_loops = bitmap & (1 << b'\n') != 0;
-    // The exclusion flavor requires every symbol above 127 to loop. The
-    // single-interval shape mirrors the clipped hi row the classification
-    // historically read.
+    // The exclusion flavor requires every symbol above 127 to loop, all the
+    // way to MAX_SYMBOL.
     let all_hi_loop = {
         let mut hi = rows.intervals.iter().filter(|iv| iv.hi > ASCII_MAX);
         let first = hi.next();
@@ -803,7 +799,7 @@ fn compute_accel(state: u16, rows: &StateRows) -> Option<Accel> {
             && first.is_some_and(|iv| {
                 iv.lo <= ASCII_MAX + 1
                     && iv.hi == MAX_SYMBOL
-                    && matches!(iv.entry, EdgeEntry::Target(target) if target == u32::from(state))
+                    && matches!(iv.entry, EdgeEntry::Target(target) if target == state)
             })
     };
     if all_hi_loop {
@@ -825,17 +821,13 @@ fn compute_accel(state: u16, rows: &StateRows) -> Option<Accel> {
         }
     }
     if nl_loops {
-        bitmap &= !(1u128 << b'\n');
-    }
-    if count - usize::from(nl_loops) < MIN_ACCEL_LOOP_BYTES {
+        // A positive run is identifier/number-shaped, so newline never
+        // self-loops: keep the bitmap a plain byte set instead of tracking
+        // lines through the scan.
         return None;
     }
-    Some(Accel::Positive(PositiveAccel::new(bitmap)))
+    Some(Accel::Positive(bitmap))
 }
-
-/// Fewer self-looping bytes than this never get an accel descriptor: the
-/// run-scan setup costs more than the per-char table chase it saves.
-const MIN_ACCEL_LOOP_BYTES: usize = 12;
 
 /// Runs move+closure for one edge of a state, finalizes the closed configs
 /// into the build store, and classifies the edge.
@@ -1303,33 +1295,35 @@ mod tests {
     }
 
     #[test]
-    fn accel_positive_excludes_newline() {
-        // State 1 loops on 13 ASCII symbols including '\n'; no hi edges.
-        let rows = rows(vec![(0, 12, EdgeEntry::Target(1))]);
+    fn accel_positive_bitmap() {
+        // State 1 loops on the identifier bytes 'a'..='m'; no hi edges.
+        let rows = rows(vec![(
+            i32::from(b'a'),
+            i32::from(b'm'),
+            EdgeEntry::Target(1),
+        )]);
         let accel = compute_accel(1, &rows).expect("positive run");
-        let Accel::Positive(positive) = accel else {
+        let Accel::Positive(bitmap) = accel else {
             panic!("expected a positive accel, got {accel:?}");
         };
-        assert_eq!(positive.bitmap & (1 << b'\n'), 0);
-        assert_eq!(positive.bitmap.count_ones(), 12);
+        assert_eq!(bitmap & (1 << b'\n'), 0);
+        assert_eq!(bitmap.count_ones(), 13);
         let words = accel.to_serialized(1);
         assert_eq!(words.len(), 6);
         assert_eq!(words[0], 1);
         assert_eq!(words[1], ACCEL_POSITIVE);
-        let mut bitmap = 0u128;
+        let mut round_trip = 0u128;
         for i in 0..4 {
-            bitmap |= u128::from(words[2 + i]) << (i * 32);
+            round_trip |= u128::from(words[2 + i]) << (i * 32);
         }
-        assert_eq!(bitmap, positive.bitmap);
+        assert_eq!(round_trip, bitmap);
     }
 
     #[test]
-    fn accel_none_for_short_loops() {
-        let rows = rows(vec![(
-            i32::from(b'0'),
-            i32::from(b'9'),
-            EdgeEntry::Target(3),
-        )]);
+    fn accel_none_when_newline_loops() {
+        // '\n' self-loops: never a positive accel, and the exclusion flavor
+        // needs every symbol above 127 to loop, which none does here.
+        let rows = rows(vec![(0, 20, EdgeEntry::Target(3))]);
         assert_eq!(compute_accel(3, &rows), None);
     }
 }

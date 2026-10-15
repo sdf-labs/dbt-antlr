@@ -237,7 +237,7 @@ pub(crate) struct ContinuationConfig {
 
 /// Per-state run-acceleration descriptor. When a run of consecutive input
 /// bytes all loops back to the same state, the walker consumes the whole
-/// run with a vectorized scan instead of the per-char table chase. Both
+/// run with a single scan instead of the per-char table chase. Both
 /// flavors re-express the per-char walk exactly: a run ends on the first
 /// byte that does not loop, which the normal table step then handles.
 /// `\n` is never inside a positive bitmap and is always a needle in the
@@ -245,7 +245,7 @@ pub(crate) struct ContinuationConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Accel {
     /// Run over the ASCII bytes set in the bitmap (`\n` never set).
-    Positive(PositiveAccel),
+    Positive(u128),
     /// Run over all input except the first `n` of `needles` (every symbol
     /// past 127 loops). `nl_in_set`: `\n` is among the needles but loops; a
     /// `\n` hit means consume-newline-and-continue, not exit-run.
@@ -256,34 +256,6 @@ pub(crate) enum Accel {
     },
 }
 
-/// The positive (bitmap) flavor's scan tables: the raw 128-bit bitmap for
-/// the scalar fallback, plus SSSE3 nibble-classify tables derived from it.
-/// Byte `b` is in the set iff `lo[b & 15] & hi[b >> 4] != 0` (`hi` is zero
-/// for nibbles past 7, so bytes >= 0x80 never match).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PositiveAccel {
-    pub(crate) bitmap: u128,
-    pub(crate) lo: [u8; 16],
-    pub(crate) hi: [u8; 16],
-}
-
-impl PositiveAccel {
-    /// Builds the descriptor from the self-loop bitmap (`\n` never set).
-    pub(crate) fn new(bitmap: u128) -> Self {
-        let mut lo = [0u8; 16];
-        let mut hi = [0u8; 16];
-        for (h, slot) in hi.iter_mut().enumerate().take(8) {
-            *slot = 1u8 << h;
-        }
-        for b in 0..128usize {
-            if (bitmap >> b) & 1 != 0 {
-                lo[b & 15] |= 1 << (b >> 4);
-            }
-        }
-        Self { bitmap, lo, hi }
-    }
-}
-
 impl Accel {
     /// The serialized accel entry of this descriptor for state `s`:
     /// `(state, tag, payload...)`, in the section layout of the word-stream
@@ -291,8 +263,7 @@ impl Accel {
     #[cfg(feature = "static-dfa-build")]
     pub(crate) fn to_serialized(self, s: u16) -> Vec<u32> {
         match self {
-            Accel::Positive(positive) => {
-                let bitmap = positive.bitmap;
+            Accel::Positive(bitmap) => {
                 vec![
                     u32::from(s),
                     ACCEL_POSITIVE,
@@ -1569,7 +1540,7 @@ fn read_accel(
                     return Err(StaticLexerError::InvalidAccelBitmap { mode });
                 }
                 read += 6;
-                Accel::Positive(PositiveAccel::new(bitmap))
+                Accel::Positive(bitmap)
             }
             ACCEL_EXCLUSION => {
                 let nl_in_set = match r.next()? {
