@@ -324,54 +324,26 @@ impl<'sim> LexerATNSimulator<'sim> {
                     }
                 }
                 symbol = input.item_at(cursor).unwrap_or(EOF);
-                let looped = target == s;
                 s = target;
-                // A self-loop step means a run of loop bytes can follow:
-                // consume the rest with a vectorized scan - an exact
-                // re-expression of the walk ('\n' never occurs inside a
-                // run, so line/column stay exact; the exit byte takes the
-                // normal step next iteration; on an accept state the run
-                // end is the maximal-munch accept). Gated on the self-loop
-                // so states without runs pay one register compare per
-                // char.
-                if looped {
-                    if let Some(hay) = bytes {
-                        let tag = table.accel_tag(s);
-                        if tag != 0 {
-                            let accel = table.accel_payload(tag);
-                            let start = cursor as usize;
-                            // One-byte probe: skip the scan call when the
-                            // run ends at the very next byte (e.g. two-char
-                            // identifiers) - the call would burn its setup
-                            // to find the exit byte at offset 0.
-                            let probes = match (accel, hay.get(start)) {
-                                (Accel::Positive(pa), Some(&b)) => {
-                                    b < 0x80 && (pa.bitmap >> b) & 1 != 0
-                                }
-                                (Accel::Exclusion { needles, n, .. }, Some(&b)) => {
-                                    b != needles[0]
-                                        && (n < 2 || b != needles[1])
-                                        && (n < 3 || b != needles[2])
-                                }
-                                _ => false,
+
+                if let Some(hay) = bytes {
+                    let tag = table.accel_tag(s);
+                    if tag != 0 {
+                        let accel = table.accel_payload(tag);
+                        let start = cursor as usize;
+                        let c = run_scan(hay, start, accel, &mut line, &mut column);
+                        if c > start {
+                            cursor = c as isize;
+                            // The entry's accept bit is s's: on an
+                            // accept state the run end is the
+                            // maximal-munch accept.
+                            if entry & ACCEPT_BIT != 0 {
+                                prev_accept = Some((cursor, line, column, s));
+                            }
+                            symbol = match hay.get(c) {
+                                Some(&b) if b < 0x80 => b as i32,
+                                _ => input.item_at(cursor).unwrap_or(EOF),
                             };
-                            if !probes {
-                                continue;
-                            }
-                            let c = run_scan(hay, start, accel, &mut line, &mut column);
-                            if c > start {
-                                cursor = c as isize;
-                                // The entry's accept bit is s's: on an
-                                // accept state the run end is the
-                                // maximal-munch accept.
-                                if entry & ACCEPT_BIT != 0 {
-                                    prev_accept = Some((cursor, line, column, s));
-                                }
-                                symbol = match hay.get(c) {
-                                    Some(&b) if b < 0x80 => b as i32,
-                                    _ => input.item_at(cursor).unwrap_or(EOF),
-                                };
-                            }
                         }
                     }
                 }
@@ -1032,24 +1004,15 @@ fn span_columns(span: &[u8]) -> i32 {
 
 /// Consume a maximal run of self-looping bytes of an accelerated state,
 /// starting at byte index `c` in `hay`; update `line`/`column` and return
-/// the index of the first byte that does not loop. Exact re-expression of
-/// the per-char walk: the exit byte is left for the normal table step.
-/// Outlined so the walker's per-char loop stays compact; the scan loops
-/// themselves are still optimized aggressively.
+/// the index of the first byte that does not loop.
 #[inline(never)]
 fn run_scan(hay: &[u8], mut c: usize, accel: Accel, line: &mut u32, column: &mut i32) -> usize {
     match accel {
-        Accel::Positive(pa) => {
+        Accel::Positive(bitmap) => {
             let start = c;
-            #[cfg(target_arch = "x86_64")]
-            if std::arch::is_x86_feature_detected!("ssse3") {
-                // SAFETY: SSSE3 support was just detected.
-                c = unsafe { positive_scan_ssse3(hay, c, &pa) };
-            }
-            // Scalar tail (and fallback without SSSE3).
             while c < hay.len() {
                 let b = hay[c];
-                if b < 0x80 && (pa.bitmap >> b) & 1 != 0 {
+                if b < 0x80 && (bitmap >> b) & 1 != 0 {
                     c += 1;
                 } else {
                     break;
@@ -1088,40 +1051,6 @@ fn run_scan(hay: &[u8], mut c: usize, accel: Accel, line: &mut u32, column: &mut
                     }
                 }
             }
-        }
-    }
-    c
-}
-
-/// SSSE3 nibble-classify scan of the positive flavor: 16 input bytes per
-/// iteration; a byte is in the set iff `lo[b & 15] & hi[b >> 4] != 0`.
-/// Returns the index of the first byte not in the set, stopping at the end
-/// of the last full 16-byte block (the caller's scalar loop finishes the
-/// tail).
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "ssse3")]
-unsafe fn positive_scan_ssse3(
-    hay: &[u8],
-    mut c: usize,
-    pa: &crate::static_lexer_dfa::PositiveAccel,
-) -> usize {
-    use std::arch::x86_64::*;
-    // SAFETY: SSSE3 support was detected at the call site; loads stay
-    // within the haystack bounds by the loop condition.
-    unsafe {
-        let lo = _mm_loadu_si128(pa.lo.as_ptr() as *const __m128i);
-        let hi = _mm_loadu_si128(pa.hi.as_ptr() as *const __m128i);
-        let x0f = _mm_set1_epi8(0x0f);
-        while c + 16 <= hay.len() {
-            let v = _mm_loadu_si128(hay.as_ptr().add(c) as *const __m128i);
-            let l = _mm_shuffle_epi8(lo, _mm_and_si128(v, x0f));
-            let h = _mm_shuffle_epi8(hi, _mm_and_si128(_mm_srli_epi16(v, 4), x0f));
-            let stop = _mm_cmpeq_epi8(_mm_and_si128(l, h), _mm_setzero_si128());
-            let mask = _mm_movemask_epi8(stop) as u32;
-            if mask != 0 {
-                return c + mask.trailing_zeros() as usize;
-            }
-            c += 16;
         }
     }
     c
