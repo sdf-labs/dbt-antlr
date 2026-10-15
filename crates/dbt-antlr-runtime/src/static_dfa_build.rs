@@ -83,7 +83,7 @@ use crate::prediction_context::PredictionContextRef;
 use crate::semantic_context::SemanticContext;
 use crate::static_lexer_dfa::{
     class_map, dense_hi_rows, Accel, ContinuationConfig, EscapeRange, LexerContinuation,
-    StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, ASCII_ROW, CONTINUATION_MOVED_CONFIGS,
+    PositiveAccel, StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, CONTINUATION_MOVED_CONFIGS,
     CONTINUATION_SOURCE_SET, ESCAPE, LOW_ROW, NO_CONTINUATION, NO_EDGE,
 };
 use crate::transition::{Transition, TransitionType};
@@ -286,7 +286,7 @@ impl StaticLexerDfaBuilder {
         let num_continuations = mode.continuations.len();
         let escape_counts = mode.counts;
         ModeBuildOutcome {
-            table: Some(mode.commit(atn)),
+            table: Some(mode.finalize(atn)),
             failure: None,
             num_states,
             num_continuations,
@@ -635,13 +635,8 @@ impl<'sc> ModeBuild<'sc> {
         id
     }
 
-    /// Converts the structural build into the walker's own table form. All
-    /// layout happens here: `u16` edge packing with the
-    /// `NO_EDGE`/`ESCAPE`/`ACCEPT_BIT` sentinels, the dense 129-wide low
-    /// rows (column 0 is the EOF edge), the hi-class compression, the
-    /// deduplicated accept action tables, the accel classification, the
-    /// escape ranges, and the continuation pool.
-    fn commit(self, atn: &ATN) -> StaticLexerDFA {
+    /// Converts the structural build into a final [`StaticLexerDFA`].
+    fn finalize(self, atn: &ATN) -> StaticLexerDFA {
         let num_states = self.states.len();
         let accept_type: Vec<i32> = self.states.iter().map(|s| s.accept_type).collect();
 
@@ -714,12 +709,7 @@ impl<'sc> ModeBuild<'sc> {
         let mut accel_tag = vec![0u8; num_states];
         let mut accel_data = Vec::new();
         for (s, rows) in self.rows.iter().enumerate() {
-            let low_row: &[u16; ASCII_ROW] = low[s * LOW_ROW + 1..(s + 1) * LOW_ROW]
-                .try_into()
-                .expect("the low row holds EOF plus ASCII_ROW symbols");
-            if let Some(accel) =
-                Accel::from_dfa_state(s as u16, low_row, &hi_clipped(&accept_type, rows))
-            {
+            if let Some(accel) = compute_accel(s as u16, rows) {
                 accel_data.push(accel);
                 assert!(
                     accel_data.len() <= u8::MAX as usize,
@@ -775,6 +765,77 @@ impl<'sc> ModeBuild<'sc> {
         }
     }
 }
+
+/// The run-acceleration descriptor of one state, classified from its
+/// structural edges: the intervals whose entry loops back to the state. A
+/// port of the dbt `LexerDFABuilder#computeAccel` classification. `None`
+/// when the state has no worthwhile run. `\n` is never inside a positive
+/// bitmap and is always a needle in the exclusion flavor, so line/column
+/// tracking stays exact.
+fn compute_accel(state: u16, rows: &StateRows) -> Option<Accel> {
+    let loops = |symbol: i32| {
+        rows.intervals
+            .iter()
+            .find(|iv| iv.lo <= symbol && symbol <= iv.hi)
+            .is_some_and(
+                |iv| matches!(iv.entry, EdgeEntry::Target(target) if target == u32::from(state)),
+            )
+    };
+    let mut bitmap = 0u128;
+    let mut count = 0usize;
+    for c in 0..=ASCII_MAX {
+        if loops(c) {
+            bitmap |= 1u128 << c;
+            count += 1;
+        }
+    }
+    if count == 0 {
+        return None;
+    }
+    let nl_loops = bitmap & (1 << b'\n') != 0;
+    // The exclusion flavor requires every symbol above 127 to loop. The
+    // single-interval shape mirrors the clipped hi row the classification
+    // historically read.
+    let all_hi_loop = {
+        let mut hi = rows.intervals.iter().filter(|iv| iv.hi > ASCII_MAX);
+        let first = hi.next();
+        hi.next().is_none()
+            && first.is_some_and(|iv| {
+                iv.lo <= ASCII_MAX + 1
+                    && iv.hi == MAX_SYMBOL
+                    && matches!(iv.entry, EdgeEntry::Target(target) if target == u32::from(state))
+            })
+    };
+    if all_hi_loop {
+        let mut needles: Vec<u8> = (0..=ASCII_MAX as u8)
+            .filter(|&c| bitmap & (1 << c) == 0)
+            .collect();
+        if nl_loops {
+            needles.push(b'\n');
+        }
+        if (1..=3).contains(&needles.len()) {
+            let n = needles.len() as u8;
+            let mut needle_arr = [0u8; 3];
+            needle_arr[..needles.len()].copy_from_slice(&needles);
+            return Some(Accel::Exclusion {
+                needles: needle_arr,
+                n,
+                nl_in_set: nl_loops,
+            });
+        }
+    }
+    if nl_loops {
+        bitmap &= !(1u128 << b'\n');
+    }
+    if count - usize::from(nl_loops) < MIN_ACCEL_LOOP_BYTES {
+        return None;
+    }
+    Some(Accel::Positive(PositiveAccel::new(bitmap)))
+}
+
+/// Fewer self-looping bytes than this never get an accel descriptor: the
+/// run-scan setup costs more than the per-char table chase it saves.
+const MIN_ACCEL_LOOP_BYTES: usize = 12;
 
 /// Runs move+closure for one edge of a state, finalizes the closed configs
 /// into the build store, and classifies the edge.
@@ -1199,17 +1260,26 @@ mod tests {
         assert_eq!(runs, vec![(0, 1, 7), (3, 3, 7)]);
     }
 
+    /// Builds the structural rows of one state from `(lo, hi, entry)`
+    /// intervals.
+    fn rows(intervals: Vec<(i32, i32, EdgeEntry)>) -> StateRows {
+        StateRows {
+            eof: EdgeEntry::None,
+            intervals: intervals
+                .into_iter()
+                .map(|(lo, hi, entry)| EdgeInterval { lo, hi, entry })
+                .collect(),
+        }
+    }
+
     #[test]
     fn accel_exclusion_with_newline_needle() {
-        // State 2 loops on every symbol except 'a', 'b', and '\n' loops too.
-        let mut low = [NO_EDGE; 128];
-        for entry in low.iter_mut() {
-            *entry = 2;
-        }
-        low[b'a' as usize] = NO_EDGE;
-        low[b'b' as usize] = NO_EDGE;
-        let hi = vec![(128, MAX_SYMBOL, 2u16)];
-        let accel = Accel::from_dfa_state(2, &low, &hi).expect("exclusion run");
+        // State 2 loops on every symbol except 'a' and 'b'; '\n' loops too.
+        let rows = rows(vec![
+            (0, i32::from(b'a') - 1, EdgeEntry::Target(2)),
+            (i32::from(b'b') + 1, MAX_SYMBOL, EdgeEntry::Target(2)),
+        ]);
+        let accel = compute_accel(2, &rows).expect("exclusion run");
         assert_eq!(
             accel,
             Accel::Exclusion {
@@ -1235,11 +1305,8 @@ mod tests {
     #[test]
     fn accel_positive_excludes_newline() {
         // State 1 loops on 13 ASCII symbols including '\n'; no hi edges.
-        let mut low = [NO_EDGE; 128];
-        for c in 0..13u8 {
-            low[c as usize] = 1;
-        }
-        let accel = Accel::from_dfa_state(1, &low, &[]).expect("positive run");
+        let rows = rows(vec![(0, 12, EdgeEntry::Target(1))]);
+        let accel = compute_accel(1, &rows).expect("positive run");
         let Accel::Positive(positive) = accel else {
             panic!("expected a positive accel, got {accel:?}");
         };
@@ -1258,11 +1325,12 @@ mod tests {
 
     #[test]
     fn accel_none_for_short_loops() {
-        let mut low = [NO_EDGE; 128];
-        for c in b'0'..=b'9' {
-            low[c as usize] = 3;
-        }
-        assert_eq!(Accel::from_dfa_state(3, &low, &[]), None);
+        let rows = rows(vec![(
+            i32::from(b'0'),
+            i32::from(b'9'),
+            EdgeEntry::Target(3),
+        )]);
+        assert_eq!(compute_accel(3, &rows), None);
     }
 }
 
