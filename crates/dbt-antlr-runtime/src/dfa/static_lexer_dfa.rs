@@ -1797,7 +1797,7 @@ mod tests {
 
     use super::*;
     use crate::atn_deserializer::ATNDeserializer;
-    use crate::static_dfa_build::StaticLexerDfaBuilder;
+    use crate::dfa::static_dfa_build::StaticLexerDfaBuilder;
 
     fn fixture(name: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))

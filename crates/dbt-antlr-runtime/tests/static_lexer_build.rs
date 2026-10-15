@@ -11,15 +11,15 @@ use std::path::PathBuf;
 
 use dbt_antlr_runtime::atn::ATN;
 use dbt_antlr_runtime::atn_deserializer::ATNDeserializer;
-use dbt_antlr_runtime::int_stream::EOF;
-use dbt_antlr_runtime::static_dfa_build::{
+use dbt_antlr_runtime::dfa::static_dfa_build::{
     ModeFailure, StaticLexerDfaBuild, StaticLexerDfaBuilder,
 };
-use dbt_antlr_runtime::static_lexer_dfa::{
+use dbt_antlr_runtime::dfa::static_lexer_dfa::{
     StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, BEHIND_POSITION_INDEPENDENT,
     CONTINUATION_MOVED_CONFIGS, CONTINUATION_SOURCE_SET, ESCAPE, NO_CONTINUATION, NO_EDGE,
     STATE_MASK, STATIC_DFA_FORMAT_VERSION, STATIC_DFA_MAGIC,
 };
+use dbt_antlr_runtime::int_stream::EOF;
 
 fn grammar_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

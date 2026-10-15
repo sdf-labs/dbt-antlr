@@ -24,6 +24,9 @@ use crate::vocabulary::Vocabulary;
 
 mod dfa_serializer;
 mod dfa_state;
+#[cfg(feature = "static-dfa-build")]
+pub mod static_dfa_build;
+pub mod static_lexer_dfa;
 
 use bit_set::BitSet;
 pub use dfa_serializer::DFASerializer;
@@ -606,13 +609,12 @@ where
 
 type StateStoreRoots<'sim, CS> = [*mut MaybeUninit<DFAState<'sim, CS>>; MAX_NUM_CHUNKS as usize];
 
-/// The allocation surface that config finalization and value promotion read
-/// from a state store. [`crate::atn_config::ATNConfig::finalize`],
-/// [`LexerActionExecutor::promote`], and [`SemanticContext::promote`] allocate
-/// their results through this trait. [`DFAStateStore`] implements it for the
-/// lazy runtime path. The static lexer DFA builder (feature
-/// `static-dfa-build`) implements it for its own build-side store, so both
-/// paths share one finalize code path.
+/// The shared allocation surface for ATNConfig finalization and value promotion.
+///
+/// This trait exists so that [`ATNConfig`]/[`LexerATNConfig`] structs can be
+/// shared between the runtime and the toolside static DFA builder: on the
+/// runtime side it's implemented by [`DFAStateStore`]; on the tool side it's
+/// implemented by [`BuildStore`] (gated by feature `static-dfa-build`)
 pub(crate) trait FinalizeStore<'sim> {
     fn alloc_semantic_context(
         &self,

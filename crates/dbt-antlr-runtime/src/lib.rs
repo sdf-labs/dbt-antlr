@@ -111,9 +111,6 @@ pub mod parser;
 pub mod parser_atn_simulator;
 pub mod parser_interpreter;
 mod prediction_mode;
-#[cfg(feature = "static-dfa-build")]
-pub mod static_dfa_build;
-pub mod static_lexer_dfa;
 pub mod token;
 pub mod trees;
 mod utils;

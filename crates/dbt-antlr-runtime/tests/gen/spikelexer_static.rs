@@ -16,7 +16,7 @@ use dbt_antlr_runtime::token_factory::{CommonTokenFactory, TokenFactory};
 use dbt_antlr_runtime::rule_context::{BaseRuleContext,EmptyNodeKind,EmptyCustomRuleContext,EmptyRuleNode};
 use dbt_antlr_runtime::vocabulary::{Vocabulary,VocabularyImpl};
 
-use dbt_antlr_runtime::static_lexer_dfa::StaticLexerTables;
+use dbt_antlr_runtime::dfa::static_lexer_dfa::StaticLexerTables;
 
 use std::ops::{DerefMut, Deref};
 use std::sync::LazyLock;
