@@ -24,8 +24,8 @@ use dbt_antlr_runtime::atn_simulator::LexerATNSimulatorManager;
 use dbt_antlr_runtime::char_stream::CharStream;
 use dbt_antlr_runtime::dfa::static_dfa_build::{StaticLexerDfaBuild, StaticLexerDfaBuilder};
 use dbt_antlr_runtime::dfa::static_lexer_dfa::{
-    StaticLexerError, StaticLexerTables, ACCEL_EXCLUSION, ACCEL_POSITIVE, ACCEPT_BIT, ESCAPE,
-    NO_CONTINUATION, NO_EDGE, STATIC_DFA_FORMAT_VERSION, STATIC_DFA_MAGIC,
+    StaticLexerError, StaticLexerTables, ACCEL_COUNTED_EXCLUSION, ACCEL_EXCLUSION, ACCEL_POSITIVE,
+    ACCEPT_BIT, ESCAPE, NO_CONTINUATION, NO_EDGE, STATIC_DFA_FORMAT_VERSION, STATIC_DFA_MAGIC,
 };
 use dbt_antlr_runtime::error_listener::ErrorListener;
 use dbt_antlr_runtime::errors::ANTLRError;
@@ -569,7 +569,7 @@ fn csv_static_matches_lazy() {
 fn spike_escapes_match_lazy() {
     let fixture = compile(GrammarKind::Spike, &StaticLexerDfaBuilder::new());
     let counts = fixture.build.modes[0].escape_counts;
-    assert!(counts.predicate > 0 && counts.recursive_context > 0);
+    assert!(counts.predicate > 0 && counts.recursive_context == 0);
     let corpus = [
         "",
         "abc 123",
@@ -591,6 +591,8 @@ fn spike_escapes_match_lazy() {
         "/*/",
         "x/* c */y",
         "/* */*/",
+        "/*/**/*/",
+        "/*/*/**/*/*/",
         "/* a /* b */ c */ 42 let= z9",
         "9let=9",
         "abc\nlet=\r\n/* multi\nline /* nest\n*/ done */ 7",
@@ -601,6 +603,18 @@ fn spike_escapes_match_lazy() {
         "/*", "*/", "*", "/", "let", "le", "=", "==", "abc", "z", "09", " ", "\n", "@", "let=",
         "/* */",
     ];
+    let pieces = ["/*", "*/", "/", "*", "a"];
+    for k in 1..=6usize {
+        let total = pieces.len().pow(k as u32);
+        for mut n in 0..total {
+            let mut s = String::new();
+            for _ in 0..k {
+                s.push_str(pieces[n % pieces.len()]);
+                n /= pieces.len();
+            }
+            check(&fixture, GrammarKind::Spike, &s);
+        }
+    }
     let (escapes, _) = run_corpus(&fixture, GrammarKind::Spike, &corpus, &fragments, 0x591E);
     assert!(escapes > 0, "escape edges crossed");
 }
@@ -1053,6 +1067,64 @@ fn exclusion_accel_needle_past_127_is_a_clean_error() {
 fn positive_accel_bitmap_decodes() {
     let words = positive_accel_stream((1u128 << b'a') | (1u128 << b'z') | (1u128 << b'\n'));
     assert!(StaticLexerTables::from_words(&words).is_ok());
+}
+
+#[test]
+fn counted_exclusion_accel_decodes_and_validates() {
+    let valid_1 = accel_stream(&[
+        6,
+        0,
+        ACCEL_COUNTED_EXCLUSION,
+        1,
+        u32::from(b'{'),
+        u32::from(b'}'),
+        0,
+    ]);
+    assert!(StaticLexerTables::from_words(&valid_1).is_ok());
+
+    let valid_2 = accel_stream(&[
+        6,
+        0,
+        ACCEL_COUNTED_EXCLUSION,
+        2,
+        u32::from_le_bytes([b'/', b'*', 0, 0]),
+        u32::from_le_bytes([b'*', b'/', 0, 0]),
+        0,
+    ]);
+    assert!(StaticLexerTables::from_words(&valid_2).is_ok());
+
+    let valid_3 = accel_stream(&[
+        6,
+        0,
+        ACCEL_COUNTED_EXCLUSION,
+        3,
+        u32::from_le_bytes([b'/', b'*', b'-', 0]),
+        u32::from_le_bytes([b'-', b'*', b'/', 0]),
+        0,
+    ]);
+    assert!(StaticLexerTables::from_words(&valid_3).is_ok());
+
+    // Equal opener and closer is rejected.
+    let same = accel_stream(&[
+        6,
+        0,
+        ACCEL_COUNTED_EXCLUSION,
+        2,
+        u32::from_le_bytes([b'/', b'*', 0, 0]),
+        u32::from_le_bytes([b'/', b'*', 0, 0]),
+        0,
+    ]);
+    assert_eq!(
+        StaticLexerTables::from_words(&same).err(),
+        Some(StaticLexerError::InvalidAccelNeedles { mode: 0 })
+    );
+
+    // Non-ASCII byte in opener is rejected.
+    let non_ascii = accel_stream(&[6, 0, ACCEL_COUNTED_EXCLUSION, 1, 0x80, u32::from(b'}'), 0]);
+    assert_eq!(
+        StaticLexerTables::from_words(&non_ascii).err(),
+        Some(StaticLexerError::InvalidAccelNeedles { mode: 0 })
+    );
 }
 
 #[test]

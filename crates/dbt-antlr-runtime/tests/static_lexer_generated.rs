@@ -171,6 +171,8 @@ const SPIKE_CORPUS: &[&str] = &[
     "/* comment */",
     "/* outer /* inner */ tail */",
     "/*/*/*/**/*/",
+    "/*/**/*/",
+    "/*/*/**/*/*/",
     "/* unterminated",
     "/*",
     "/*/",

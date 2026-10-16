@@ -416,7 +416,10 @@ fn spike_escape_coordinates() {
     let dfa = build.table(0).expect("mode 0");
     let counts = build.modes[0].escape_counts;
     assert!(counts.predicate >= 1, "predicate escape exists");
-    assert!(counts.recursive_context >= 1, "recursion escape exists");
+    assert_eq!(
+        counts.recursive_context, 0,
+        "nested comment is compiled statically"
+    );
     assert_eq!(counts.budget, 0);
 
     // The predicate escape: 't' after "le" (`KWLET: 'let' {p}?`). The move
@@ -429,40 +432,41 @@ fn spike_escape_coordinates() {
     assert_eq!(dfa.continuation_kind(cont), CONTINUATION_SOURCE_SET);
     assert!(dfa.continuation_num_configs(cont) > 0);
 
-    // The recursion escape: '*' of a nested `/*`. Walk "/*", then repeat
-    // "/*" until the '*' edge escapes; it must escape within a few levels.
-    let mut s = walk(dfa, dfa.start_state(), "/*");
-    let mut escaped = None;
-    for _ in 0..4 {
-        let slash = walk(dfa, s, "/");
-        let entry = dfa.edge_entry(slash, '*' as i32);
-        if entry == ESCAPE {
-            escaped = Some(slash);
-            break;
-        }
-        assert_ne!(entry, NO_EDGE);
-        s = entry & STATE_MASK;
-    }
-    let slash = escaped.expect("nested comment '*' escapes");
-    let cont = dfa.escape_continuation(slash, '*' as i32);
-    assert_ne!(cont, NO_CONTINUATION, "escape range for nested '*'");
-    assert_eq!(dfa.continuation_kind(cont), CONTINUATION_MOVED_CONFIGS);
-    assert!(dfa.continuation_num_configs(cont) > 0);
-
-    // Both continuation kinds exist in the pool.
     let kinds: Vec<u32> = (0..dfa.num_continuations() as u32)
         .map(|i| dfa.continuation_kind(i))
         .collect();
-    assert!(kinds.contains(&CONTINUATION_MOVED_CONFIGS));
     assert!(kinds.contains(&CONTINUATION_SOURCE_SET));
 
-    // Non-nested comment bodies stay static: after "/*", '/' and the loop
-    // characters are plain edges.
+    // Nested comment bodies stay static and do not escape on nested "/*".
     let body = walk(dfa, dfa.start_state(), "/*");
     let slash = walk(dfa, body, "/");
     assert_ne!(dfa.edge_entry(body, 'a' as i32), ESCAPE);
     assert_ne!(dfa.edge_entry(body, 'a' as i32), NO_EDGE);
-    let _ = slash;
+    assert_ne!(dfa.edge_entry(slash, '*' as i32), ESCAPE);
+    assert_ne!(dfa.edge_entry(slash, '*' as i32), NO_EDGE);
+}
+
+#[test]
+fn non_counted_recursion_escapes() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+        "../dbt-antlr-codegen/tests/codegen-direct/fixtures/lexer-recursion/LexerRecursion.g4",
+    );
+    let units =
+        dbt_antlr_codegen::atn_export::compile_atn_data(&path, &[]).expect("grammar compiles");
+    let words = units
+        .iter()
+        .find_map(|u| u.lexer_atn_words.clone())
+        .expect("lexer unit");
+    let atn = ATNDeserializer::new(None).deserialize(&mut words.iter());
+    let build = StaticLexerDfaBuilder::new().build(&atn);
+    check_invariants(&build, &atn);
+    let dfa = build.table(0).expect("mode 0");
+    let counts = build.modes[0].escape_counts;
+    assert!(counts.recursive_context >= 1, "recursion escape exists");
+    let kinds: Vec<u32> = (0..dfa.num_continuations() as u32)
+        .map(|i| dfa.continuation_kind(i))
+        .collect();
+    assert!(kinds.contains(&CONTINUATION_MOVED_CONFIGS));
 }
 
 #[test]

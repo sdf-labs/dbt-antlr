@@ -144,14 +144,38 @@ fn spike_lexer_warnings_name_the_escape_reasons() {
         escape.message()
     );
     assert!(
-        escape.message().contains("reach a recursive rule context"),
-        "recursion escape reason: {}",
+        !escape.message().contains("reach a recursive rule context"),
+        "nested comment compiles without recursion escape: {}",
         escape.message()
     );
     assert!(
         escape.path().ends_with("SpikeLexer.g4"),
         "warning path is the grammar: {}",
         escape.path().display()
+    );
+
+    let rec_grammar = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/codegen-direct/fixtures/lexer-recursion/LexerRecursion.g4");
+    let rec_output = emit_files_with_options(
+        &rec_grammar,
+        &[],
+        true,
+        false,
+        &OptimizationOptions::default(),
+        true,
+    )
+    .expect("emission succeeds");
+    let rec_escape = rec_output
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code() == "G4S188")
+        .expect("recursion escape warning reported");
+    assert!(
+        rec_escape
+            .message()
+            .contains("reach a recursive rule context"),
+        "recursion escape reason: {}",
+        rec_escape.message()
     );
 }
 

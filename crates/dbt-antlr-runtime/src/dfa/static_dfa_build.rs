@@ -73,7 +73,7 @@ use crate::arena::{is_ref_in_arena, is_slice_in_arena};
 use crate::atn::ATN;
 use crate::atn_config::LexerATNConfig;
 use crate::atn_config_set::MutableLexerATNConfigSet;
-use crate::atn_state::ATNStateType;
+use crate::atn_state::{ATNStateRef, ATNStateType, StarLoopEntryState};
 use crate::dfa::static_lexer_dfa::{
     class_map, dense_hi_rows, Accel, ContinuationConfig, EscapeRange, LexerContinuation,
     StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, CONTINUATION_MOVED_CONFIGS,
@@ -86,7 +86,9 @@ use crate::lexer_action_executor::LexerActionExecutor;
 use crate::lexer_atn_simulator::{reachable_core, start_state_core, LexerClosureEnv, ReachCapture};
 use crate::prediction_context::PredictionContextRef;
 use crate::semantic_context::SemanticContext;
-use crate::transition::{Transition, TransitionType};
+use crate::transition::{
+    ActionTransition, AtomTransition, RuleTransition, Transition, TransitionType,
+};
 use crate::PredictionContextCache;
 
 /// The default per-mode DFA state budget
@@ -248,9 +250,12 @@ impl StaticLexerDfaBuilder {
         mode_index: usize,
         fin: Finalizer<'sc>,
     ) -> ModeBuildOutcome {
-        let mut mode = ModeBuild::new(self.max_states_per_mode.min(MAX_TABLE_STATE_COUNT));
-
         let start_state = atn.mode_to_start_state[mode_index];
+        let recursive_rules = detect_simple_recursive_rules(atn, start_state);
+        let mut mode = ModeBuild::new(
+            self.max_states_per_mode.min(MAX_TABLE_STATE_COUNT),
+            recursive_rules,
+        );
         let mut env = BuildEnv::default();
         let start_set = start_state_core(atn, start_state.as_ref(), &mut env, fin.store.arena());
         let start_configs = fin.finalize_all(start_set.get_items().cloned());
@@ -324,13 +329,12 @@ impl LexerClosureEnv for BuildEnv {
     }
 }
 
-/// The build-side [`FinalizeStore`]: a bump arena that backs both the scratch
-/// and the finalized configs of one mode, plus interning maps for lexer
-/// action executors and semantic contexts. Config identity after
-/// finalization is structural: contexts are hash-consed by the
-/// [`PredictionContextCache`] of the mode, executors and semantic contexts
-/// intern here. One store per mode: the arena must live exactly as long as
-/// the [`ModeBuild`] that borrows it.
+/// The build-side [`FinalizeStore`]
+///
+/// A bump arena that backs both the scratch and the finalized configs of one
+/// mode, plus interning maps for lexer action executors and semantic contexts.
+/// One store per mode: the arena must live exactly as long as the [`ModeBuild`]
+/// that borrows it.
 #[derive(Debug)]
 struct BuildStore<'sc> {
     executors: RefCell<HashSet<&'sc LexerActionExecutor<'sc>>>,
@@ -430,10 +434,6 @@ impl<'sc> FinalizeStore<'sc> for BuildStore<'sc> {
     }
 }
 
-/// Finalizes scratch configs into the build store of a mode. After
-/// finalization, config equality is exact: contexts are hash-consed
-/// (pointer-unique for structural equality), executors and semantic contexts
-/// are interned.
 #[derive(Clone, Copy)]
 struct Finalizer<'sc> {
     cache: &'sc PredictionContextCache<'sc>,
@@ -514,11 +514,9 @@ fn config_action_indices(atn: &ATN, config: &LexerATNConfig<'_>) -> Result<Vec<u
     Ok(actions)
 }
 
-/// One table state: the finalized closed config set in insertion order and
-/// the accept data. `accept_actions` holds the ATN indices of the actions of
-/// the accept config. Conversion to `LexerAction<'static>` clones happens in
-/// [`ModeBuild::commit`]; the `(type, data1, data2)` triples exist only in
-/// the word stream.
+/// One finalized DFA state: the finalized closed config set in insertion order
+/// and the accept data. `accept_actions` holds the ATN indices of the actions
+/// of the accept config.
 #[derive(Debug)]
 struct StateData<'sc> {
     configs: Vec<LexerATNConfig<'sc>>,
@@ -526,16 +524,17 @@ struct StateData<'sc> {
     accept_actions: Vec<u32>,
 }
 
-/// The structured target of one edge. Packing (`NO_EDGE`, `ESCAPE`, the
-/// `ACCEPT_BIT` or-ing) happens only in [`ModeBuild::commit`].
+/// The structured target of one DFA edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EdgeEntry {
     /// The edge does not exist.
     None,
     /// The edge targets the table state with the given id.
     Target(u32),
-    /// The edge escapes to the lazy simulator. `Some` names the continuation
-    /// pool index. `None` is a budget escape and carries no continuation.
+    /// The edge can not be fully resolved by the static DFA builder and thus
+    /// must be deferred to the runtime ATN simulator: `Some` names the
+    /// continuation pool index, `None` is a budget escape and carries no
+    /// continuation.
     Escape(Option<u32>),
 }
 
@@ -575,12 +574,6 @@ impl ContinuationKind {
     }
 }
 
-/// A continuation in structural form: the finalized configs and the
-/// `alt_reached_accept` flag of each. Conversion to the pool entry (the
-/// local context table, the [`ContinuationConfig`] structs) happens in
-/// [`ModeBuild::commit`]. The derived `Hash` and `Eq` dedupe continuations
-/// by structural content: after finalization the `LexerATNConfig` equality
-/// is exact.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct PendingContinuation<'sc> {
     kind: ContinuationKind,
@@ -598,10 +591,11 @@ struct ModeBuild<'sc> {
     cont_ids: HashMap<PendingContinuation<'sc>, u32>,
     counts: EscapeCounts,
     max_states: usize,
+    recursive_rules: Vec<SimpleRecursiveRule>,
 }
 
 impl<'sc> ModeBuild<'sc> {
-    fn new(max_states: usize) -> Self {
+    fn new(max_states: usize, recursive_rules: Vec<SimpleRecursiveRule>) -> Self {
         ModeBuild {
             states: Vec::new(),
             rows: Vec::new(),
@@ -610,6 +604,7 @@ impl<'sc> ModeBuild<'sc> {
             cont_ids: HashMap::new(),
             counts: EscapeCounts::default(),
             max_states,
+            recursive_rules,
         }
     }
 
@@ -707,7 +702,9 @@ impl<'sc> ModeBuild<'sc> {
         let mut accel_tag = vec![0u8; num_states];
         let mut accel_data = Vec::new();
         for (s, rows) in self.rows.iter().enumerate() {
-            if let Some(accel) = compute_accel(s as u32, rows) {
+            let accel = maybe_counted_accel(s as u32, rows, &self.states, &self.recursive_rules)
+                .or_else(|| compute_accel(s as u32, rows));
+            if let Some(accel) = accel {
                 accel_data.push(accel);
                 assert!(
                     accel_data.len() <= u8::MAX as usize,
@@ -762,6 +759,285 @@ impl<'sc> ModeBuild<'sc> {
             continuations,
         }
     }
+}
+
+/// Special case to handle rules of the following shape:
+///
+///   COMMENT : '/*' (COMMENT | .)*? '*/' ;
+///
+/// instead of deferring these to adaptive runtime, we compile them into a
+/// special [`Accel::CountedExclusion`] that uses a depth counter to track the
+/// recursion while still utilizing SIMD accelerated scans.
+#[derive(Debug, Clone, Copy)]
+struct SimpleRecursiveRule {
+    rule_index: i32,
+    rec_return_state: i32,
+    wildcard_state: i32,
+    accel: Accel,
+}
+
+fn detect_simple_recursive_rules(atn: &ATN, mode_start: ATNStateRef) -> Vec<SimpleRecursiveRule> {
+    let mut rules = Vec::new();
+    for tr in mode_start.get_transitions() {
+        let rule_index = tr.get_target().get_rule_index();
+        if rule_index >= 0 {
+            if let Some(cc) = detect_simple_recursive_rule(atn, rule_index as usize) {
+                rules.push(cc);
+            }
+        }
+    }
+    rules
+}
+
+fn detect_simple_recursive_rule(atn: &ATN, rule_index: usize) -> Option<SimpleRecursiveRule> {
+    use crate::atn_state::ATNStateExtTrait;
+    use crate::transition::ConcreteTransition;
+
+    let start_state = *atn.rule_to_start_state.get(rule_index)?;
+    let stop_state = *atn.rule_to_stop_state.get(rule_index)?;
+
+    let mut opener = Vec::with_capacity(3);
+    let mut cur = start_state;
+    let mut steps = 0usize;
+    let loop_entry = loop {
+        steps += 1;
+        if steps > 32 {
+            return None;
+        }
+        if cur.state_type() == ATNStateType::StarLoopEntry {
+            break cur;
+        }
+        let [tr] = cur.get_transitions() else {
+            return None;
+        };
+        match tr.transition_type() {
+            TransitionType::Epsilon => {
+                cur = tr.get_target();
+            }
+            TransitionType::Atom => {
+                let ch = AtomTransition::cast_from(tr)?.label();
+                if !(0..=ASCII_MAX).contains(&ch) || opener.len() >= 3 {
+                    return None;
+                }
+                opener.push(ch as u8);
+                cur = tr.get_target();
+            }
+            _ => return None,
+        }
+    };
+    if opener.is_empty() {
+        return None;
+    }
+
+    let sle = StarLoopEntryState::try_cast(loop_entry.as_ref())?;
+    if !sle.nongreedy {
+        return None;
+    }
+    let [t0, t1] = loop_entry.get_transitions() else {
+        return None;
+    };
+    if !matches!(t0.transition_type(), TransitionType::Epsilon)
+        || !matches!(t1.transition_type(), TransitionType::Epsilon)
+    {
+        return None;
+    }
+    let (block_start, loop_end) = match (t0.get_target().state_type(), t1.get_target().state_type())
+    {
+        (ATNStateType::LoopEnd, ATNStateType::StarBlockStart) => (t1.get_target(), t0.get_target()),
+        (ATNStateType::StarBlockStart, ATNStateType::LoopEnd) => (t0.get_target(), t1.get_target()),
+        _ => return None,
+    };
+
+    let [b0, b1] = block_start.get_transitions() else {
+        return None;
+    };
+    if !matches!(b0.transition_type(), TransitionType::Epsilon)
+        || !matches!(b1.transition_type(), TransitionType::Epsilon)
+    {
+        return None;
+    }
+    let s0 = chase_epsilons(b0.get_target())?;
+    let s1 = chase_epsilons(b1.get_target())?;
+    let ([tr0], [tr1]) = (s0.get_transitions(), s1.get_transitions()) else {
+        return None;
+    };
+    let (rule_tr, wild_state, wild_tr) = match (tr0.transition_type(), tr1.transition_type()) {
+        (TransitionType::Rule, TransitionType::Wildcard) => (tr0, s1, tr1),
+        (TransitionType::Wildcard, TransitionType::Rule) => (tr1, s0, tr0),
+        _ => return None,
+    };
+    let rt = RuleTransition::cast_from(rule_tr)?;
+    if rt.get_target() != start_state {
+        return None;
+    }
+    if chase_epsilons(rt.follow_state)? != loop_entry {
+        return None;
+    }
+    if chase_epsilons(wild_tr.get_target())? != loop_entry {
+        return None;
+    }
+
+    let mut closer = Vec::with_capacity(3);
+    let mut cur = loop_end;
+    let mut seen_action = false;
+    let mut steps = 0usize;
+    while cur != stop_state {
+        steps += 1;
+        if steps > 32 {
+            return None;
+        }
+        let [tr] = cur.get_transitions() else {
+            return None;
+        };
+        match tr.transition_type() {
+            TransitionType::Epsilon => {
+                cur = tr.get_target();
+            }
+            TransitionType::Atom => {
+                if seen_action {
+                    return None;
+                }
+                let ch = AtomTransition::cast_from(tr)?.label();
+                if !(0..=ASCII_MAX).contains(&ch) || closer.len() >= 3 {
+                    return None;
+                }
+                closer.push(ch as u8);
+                cur = tr.get_target();
+            }
+            TransitionType::Action => {
+                let at = ActionTransition::cast_from(tr)?;
+                let action = atn.lexer_actions.get(at.action_index() as usize)?;
+                if action.is_position_dependent() {
+                    return None;
+                }
+                seen_action = true;
+                cur = tr.get_target();
+            }
+            _ => return None,
+        }
+    }
+
+    if closer.len() != opener.len() || closer == opener || !(1..=3).contains(&opener.len()) {
+        return None;
+    }
+    let mut opener_arr = [0u8; 3];
+    let mut closer_arr = [0u8; 3];
+    opener_arr[..opener.len()].copy_from_slice(&opener);
+    closer_arr[..closer.len()].copy_from_slice(&closer);
+    let accel = Accel::CountedExclusion {
+        opener: opener_arr,
+        closer: closer_arr,
+        n: opener.len() as u8,
+    };
+    Some(SimpleRecursiveRule {
+        rule_index: rule_index as i32,
+        rec_return_state: rt.follow_state.get_state_number(),
+        wildcard_state: wild_state.get_state_number(),
+        accel,
+    })
+}
+
+fn chase_epsilons(mut state: ATNStateRef) -> Option<ATNStateRef> {
+    for _ in 0..16 {
+        let [tr] = state.get_transitions() else {
+            return Some(state);
+        };
+        if !matches!(tr.transition_type(), TransitionType::Epsilon) {
+            return Some(state);
+        }
+        state = tr.get_target();
+    }
+    None
+}
+
+fn context_has_return_state(mut ctx: Option<PredictionContextRef>, return_state: i32) -> bool {
+    while let Some(c) = ctx {
+        if c.is_empty() {
+            break;
+        }
+        if c.get_return_state(0).get_state_number() == return_state {
+            return true;
+        }
+        ctx = c.get_parent(0);
+    }
+    false
+}
+
+fn is_simple_recursive_body(configs: &[LexerATNConfig<'_>], cc: &SimpleRecursiveRule) -> bool {
+    !configs.is_empty()
+        && configs.iter().all(|c| {
+            let s = c.get_state();
+            if s.get_rule_index() == cc.rule_index {
+                s.state_type() != ATNStateType::RuleStop
+            } else {
+                s.state_type() == ATNStateType::RuleStop
+                    && c.get_context().is_none_or(|ctx| ctx.is_empty())
+            }
+        })
+        && configs.iter().any(|c| {
+            c.get_state().get_state_number() == cc.wildcard_state
+                && c.get_context().is_none_or(|ctx| ctx.is_empty())
+        })
+}
+
+fn strip_simple_recursion(
+    closed: &mut Vec<LexerATNConfig<'_>>,
+    simple_recursive_rules: &[SimpleRecursiveRule],
+) {
+    if closed.is_empty() || simple_recursive_rules.is_empty() {
+        return;
+    }
+    for cc in simple_recursive_rules {
+        if is_simple_recursive_body(closed, cc) {
+            closed.retain(|c| !context_has_return_state(c.get_context(), cc.rec_return_state));
+            return;
+        }
+    }
+}
+
+fn maybe_counted_accel(
+    state: u32,
+    rows: &StateRows,
+    states: &[StateData<'_>],
+    recursive_rules: &[SimpleRecursiveRule],
+) -> Option<Accel> {
+    let state_data = &states[state as usize];
+    if state_data.configs.is_empty() || recursive_rules.is_empty() {
+        return None;
+    }
+    let cc = recursive_rules
+        .iter()
+        .find(|cc| is_simple_recursive_body(&state_data.configs, cc))?;
+    let mut hi_covered_to = ASCII_MAX;
+    let mut hi_target = None;
+    for iv in &rows.intervals {
+        if iv.hi > ASCII_MAX && iv.lo <= hi_covered_to + 1 {
+            let EdgeEntry::Target(target) = iv.entry else {
+                break;
+            };
+            match hi_target {
+                None => hi_target = Some(target),
+                Some(t) if t == target => {}
+                Some(_) => break,
+            }
+            hi_covered_to = hi_covered_to.max(iv.hi);
+        }
+    }
+    let hi_target = hi_target?;
+    if hi_covered_to < MAX_SYMBOL - 1 {
+        return None;
+    }
+    if hi_target != state {
+        let target_configs = &states[hi_target as usize].configs;
+        let non_stop = state_data
+            .configs
+            .iter()
+            .filter(|c| c.get_state().state_type() != ATNStateType::RuleStop);
+        if !non_stop.eq(target_configs.iter()) {
+            return None;
+        }
+    }
+    Some(cc.accel)
 }
 
 /// The run-acceleration descriptor of one state, classified from its structural
@@ -837,8 +1113,8 @@ fn compute_edge<'sc>(
         Some(&mut capture),
         fin.store.arena(),
     );
-    let closed = fin.finalize_all(reach.get_items().cloned());
-
+    let mut closed = fin.finalize_all(reach.get_items().cloned());
+    strip_simple_recursion(&mut closed, &mode.recursive_rules);
     let reason = if env.predicate_crossed {
         Some(EscapeReason::Predicate)
     } else if has_position_dependent_action(&closed) {
@@ -1302,6 +1578,59 @@ mod tests {
     fn accel_none_when_no_ascii_loops() {
         let rows = rows(vec![(128, MAX_SYMBOL, EdgeEntry::Target(3))]);
         assert_eq!(compute_accel(3, &rows), None);
+    }
+
+    #[test]
+    fn counted_exclude_serialization() {
+        use crate::dfa::static_lexer_dfa::ACCEL_COUNTED_EXCLUSION;
+        let a1 = Accel::CountedExclusion {
+            opener: [b'{', 0, 0],
+            closer: [b'}', 0, 0],
+            n: 1,
+        };
+        assert_eq!(
+            a1.to_serialized(4),
+            vec![
+                4,
+                ACCEL_COUNTED_EXCLUSION,
+                1,
+                u32::from(b'{'),
+                u32::from(b'}'),
+                0
+            ]
+        );
+        let a2 = Accel::CountedExclusion {
+            opener: [b'/', b'*', 0],
+            closer: [b'*', b'/', 0],
+            n: 2,
+        };
+        assert_eq!(
+            a2.to_serialized(5),
+            vec![
+                5,
+                ACCEL_COUNTED_EXCLUSION,
+                2,
+                u32::from_le_bytes([b'/', b'*', 0, 0]),
+                u32::from_le_bytes([b'*', b'/', 0, 0]),
+                0,
+            ]
+        );
+        let a3 = Accel::CountedExclusion {
+            opener: *b"/*-",
+            closer: *b"-*/",
+            n: 3,
+        };
+        assert_eq!(
+            a3.to_serialized(6),
+            vec![
+                6,
+                ACCEL_COUNTED_EXCLUSION,
+                3,
+                u32::from_le_bytes([b'/', b'*', b'-', 0]),
+                u32::from_le_bytes([b'-', b'*', b'/', 0]),
+                0,
+            ]
+        );
     }
 }
 
