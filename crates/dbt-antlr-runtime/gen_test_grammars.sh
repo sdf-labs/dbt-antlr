@@ -15,7 +15,7 @@ declare -a GRAMMARS=(
     "CSV"
     "ReferenceToATN"
     "XMLLexer"
-    "SpikeLexer"
+    "lexer/Spike"
     "SimpleLR"
     "Labels"
 #    "FHIRPath"
@@ -48,23 +48,23 @@ for i in "${!GRAMMARS[@]}"; do
     "${cmd[@]}"
 done
 
-# `--static-lexer-dfa` lexer twins. SpikeLexer.g4 is generated plain above; CSV and
+# `--static-lexer-dfa` lexer twins. Spike.g4 is generated plain above; CSV and
 # XMLLexer get a static variant next to their plain golden. The CLI writes
 # every recognizer of the grammar into the output directory, so the static
 # runs go to a scratch dir and only the lexer file is kept, renamed with the
-# `_static` suffix. The warnings of the escape-edge witness (SpikeLexer) go
+# `_static` suffix. The warnings of the escape-edge witness (Spike) go
 # to stderr as usual.
 declare -a STATIC_GRAMMARS=(
     "CSV"
     "XMLLexer"
-    "SpikeLexer"
+    "lexer/Spike"
 )
 # Emitted lexer file stem per grammar: the implicit lexer of a combined
 # grammar is `<name>Lexer`, a lexer grammar emits under its own name.
 declare -a STATIC_LEXER_NAMES=(
     "csvlexer"
     "xmllexer"
-    "spikelexer"
+    "spike"
 )
 
 STATIC_TMP="$(mktemp -d)"

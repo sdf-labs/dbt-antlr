@@ -54,7 +54,7 @@ const SWEEP: &[SweepRow] = &[
         ],
     ),
     ("XMLLexer.g4", true, false, &[], &["xmllexer.rs"]),
-    ("SpikeLexer.g4", true, false, &[], &["spikelexer.rs"]),
+    ("lexer/Spike.g4", true, false, &[], &["spike.rs"]),
     (
         "SimpleLR.g4",
         true,

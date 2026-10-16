@@ -1,4 +1,4 @@
-// Generated from SpikeLexer.g4 by ANTLR 4.13.2
+// Generated from Spike.g4 by ANTLR 4.13.2
 use dbt_antlr_runtime::Arena;
 use dbt_antlr_runtime::atn::ATN;
 use dbt_antlr_runtime::char_stream::CharStream;
@@ -24,7 +24,8 @@ pub const COMMENT:i32=1;
 pub const KWLET:i32=2; 
 pub const ID:i32=3; 
 pub const INT:i32=4; 
-pub const WS:i32=5;
+pub const WS:i32=5; 
+pub const UNPAIRED:i32=6;
 
 pub const channelNames: [&'static str;0+2] = [
     "DEFAULT_TOKEN_CHANNEL", "HIDDEN"
@@ -34,23 +35,24 @@ pub const modeNames: [&'static str;1] = [
     "DEFAULT_MODE"
 ];
 
-pub const ruleNames: [&'static str;5] = [
-    "COMMENT", "KWLET", "ID", "INT", "WS"
+pub const ruleNames: [&'static str;6] = [
+    "COMMENT", "KWLET", "ID", "INT", "WS", "UNPAIRED"
 ];
-pub const _LITERAL_NAMES: [Option<&'static str>;3] = [
-	None, None, Some("'let'")
+pub const _LITERAL_NAMES: [Option<&'static str>;7] = [
+	None, None, Some("'let'"), None, None, None, Some("'/*'")
 ];
-pub const _SYMBOLIC_NAMES: [Option<&'static str>;6]  = [
-	None, Some("COMMENT"), Some("KWLET"), Some("ID"), Some("INT"), Some("WS")
+pub const _SYMBOLIC_NAMES: [Option<&'static str>;7]  = [
+	None, Some("COMMENT"), Some("KWLET"), Some("ID"), Some("INT"), Some("WS"), 
+	Some("UNPAIRED")
 ];
 
 static VOCABULARY: LazyLock<Box<dyn Vocabulary>> = LazyLock::new(|| Box::new(VocabularyImpl::new(_LITERAL_NAMES.iter(), _SYMBOLIC_NAMES.iter(), None)));
 
 pub type LexerContext<'input, 'arena> = BaseRuleContext<'input, 'arena, EmptyNodeKind, EmptyCustomRuleContext<'input, 'arena>>;
-pub type BaseLexerType<'input, 'arena, Input, TF> = BaseLexer<'input, 'arena, SpikeLexerActions, Input, TF>;
+pub type BaseLexerType<'input, 'arena, Input, TF> = BaseLexer<'input, 'arena, SpikeActions, Input, TF>;
 pub fn lexer_simulator_manager() -> &'static ATNSimulatorManager { &ATN_SIMULATOR_MANAGER }
 
-pub struct SpikeLexer<'input, 'arena, Input, TF = CommonTokenFactory<'input, 'arena>>
+pub struct Spike<'input, 'arena, Input, TF = CommonTokenFactory<'input, 'arena>>
 where
     'input: 'arena,
     TF: TokenFactory<'input, 'arena> + 'arena,
@@ -59,27 +61,27 @@ where
 	base: BaseLexerType<'input, 'arena, Input, TF>,
 }
 
-dbt_antlr_runtime::impl_token_source! { SpikeLexer }
-dbt_antlr_runtime::impl_deref! { lexer => SpikeLexer }
+dbt_antlr_runtime::impl_token_source! { Spike }
+dbt_antlr_runtime::impl_deref! { lexer => Spike }
 
-impl<'input, 'arena, Input, TF> SpikeLexer<'input, 'arena, Input, TF>
+impl<'input, 'arena, Input, TF> Spike<'input, 'arena, Input, TF>
 where
     'input: 'arena,
     TF: TokenFactory<'input, 'arena> + 'arena,
     Input: CharStream<'input>,
 {
     pub fn new(arena: &'arena Arena, input: Input) -> Self {
-        let actions = SpikeLexerActions {
+        let actions = SpikeActions {
         };
         let base = BaseLexerType::new_base_lexer(input, actions, arena);
         Self { base }
     }
 }
 
-pub struct SpikeLexerActions {
+pub struct SpikeActions {
 }
 
-impl SpikeLexerActions {
+impl SpikeActions {
 	fn KWLET_sempred<'arena, 'input, Input, TF>(pred_index:i32, recog: &mut BaseLexerType<'input, 'arena, Input, TF>) -> bool
 	where
 	    TF: TokenFactory<'input, 'arena> + 'arena,
@@ -95,7 +97,7 @@ impl SpikeLexerActions {
 }
 
 impl<'input, 'arena, Input, TF> Actions<'input, 'arena, BaseLexerType<'input, 'arena, Input, TF>, TF::Tok>
-    for SpikeLexerActions
+    for SpikeActions
 where
     'input: 'arena,
     Input: CharStream<'input>,
@@ -103,13 +105,13 @@ where
 {
     fn sempred(_localctx: Option<&EmptyRuleNode<'input, 'arena, TF::Tok>>, rule_index: i32, pred_index: i32, recog:&mut BaseLexerType<'input, 'arena, Input, TF>) -> bool {
         match rule_index {
-            1 => SpikeLexerActions::KWLET_sempred(pred_index, recog), 
+            1 => SpikeActions::KWLET_sempred(pred_index, recog), 
             _ => true
         }
     }
 }
 impl<'input, 'arena, Input, TF> LexerRecog<'input, 'arena, TF, BaseLexerType<'input, 'arena, Input, TF>>
-    for SpikeLexerActions
+    for SpikeActions
 where
     'input: 'arena,
     Input: CharStream<'input>,
@@ -118,7 +120,7 @@ where
     fn get_rule_names(&self) -> &'static [&'static str] { &ruleNames }
     fn get_literal_names(&self) -> &[Option<&str>] { &_LITERAL_NAMES }
     fn get_symbolic_names(&self) -> &[Option<&str>] { &_SYMBOLIC_NAMES }
-    fn get_grammar_file_name(&self) -> &'static str { "SpikeLexer.g4" }
+    fn get_grammar_file_name(&self) -> &'static str { "Spike.g4" }
     fn get_atn_simulator_man(&self) -> &'static ATNSimulatorManager { &ATN_SIMULATOR_MANAGER }
 }
 
@@ -126,26 +128,28 @@ static ATN_SIMULATOR_MANAGER: LazyLock<ATNSimulatorManager> = LazyLock::new(|| A
 static _ATN: LazyLock<ATN> =
     LazyLock::new(|| ATNDeserializer::new(None).deserialize(&mut _serializedATN.iter()));
 static _serializedATN: LazyLock<Vec<i32>> = LazyLock::new(|| vec![
-    4, 0, 5, 47, 6, -1, 2, 0, 7, 0, 2, 1, 7, 1, 2, 2, 7, 2, 2, 3, 7, 3, 
-    2, 4, 7, 4, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 5, 0, 17, 8, 0, 10, 0, 12, 
-    0, 20, 9, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
-    2, 4, 2, 32, 8, 2, 11, 2, 12, 2, 33, 1, 3, 4, 3, 37, 8, 3, 11, 3, 12, 
-    3, 38, 1, 4, 4, 4, 42, 8, 4, 11, 4, 12, 4, 43, 1, 4, 1, 4, 1, 18, 0, 
-    5, 1, 1, 3, 2, 5, 3, 7, 4, 9, 5, 1, 0, 3, 1, 0, 97, 122, 1, 0, 48, 57, 
-    3, 0, 9, 10, 13, 13, 32, 32, 51, 0, 1, 1, 0, 0, 0, 0, 3, 1, 0, 0, 0, 
-    0, 5, 1, 0, 0, 0, 0, 7, 1, 0, 0, 0, 0, 9, 1, 0, 0, 0, 1, 11, 1, 0, 0, 
-    0, 3, 24, 1, 0, 0, 0, 5, 31, 1, 0, 0, 0, 7, 36, 1, 0, 0, 0, 9, 41, 1, 
-    0, 0, 0, 11, 12, 5, 47, 0, 0, 12, 13, 5, 42, 0, 0, 13, 18, 1, 0, 0, 
-    0, 14, 17, 3, 1, 0, 0, 15, 17, 9, 0, 0, 0, 16, 14, 1, 0, 0, 0, 16, 15, 
-    1, 0, 0, 0, 17, 20, 1, 0, 0, 0, 18, 19, 1, 0, 0, 0, 18, 16, 1, 0, 0, 
-    0, 19, 21, 1, 0, 0, 0, 20, 18, 1, 0, 0, 0, 21, 22, 5, 42, 0, 0, 22, 
-    23, 5, 47, 0, 0, 23, 2, 1, 0, 0, 0, 24, 25, 5, 108, 0, 0, 25, 26, 5, 
-    101, 0, 0, 26, 27, 5, 116, 0, 0, 27, 28, 1, 0, 0, 0, 28, 29, 4, 1, 0, 
-    0, 29, 4, 1, 0, 0, 0, 30, 32, 7, 0, 0, 0, 31, 30, 1, 0, 0, 0, 32, 33, 
-    1, 0, 0, 0, 33, 31, 1, 0, 0, 0, 33, 34, 1, 0, 0, 0, 34, 6, 1, 0, 0, 
-    0, 35, 37, 7, 1, 0, 0, 36, 35, 1, 0, 0, 0, 37, 38, 1, 0, 0, 0, 38, 36, 
-    1, 0, 0, 0, 38, 39, 1, 0, 0, 0, 39, 8, 1, 0, 0, 0, 40, 42, 7, 2, 0, 
-    0, 41, 40, 1, 0, 0, 0, 42, 43, 1, 0, 0, 0, 43, 41, 1, 0, 0, 0, 43, 44, 
-    1, 0, 0, 0, 44, 45, 1, 0, 0, 0, 45, 46, 6, 4, 0, 0, 46, 10, 1, 0, 0, 
-    0, 6, 0, 16, 18, 33, 38, 43, 1, 0, 1, 0
+    4, 0, 6, 52, 6, -1, 2, 0, 7, 0, 2, 1, 7, 1, 2, 2, 7, 2, 2, 3, 7, 3, 
+    2, 4, 7, 4, 2, 5, 7, 5, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 5, 0, 19, 8, 0, 
+    10, 0, 12, 0, 22, 9, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
+    1, 1, 1, 1, 2, 4, 2, 34, 8, 2, 11, 2, 12, 2, 35, 1, 3, 4, 3, 39, 8, 
+    3, 11, 3, 12, 3, 40, 1, 4, 4, 4, 44, 8, 4, 11, 4, 12, 4, 45, 1, 4, 1, 
+    4, 1, 5, 1, 5, 1, 5, 1, 20, 0, 6, 1, 1, 3, 2, 5, 3, 7, 4, 9, 5, 11, 
+    6, 1, 0, 3, 1, 0, 97, 122, 1, 0, 48, 57, 3, 0, 9, 10, 13, 13, 32, 32, 
+    56, 0, 1, 1, 0, 0, 0, 0, 3, 1, 0, 0, 0, 0, 5, 1, 0, 0, 0, 0, 7, 1, 0, 
+    0, 0, 0, 9, 1, 0, 0, 0, 0, 11, 1, 0, 0, 0, 1, 13, 1, 0, 0, 0, 3, 26, 
+    1, 0, 0, 0, 5, 33, 1, 0, 0, 0, 7, 38, 1, 0, 0, 0, 9, 43, 1, 0, 0, 0, 
+    11, 49, 1, 0, 0, 0, 13, 14, 5, 47, 0, 0, 14, 15, 5, 42, 0, 0, 15, 20, 
+    1, 0, 0, 0, 16, 19, 3, 1, 0, 0, 17, 19, 9, 0, 0, 0, 18, 16, 1, 0, 0, 
+    0, 18, 17, 1, 0, 0, 0, 19, 22, 1, 0, 0, 0, 20, 21, 1, 0, 0, 0, 20, 18, 
+    1, 0, 0, 0, 21, 23, 1, 0, 0, 0, 22, 20, 1, 0, 0, 0, 23, 24, 5, 42, 0, 
+    0, 24, 25, 5, 47, 0, 0, 25, 2, 1, 0, 0, 0, 26, 27, 5, 108, 0, 0, 27, 
+    28, 5, 101, 0, 0, 28, 29, 5, 116, 0, 0, 29, 30, 1, 0, 0, 0, 30, 31, 
+    4, 1, 0, 0, 31, 4, 1, 0, 0, 0, 32, 34, 7, 0, 0, 0, 33, 32, 1, 0, 0, 
+    0, 34, 35, 1, 0, 0, 0, 35, 33, 1, 0, 0, 0, 35, 36, 1, 0, 0, 0, 36, 6, 
+    1, 0, 0, 0, 37, 39, 7, 1, 0, 0, 38, 37, 1, 0, 0, 0, 39, 40, 1, 0, 0, 
+    0, 40, 38, 1, 0, 0, 0, 40, 41, 1, 0, 0, 0, 41, 8, 1, 0, 0, 0, 42, 44, 
+    7, 2, 0, 0, 43, 42, 1, 0, 0, 0, 44, 45, 1, 0, 0, 0, 45, 43, 1, 0, 0, 
+    0, 45, 46, 1, 0, 0, 0, 46, 47, 1, 0, 0, 0, 47, 48, 6, 4, 0, 0, 48, 10, 
+    1, 0, 0, 0, 49, 50, 5, 47, 0, 0, 50, 51, 5, 42, 0, 0, 51, 12, 1, 0, 
+    0, 0, 6, 0, 18, 20, 35, 40, 45, 1, 0, 1, 0
 ]);

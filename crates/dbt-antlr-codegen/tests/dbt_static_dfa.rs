@@ -39,7 +39,7 @@ fn lexer_content<'o>(output: &'o EmittedOutput, name: &str) -> &'o str {
 
 #[test]
 fn cli_accepts_the_static_lexer_dfa_flag() {
-    let grammar = grammars_dir().join("SpikeLexer.g4");
+    let grammar = grammars_dir().join("lexer/Spike.g4");
     let out_dir =
         std::env::temp_dir().join(format!("dbt-static-lexer-dfa-cli-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&out_dir);
@@ -54,7 +54,7 @@ fn cli_accepts_the_static_lexer_dfa_flag() {
     let mut stderr = Vec::new();
     cli::run(&args, &mut stdout, &mut stderr).expect("CLI run succeeds");
 
-    let written = std::fs::read_to_string(out_dir.join("spikelexer.rs")).expect("lexer written");
+    let written = std::fs::read_to_string(out_dir.join("spike.rs")).expect("lexer written");
     assert!(
         written.contains("_STATIC_LEXER_TABLE_WORDS"),
         "the flag puts the table statics into the emitted lexer"
@@ -107,8 +107,8 @@ fn csv_lexer_flag_on_is_fully_static() {
 fn spike_lexer_flag_on_keeps_the_atn_next_to_the_tables() {
     // The escape-edge witness: recursion and a predicate escape, so the
     // tables come with the retained ATN.
-    let output = emit("SpikeLexer.g4", true);
-    let content = lexer_content(&output, "spikelexer.rs");
+    let output = emit("lexer/Spike.g4", true);
+    let content = lexer_content(&output, "spike.rs");
     assert!(content.contains("_STATIC_LEXER_TABLE_WORDS"));
     assert!(content.contains("new_with_static_lexer_tables"));
     assert!(content.contains("_serializedATN"));
@@ -119,7 +119,7 @@ fn flag_off_emits_no_tables() {
     for (grammar, name) in [
         ("CSV.g4", "csvlexer.rs"),
         ("XMLLexer.g4", "xmllexer.rs"),
-        ("SpikeLexer.g4", "spikelexer.rs"),
+        ("lexer/Spike.g4", "spike.rs"),
     ] {
         let output = emit(grammar, false);
         let content = lexer_content(&output, name);
@@ -132,7 +132,7 @@ fn flag_off_emits_no_tables() {
 
 #[test]
 fn spike_lexer_warnings_name_the_escape_reasons() {
-    let output = emit("SpikeLexer.g4", true);
+    let output = emit("lexer/Spike.g4", true);
     let escape = output
         .diagnostics
         .iter()
@@ -150,7 +150,7 @@ fn spike_lexer_warnings_name_the_escape_reasons() {
         escape.message()
     );
     assert!(
-        escape.path().ends_with("SpikeLexer.g4"),
+        escape.path().ends_with("Spike.g4"),
         "warning path is the grammar: {}",
         escape.path().display()
     );
@@ -182,7 +182,7 @@ fn spike_lexer_warnings_name_the_escape_reasons() {
 
 #[test]
 fn flag_off_reports_no_escape_warnings() {
-    let output = emit("SpikeLexer.g4", false);
+    let output = emit("lexer/Spike.g4", false);
     assert!(
         output
             .diagnostics

@@ -2,7 +2,7 @@
 //! `match_static` path (plus its escape/resume/restart handling) against the
 //! pure lazy `LexerATNSimulator`, token for token.
 //!
-//! Every grammar in `grammars/lexer/` is compiled to a lexer ATN with
+//! Every grammar under `grammars/` is compiled to a lexer ATN with
 //! `dbt-antlr-codegen`'s `atn-export`, the tables are built with the
 //! `static-dfa-build` builder, and both sides run through `BaseLexer` with
 //! the same test predicates and custom actions. Token type, text, channel,
@@ -60,16 +60,16 @@ impl GrammarKind {
     fn file(self) -> &'static str {
         match self {
             GrammarKind::Csv => "CSV.g4",
-            GrammarKind::Spike => "Spike.g4",
-            GrammarKind::MiniModes => "MiniModes.g4",
-            GrammarKind::CustomAction => "CustomAction.g4",
-            GrammarKind::EofLexer => "EofLexer.g4",
+            GrammarKind::Spike => "lexer/Spike.g4",
+            GrammarKind::MiniModes => "lexer/MiniModes.g4",
+            GrammarKind::CustomAction => "lexer/CustomAction.g4",
+            GrammarKind::EofLexer => "lexer/EofLexer.g4",
             GrammarKind::Xml => "XMLLexer.g4",
-            GrammarKind::StartPred => "StartPred.g4",
-            GrammarKind::StartAction => "StartAction.g4",
-            GrammarKind::StartRecurse => "StartRecurse.g4",
-            GrammarKind::EofEscape => "EofEscape.g4",
-            GrammarKind::EofChain => "EofChain.g4",
+            GrammarKind::StartPred => "lexer/StartPred.g4",
+            GrammarKind::StartAction => "lexer/StartAction.g4",
+            GrammarKind::StartRecurse => "lexer/StartRecurse.g4",
+            GrammarKind::EofEscape => "lexer/EofEscape.g4",
+            GrammarKind::EofChain => "lexer/EofChain.g4",
         }
     }
 }
@@ -86,7 +86,7 @@ struct Fixture {
 
 fn compile(kind: GrammarKind, builder: &StaticLexerDfaBuilder) -> Fixture {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("grammars/lexer")
+        .join("grammars")
         .join(kind.file());
     let units =
         dbt_antlr_codegen::atn_export::compile_atn_data(&path, &[]).expect("grammar compiles");
@@ -877,7 +877,7 @@ fn budget_escape_restarts_match_lazy() {
 
 fn csv_words() -> Vec<u32> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("grammars/lexer")
+        .join("grammars")
         .join("CSV.g4");
     let units =
         dbt_antlr_codegen::atn_export::compile_atn_data(&path, &[]).expect("grammar compiles");
