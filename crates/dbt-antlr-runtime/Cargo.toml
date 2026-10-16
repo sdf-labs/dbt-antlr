@@ -48,9 +48,19 @@ dbt-antlr-codegen = { path = "../dbt-antlr-codegen", default-features = false, f
 ] }
 
 [[test]]
-name = "static_lexer_walk"
-required-features = ["static-dfa-build"]
+name = "static_lexer_build"
+path = "tests/static_lexer/build.rs"
+
+[[test]]
+name = "static_lexer_generated"
+path = "tests/static_lexer/generated.rs"
 
 [[test]]
 name = "static_lexer_stress"
+path = "tests/static_lexer/stress.rs"
+required-features = ["static-dfa-build"]
+
+[[test]]
+name = "static_lexer_walk"
+path = "tests/static_lexer/walk.rs"
 required-features = ["static-dfa-build"]

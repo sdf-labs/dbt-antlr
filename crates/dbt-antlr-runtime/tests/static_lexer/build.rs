@@ -1,5 +1,5 @@
 //! Integration tests for the compile-time static lexer DFA builder
-//! (`static-dfa-build` feature). Grammars live in `tests/static_lexer/` and
+//! (`static-dfa-build` feature). Grammars live in `grammars/lexer/` and
 //! are compiled to lexer ATN words through `dbt-antlr-codegen`'s `atn-export`.
 //!
 //! The per-grammar expectations assert directly on the committed
@@ -23,7 +23,7 @@ use dbt_antlr_runtime::int_stream::EOF;
 
 fn grammar_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/static_lexer")
+        .join("grammars/lexer")
         .join(name)
 }
 
