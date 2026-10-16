@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-runtime-v0.2.1...dbt-antlr-runtime-v0.3.0) - 2026-10-16
+
+### Other
+
+- *(runtime)* compile simple recursive comment rules to CountedExclusion run_scan ([#19](https://github.com/sdf-labs/dbt-antlr/pull/19))
+- *(runtime)* simplify static lexer Accel and run_scan without newline special-casing ([#18](https://github.com/sdf-labs/dbt-antlr/pull/18))
+- *(runtime)* lazy token line/column resolution via shared SourceInfo ([#17](https://github.com/sdf-labs/dbt-antlr/pull/17))
+- Add compile-time static lexer DFA tables behind --static-lexer-dfa ([#15](https://github.com/sdf-labs/dbt-antlr/pull/15))
+
 ## [0.1.0](https://github.com/sdf-labs/dbt-antlr/releases/tag/dbt-antlr-runtime-v0.1.0) - 2026-10-09
 
 ### Other
