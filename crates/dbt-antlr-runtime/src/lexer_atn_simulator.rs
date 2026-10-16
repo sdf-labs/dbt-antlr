@@ -273,13 +273,15 @@ impl<'sim> LexerATNSimulator<'sim> {
                     if tag != 0 {
                         let accel = table.accel_payload(tag);
                         let start = cursor as usize;
-                        let c = run_scan(hay, start, accel);
+                        let c = run_scan(hay, start, accel, scratch);
                         if c > start {
                             cursor = c as isize;
                             // The entry's accept bit is s's: on an
                             // accept state the run end is the
                             // maximal-munch accept.
-                            if entry & ACCEPT_BIT != 0 {
+                            if entry & ACCEPT_BIT != 0
+                                && !matches!(accel, Accel::CountedExclusion { .. })
+                            {
                                 prev_accept = Some((cursor, s));
                             }
                             symbol = match hay.get(c) {
@@ -330,17 +332,12 @@ impl<'sim> LexerATNSimulator<'sim> {
                 let tag = table.accel_tag(s);
                 if tag != 0 {
                     let accel = table.accel_payload(tag);
-                    if matches!(
-                        accel,
-                        Accel::CountedExclude { .. }
-                            | Accel::CountedExclude2 { .. }
-                            | Accel::CountedExclude3 { .. }
-                    ) {
+                    if matches!(accel, Accel::CountedExclusion { .. }) {
                         let input = lexer.input();
                         let start = input.index() as usize;
                         let c = {
                             let text = input.get_text(0, input.size());
-                            run_scan(text.as_bytes(), start, accel)
+                            run_scan(text.as_bytes(), start, accel, scratch)
                         };
                         if c > start {
                             input.seek(c as isize);
@@ -904,7 +901,7 @@ pub(crate) enum AcceptExecutor<'sim> {
 /// starting at byte index `c` in `hay`, and return the index of the first
 /// byte that does not loop.
 #[inline(never)]
-fn run_scan(hay: &[u8], mut c: usize, accel: Accel) -> usize {
+fn run_scan(hay: &[u8], mut c: usize, accel: Accel, scratch: &bumpalo::Bump) -> usize {
     match accel {
         Accel::Positive(bitmap) => {
             while c < hay.len() {
@@ -930,20 +927,18 @@ fn run_scan(hay: &[u8], mut c: usize, accel: Accel) -> usize {
                 Some(i) => c += i,
             }
         }
-        Accel::CountedExclude { opener, closer } => {
-            c = run_scan_counted(hay, c, &[opener], &[closer]);
-        }
-        Accel::CountedExclude2 {
+        Accel::CountedExclusion {
             ref opener,
             ref closer,
+            n,
         } => {
-            c = run_scan_counted(hay, c, opener, closer);
-        }
-        Accel::CountedExclude3 {
-            ref opener,
-            ref closer,
-        } => {
-            c = run_scan_counted(hay, c, opener, closer);
+            c = run_scan_counted(
+                hay,
+                c,
+                &opener[..n as usize],
+                &closer[..n as usize],
+                scratch,
+            );
         }
     }
     c
@@ -956,13 +951,19 @@ enum CountedEntry {
     Open(u8, u32),
 }
 
-fn push_unique(vec: &mut Vec<CountedEntry>, entry: CountedEntry) {
+fn push_unique(vec: &mut bumpalo::collections::Vec<CountedEntry>, entry: CountedEntry) {
     if !vec.contains(&entry) {
         vec.push(entry);
     }
 }
 
-fn run_scan_counted(hay: &[u8], mut c: usize, opener: &[u8], closer: &[u8]) -> usize {
+fn run_scan_counted(
+    hay: &[u8],
+    mut c: usize,
+    opener: &[u8],
+    closer: &[u8],
+    scratch: &bumpalo::Bump,
+) -> usize {
     let start = c;
     let n = opener.len();
     let o0 = opener[0];
@@ -990,8 +991,8 @@ fn run_scan_counted(hay: &[u8], mut c: usize, opener: &[u8], closer: &[u8]) -> u
         return hay.len();
     }
 
-    let mut state = vec![CountedEntry::Body(0)];
-    let mut next = Vec::with_capacity(8);
+    let mut state = bumpalo::vec![in scratch; CountedEntry::Body(0)];
+    let mut next = bumpalo::collections::Vec::with_capacity_in(8, scratch);
     let mut last_closer = hay.len();
 
     while c < hay.len() {

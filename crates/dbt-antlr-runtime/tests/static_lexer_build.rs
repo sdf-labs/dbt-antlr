@@ -437,13 +437,13 @@ fn spike_escape_coordinates() {
         .collect();
     assert!(kinds.contains(&CONTINUATION_SOURCE_SET));
 
-    // Nested comment bodies stay static and get CountedExclude2 acceleration.
+    // Nested comment bodies stay static and do not escape on nested "/*".
     let body = walk(dfa, dfa.start_state(), "/*");
-    assert_ne!(dfa.accel_tag(body), 0, "comment body state is accelerated");
     let slash = walk(dfa, body, "/");
     assert_ne!(dfa.edge_entry(body, 'a' as i32), ESCAPE);
     assert_ne!(dfa.edge_entry(body, 'a' as i32), NO_EDGE);
-    let _ = slash;
+    assert_ne!(dfa.edge_entry(slash, '*' as i32), ESCAPE);
+    assert_ne!(dfa.edge_entry(slash, '*' as i32), NO_EDGE);
 }
 
 #[test]

@@ -252,17 +252,10 @@ pub(crate) enum Accel {
     Exclude2(u8, u8),
     /// Run over all input until the first occurance of any of the 3 needles
     Exclude3(u8, u8, u8),
-    CountedExclude {
-        opener: u8,
-        closer: u8,
-    },
-    CountedExclude2 {
-        opener: [u8; 2],
-        closer: [u8; 2],
-    },
-    CountedExclude3 {
+    CountedExclusion {
         opener: [u8; 3],
         closer: [u8; 3],
+        n: u8,
     },
 }
 
@@ -306,31 +299,11 @@ impl Accel {
                     u32::from(n2),
                 ]
             }
-            Accel::CountedExclude { opener, closer } => {
+            Accel::CountedExclusion { opener, closer, n } => {
                 vec![
                     u32::from(s),
                     ACCEL_COUNTED_EXCLUSION,
-                    1,
-                    u32::from(opener),
-                    u32::from(closer),
-                    0,
-                ]
-            }
-            Accel::CountedExclude2 { opener, closer } => {
-                vec![
-                    u32::from(s),
-                    ACCEL_COUNTED_EXCLUSION,
-                    2,
-                    u32::from_le_bytes([opener[0], opener[1], 0, 0]),
-                    u32::from_le_bytes([closer[0], closer[1], 0, 0]),
-                    0,
-                ]
-            }
-            Accel::CountedExclude3 { opener, closer } => {
-                vec![
-                    u32::from(s),
-                    ACCEL_COUNTED_EXCLUSION,
-                    3,
+                    u32::from(n),
                     u32::from_le_bytes([opener[0], opener[1], opener[2], 0]),
                     u32::from_le_bytes([closer[0], closer[1], closer[2], 0]),
                     0,
@@ -1617,20 +1590,10 @@ fn read_accel(
                     return Err(StaticLexerError::InvalidAccelNeedles { mode });
                 }
                 read += 6;
-                match n {
-                    1 => Accel::CountedExclude {
-                        opener: opener_bytes[0],
-                        closer: closer_bytes[0],
-                    },
-                    2 => Accel::CountedExclude2 {
-                        opener: [opener_bytes[0], opener_bytes[1]],
-                        closer: [closer_bytes[0], closer_bytes[1]],
-                    },
-                    3 => Accel::CountedExclude3 {
-                        opener: [opener_bytes[0], opener_bytes[1], opener_bytes[2]],
-                        closer: [closer_bytes[0], closer_bytes[1], closer_bytes[2]],
-                    },
-                    _ => unreachable!(),
+                Accel::CountedExclusion {
+                    opener: [opener_bytes[0], opener_bytes[1], opener_bytes[2]],
+                    closer: [closer_bytes[0], closer_bytes[1], closer_bytes[2]],
+                    n: n as u8,
                 }
             }
             value => {

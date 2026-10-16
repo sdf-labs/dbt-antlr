@@ -714,7 +714,7 @@ impl<'sc> ModeBuild<'sc> {
         let mut accel_tag = vec![0u8; num_states];
         let mut accel_data = Vec::new();
         for (s, rows) in self.rows.iter().enumerate() {
-            let accel = counted_accel(s as u32, rows, &self.states[s], &self.counted_rules)
+            let accel = counted_accel(s as u32, rows, &self.states, &self.counted_rules)
                 .or_else(|| compute_accel(s as u32, rows));
             if let Some(accel) = accel {
                 accel_data.push(accel);
@@ -922,23 +922,17 @@ fn detect_counted_comment_rule(atn: &ATN, rule_index: usize) -> Option<CountedCo
         }
     }
 
-    if closer.len() != opener.len() || closer == opener {
+    if closer.len() != opener.len() || closer == opener || !(1..=3).contains(&opener.len()) {
         return None;
     }
-    let accel = match opener.len() {
-        1 => Accel::CountedExclude {
-            opener: opener[0],
-            closer: closer[0],
-        },
-        2 => Accel::CountedExclude2 {
-            opener: [opener[0], opener[1]],
-            closer: [closer[0], closer[1]],
-        },
-        3 => Accel::CountedExclude3 {
-            opener: [opener[0], opener[1], opener[2]],
-            closer: [closer[0], closer[1], closer[2]],
-        },
-        _ => return None,
+    let mut opener_arr = [0u8; 3];
+    let mut closer_arr = [0u8; 3];
+    opener_arr[..opener.len()].copy_from_slice(&opener);
+    closer_arr[..closer.len()].copy_from_slice(&closer);
+    let accel = Accel::CountedExclusion {
+        opener: opener_arr,
+        closer: closer_arr,
+        n: opener.len() as u8,
     };
     Some(CountedCommentRule {
         rule_index: rule_index as i32,
@@ -974,6 +968,23 @@ fn context_has_return_state(mut ctx: Option<PredictionContextRef>, return_state:
     false
 }
 
+fn is_counted_comment_body(configs: &[LexerATNConfig<'_>], cc: &CountedCommentRule) -> bool {
+    !configs.is_empty()
+        && configs.iter().all(|c| {
+            let s = c.get_state();
+            if s.get_rule_index() == cc.rule_index {
+                s.state_type() != ATNStateType::RuleStop
+            } else {
+                s.state_type() == ATNStateType::RuleStop
+                    && c.get_context().is_none_or(|ctx| ctx.is_empty())
+            }
+        })
+        && configs.iter().any(|c| {
+            c.get_state().get_state_number() == cc.wildcard_state
+                && c.get_context().is_none_or(|ctx| ctx.is_empty())
+        })
+}
+
 fn strip_counted_comment_recursion(
     closed: &mut Vec<LexerATNConfig<'_>>,
     counted_rules: &[CountedCommentRule],
@@ -982,14 +993,7 @@ fn strip_counted_comment_recursion(
         return;
     }
     for cc in counted_rules {
-        if closed
-            .iter()
-            .all(|c| c.get_state().get_rule_index() == cc.rule_index)
-            && closed.iter().any(|c| {
-                c.get_state().get_state_number() == cc.wildcard_state
-                    && c.get_context().is_none_or(|ctx| ctx.is_empty())
-            })
-        {
+        if is_counted_comment_body(closed, cc) {
             closed.retain(|c| !context_has_return_state(c.get_context(), cc.rec_return_state));
             return;
         }
@@ -999,36 +1003,46 @@ fn strip_counted_comment_recursion(
 fn counted_accel(
     state: u32,
     rows: &StateRows,
-    state_data: &StateData<'_>,
+    states: &[StateData<'_>],
     counted_rules: &[CountedCommentRule],
 ) -> Option<Accel> {
-    if state_data.accept_type >= 0 || state_data.configs.is_empty() || counted_rules.is_empty() {
+    let state_data = &states[state as usize];
+    if state_data.configs.is_empty() || counted_rules.is_empty() {
         return None;
     }
-    let cc = counted_rules.iter().find(|cc| {
-        state_data
-            .configs
-            .iter()
-            .all(|c| c.get_state().get_rule_index() == cc.rule_index)
-            && state_data.configs.iter().any(|c| {
-                c.get_state().get_state_number() == cc.wildcard_state
-                    && c.get_context().is_none_or(|ctx| ctx.is_empty())
-            })
-    })?;
+    let cc = counted_rules
+        .iter()
+        .find(|cc| is_counted_comment_body(&state_data.configs, cc))?;
     let mut hi_covered_to = ASCII_MAX;
+    let mut hi_target = None;
     for iv in &rows.intervals {
-        if matches!(iv.entry, EdgeEntry::Target(target) if target == state)
-            && iv.hi > ASCII_MAX
-            && iv.lo <= hi_covered_to + 1
-        {
+        if iv.hi > ASCII_MAX && iv.lo <= hi_covered_to + 1 {
+            let EdgeEntry::Target(target) = iv.entry else {
+                break;
+            };
+            match hi_target {
+                None => hi_target = Some(target),
+                Some(t) if t == target => {}
+                Some(_) => break,
+            }
             hi_covered_to = hi_covered_to.max(iv.hi);
         }
     }
-    if hi_covered_to >= MAX_SYMBOL - 1 {
-        Some(cc.accel)
-    } else {
-        None
+    let hi_target = hi_target?;
+    if hi_covered_to < MAX_SYMBOL - 1 {
+        return None;
     }
+    if hi_target != state {
+        let target_configs = &states[hi_target as usize].configs;
+        let non_stop = state_data
+            .configs
+            .iter()
+            .filter(|c| c.get_state().state_type() != ATNStateType::RuleStop);
+        if !non_stop.eq(target_configs.iter()) {
+            return None;
+        }
+    }
+    Some(cc.accel)
 }
 
 /// The run-acceleration descriptor of one state, classified from its structural
@@ -1574,9 +1588,10 @@ mod tests {
     #[test]
     fn counted_exclude_serialization() {
         use crate::dfa::static_lexer_dfa::ACCEL_COUNTED_EXCLUSION;
-        let a1 = Accel::CountedExclude {
-            opener: b'{',
-            closer: b'}',
+        let a1 = Accel::CountedExclusion {
+            opener: [b'{', 0, 0],
+            closer: [b'}', 0, 0],
+            n: 1,
         };
         assert_eq!(
             a1.to_serialized(4),
@@ -1589,9 +1604,10 @@ mod tests {
                 0
             ]
         );
-        let a2 = Accel::CountedExclude2 {
-            opener: *b"/*",
-            closer: *b"*/",
+        let a2 = Accel::CountedExclusion {
+            opener: [b'/', b'*', 0],
+            closer: [b'*', b'/', 0],
+            n: 2,
         };
         assert_eq!(
             a2.to_serialized(5),
@@ -1604,9 +1620,10 @@ mod tests {
                 0,
             ]
         );
-        let a3 = Accel::CountedExclude3 {
+        let a3 = Accel::CountedExclusion {
             opener: *b"/*-",
             closer: *b"-*/",
+            n: 3,
         };
         assert_eq!(
             a3.to_serialized(6),
