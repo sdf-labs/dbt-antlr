@@ -251,10 +251,10 @@ impl StaticLexerDfaBuilder {
         fin: Finalizer<'sc>,
     ) -> ModeBuildOutcome {
         let start_state = atn.mode_to_start_state[mode_index];
-        let counted_rules = detect_counted_comment_rules(atn, start_state);
+        let recursive_rules = detect_simple_recursive_rules(atn, start_state);
         let mut mode = ModeBuild::new(
             self.max_states_per_mode.min(MAX_TABLE_STATE_COUNT),
-            counted_rules,
+            recursive_rules,
         );
         let mut env = BuildEnv::default();
         let start_set = start_state_core(atn, start_state.as_ref(), &mut env, fin.store.arena());
@@ -329,13 +329,12 @@ impl LexerClosureEnv for BuildEnv {
     }
 }
 
-/// The build-side [`FinalizeStore`]: a bump arena that backs both the scratch
-/// and the finalized configs of one mode, plus interning maps for lexer
-/// action executors and semantic contexts. Config identity after
-/// finalization is structural: contexts are hash-consed by the
-/// [`PredictionContextCache`] of the mode, executors and semantic contexts
-/// intern here. One store per mode: the arena must live exactly as long as
-/// the [`ModeBuild`] that borrows it.
+/// The build-side [`FinalizeStore`]
+///
+/// A bump arena that backs both the scratch and the finalized configs of one
+/// mode, plus interning maps for lexer action executors and semantic contexts.
+/// One store per mode: the arena must live exactly as long as the [`ModeBuild`]
+/// that borrows it.
 #[derive(Debug)]
 struct BuildStore<'sc> {
     executors: RefCell<HashSet<&'sc LexerActionExecutor<'sc>>>,
@@ -435,10 +434,6 @@ impl<'sc> FinalizeStore<'sc> for BuildStore<'sc> {
     }
 }
 
-/// Finalizes scratch configs into the build store of a mode. After
-/// finalization, config equality is exact: contexts are hash-consed
-/// (pointer-unique for structural equality), executors and semantic contexts
-/// are interned.
 #[derive(Clone, Copy)]
 struct Finalizer<'sc> {
     cache: &'sc PredictionContextCache<'sc>,
@@ -519,11 +514,9 @@ fn config_action_indices(atn: &ATN, config: &LexerATNConfig<'_>) -> Result<Vec<u
     Ok(actions)
 }
 
-/// One table state: the finalized closed config set in insertion order and
-/// the accept data. `accept_actions` holds the ATN indices of the actions of
-/// the accept config. Conversion to `LexerAction<'static>` clones happens in
-/// [`ModeBuild::commit`]; the `(type, data1, data2)` triples exist only in
-/// the word stream.
+/// One finalized DFA state: the finalized closed config set in insertion order
+/// and the accept data. `accept_actions` holds the ATN indices of the actions
+/// of the accept config.
 #[derive(Debug)]
 struct StateData<'sc> {
     configs: Vec<LexerATNConfig<'sc>>,
@@ -531,16 +524,17 @@ struct StateData<'sc> {
     accept_actions: Vec<u32>,
 }
 
-/// The structured target of one edge. Packing (`NO_EDGE`, `ESCAPE`, the
-/// `ACCEPT_BIT` or-ing) happens only in [`ModeBuild::commit`].
+/// The structured target of one DFA edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EdgeEntry {
     /// The edge does not exist.
     None,
     /// The edge targets the table state with the given id.
     Target(u32),
-    /// The edge escapes to the lazy simulator. `Some` names the continuation
-    /// pool index. `None` is a budget escape and carries no continuation.
+    /// The edge can not be fully resolved by the static DFA builder and thus
+    /// must be deferred to the runtime ATN simulator: `Some` names the
+    /// continuation pool index, `None` is a budget escape and carries no
+    /// continuation.
     Escape(Option<u32>),
 }
 
@@ -580,12 +574,6 @@ impl ContinuationKind {
     }
 }
 
-/// A continuation in structural form: the finalized configs and the
-/// `alt_reached_accept` flag of each. Conversion to the pool entry (the
-/// local context table, the [`ContinuationConfig`] structs) happens in
-/// [`ModeBuild::commit`]. The derived `Hash` and `Eq` dedupe continuations
-/// by structural content: after finalization the `LexerATNConfig` equality
-/// is exact.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct PendingContinuation<'sc> {
     kind: ContinuationKind,
@@ -603,11 +591,11 @@ struct ModeBuild<'sc> {
     cont_ids: HashMap<PendingContinuation<'sc>, u32>,
     counts: EscapeCounts,
     max_states: usize,
-    counted_rules: Vec<CountedCommentRule>,
+    recursive_rules: Vec<SimpleRecursiveRule>,
 }
 
 impl<'sc> ModeBuild<'sc> {
-    fn new(max_states: usize, counted_rules: Vec<CountedCommentRule>) -> Self {
+    fn new(max_states: usize, recursive_rules: Vec<SimpleRecursiveRule>) -> Self {
         ModeBuild {
             states: Vec::new(),
             rows: Vec::new(),
@@ -616,7 +604,7 @@ impl<'sc> ModeBuild<'sc> {
             cont_ids: HashMap::new(),
             counts: EscapeCounts::default(),
             max_states,
-            counted_rules,
+            recursive_rules,
         }
     }
 
@@ -714,7 +702,7 @@ impl<'sc> ModeBuild<'sc> {
         let mut accel_tag = vec![0u8; num_states];
         let mut accel_data = Vec::new();
         for (s, rows) in self.rows.iter().enumerate() {
-            let accel = counted_accel(s as u32, rows, &self.states, &self.counted_rules)
+            let accel = maybe_counted_accel(s as u32, rows, &self.states, &self.recursive_rules)
                 .or_else(|| compute_accel(s as u32, rows));
             if let Some(accel) = accel {
                 accel_data.push(accel);
@@ -773,20 +761,27 @@ impl<'sc> ModeBuild<'sc> {
     }
 }
 
+/// Special case to handle rules of the following shape:
+///
+///   COMMENT : '/*' (COMMENT | .)*? '*/' ;
+///
+/// instead of deferring these to adaptive runtime, we compile them into a
+/// special [`Accel::CountedExclusion`] that uses a depth counter to track the
+/// recursion while still utilizing SIMD accelerated scans.
 #[derive(Debug, Clone, Copy)]
-struct CountedCommentRule {
+struct SimpleRecursiveRule {
     rule_index: i32,
     rec_return_state: i32,
     wildcard_state: i32,
     accel: Accel,
 }
 
-fn detect_counted_comment_rules(atn: &ATN, mode_start: ATNStateRef) -> Vec<CountedCommentRule> {
+fn detect_simple_recursive_rules(atn: &ATN, mode_start: ATNStateRef) -> Vec<SimpleRecursiveRule> {
     let mut rules = Vec::new();
     for tr in mode_start.get_transitions() {
         let rule_index = tr.get_target().get_rule_index();
         if rule_index >= 0 {
-            if let Some(cc) = detect_counted_comment_rule(atn, rule_index as usize) {
+            if let Some(cc) = detect_simple_recursive_rule(atn, rule_index as usize) {
                 rules.push(cc);
             }
         }
@@ -794,7 +789,7 @@ fn detect_counted_comment_rules(atn: &ATN, mode_start: ATNStateRef) -> Vec<Count
     rules
 }
 
-fn detect_counted_comment_rule(atn: &ATN, rule_index: usize) -> Option<CountedCommentRule> {
+fn detect_simple_recursive_rule(atn: &ATN, rule_index: usize) -> Option<SimpleRecursiveRule> {
     use crate::atn_state::ATNStateExtTrait;
     use crate::transition::ConcreteTransition;
 
@@ -934,7 +929,7 @@ fn detect_counted_comment_rule(atn: &ATN, rule_index: usize) -> Option<CountedCo
         closer: closer_arr,
         n: opener.len() as u8,
     };
-    Some(CountedCommentRule {
+    Some(SimpleRecursiveRule {
         rule_index: rule_index as i32,
         rec_return_state: rt.follow_state.get_state_number(),
         wildcard_state: wild_state.get_state_number(),
@@ -968,7 +963,7 @@ fn context_has_return_state(mut ctx: Option<PredictionContextRef>, return_state:
     false
 }
 
-fn is_counted_comment_body(configs: &[LexerATNConfig<'_>], cc: &CountedCommentRule) -> bool {
+fn is_simple_recursive_body(configs: &[LexerATNConfig<'_>], cc: &SimpleRecursiveRule) -> bool {
     !configs.is_empty()
         && configs.iter().all(|c| {
             let s = c.get_state();
@@ -985,34 +980,34 @@ fn is_counted_comment_body(configs: &[LexerATNConfig<'_>], cc: &CountedCommentRu
         })
 }
 
-fn strip_counted_comment_recursion(
+fn strip_simple_recursion(
     closed: &mut Vec<LexerATNConfig<'_>>,
-    counted_rules: &[CountedCommentRule],
+    simple_recursive_rules: &[SimpleRecursiveRule],
 ) {
-    if closed.is_empty() || counted_rules.is_empty() {
+    if closed.is_empty() || simple_recursive_rules.is_empty() {
         return;
     }
-    for cc in counted_rules {
-        if is_counted_comment_body(closed, cc) {
+    for cc in simple_recursive_rules {
+        if is_simple_recursive_body(closed, cc) {
             closed.retain(|c| !context_has_return_state(c.get_context(), cc.rec_return_state));
             return;
         }
     }
 }
 
-fn counted_accel(
+fn maybe_counted_accel(
     state: u32,
     rows: &StateRows,
     states: &[StateData<'_>],
-    counted_rules: &[CountedCommentRule],
+    recursive_rules: &[SimpleRecursiveRule],
 ) -> Option<Accel> {
     let state_data = &states[state as usize];
-    if state_data.configs.is_empty() || counted_rules.is_empty() {
+    if state_data.configs.is_empty() || recursive_rules.is_empty() {
         return None;
     }
-    let cc = counted_rules
+    let cc = recursive_rules
         .iter()
-        .find(|cc| is_counted_comment_body(&state_data.configs, cc))?;
+        .find(|cc| is_simple_recursive_body(&state_data.configs, cc))?;
     let mut hi_covered_to = ASCII_MAX;
     let mut hi_target = None;
     for iv in &rows.intervals {
@@ -1119,7 +1114,7 @@ fn compute_edge<'sc>(
         fin.store.arena(),
     );
     let mut closed = fin.finalize_all(reach.get_items().cloned());
-    strip_counted_comment_recursion(&mut closed, &mode.counted_rules);
+    strip_simple_recursion(&mut closed, &mode.recursive_rules);
     let reason = if env.predicate_crossed {
         Some(EscapeReason::Predicate)
     } else if has_position_dependent_action(&closed) {

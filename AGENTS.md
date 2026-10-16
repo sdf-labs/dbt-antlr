@@ -1,7 +1,7 @@
 The following needs to pass on every commit:
-- cargo test
+- cargo test --workspace
 - cargo fmt
-- cargo clippy
+- cargo clippy --workspace
 - Full e2e testsuite: cargo run -p runtime-testsuite
 
 ## Snapshot tests
