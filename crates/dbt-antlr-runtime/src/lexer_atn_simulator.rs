@@ -949,55 +949,113 @@ fn run_scan(hay: &[u8], mut c: usize, accel: Accel) -> usize {
     c
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CountedEntry {
+    Body(u32),
+    Close(u8, u32),
+    Open(u8, u32),
+}
+
+fn push_unique(vec: &mut Vec<CountedEntry>, entry: CountedEntry) {
+    if !vec.contains(&entry) {
+        vec.push(entry);
+    }
+}
+
 fn run_scan_counted(hay: &[u8], mut c: usize, opener: &[u8], closer: &[u8]) -> usize {
+    let start = c;
     let n = opener.len();
-    let mut depth = 1usize;
-    let mut min_depth = 1usize;
-    let mut last_closer = hay.len();
     let o0 = opener[0];
     let c0 = closer[0];
+
     while c + n <= hay.len() {
         let Some(i) = memchr::memchr2(o0, c0, &hay[c..]) else {
-            break;
+            return hay.len();
         };
         let pos = c + i;
         if pos + n > hay.len() {
-            break;
+            return hay.len();
         }
         let slice = &hay[pos..pos + n];
         if slice == closer {
-            depth -= 1;
-            if depth == 0 {
-                return pos;
-            }
-            if min_depth == 1 {
-                last_closer = pos;
-            } else {
-                min_depth -= 1;
-            }
-            c = pos + n;
-        } else if slice == opener {
-            let old_depth = depth;
-            depth += 1;
-            let mut step = n;
-            for offset in 1..n {
-                if pos + offset + n <= hay.len() && &hay[pos + offset..pos + offset + n] == closer {
-                    if min_depth == 1 {
-                        last_closer = pos + offset;
-                        if old_depth == 1 {
-                            min_depth = 2;
+            return pos;
+        }
+        if slice == opener {
+            c = pos.saturating_sub(n - 1).max(start);
+            break;
+        }
+        c = pos + 1;
+    }
+    if c + n > hay.len() {
+        return hay.len();
+    }
+
+    let mut state = vec![CountedEntry::Body(0)];
+    let mut next = Vec::with_capacity(8);
+    let mut last_closer = hay.len();
+
+    while c < hay.len() {
+        let has_partial = state.iter().any(|e| !matches!(e, CountedEntry::Body(_)));
+        if !has_partial {
+            let Some(i) = memchr::memchr2(o0, c0, &hay[c..]) else {
+                break;
+            };
+            c += i;
+        }
+        let b = hay[c];
+        next.clear();
+        for &entry in &state {
+            match entry {
+                CountedEntry::Close(idx, d) => {
+                    if b == closer[idx as usize] {
+                        if idx as usize + 1 == n {
+                            if d == 0 {
+                                last_closer = c + 1 - n;
+                                break;
+                            }
+                            push_unique(&mut next, CountedEntry::Body(d - 1));
+                        } else {
+                            push_unique(&mut next, CountedEntry::Close(idx + 1, d));
                         }
-                    } else {
-                        min_depth -= 1;
                     }
-                    step = offset + n;
-                    break;
+                }
+                CountedEntry::Open(idx, d) => {
+                    if b == opener[idx as usize] {
+                        if idx as usize + 1 == n {
+                            push_unique(&mut next, CountedEntry::Body(d));
+                        } else {
+                            push_unique(&mut next, CountedEntry::Open(idx + 1, d));
+                        }
+                    }
+                }
+                CountedEntry::Body(d) => {
+                    if b == c0 {
+                        if n == 1 {
+                            if d == 0 {
+                                last_closer = c;
+                                break;
+                            }
+                            push_unique(&mut next, CountedEntry::Body(d - 1));
+                        } else {
+                            push_unique(&mut next, CountedEntry::Close(1, d));
+                        }
+                    }
+                    if b == o0 {
+                        if n == 1 {
+                            push_unique(&mut next, CountedEntry::Body(d + 1));
+                        } else {
+                            push_unique(&mut next, CountedEntry::Open(1, d + 1));
+                        }
+                    }
+                    push_unique(&mut next, CountedEntry::Body(d));
                 }
             }
-            c = pos + step;
-        } else {
-            c = pos + 1;
         }
+        std::mem::swap(&mut state, &mut next);
+        if state.is_empty() {
+            return last_closer;
+        }
+        c += 1;
     }
     last_closer
 }

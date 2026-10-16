@@ -591,6 +591,8 @@ fn spike_escapes_match_lazy() {
         "/*/",
         "x/* c */y",
         "/* */*/",
+        "/*/**/*/",
+        "/*/*/**/*/*/",
         "/* a /* b */ c */ 42 let= z9",
         "9let=9",
         "abc\nlet=\r\n/* multi\nline /* nest\n*/ done */ 7",
@@ -601,6 +603,18 @@ fn spike_escapes_match_lazy() {
         "/*", "*/", "*", "/", "let", "le", "=", "==", "abc", "z", "09", " ", "\n", "@", "let=",
         "/* */",
     ];
+    let pieces = ["/*", "*/", "/", "*", "a"];
+    for k in 1..=6usize {
+        let total = pieces.len().pow(k as u32);
+        for mut n in 0..total {
+            let mut s = String::new();
+            for _ in 0..k {
+                s.push_str(pieces[n % pieces.len()]);
+                n /= pieces.len();
+            }
+            check(&fixture, GrammarKind::Spike, &s);
+        }
+    }
     let (escapes, _) = run_corpus(&fixture, GrammarKind::Spike, &corpus, &fragments, 0x591E);
     assert!(escapes > 0, "escape edges crossed");
 }
