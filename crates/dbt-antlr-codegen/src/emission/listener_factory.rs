@@ -13,8 +13,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::dbt::lexer_factory::ANTLR_VERSION;
-use crate::dbt::model::{
+use crate::emission::lexer_factory::ANTLR_VERSION;
+use crate::emission::model::{
     ListenerFileContext, ListenerFileModel, NamedActionsModel, VisitorFileContext, VisitorFileModel,
 };
 use crate::grammar::model::{ElementKind, GrammarUnit, Rule};

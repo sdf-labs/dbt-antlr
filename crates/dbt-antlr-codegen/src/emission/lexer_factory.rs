@@ -8,7 +8,7 @@
 //! `LexerFile`, and `Recognizer` model constructors, built on the vendored
 //! `grammar` analysis layer instead of the Java `Grammar` object.
 
-use crate::dbt::model::{
+use crate::emission::model::{
     ActionChunkModel, ChunkContextModel, IndexedActionModel, LexerFileContext, LexerModel,
     NamedActionsModel, OutputFileModel, RuleActionFunctionModel, SerializedAtnModel,
     StaticLexerTablesModel, TokenConstantModel,

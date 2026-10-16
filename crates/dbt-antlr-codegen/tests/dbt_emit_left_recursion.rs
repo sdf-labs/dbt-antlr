@@ -17,7 +17,7 @@
 mod common;
 
 use common::{compile_check, grammars_dir, mask_parser_atn_diff, report_first_diff};
-use dbt_antlr_codegen::dbt::{EmittedFile, emit_files_with_flags};
+use dbt_antlr_codegen::emission::{EmittedFile, emit_files_with_flags};
 
 fn emit_simplelr() -> Vec<EmittedFile> {
     let grammar = grammars_dir().join("SimpleLR.g4");

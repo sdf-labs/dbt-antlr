@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::OptimizationOptions;
 #[cfg(feature = "generator")]
-use crate::dbt::emit_files_with_options;
+use crate::emission::emit_files_with_options;
 use crate::error::{Diagnostic, EmitError};
 
 /// Generator configuration, primarily for use from a `build.rs` build script.

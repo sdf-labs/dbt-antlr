@@ -21,20 +21,20 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use crate::dbt::action_translator::{ActionScope, LabelDef, split_action, translate_action};
-use crate::dbt::emit::EmitError;
-use crate::dbt::lexer_factory::{
+use crate::emission::action_translator::{ActionScope, LabelDef, split_action, translate_action};
+use crate::emission::lexer_factory::{
     ANTLR_VERSION, capitalize, collect_named_actions, escape_if_needed, rule_context_struct_name,
     target_string_literal_from_string, token_constants, translate_literal_names,
     translate_symbolic_names,
 };
-use crate::dbt::listener_factory::alt_labels;
-use crate::dbt::model::{
+use crate::emission::listener_factory::alt_labels;
+use crate::emission::model::{
     ActionChunkModel, BitsetModel, ChoiceModel, ChunkContextModel, DeclModel, IndexedActionModel,
     OpLabelModel, PackedAtnModel, ParserFileContext, ParserFileModel, ParserModel,
     RuleActionFunctionModel, RuleFunctionModel, RuleNamedActionsModel, RuleRefModel, SrcOpModel,
     StructDeclModel, TokenInfoModel,
 };
+use crate::error::EmitError;
 use crate::grammar::atn::{
     AtnStateKind, CompiledParser, DecisionLookahead, FinalizedAtnGraph, FinalizedTransitionKind,
 };
@@ -2375,7 +2375,7 @@ fn sniff_action_body(
     rule_refs: &BTreeSet<String>,
     in_actions: &mut AltActionRefs,
 ) {
-    use crate::dbt::action_translator::SplitEvent;
+    use crate::emission::action_translator::SplitEvent;
     for event in split_action(body) {
         match event {
             SplitEvent::Attr(x) | SplitEvent::QualifiedAttr(x, _) => {

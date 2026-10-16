@@ -16,9 +16,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::dbt::emit::EmitError;
-use crate::dbt::lexer_factory::escape_if_needed;
-use crate::dbt::model::{ActionChunkModel, ChunkContextModel};
+use crate::emission::lexer_factory::escape_if_needed;
+use crate::emission::model::{ActionChunkModel, ChunkContextModel};
+use crate::error::EmitError;
 
 /// Predefined rule properties (`Rule.predefinedRulePropertiesDict`), the
 /// `PREDEFINED_RULE` attribute dictionary.

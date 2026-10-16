@@ -24,12 +24,14 @@
 #[cfg(feature = "atn-export")]
 pub mod atn_export;
 #[cfg(feature = "generator")]
+pub mod cli;
+#[cfg(feature = "generator")]
 mod compile_error;
 mod config;
-#[cfg(feature = "generator")]
-pub mod dbt;
 #[cfg(feature = "download")]
 mod download;
+#[cfg(feature = "generator")]
+pub mod emission;
 mod error;
 #[cfg(feature = "generator")]
 #[allow(dead_code)]
@@ -48,5 +50,5 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 #[cfg(feature = "generator")]
 #[doc(hidden)]
 pub fn run_cli() -> miette::Result<()> {
-    dbt::cli::run_cli()
+    cli::run_cli()
 }
