@@ -23,7 +23,7 @@ use dbt_antlr_runtime::dfa::static_dfa_build::{
     StaticLexerDfaBuilder,
 };
 
-use crate::dbt::model::StaticLexerTablesModel;
+use crate::emission::model::StaticLexerTablesModel;
 use crate::error::{Diagnostic, Severity};
 use crate::grammar::atn::CompiledLexer;
 use crate::grammar::model::{Block, ElementKind, GrammarUnit, Rule, RuleId};

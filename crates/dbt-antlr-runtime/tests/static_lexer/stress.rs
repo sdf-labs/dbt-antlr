@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Instant;
 
-use dbt_antlr_codegen::dbt::emit_files_with_options;
+use dbt_antlr_codegen::emission::emit_files_with_options;
 use dbt_antlr_codegen::OptimizationOptions;
 use dbt_antlr_runtime::atn::ATN;
 use dbt_antlr_runtime::atn_deserializer::ATNDeserializer;

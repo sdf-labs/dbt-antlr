@@ -9,7 +9,7 @@ mod common;
 
 use common::grammars_dir;
 use dbt_antlr_codegen::Config;
-use dbt_antlr_codegen::dbt::{EmitError, emit_files_with_flags};
+use dbt_antlr_codegen::emission::{EmitError, emit_files_with_flags};
 
 #[test]
 fn generates_the_same_files_as_the_emission_api() {

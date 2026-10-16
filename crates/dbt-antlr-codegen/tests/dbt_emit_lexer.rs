@@ -21,7 +21,7 @@ mod common;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use dbt_antlr_codegen::dbt::{EmittedFile, emit_lexer_files};
+use dbt_antlr_codegen::emission::{EmittedFile, emit_lexer_files};
 
 fn grammars_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

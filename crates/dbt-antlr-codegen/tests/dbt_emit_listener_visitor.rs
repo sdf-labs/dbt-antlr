@@ -25,7 +25,7 @@
 mod common;
 
 use common::{compile_check, grammars_dir, report_first_diff};
-use dbt_antlr_codegen::dbt::{
+use dbt_antlr_codegen::emission::{
     EmittedFile, emit_files, emit_files_with_flags, emit_listener_visitor_files,
 };
 

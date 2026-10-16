@@ -1,18 +1,34 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Bo Lin
+//! Emission layer generating Rust recognizers for the `dbt-antlr-runtime` runtime.
+//!
+//! Generated text comes from the minijinja template
+//! `templates/dbt/Rust.stg.jinja`, which mirrors the Java tool's `Rust.stg`.
+//! The output model ([`model`]) mirrors the Java `codegen.model` classes; the
+//! factories ([`lexer_factory`], [`parser_factory`]) mirror the Java
+//! `OutputModelController` / `LexerFactory` / `ParserFactory` walks on top of
+//! the `grammar` analysis layer.
+//!
 //! Public entry point of the dbt emission layer: generate Rust recognizer
 //! sources for the `dbt-antlr-runtime` runtime from `.g4` grammars.
 
+mod action_translator;
+mod lexer_factory;
+mod listener_factory;
+pub mod model;
+mod parser_factory;
+pub mod template;
+
 use std::path::{Path, PathBuf};
 
-use crate::dbt::lexer_factory::build_lexer_file_context;
-use crate::dbt::listener_factory::build_tree_walk_file_contexts;
-use crate::dbt::parser_factory::build_parser_file_context;
-use crate::dbt::static_lexer_dfa::build_static_lexer_tables;
-use crate::dbt::template::render_template;
+use crate::emission::lexer_factory::build_lexer_file_context;
+use crate::emission::listener_factory::build_tree_walk_file_contexts;
+use crate::emission::parser_factory::build_parser_file_context;
+use crate::emission::template::render_template;
 use crate::error::Diagnostic;
 use crate::grammar::compiler::{self, Compilation};
 use crate::grammar::loader::LoadOptions;
+use crate::optimization::static_lexer_dfa::build_static_lexer_tables;
 use crate::optimization::{OptimizationOptions, OptimizationPlan};
 /// One generated source file.
 #[derive(Clone, Debug, Eq, PartialEq)]

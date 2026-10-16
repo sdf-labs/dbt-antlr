@@ -6,7 +6,7 @@ for SQL-like languages.
 ## Repository layout
 
 - `crates/dbt-antlr-codegen` — the tool: `.g4` loading, semantics, ATN
-  construction, and code generation. The emission layer (`src/dbt/`) renders
+  construction, and code generation. The emission layer (`src/emission/`) renders
   recognizers for the `dbt-antlr-runtime` runtime from a minijinja template that
   mirrors the Java tool's `Rust.stg`; the `dbt-antlr-codegen` binary is the
   Java-tool-like command line (`-o`, `-lib`, `-visitor`, `-no-listener`).

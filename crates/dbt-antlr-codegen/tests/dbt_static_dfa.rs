@@ -11,7 +11,8 @@
 mod common;
 
 use common::grammars_dir;
-use dbt_antlr_codegen::dbt::{EmittedOutput, cli, emit_files_with_options};
+use dbt_antlr_codegen::cli;
+use dbt_antlr_codegen::emission::{EmittedOutput, emit_files_with_options};
 use dbt_antlr_codegen::{OptimizationOptions, Severity};
 
 fn emit(grammar_file: &str, static_lexer_dfa: bool) -> EmittedOutput {
