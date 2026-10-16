@@ -52,8 +52,10 @@
 //!   content.
 //! - Accel section: `num_accel_ints`, then the run-acceleration entries.
 //!   An entry is `(state, ACCEL_POSITIVE, w0, w1, w2, w3)` for a 128-bit
-//!   bitmap of self-looping ASCII symbols, or `(state, ACCEL_EXCLUSION,
-//!   n_needles, needle0, needle1, needle2)` with zero-padded needles.
+//!   bitmap of self-looping ASCII symbols, `(state, ACCEL_EXCLUSION,
+//!   n_needles, needle0, needle1, needle2)` with zero-padded needles, or
+//!   `(state, ACCEL_COUNTED_EXCLUSION, len, opener_le, closer_le, 0)` for a
+//!   counted nested opener/closer scan.
 //! - Escape rows: per state, `eof_escape`, `num_ranges`, then `num_ranges`
 //!   times `(lo_symbol, hi_symbol, continuation_index)`. The ranges are
 //!   the sorted, disjoint symbol intervals whose edge escapes. Edges with a
@@ -117,6 +119,8 @@ pub const CONTINUATION_SOURCE_SET: u32 = 1;
 pub const ACCEL_POSITIVE: u32 = 1;
 /// Accel tag: run over all input except up to three needle bytes.
 pub const ACCEL_EXCLUSION: u32 = 2;
+/// Accel tag: counted nested run over equal-length 1..=3-byte opener and closer.
+pub const ACCEL_COUNTED_EXCLUSION: u32 = 3;
 /// `behind` value of a position-independent action.
 pub const BEHIND_POSITION_INDEPENDENT: u32 = 0xFFFF;
 
@@ -232,11 +236,12 @@ pub(crate) struct ContinuationConfig {
     pub(crate) actions: Vec<u32>,
 }
 
-/// Per-state run-acceleration descriptor. When a run of consecutive input
-/// bytes all loops back to the same state, the walker consumes the whole
-/// run with a single scan instead of the per-char table chase. Both
-/// flavors re-express the per-char walk exactly: a run ends on the first
-/// byte that does not loop, which the normal table step then handles.
+/// Per-state run-acceleration descriptor.
+///
+/// When a run of consecutive input bytes all loops back to the same state, the
+/// walker consumes the whole run with a single scan instead of the per-char
+/// table chase. A run ends on the first byte that does not loop, which is then
+/// handed back to the normal table chase.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Accel {
     /// Run over the ASCII bytes set in the bitmap
@@ -247,6 +252,18 @@ pub(crate) enum Accel {
     Exclude2(u8, u8),
     /// Run over all input until the first occurance of any of the 3 needles
     Exclude3(u8, u8, u8),
+    CountedExclude {
+        opener: u8,
+        closer: u8,
+    },
+    CountedExclude2 {
+        opener: [u8; 2],
+        closer: [u8; 2],
+    },
+    CountedExclude3 {
+        opener: [u8; 3],
+        closer: [u8; 3],
+    },
 }
 
 impl Accel {
@@ -287,6 +304,36 @@ impl Accel {
                     u32::from(n0),
                     u32::from(n1),
                     u32::from(n2),
+                ]
+            }
+            Accel::CountedExclude { opener, closer } => {
+                vec![
+                    u32::from(s),
+                    ACCEL_COUNTED_EXCLUSION,
+                    1,
+                    u32::from(opener),
+                    u32::from(closer),
+                    0,
+                ]
+            }
+            Accel::CountedExclude2 { opener, closer } => {
+                vec![
+                    u32::from(s),
+                    ACCEL_COUNTED_EXCLUSION,
+                    2,
+                    u32::from_le_bytes([opener[0], opener[1], 0, 0]),
+                    u32::from_le_bytes([closer[0], closer[1], 0, 0]),
+                    0,
+                ]
+            }
+            Accel::CountedExclude3 { opener, closer } => {
+                vec![
+                    u32::from(s),
+                    ACCEL_COUNTED_EXCLUSION,
+                    3,
+                    u32::from_le_bytes([opener[0], opener[1], opener[2], 0]),
+                    u32::from_le_bytes([closer[0], closer[1], closer[2], 0]),
+                    0,
                 ]
             }
         }
@@ -1507,9 +1554,9 @@ fn read_action_lists(
 }
 
 /// Reads the run-acceleration section of one mode: a flattened list of
-/// fixed-stride entries, `(state, ACCEL_POSITIVE, w0..w3)` or `(state,
-/// ACCEL_EXCLUSION, n_needles, n0..n2)`, expanded into one descriptor per
-/// state.
+/// fixed-stride entries, `(state, ACCEL_POSITIVE, w0..w3)`, `(state,
+/// ACCEL_EXCLUSION, n_needles, n0..n2)`, or `(state, ACCEL_COUNTED_EXCLUSION,
+/// len, opener_le, closer_le, 0)`, expanded into one descriptor per state.
 fn read_accel(
     r: &mut Reader,
     mode: usize,
@@ -1549,6 +1596,40 @@ fn read_accel(
                         needle_words[1] as u8,
                         needle_words[2] as u8,
                     ),
+                    _ => unreachable!(),
+                }
+            }
+            ACCEL_COUNTED_EXCLUSION => {
+                let n = r.next()?;
+                let opener_word = r.next()?;
+                let closer_word = r.next()?;
+                let reserved = r.next()?;
+                let opener_bytes = opener_word.to_le_bytes();
+                let closer_bytes = closer_word.to_le_bytes();
+                if !(1..=3).contains(&n)
+                    || reserved != 0
+                    || opener_word == closer_word
+                    || opener_bytes[..n as usize].iter().any(|&b| b >= 0x80)
+                    || closer_bytes[..n as usize].iter().any(|&b| b >= 0x80)
+                    || opener_bytes[n as usize..].iter().any(|&b| b != 0)
+                    || closer_bytes[n as usize..].iter().any(|&b| b != 0)
+                {
+                    return Err(StaticLexerError::InvalidAccelNeedles { mode });
+                }
+                read += 6;
+                match n {
+                    1 => Accel::CountedExclude {
+                        opener: opener_bytes[0],
+                        closer: closer_bytes[0],
+                    },
+                    2 => Accel::CountedExclude2 {
+                        opener: [opener_bytes[0], opener_bytes[1]],
+                        closer: [closer_bytes[0], closer_bytes[1]],
+                    },
+                    3 => Accel::CountedExclude3 {
+                        opener: [opener_bytes[0], opener_bytes[1], opener_bytes[2]],
+                        closer: [closer_bytes[0], closer_bytes[1], closer_bytes[2]],
+                    },
                     _ => unreachable!(),
                 }
             }

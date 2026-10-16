@@ -327,6 +327,27 @@ impl<'sim> LexerATNSimulator<'sim> {
                 }
                 symbol = lexer.input().la(1);
                 s = target;
+                let tag = table.accel_tag(s);
+                if tag != 0 {
+                    let accel = table.accel_payload(tag);
+                    if matches!(
+                        accel,
+                        Accel::CountedExclude { .. }
+                            | Accel::CountedExclude2 { .. }
+                            | Accel::CountedExclude3 { .. }
+                    ) {
+                        let input = lexer.input();
+                        let start = input.index() as usize;
+                        let c = {
+                            let text = input.get_text(0, input.size());
+                            run_scan(text.as_bytes(), start, accel)
+                        };
+                        if c > start {
+                            input.seek(c as isize);
+                            symbol = input.la(1);
+                        }
+                    }
+                }
             }
         }
 
@@ -895,23 +916,90 @@ fn run_scan(hay: &[u8], mut c: usize, accel: Accel) -> usize {
                 }
             }
         }
-        _ => {
-            let rest = &hay[c..];
-            let found = match accel {
-                Accel::Exclude(needle) => memchr::memchr(needle, rest),
-                Accel::Exclude2(needle1, needle2) => memchr::memchr2(needle1, needle2, rest),
-                Accel::Exclude3(needle1, needle2, needle3) => {
-                    memchr::memchr3(needle1, needle2, needle3, rest)
-                }
-                _ => unreachable!(),
-            };
-            match found {
+        Accel::Exclude(needle) => match memchr::memchr(needle, &hay[c..]) {
+            None => c = hay.len(),
+            Some(i) => c += i,
+        },
+        Accel::Exclude2(needle1, needle2) => match memchr::memchr2(needle1, needle2, &hay[c..]) {
+            None => c = hay.len(),
+            Some(i) => c += i,
+        },
+        Accel::Exclude3(needle1, needle2, needle3) => {
+            match memchr::memchr3(needle1, needle2, needle3, &hay[c..]) {
                 None => c = hay.len(),
                 Some(i) => c += i,
             }
         }
+        Accel::CountedExclude { opener, closer } => {
+            c = run_scan_counted(hay, c, &[opener], &[closer]);
+        }
+        Accel::CountedExclude2 {
+            ref opener,
+            ref closer,
+        } => {
+            c = run_scan_counted(hay, c, opener, closer);
+        }
+        Accel::CountedExclude3 {
+            ref opener,
+            ref closer,
+        } => {
+            c = run_scan_counted(hay, c, opener, closer);
+        }
     }
     c
+}
+
+fn run_scan_counted(hay: &[u8], mut c: usize, opener: &[u8], closer: &[u8]) -> usize {
+    let n = opener.len();
+    let mut depth = 1usize;
+    let mut min_depth = 1usize;
+    let mut last_closer = hay.len();
+    let o0 = opener[0];
+    let c0 = closer[0];
+    while c + n <= hay.len() {
+        let Some(i) = memchr::memchr2(o0, c0, &hay[c..]) else {
+            break;
+        };
+        let pos = c + i;
+        if pos + n > hay.len() {
+            break;
+        }
+        let slice = &hay[pos..pos + n];
+        if slice == closer {
+            depth -= 1;
+            if depth == 0 {
+                return pos;
+            }
+            if min_depth == 1 {
+                last_closer = pos;
+            } else {
+                min_depth -= 1;
+            }
+            c = pos + n;
+        } else if slice == opener {
+            let old_depth = depth;
+            depth += 1;
+            let mut step = n;
+            for offset in 1..n {
+                if pos + offset + n <= hay.len() && &hay[pos + offset..pos + offset + n] == closer {
+                    if min_depth == 1 {
+                        last_closer = pos + offset;
+                        if old_depth == 1 {
+                            min_depth = 2;
+                        }
+                    } else {
+                        min_depth -= 1;
+                    }
+                    step = offset + n;
+                    break;
+                }
+            }
+            c = pos + step;
+        } else {
+            c = pos + 1;
+        }
+    }
+    last_closer
 }
 
 /// Environment that the lexer move/closure core reads runtime input facts

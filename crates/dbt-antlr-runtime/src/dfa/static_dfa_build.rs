@@ -73,7 +73,7 @@ use crate::arena::{is_ref_in_arena, is_slice_in_arena};
 use crate::atn::ATN;
 use crate::atn_config::LexerATNConfig;
 use crate::atn_config_set::MutableLexerATNConfigSet;
-use crate::atn_state::ATNStateType;
+use crate::atn_state::{ATNStateRef, ATNStateType, StarLoopEntryState};
 use crate::dfa::static_lexer_dfa::{
     class_map, dense_hi_rows, Accel, ContinuationConfig, EscapeRange, LexerContinuation,
     StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, CONTINUATION_MOVED_CONFIGS,
@@ -86,7 +86,9 @@ use crate::lexer_action_executor::LexerActionExecutor;
 use crate::lexer_atn_simulator::{reachable_core, start_state_core, LexerClosureEnv, ReachCapture};
 use crate::prediction_context::PredictionContextRef;
 use crate::semantic_context::SemanticContext;
-use crate::transition::{Transition, TransitionType};
+use crate::transition::{
+    ActionTransition, AtomTransition, RuleTransition, Transition, TransitionType,
+};
 use crate::PredictionContextCache;
 
 /// The default per-mode DFA state budget
@@ -248,9 +250,12 @@ impl StaticLexerDfaBuilder {
         mode_index: usize,
         fin: Finalizer<'sc>,
     ) -> ModeBuildOutcome {
-        let mut mode = ModeBuild::new(self.max_states_per_mode.min(MAX_TABLE_STATE_COUNT));
-
         let start_state = atn.mode_to_start_state[mode_index];
+        let counted_rules = detect_counted_comment_rules(atn, start_state);
+        let mut mode = ModeBuild::new(
+            self.max_states_per_mode.min(MAX_TABLE_STATE_COUNT),
+            counted_rules,
+        );
         let mut env = BuildEnv::default();
         let start_set = start_state_core(atn, start_state.as_ref(), &mut env, fin.store.arena());
         let start_configs = fin.finalize_all(start_set.get_items().cloned());
@@ -598,10 +603,11 @@ struct ModeBuild<'sc> {
     cont_ids: HashMap<PendingContinuation<'sc>, u32>,
     counts: EscapeCounts,
     max_states: usize,
+    counted_rules: Vec<CountedCommentRule>,
 }
 
 impl<'sc> ModeBuild<'sc> {
-    fn new(max_states: usize) -> Self {
+    fn new(max_states: usize, counted_rules: Vec<CountedCommentRule>) -> Self {
         ModeBuild {
             states: Vec::new(),
             rows: Vec::new(),
@@ -610,6 +616,7 @@ impl<'sc> ModeBuild<'sc> {
             cont_ids: HashMap::new(),
             counts: EscapeCounts::default(),
             max_states,
+            counted_rules,
         }
     }
 
@@ -707,7 +714,9 @@ impl<'sc> ModeBuild<'sc> {
         let mut accel_tag = vec![0u8; num_states];
         let mut accel_data = Vec::new();
         for (s, rows) in self.rows.iter().enumerate() {
-            if let Some(accel) = compute_accel(s as u32, rows) {
+            let accel = counted_accel(s as u32, rows, &self.states[s], &self.counted_rules)
+                .or_else(|| compute_accel(s as u32, rows));
+            if let Some(accel) = accel {
                 accel_data.push(accel);
                 assert!(
                     accel_data.len() <= u8::MAX as usize,
@@ -761,6 +770,264 @@ impl<'sc> ModeBuild<'sc> {
             escape_ranges,
             continuations,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CountedCommentRule {
+    rule_index: i32,
+    rec_return_state: i32,
+    wildcard_state: i32,
+    accel: Accel,
+}
+
+fn detect_counted_comment_rules(atn: &ATN, mode_start: ATNStateRef) -> Vec<CountedCommentRule> {
+    let mut rules = Vec::new();
+    for tr in mode_start.get_transitions() {
+        let rule_index = tr.get_target().get_rule_index();
+        if rule_index >= 0 {
+            if let Some(cc) = detect_counted_comment_rule(atn, rule_index as usize) {
+                rules.push(cc);
+            }
+        }
+    }
+    rules
+}
+
+fn detect_counted_comment_rule(atn: &ATN, rule_index: usize) -> Option<CountedCommentRule> {
+    use crate::atn_state::ATNStateExtTrait;
+    use crate::transition::ConcreteTransition;
+
+    let start_state = *atn.rule_to_start_state.get(rule_index)?;
+    let stop_state = *atn.rule_to_stop_state.get(rule_index)?;
+
+    let mut opener = Vec::with_capacity(3);
+    let mut cur = start_state;
+    let mut steps = 0usize;
+    let loop_entry = loop {
+        steps += 1;
+        if steps > 32 {
+            return None;
+        }
+        if cur.state_type() == ATNStateType::StarLoopEntry {
+            break cur;
+        }
+        let [tr] = cur.get_transitions() else {
+            return None;
+        };
+        match tr.transition_type() {
+            TransitionType::Epsilon => {
+                cur = tr.get_target();
+            }
+            TransitionType::Atom => {
+                let ch = AtomTransition::cast_from(tr)?.label();
+                if !(0..=ASCII_MAX).contains(&ch) || opener.len() >= 3 {
+                    return None;
+                }
+                opener.push(ch as u8);
+                cur = tr.get_target();
+            }
+            _ => return None,
+        }
+    };
+    if opener.is_empty() {
+        return None;
+    }
+
+    let sle = StarLoopEntryState::try_cast(loop_entry.as_ref())?;
+    if !sle.nongreedy {
+        return None;
+    }
+    let [t0, t1] = loop_entry.get_transitions() else {
+        return None;
+    };
+    if !matches!(t0.transition_type(), TransitionType::Epsilon)
+        || !matches!(t1.transition_type(), TransitionType::Epsilon)
+    {
+        return None;
+    }
+    let (block_start, loop_end) = match (t0.get_target().state_type(), t1.get_target().state_type())
+    {
+        (ATNStateType::LoopEnd, ATNStateType::StarBlockStart) => (t1.get_target(), t0.get_target()),
+        (ATNStateType::StarBlockStart, ATNStateType::LoopEnd) => (t0.get_target(), t1.get_target()),
+        _ => return None,
+    };
+
+    let [b0, b1] = block_start.get_transitions() else {
+        return None;
+    };
+    if !matches!(b0.transition_type(), TransitionType::Epsilon)
+        || !matches!(b1.transition_type(), TransitionType::Epsilon)
+    {
+        return None;
+    }
+    let s0 = chase_epsilons(b0.get_target())?;
+    let s1 = chase_epsilons(b1.get_target())?;
+    let ([tr0], [tr1]) = (s0.get_transitions(), s1.get_transitions()) else {
+        return None;
+    };
+    let (rule_tr, wild_state, wild_tr) = match (tr0.transition_type(), tr1.transition_type()) {
+        (TransitionType::Rule, TransitionType::Wildcard) => (tr0, s1, tr1),
+        (TransitionType::Wildcard, TransitionType::Rule) => (tr1, s0, tr0),
+        _ => return None,
+    };
+    let rt = RuleTransition::cast_from(rule_tr)?;
+    if rt.get_target() != start_state {
+        return None;
+    }
+    if chase_epsilons(rt.follow_state)? != loop_entry {
+        return None;
+    }
+    if chase_epsilons(wild_tr.get_target())? != loop_entry {
+        return None;
+    }
+
+    let mut closer = Vec::with_capacity(3);
+    let mut cur = loop_end;
+    let mut seen_action = false;
+    let mut steps = 0usize;
+    while cur != stop_state {
+        steps += 1;
+        if steps > 32 {
+            return None;
+        }
+        let [tr] = cur.get_transitions() else {
+            return None;
+        };
+        match tr.transition_type() {
+            TransitionType::Epsilon => {
+                cur = tr.get_target();
+            }
+            TransitionType::Atom => {
+                if seen_action {
+                    return None;
+                }
+                let ch = AtomTransition::cast_from(tr)?.label();
+                if !(0..=ASCII_MAX).contains(&ch) || closer.len() >= 3 {
+                    return None;
+                }
+                closer.push(ch as u8);
+                cur = tr.get_target();
+            }
+            TransitionType::Action => {
+                let at = ActionTransition::cast_from(tr)?;
+                let action = atn.lexer_actions.get(at.action_index() as usize)?;
+                if action.is_position_dependent() {
+                    return None;
+                }
+                seen_action = true;
+                cur = tr.get_target();
+            }
+            _ => return None,
+        }
+    }
+
+    if closer.len() != opener.len() || closer == opener {
+        return None;
+    }
+    let accel = match opener.len() {
+        1 => Accel::CountedExclude {
+            opener: opener[0],
+            closer: closer[0],
+        },
+        2 => Accel::CountedExclude2 {
+            opener: [opener[0], opener[1]],
+            closer: [closer[0], closer[1]],
+        },
+        3 => Accel::CountedExclude3 {
+            opener: [opener[0], opener[1], opener[2]],
+            closer: [closer[0], closer[1], closer[2]],
+        },
+        _ => return None,
+    };
+    Some(CountedCommentRule {
+        rule_index: rule_index as i32,
+        rec_return_state: rt.follow_state.get_state_number(),
+        wildcard_state: wild_state.get_state_number(),
+        accel,
+    })
+}
+
+fn chase_epsilons(mut state: ATNStateRef) -> Option<ATNStateRef> {
+    for _ in 0..16 {
+        let [tr] = state.get_transitions() else {
+            return Some(state);
+        };
+        if !matches!(tr.transition_type(), TransitionType::Epsilon) {
+            return Some(state);
+        }
+        state = tr.get_target();
+    }
+    None
+}
+
+fn context_has_return_state(mut ctx: Option<PredictionContextRef>, return_state: i32) -> bool {
+    while let Some(c) = ctx {
+        if c.is_empty() {
+            break;
+        }
+        if c.get_return_state(0).get_state_number() == return_state {
+            return true;
+        }
+        ctx = c.get_parent(0);
+    }
+    false
+}
+
+fn strip_counted_comment_recursion(
+    closed: &mut Vec<LexerATNConfig<'_>>,
+    counted_rules: &[CountedCommentRule],
+) {
+    if closed.is_empty() || counted_rules.is_empty() {
+        return;
+    }
+    for cc in counted_rules {
+        if closed
+            .iter()
+            .all(|c| c.get_state().get_rule_index() == cc.rule_index)
+            && closed.iter().any(|c| {
+                c.get_state().get_state_number() == cc.wildcard_state
+                    && c.get_context().is_none_or(|ctx| ctx.is_empty())
+            })
+        {
+            closed.retain(|c| !context_has_return_state(c.get_context(), cc.rec_return_state));
+            return;
+        }
+    }
+}
+
+fn counted_accel(
+    state: u32,
+    rows: &StateRows,
+    state_data: &StateData<'_>,
+    counted_rules: &[CountedCommentRule],
+) -> Option<Accel> {
+    if state_data.accept_type >= 0 || state_data.configs.is_empty() || counted_rules.is_empty() {
+        return None;
+    }
+    let cc = counted_rules.iter().find(|cc| {
+        state_data
+            .configs
+            .iter()
+            .all(|c| c.get_state().get_rule_index() == cc.rule_index)
+            && state_data.configs.iter().any(|c| {
+                c.get_state().get_state_number() == cc.wildcard_state
+                    && c.get_context().is_none_or(|ctx| ctx.is_empty())
+            })
+    })?;
+    let mut hi_covered_to = ASCII_MAX;
+    for iv in &rows.intervals {
+        if matches!(iv.entry, EdgeEntry::Target(target) if target == state)
+            && iv.hi > ASCII_MAX
+            && iv.lo <= hi_covered_to + 1
+        {
+            hi_covered_to = hi_covered_to.max(iv.hi);
+        }
+    }
+    if hi_covered_to >= MAX_SYMBOL - 1 {
+        Some(cc.accel)
+    } else {
+        None
     }
 }
 
@@ -837,8 +1104,8 @@ fn compute_edge<'sc>(
         Some(&mut capture),
         fin.store.arena(),
     );
-    let closed = fin.finalize_all(reach.get_items().cloned());
-
+    let mut closed = fin.finalize_all(reach.get_items().cloned());
+    strip_counted_comment_recursion(&mut closed, &mode.counted_rules);
     let reason = if env.predicate_crossed {
         Some(EscapeReason::Predicate)
     } else if has_position_dependent_action(&closed) {
@@ -1302,6 +1569,56 @@ mod tests {
     fn accel_none_when_no_ascii_loops() {
         let rows = rows(vec![(128, MAX_SYMBOL, EdgeEntry::Target(3))]);
         assert_eq!(compute_accel(3, &rows), None);
+    }
+
+    #[test]
+    fn counted_exclude_serialization() {
+        use crate::dfa::static_lexer_dfa::ACCEL_COUNTED_EXCLUSION;
+        let a1 = Accel::CountedExclude {
+            opener: b'{',
+            closer: b'}',
+        };
+        assert_eq!(
+            a1.to_serialized(4),
+            vec![
+                4,
+                ACCEL_COUNTED_EXCLUSION,
+                1,
+                u32::from(b'{'),
+                u32::from(b'}'),
+                0
+            ]
+        );
+        let a2 = Accel::CountedExclude2 {
+            opener: *b"/*",
+            closer: *b"*/",
+        };
+        assert_eq!(
+            a2.to_serialized(5),
+            vec![
+                5,
+                ACCEL_COUNTED_EXCLUSION,
+                2,
+                u32::from_le_bytes([b'/', b'*', 0, 0]),
+                u32::from_le_bytes([b'*', b'/', 0, 0]),
+                0,
+            ]
+        );
+        let a3 = Accel::CountedExclude3 {
+            opener: *b"/*-",
+            closer: *b"-*/",
+        };
+        assert_eq!(
+            a3.to_serialized(6),
+            vec![
+                6,
+                ACCEL_COUNTED_EXCLUSION,
+                3,
+                u32::from_le_bytes([b'/', b'*', b'-', 0]),
+                u32::from_le_bytes([b'-', b'*', b'/', 0]),
+                0,
+            ]
+        );
     }
 }
 
