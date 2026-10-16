@@ -30,6 +30,7 @@ use dbt_antlr_runtime::token_factory::CommonTokenFactory;
 use dbt_antlr_runtime::{Arena, Lexer, TokenSource};
 
 #[rustfmt::skip]
+#[path = "../gen"]
 mod gen {
     // Generated lexers: lint with the codegen template, not here.
     #![allow(clippy::all, warnings)]

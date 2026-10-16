@@ -2,7 +2,7 @@
 //! `match_static` path (plus its escape/resume/restart handling) against the
 //! pure lazy `LexerATNSimulator`, token for token.
 //!
-//! Every grammar in `tests/static_lexer/` is compiled to a lexer ATN with
+//! Every grammar in `grammars/lexer/` is compiled to a lexer ATN with
 //! `dbt-antlr-codegen`'s `atn-export`, the tables are built with the
 //! `static-dfa-build` builder, and both sides run through `BaseLexer` with
 //! the same test predicates and custom actions. Token type, text, channel,
@@ -86,7 +86,7 @@ struct Fixture {
 
 fn compile(kind: GrammarKind, builder: &StaticLexerDfaBuilder) -> Fixture {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/static_lexer")
+        .join("grammars/lexer")
         .join(kind.file());
     let units =
         dbt_antlr_codegen::atn_export::compile_atn_data(&path, &[]).expect("grammar compiles");
@@ -877,7 +877,7 @@ fn budget_escape_restarts_match_lazy() {
 
 fn csv_words() -> Vec<u32> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/static_lexer")
+        .join("grammars/lexer")
         .join("CSV.g4");
     let units =
         dbt_antlr_codegen::atn_export::compile_atn_data(&path, &[]).expect("grammar compiles");

@@ -1825,7 +1825,7 @@ mod tests {
 
     fn fixture(name: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/static_lexer")
+            .join("grammars/lexer")
             .join(name)
     }
 
