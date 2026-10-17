@@ -43,6 +43,8 @@ pub struct ATN {
     pub rule_to_token_type: Vec<i32>,
 
     pub(crate) states: Vec<Pin<Box<ATNState>>>,
+
+    pub static_dfas: crate::dfa::static_parser_dfa::StaticDFATables,
 }
 
 impl Debug for ATN {
@@ -69,6 +71,7 @@ impl ATN {
             rule_to_stop_state: Vec::new(),
             rule_to_token_type: Vec::new(),
             states: Vec::new(),
+            static_dfas: crate::dfa::static_parser_dfa::StaticDFATables::empty(),
         }
     }
 

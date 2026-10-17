@@ -44,6 +44,8 @@ use crate::grammar::model::{
 };
 use crate::grammar::provenance::Origin;
 use crate::grammar::source::SourceSet;
+use crate::optimization::static_parser_dfa::StaticParserBuild;
+use dbt_antlr_runtime::dfa::static_parser_dfa::append_sdfa_section;
 
 /// `Token.EOF`.
 const TOKEN_EOF: i32 = -1;
@@ -61,6 +63,7 @@ pub(crate) fn build_parser_file_context(
     grammar_file_name: &str,
     gen_listener: bool,
     gen_visitor: bool,
+    static_build: Option<&StaticParserBuild>,
 ) -> Result<ParserFileContext, EmitError> {
     let unit = &compiled.semantic.unit;
     let recognizer = &compiled.semantic.recognizer;
@@ -70,6 +73,7 @@ pub(crate) fn build_parser_file_context(
         &compiled.graph,
         compiled,
         sources,
+        static_build,
     );
 
     let mut funcs = Vec::new();
@@ -108,7 +112,12 @@ pub(crate) fn build_parser_file_context(
         funcs,
         sempred_funcs,
         atn: PackedAtnModel {
-            serialized: compiled.packed.packed_words().to_vec(),
+            serialized: match static_build {
+                Some(build) => {
+                    append_sdfa_section(compiled.packed.packed_words(), &build.sdfa_words)
+                }
+                None => compiled.packed.packed_words().to_vec(),
+            },
         },
     };
 
@@ -149,6 +158,7 @@ struct WalkContext<'a> {
     /// The grammar source files (with token streams), for the
     /// `ImplicitSetLabel` token index.
     sources: &'a SourceSet,
+    static_build: Option<&'a StaticParserBuild>,
 }
 
 impl<'a> WalkContext<'a> {
@@ -158,6 +168,7 @@ impl<'a> WalkContext<'a> {
         graph: &'a FinalizedAtnGraph,
         compiled: &'a CompiledParser,
         sources: &'a SourceSet,
+        static_build: Option<&'a StaticParserBuild>,
     ) -> Self {
         let mut synthetic_states: BTreeMap<ModelNodeId, Vec<(AtnStateKind, usize)>> =
             BTreeMap::new();
@@ -223,7 +234,18 @@ impl<'a> WalkContext<'a> {
             attributes: &compiled.semantic.bindings.attributes,
             rule_retvals,
             sources,
+            static_build,
         }
+    }
+
+    fn has_static_dfa(&self, decision: usize) -> bool {
+        self.static_build
+            .is_some_and(|build| build.has_static_dfa(decision))
+    }
+
+    fn static_dfa_can_defer(&self, decision: usize) -> bool {
+        self.static_build
+            .is_some_and(|build| build.static_dfa_can_defer(decision))
     }
 
     /// The state of `kind` created for `owner`, e.g. the `StarLoopEntry`
@@ -490,9 +512,9 @@ fn inject_left_recursion_ops(code: &mut [SrcOpModel], rule: &Rule) -> Result<(),
     }
     // The primary alternatives: one code block per labeled primary.
     let mut primary_alts_code = match &mut ops[0] {
-        SrcOpModel::LL1AltBlock { alts, .. } | SrcOpModel::AltBlock { alts, .. } => {
-            alts.iter_mut().collect::<Vec<_>>()
-        }
+        SrcOpModel::LL1AltBlock { alts, .. }
+        | SrcOpModel::AltBlock { alts, .. }
+        | SrcOpModel::DFAAltBlock { alts, .. } => alts.iter_mut().collect::<Vec<_>>(),
         single @ SrcOpModel::CodeBlockForAlt { .. } => vec![single],
         _ => return Err(unexpected()),
     };
@@ -512,9 +534,12 @@ fn inject_left_recursion_ops(code: &mut [SrcOpModel], rule: &Rule) -> Result<(),
     }
     // After the primary alternatives, before the operator loop.
     ops.insert(1, SrcOpModel::RecRuleSetStopToken);
-    let SrcOpModel::StarBlock {
+    let (SrcOpModel::StarBlock {
         alts, iteration, ..
-    } = &mut ops[2]
+    }
+    | SrcOpModel::DFAStarBlock {
+        alts, iteration, ..
+    }) = &mut ops[2]
     else {
         return Err(unexpected());
     };
@@ -551,7 +576,7 @@ fn inject_left_recursion_ops(code: &mut [SrcOpModel], rule: &Rule) -> Result<(),
     let mut op_alt_infos = op_alt_infos.iter();
     match wrapper.first_mut() {
         // Multiple operator alternatives: one code block per alternative.
-        Some(SrcOpModel::AltBlock { alts, .. }) => {
+        Some(SrcOpModel::AltBlock { alts, .. } | SrcOpModel::DFAAltBlock { alts, .. }) => {
             for alt in alts {
                 let SrcOpModel::CodeBlockForAlt { ops, .. } = alt else {
                     return Err(unexpected());
@@ -699,7 +724,10 @@ impl RuleWalk<'_, '_> {
                 let choice = self.ebnf_block(root, kind, alts)?;
                 self.has_lookahead_block |= matches!(
                     choice,
-                    SrcOpModel::StarBlock { .. } | SrcOpModel::PlusBlock { .. }
+                    SrcOpModel::StarBlock { .. }
+                        | SrcOpModel::PlusBlock { .. }
+                        | SrcOpModel::DFAStarBlock { .. }
+                        | SrcOpModel::DFAPlusBlock { .. }
                 );
                 Ok(vec![choice])
             }
@@ -784,7 +812,10 @@ impl RuleWalk<'_, '_> {
             let choice = self.ebnf_block(element, kind, alts)?;
             self.has_lookahead_block |= matches!(
                 choice,
-                SrcOpModel::StarBlock { .. } | SrcOpModel::PlusBlock { .. }
+                SrcOpModel::StarBlock { .. }
+                    | SrcOpModel::PlusBlock { .. }
+                    | SrcOpModel::DFAStarBlock { .. }
+                    | SrcOpModel::DFAPlusBlock { .. }
             );
             return Ok(vec![choice]);
         }
@@ -831,7 +862,10 @@ impl RuleWalk<'_, '_> {
                         let choice = self.ebnf_block(element, kind, vec![wrapper])?;
                         self.has_lookahead_block |= matches!(
                             choice,
-                            SrcOpModel::StarBlock { .. } | SrcOpModel::PlusBlock { .. }
+                            SrcOpModel::StarBlock { .. }
+                                | SrcOpModel::PlusBlock { .. }
+                                | SrcOpModel::DFAStarBlock { .. }
+                                | SrcOpModel::DFAPlusBlock { .. }
                         );
                         Ok(vec![choice])
                     }
@@ -926,6 +960,14 @@ impl RuleWalk<'_, '_> {
                 alts,
                 error: Box::new(SrcOpModel::ThrowNoViableAlt),
             })
+        } else if self.walk.has_static_dfa(decision) {
+            let mut choice = choice_model(state, decision);
+            choice.table_can_defer = self.walk.static_dfa_can_defer(decision);
+            Ok(SrcOpModel::DFAAltBlock {
+                choice,
+                preamble: Vec::new(),
+                alts,
+            })
         } else {
             Ok(SrcOpModel::AltBlock {
                 choice: choice_model(state, decision),
@@ -983,6 +1025,10 @@ impl RuleWalk<'_, '_> {
                             error: Box::new(SrcOpModel::ThrowNoViableAlt),
                         })
                     }
+                } else if greedy && self.walk.has_static_dfa(decision) {
+                    let mut choice = choice_model(state, decision);
+                    choice.table_can_defer = self.walk.static_dfa_can_defer(decision);
+                    Ok(SrcOpModel::DFAOptionalBlock { choice, alts })
                 } else {
                     let mut choice = choice_model(state, decision);
                     choice.greedy = greedy;
@@ -1013,6 +1059,13 @@ impl RuleWalk<'_, '_> {
                         alts,
                         preamble: vec![capture_next_token_type()],
                         iteration: vec![capture_next_token_type()],
+                    })
+                } else if greedy && self.walk.has_static_dfa(decision) {
+                    choice.table_can_defer = self.walk.static_dfa_can_defer(decision);
+                    Ok(SrcOpModel::DFAStarBlock {
+                        choice,
+                        alts,
+                        iteration: Vec::new(),
                     })
                 } else {
                     Ok(SrcOpModel::StarBlock {
@@ -1049,6 +1102,13 @@ impl RuleWalk<'_, '_> {
                         alts,
                         preamble: vec![capture_next_token_type()],
                         iteration: vec![capture_next_token_type()],
+                    })
+                } else if greedy && self.walk.has_static_dfa(decision) {
+                    choice.table_can_defer = self.walk.static_dfa_can_defer(decision);
+                    Ok(SrcOpModel::DFAPlusBlock {
+                        choice,
+                        alts,
+                        error: Box::new(SrcOpModel::ThrowNoViableAlt),
                     })
                 } else {
                     Ok(SrcOpModel::PlusBlock {
@@ -1625,6 +1685,7 @@ fn choice_model(state_number: usize, decision: usize) -> ChoiceModel {
         loop_back_state_number: 0,
         greedy: true,
         alt_look: Vec::new(),
+        table_can_defer: false,
     }
 }
 

@@ -17,7 +17,7 @@ use crate::interval_set::IntervalSet;
 use crate::parser_atn_simulator::ParserATNSimulator;
 use crate::recognizer::{Actions, Recognizer};
 use crate::rule_context::{states_stack, RuleContext as _};
-use crate::token::{Token, TOKEN_EOF};
+use crate::token::{OwningToken, Token, TOKEN_EOF};
 use crate::token_factory::TokenFactory;
 use crate::token_stream::TokenStream;
 use crate::tree::{NodeKindType, ParseTreeListener, Tree as _, TreeNode};
@@ -512,6 +512,104 @@ where
 
     pub fn set_global_cache_threshold(&mut self, threshold: usize) {
         self.global_cache_threshold = threshold;
+    }
+
+    pub fn dfa_predict(&mut self, decision: i32) -> Result<i32, ANTLRError> {
+        let alt = self.dfa_walk(decision)?;
+        if alt >= crate::dfa::static_parser_dfa::VIRTUAL_ALT_BASE {
+            Ok(crate::atn::INVALID_ALT)
+        } else {
+            Ok(alt)
+        }
+    }
+
+    pub fn dfa_predict_virtual(&mut self, decision: i32) -> Result<i32, ANTLRError> {
+        self.dfa_walk(decision)
+    }
+
+    fn dfa_walk(&mut self, decision: i32) -> Result<i32, ANTLRError> {
+        let precedence = self.get_precedence();
+        let static_dfas = &self.get_interpreter().atn().static_dfas;
+        if static_dfas.is_precedence_dispatched(decision) && self.parent_ctx().is_none() {
+            return Ok(0);
+        }
+        let Some(dfa) = static_dfas.table(decision, precedence) else {
+            return Ok(0);
+        };
+        let mut s = 0i32;
+        let mut i = 1isize;
+        loop {
+            let alt = dfa.accepts[s as usize];
+            if alt == crate::dfa::static_parser_dfa::ESCAPE {
+                if let Some((cont_idx, cont)) = dfa.continuation(s) {
+                    let depth = (i - 1) as usize;
+                    return self.get_interpreter().resume_from_continuation(
+                        decision,
+                        cont_idx,
+                        dfa.continuations.len(),
+                        cont,
+                        depth,
+                        self,
+                    );
+                }
+                return Ok(0);
+            }
+            if alt == crate::dfa::static_parser_dfa::CONFLICT_ESCAPE {
+                if let Some(sll_min_alt) = dfa.conflict_min_alt(s) {
+                    return self.get_interpreter().adaptive_predict_conflict(
+                        decision,
+                        sll_min_alt,
+                        self,
+                    );
+                }
+                return Ok(0);
+            }
+            if alt == crate::dfa::static_parser_dfa::GUARDED {
+                let mut defers = false;
+                let mut c = self.ctx();
+                while let Some(node) = c {
+                    let inv = node.get_invoking_state();
+                    if inv < 0 {
+                        break;
+                    }
+                    match dfa.guard_step(inv) {
+                        Some(true) => {
+                            defers = true;
+                            break;
+                        }
+                        Some(false) => break,
+                        None => c = node.get_parent(),
+                    }
+                }
+                if !defers {
+                    return Ok(dfa.guarded_alt(s).unwrap());
+                }
+                return Ok(0);
+            }
+            if alt > 0 {
+                return Ok(alt);
+            }
+            let t = self.input.la(i);
+            match dfa.edge(s, t) {
+                Some(next) => {
+                    s = next;
+                    i += 1;
+                }
+                None => {
+                    if let Some(alt) = dfa.fallback(s) {
+                        return Ok(alt);
+                    }
+                    let start = self.input.lt(1).map(|t| OwningToken::from(t as &dyn Token));
+                    let offending = self.input.lt(i).map(|t| OwningToken::from(t as &dyn Token));
+                    return Err(match (start, offending) {
+                        (Some(start), Some(offending)) => {
+                            ANTLRError::no_alt_full(self, start, offending)
+                        }
+                        _ => ANTLRError::no_alt(self),
+                    });
+                }
+            }
+        }
     }
 
     pub fn get_interpreter_mut(&mut self) -> &mut ParserATNSimulator<'arena> {

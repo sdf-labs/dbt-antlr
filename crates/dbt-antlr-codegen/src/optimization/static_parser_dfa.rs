@@ -13,6 +13,7 @@ use dbt_antlr_runtime::dfa::decision_classifier::{
     PrecedenceStaticParserDFA, StaticParserDFA, VIRTUAL_ALT_BASE, distinct_bitsets, format_bitset,
     format_distinct_bitsets, format_histogram,
 };
+use dbt_antlr_runtime::dfa::static_parser_dfa::{CONFLICT_ESCAPE, DecisionTables, StaticDFATables};
 
 use crate::error::{Diagnostic, Severity};
 use crate::grammar::atn::CompiledParser;
@@ -23,9 +24,33 @@ use crate::grammar::model::{
 use crate::grammar::provenance::Origin;
 use crate::grammar::source::SourceSet;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct StaticParserBuild {
+    pub(crate) sdfa_words: Vec<u32>,
+    pub(crate) tables: StaticDFATables,
     pub(crate) diagnostics: Vec<Diagnostic>,
+}
+
+impl StaticParserBuild {
+    pub(crate) fn has_static_dfa(&self, decision: usize) -> bool {
+        !matches!(
+            self.tables.decisions().get(decision),
+            None | Some(DecisionTables::None)
+        )
+    }
+
+    pub(crate) fn static_dfa_can_defer(&self, decision: usize) -> bool {
+        match self.tables.decisions().get(decision) {
+            Some(DecisionTables::Dispatch(_)) => true,
+            Some(DecisionTables::Single(idx)) => {
+                let t = &self.tables.tables()[*idx];
+                t.accepts.iter().any(|&a| {
+                    a == ESCAPE || a == CONFLICT_ESCAPE || a == GUARDED || a >= VIRTUAL_ALT_BASE
+                })
+            }
+            _ => false,
+        }
+    }
 }
 
 pub(crate) fn build_static_parser_tables(
@@ -38,22 +63,25 @@ pub(crate) fn build_static_parser_tables(
         .expect("packed parser ATN deserializes");
     let ll1_disjoint = ll1_disjoint_vec(compiled, atn.decision_to_state.len());
     let mut classifier = DecisionClassifier::new(&atn, ll1_disjoint.clone());
-    classifier.abort_on_untrusted_conflict = true;
+    let (tables, results) = classifier.build_tables();
 
     let mut warnings = Vec::new();
-    for (decision, &s) in atn.decision_to_state.iter().enumerate() {
+    for (decision, r) in results.iter().enumerate() {
         if ll1_disjoint.get(decision).copied() == Some(true) {
             continue;
         }
-        let r = classifier.classify(s);
-        if let Some(w) = warn_if_not_fully_static(compiled, sources, grammar_path, &classifier, &r)
-        {
+        if let Some(w) = warn_if_not_fully_static(compiled, sources, grammar_path, &classifier, r) {
             warnings.push(w);
         }
     }
 
+    let sdfa_words = tables.to_words();
     let diagnostics = emit_decision_warnings(warnings);
-    StaticParserBuild { diagnostics }
+    StaticParserBuild {
+        sdfa_words,
+        tables,
+        diagnostics,
+    }
 }
 
 fn ll1_disjoint_vec(compiled: &CompiledParser, num_decisions: usize) -> Vec<bool> {

@@ -338,6 +338,13 @@ impl PackedATNDeserializer {
         self.read_transitions(&mut atn, words, &layout, &transition_ranges, &sets)?;
         self.read_decisions(&mut atn, words, &layout)?;
         self.add_rule_return_edges(&mut atn);
+        let rule_stops_end = layout.rule_stops.offset + layout.rule_stops.len;
+        if words.len() > rule_stops_end {
+            atn.static_dfas = crate::dfa::static_parser_dfa::StaticDFATables::from_words(
+                &words[rule_stops_end..],
+            )
+            .expect("invalid trailing SDFA section in packed parser ATN");
+        }
         Ok(atn)
     }
 
