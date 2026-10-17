@@ -1443,8 +1443,7 @@ mod tests {
 
     #[test]
     fn recursive_context_detection() {
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("grammars/lexer/XMLLexer.g4");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("grammars/XMLLexer.g4");
         let units = dbt_antlr_codegen::atn_export::compile_atn_data(&path, &[]).expect("compile");
         let lexer = units
             .iter()
@@ -1643,9 +1642,10 @@ mod accel_integration_tests {
     /// tags to work with.
     #[test]
     fn real_grammars_emit_accel_tags() {
-        for grammar in ["CSV", "Spike", "XMLLexer"] {
+        for grammar in ["CSV.g4", "lexer/Spike.g4", "XMLLexer.g4"] {
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join(format!("grammars/lexer/{grammar}.g4"));
+                .join("grammars")
+                .join(grammar);
             let units =
                 dbt_antlr_codegen::atn_export::compile_atn_data(&path, &[]).expect("compile");
             let lexer = units

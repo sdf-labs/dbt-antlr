@@ -1,5 +1,5 @@
 //! Integration tests for the compile-time static lexer DFA builder
-//! (`static-dfa-build` feature). Grammars live in `grammars/lexer/` and
+//! (`static-dfa-build` feature). Grammars live under `grammars/` and
 //! are compiled to lexer ATN words through `dbt-antlr-codegen`'s `atn-export`.
 //!
 //! The per-grammar expectations assert directly on the committed
@@ -23,7 +23,7 @@ use dbt_antlr_runtime::int_stream::EOF;
 
 fn grammar_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("grammars/lexer")
+        .join("grammars")
         .join(name)
 }
 
@@ -410,7 +410,7 @@ fn csv_build_is_deterministic() {
 
 #[test]
 fn spike_escape_coordinates() {
-    let (atn, build) = build("Spike.g4");
+    let (atn, build) = build("lexer/Spike.g4");
     check_invariants(&build, &atn);
     assert_eq!(build.modes.len(), 1);
     let dfa = build.table(0).expect("mode 0");
@@ -471,8 +471,8 @@ fn non_counted_recursion_escapes() {
 
 #[test]
 fn spike_build_is_deterministic() {
-    let (_, a) = build("Spike.g4");
-    let (_, b) = build("Spike.g4");
+    let (_, a) = build("lexer/Spike.g4");
+    let (_, b) = build("lexer/Spike.g4");
     assert_eq!(a.words, b.words);
     assert!(a
         .modes
@@ -485,7 +485,7 @@ fn spike_build_is_deterministic() {
 
 #[test]
 fn modes_grammar_builds_all_modes() {
-    let (atn, build) = build("MiniModes.g4");
+    let (atn, build) = build("lexer/MiniModes.g4");
     check_invariants(&build, &atn);
     assert_eq!(build.modes.len(), 2);
     assert!(build.modes.iter().all(|m| m.table.is_some()));
@@ -516,7 +516,7 @@ fn modes_grammar_builds_all_modes() {
 
 #[test]
 fn custom_action_escapes() {
-    let (atn, build) = build("CustomAction.g4");
+    let (atn, build) = build("lexer/CustomAction.g4");
     check_invariants(&build, &atn);
     assert_eq!(build.modes.len(), 1);
     let dfa = build.table(0).expect("mode 0");
@@ -576,7 +576,7 @@ fn zero_budget_fails_the_mode() {
 
 #[test]
 fn eof_edges_are_compiled() {
-    let (atn, build) = build("EofLexer.g4");
+    let (atn, build) = build("lexer/EofLexer.g4");
     check_invariants(&build, &atn);
     assert_eq!(build.modes.len(), 1);
     let dfa = build.table(0).expect("mode 0");
@@ -635,7 +635,7 @@ fn xml_lexer_builds_with_escapes() {
 
 #[test]
 fn start_closure_predicate_fails_the_mode() {
-    let (atn, build) = build("StartPred.g4");
+    let (atn, build) = build("lexer/StartPred.g4");
     check_invariants(&build, &atn);
     assert_eq!(build.modes.len(), 1);
     assert!(build.modes[0].table.is_none());
@@ -647,7 +647,7 @@ fn start_closure_predicate_fails_the_mode() {
 
 #[test]
 fn start_closure_custom_action_fails_the_mode() {
-    let (atn, build) = build("StartAction.g4");
+    let (atn, build) = build("lexer/StartAction.g4");
     check_invariants(&build, &atn);
     assert_eq!(build.modes.len(), 1);
     assert!(build.modes[0].table.is_none());
@@ -659,7 +659,7 @@ fn start_closure_custom_action_fails_the_mode() {
 
 #[test]
 fn start_closure_recursive_context_fails_the_mode() {
-    let (atn, build) = build("StartRecurse.g4");
+    let (atn, build) = build("lexer/StartRecurse.g4");
     check_invariants(&build, &atn);
     assert_eq!(build.modes.len(), 1);
     assert!(build.modes[0].table.is_none());
@@ -673,7 +673,7 @@ fn start_closure_recursive_context_fails_the_mode() {
 
 #[test]
 fn eof_edge_escapes_on_guarded_eof() {
-    let (atn, build) = build("EofEscape.g4");
+    let (atn, build) = build("lexer/EofEscape.g4");
     check_invariants(&build, &atn);
     assert_eq!(build.modes.len(), 1);
     let dfa = build.table(0).expect("mode 0");
@@ -707,7 +707,7 @@ fn eof_edge_escapes_on_guarded_eof() {
 #[test]
 #[ignore]
 fn dump_spike() {
-    let (atn, build) = build("Spike.g4");
+    let (atn, build) = build("lexer/Spike.g4");
     check_invariants(&build, &atn);
     let dfa = build.table(0).expect("mode 0");
     eprintln!("states: {}", dfa.num_states());

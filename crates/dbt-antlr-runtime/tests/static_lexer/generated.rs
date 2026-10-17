@@ -8,7 +8,7 @@
 //!
 //! - `XMLLexer` (modes, a `{true}?` predicate, a custom action): tables with
 //!   escape edges, ATN retained.
-//! - `SpikeLexer` (a recursive nested-comment rule, a predicated keyword):
+//! - `Spike` (a recursive nested-comment rule, a predicated keyword):
 //!   tables with escape edges, ATN retained.
 //! - `CSV` (no predicates, actions, or recursion): fully static tables, ATN
 //!   elided (`ATNSimulatorManager::new_static_lexer`).
@@ -36,8 +36,8 @@ mod gen {
     #![allow(clippy::all, warnings)]
     pub mod csvlexer;
     pub mod csvlexer_static;
-    pub mod spikelexer;
-    pub mod spikelexer_static;
+    pub mod spike;
+    pub mod spike_static;
     pub mod xmllexer;
     pub mod xmllexer_static;
 }
@@ -235,17 +235,17 @@ fn spike_lexer_static_matches_adaptive() {
     let mut total_escapes = 0;
     for input in SPIKE_CORPUS {
         let adaptive = run_lexer!(input, |arena, stream| {
-            gen::spikelexer::SpikeLexer::<_, CommonTokenFactory>::new(arena, stream)
+            gen::spike::Spike::<_, CommonTokenFactory>::new(arena, stream)
         });
         let r#static = run_lexer!(input, |arena, stream| {
-            gen::spikelexer_static::SpikeLexer::<_, CommonTokenFactory>::new(arena, stream)
+            gen::spike_static::Spike::<_, CommonTokenFactory>::new(arena, stream)
         });
-        assert_same(&adaptive, &r#static, "SpikeLexer", input);
+        assert_same(&adaptive, &r#static, "Spike", input);
         total_escapes += r#static.escapes;
     }
     assert!(
         total_escapes > 0,
-        "the predicate and recursion escapes of SpikeLexer must fire"
+        "the predicate and recursion escapes of Spike must fire"
     );
 }
 

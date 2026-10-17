@@ -1825,12 +1825,6 @@ mod tests {
 
     fn fixture(name: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("grammars/lexer")
-            .join(name)
-    }
-
-    fn gen_grammar(name: &str) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("grammars")
             .join(name)
     }
@@ -1845,32 +1839,27 @@ mod tests {
     }
 
     /// The word-stream codec round-trips over every fixture grammar plus
-    /// the generated-code witnesses (CSV, XMLLexer, SpikeLexer): decoding
+    /// the generated-code witnesses (CSV, XMLLexer): decoding
     /// the encoded tables gives the tables back, and re-encoding a decoded
     /// stream reproduces it word for word.
     #[test]
     fn word_stream_round_trip() {
-        let mut grammars: Vec<PathBuf> = [
+        let grammars: Vec<PathBuf> = [
+            "lexer/CustomAction.g4",
+            "lexer/EofChain.g4",
+            "lexer/EofEscape.g4",
+            "lexer/EofLexer.g4",
+            "lexer/MiniModes.g4",
+            "lexer/Spike.g4",
+            "lexer/StartAction.g4",
+            "lexer/StartPred.g4",
+            "lexer/StartRecurse.g4",
             "CSV.g4",
-            "CustomAction.g4",
-            "EofChain.g4",
-            "EofEscape.g4",
-            "EofLexer.g4",
-            "MiniModes.g4",
-            "Spike.g4",
-            "StartAction.g4",
-            "StartPred.g4",
-            "StartRecurse.g4",
             "XMLLexer.g4",
         ]
         .into_iter()
         .map(fixture)
         .collect();
-        grammars.extend(
-            ["CSV.g4", "XMLLexer.g4", "SpikeLexer.g4"]
-                .into_iter()
-                .map(gen_grammar),
-        );
 
         for path in grammars {
             let atn = compile_tables(&path);
@@ -1905,7 +1894,7 @@ mod tests {
     /// same way.
     #[test]
     fn commit_and_decode_agree() {
-        for name in ["Spike.g4", "XMLLexer.g4", "EofEscape.g4"] {
+        for name in ["lexer/Spike.g4", "XMLLexer.g4", "lexer/EofEscape.g4"] {
             let atn = compile_tables(&fixture(name));
             let build = StaticLexerDfaBuilder::new().build(&atn);
             let decoded = StaticLexerTables::from_words(&build.words).expect("decode");
