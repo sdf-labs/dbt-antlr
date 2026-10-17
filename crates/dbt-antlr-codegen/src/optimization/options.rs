@@ -26,6 +26,9 @@ pub struct OptimizationOptions {
     pub(crate) report_trivial_rules: bool,
     pub(crate) optimize_precedence_ladders: bool,
     pub(crate) report_precedence_ladders: bool,
+    pub(crate) static_parser_dfa: bool,
+    pub(crate) report_decisions: bool,
+    pub(crate) dump_dfas: Option<String>,
 }
 
 impl OptimizationOptions {
@@ -74,6 +77,26 @@ impl OptimizationOptions {
     /// without applying it. Conflicts with `optimize_precedence_ladders`.
     pub const fn report_precedence_ladders(&mut self, enabled: bool) -> &mut Self {
         self.report_precedence_ladders = enabled;
+        self
+    }
+
+    /// Precomputes static parser SLL prediction DFA tables. Default: `false`.
+    pub const fn static_parser_dfa(&mut self, enabled: bool) -> &mut Self {
+        self.static_parser_dfa = enabled;
+        self
+    }
+
+    /// Classifies parser decisions and emits a decision report in report-only mode.
+    /// Default: `false`.
+    pub const fn report_decisions(&mut self, enabled: bool) -> &mut Self {
+        self.report_decisions = enabled;
+        self
+    }
+
+    /// Dumps static parser DFA tables for the given selector specification in
+    /// report-only mode.
+    pub fn dump_dfas(&mut self, spec: impl Into<String>) -> &mut Self {
+        self.dump_dfas = Some(spec.into());
         self
     }
 

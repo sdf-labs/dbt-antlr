@@ -205,3 +205,45 @@ fn fully_static_csv_reports_no_escape_warnings() {
         output.diagnostics
     );
 }
+
+#[test]
+fn report_decisions_and_dump_dfas_run_in_report_only_mode() {
+    let grammar = grammars_dir().join("CSV.g4");
+    let out_dir =
+        std::env::temp_dir().join(format!("dbt-static-parser-report-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let args = vec![
+        "-o".to_owned(),
+        out_dir.to_string_lossy().into_owned(),
+        "--report-decisions".to_owned(),
+        "--dump-dfas=s:99,zzz,row".to_owned(),
+        grammar.to_string_lossy().into_owned(),
+    ];
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    cli::run(&args, &mut stdout, &mut stderr).expect("CLI run succeeds");
+
+    let out = String::from_utf8(stdout).expect("stdout is utf-8");
+    assert!(
+        out.contains("=== decision report: grammar CSV (4 decisions) ==="),
+        "{out}"
+    );
+    assert!(
+        out.contains("=== static DFA dump: grammar CSV ==="),
+        "{out}"
+    );
+    assert!(out.contains("--- decision 1: rule 'row'"), "{out}");
+    assert!(out.contains("(2 of 4 decisions dumped)"), "{out}");
+
+    let err = String::from_utf8(stderr).expect("stderr is utf-8");
+    assert!(err.contains("error[G4S191]"));
+    assert!(err.contains("no parser decision of grammar CSV matches 's:99'"));
+    assert!(err.contains("matches 'zzz'"));
+
+    let entries = std::fs::read_dir(&out_dir)
+        .expect("output dir exists")
+        .count();
+    assert_eq!(entries, 0, "report-only mode writes no files");
+    std::fs::remove_dir_all(&out_dir).expect("output dir removed");
+}

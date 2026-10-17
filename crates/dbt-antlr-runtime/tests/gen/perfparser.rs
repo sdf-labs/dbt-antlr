@@ -1,32 +1,7 @@
 // Generated from Perf.g4 by ANTLR 4.13.2
-use dbt_antlr_runtime::Arena;
-use dbt_antlr_runtime::PredictionContextCache;
-use dbt_antlr_runtime::parser::{Parser, BaseParser, ParserRecog, ListenerId};
-use dbt_antlr_runtime::token::CommonToken;
-use dbt_antlr_runtime::token_stream::TokenStream;
-use dbt_antlr_runtime::TokenSource;
-use dbt_antlr_runtime::parser_atn_simulator::ParserATNSimulator;
-use dbt_antlr_runtime::errors::ANTLRError;
-use dbt_antlr_runtime::rule_context::{CustomRuleContext, RuleContext};
-use dbt_antlr_runtime::recognizer::{Recognizer,Actions};
-use dbt_antlr_runtime::atn_config_set::ATNConfigSet;
-use dbt_antlr_runtime::atn_packed_deserializer::PackedATNDeserializer;
-use dbt_antlr_runtime::atn_simulator::BaseATNSimulator;
+use dbt_antlr_runtime::prelude::*;
 use dbt_antlr_runtime::atn_simulator::ParserATNSimulatorManager as ATNSimulatorManager;
-use dbt_antlr_runtime::atn::{ATN, INVALID_ALT};
-use dbt_antlr_runtime::error_strategy::{DefaultErrorStrategy, ErrorStrategyDelegate, ErrorStrategy};
-use dbt_antlr_runtime::parser_rule_context::{BaseParserRuleContext, ParserRuleContext};
-use dbt_antlr_runtime::tree::*;
-use dbt_antlr_runtime::token::{TOKEN_EOF,Token};
-use dbt_antlr_runtime::int_stream::EOF;
-use dbt_antlr_runtime::vocabulary::{Vocabulary,VocabularyImpl};
-use dbt_antlr_runtime::token_factory::TokenFactory;
 use super::perflistener::*;
-use std::marker::PhantomData;
-use std::sync::LazyLock;
-use std::rc::Rc;
-use std::ops::{DerefMut, Deref};
-
 dbt_antlr_runtime::check_version!("0","4");
 pub const Perf_T__0:i32=1; 
 pub const Perf_T__1:i32=2; 
@@ -157,32 +132,7 @@ pub struct PerfParserExt<'input, 'arena> {
 impl<'input, 'arena> PerfParserExt<'input, 'arena> {
 }
 
-impl<'input, 'arena, Input, TF> ParserRecog<'input, 'arena, BaseParserType<'input, 'arena, Input, TF>, TF::Tok> for PerfParserExt<'input, 'arena>
-where
-    'input: 'arena,
-    TF: TokenFactory<'input, 'arena> + 'arena,
-    Input: TokenStream<'input, 'arena, TF> + 'arena {
-    fn get_atn_simulator_man(&self) -> &'static ATNSimulatorManager { &ATN_SIMULATOR_MANAGER }        
-}
-
-impl<'input, 'arena, Input, TF> Actions<'input, 'arena, BaseParserType<'input, 'arena, Input, TF>, TF::Tok> for PerfParserExt<'input, 'arena>
-where
-    'input: 'arena,
-    TF: TokenFactory<'input, 'arena> + 'arena,
-    Input: TokenStream<'input, 'arena, TF> + 'arena,
-{
-	fn get_grammar_file_name(&self) -> & str{ "Perf.g4" }
-   	fn get_rule_names(&self) -> &[& str] { &ruleNames }
-   	fn get_vocabulary(&self) -> &dyn Vocabulary { &**VOCABULARY }
-	fn sempred(_localctx: Option<&'arena PerfParserNode<'input, 'arena, TF::Tok>>, rule_index: i32, pred_index: i32,
-			   recog:&mut BaseParserType<'input, 'arena, Input, TF>
-	) -> bool {
-		match rule_index {
-		    1 => PerfParser::<'input, 'arena, Input, TF>::expr_sempred(_localctx.and_then(|x| x.as_rule_context()), pred_index, recog),
-			_ => true
-		}
-	}
-}
+dbt_antlr_runtime::impl_parser_recog! { PerfParserExt, PerfParserNodeKind, "Perf.g4"; sempred (PerfParserNode<'input, 'arena, TF::Tok>, PerfParser) { 1 => expr_sempred, } }
 
 impl<'input, 'arena, Input, TF> PerfParser<'input, 'arena, Input, TF>
 where
@@ -209,53 +159,7 @@ where
 //------------------- stat ----------------
 pub type StatContextAll<'input, 'arena, Tok = CommonToken<'input>> = StatContext<'input, 'arena, Tok>;
 
-pub type StatContext<'input, 'arena, Tok = CommonToken<'input>> = BaseParserRuleContext<'input, 'arena, StatContextExt<'input, 'arena, Tok>, PerfParserNodeKind, Tok>;
-#[derive(Debug)]
-pub struct StatContextExt<'input: 'arena, 'arena, Tok: Token + 'input = CommonToken<'input>> {
-    ph: PhantomData<(&'arena (), &'input Tok)>,
-}
-
-impl<'input: 'arena, 'arena, Tok> CustomRuleContext<'input, 'arena, Tok> for StatContextExt<'input, 'arena, Tok>
-where
-    Tok: Token + 'input,
-{
-	type NodeKind = PerfParserNodeKind;
-    fn node_tag() -> PerfParserNodeKind { PerfParserNodeKind::StatContext }
-	fn get_rule_index(&self) -> usize { RULE_stat }
-    fn make_node(
-        arena: &'arena Arena,
-        ctx: StatContext<'input, 'arena, Tok>,
-    ) -> *mut PerfParserNode<'input, 'arena, Tok> {
-        arena.alloc_zeroed_node(ctx)}
-    fn cast_from<'a>(
-        node: &'a PerfParserNode<'input, 'arena, Tok>,
-    ) -> Option<&'a StatContext<'input, 'arena, Tok>> {
-        if node.node_tag() == <Self as CustomRuleContext<'input, 'arena, Tok>>::node_tag() {
-            Some(dbt_antlr_runtime::cast_unchecked!(node.ctx_ptr() => StatContext<'input, 'arena, Tok>))
-        } else {
-            None
-        }
-    }
-    fn cast_from_mut<'a>(
-        node: &'a mut PerfParserNode<'input, 'arena, Tok>,
-    ) -> Option<&'a mut StatContext<'input, 'arena, Tok>> {
-        if node.node_tag() == <Self as CustomRuleContext<'input, 'arena, Tok>>::node_tag() {
-            Some(dbt_antlr_runtime::cast_unchecked!(node.ctx_ptr() => mut StatContext<'input, 'arena, Tok>))
-        } else {
-            None
-        }
-    }
-}
-
-impl<'input: 'arena, 'arena, Tok: Token + 'input> StatContextExt<'input, 'arena, Tok>{
-	fn create(arena: &'arena Arena, parent: Option<&'arena PerfParserNode<'input, 'arena, Tok>>, invoking_state: i32) -> Result<&'arena mut PerfParserNode<'input, 'arena, Tok>, ANTLRError>
-    {
-        BaseParserRuleContext::create(arena, parent, invoking_state, StatContextExt {
-				ph: PhantomData
-			}
-		)
-	}
-}
+dbt_antlr_runtime::impl_ctx! { PerfParserNodeKind, StatContext, StatContextExt, RULE_stat }
 
 pub trait StatContextAttrs<'input, 'arena, Tok>: ParserRuleContext<'input, 'arena>
 where
@@ -281,105 +185,42 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn stat(&mut self,) -> Result<&'arena StatContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::maybe_grow_stack!({
-		let recog = self;
-        let _parentctx = recog.base.take_ctx();
-        recog.base.enter_rule(StatContextExt::create(recog.get_arena(), _parentctx, recog.get_state())?, 0, RULE_stat)?;
+        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, StatContext<TF::Tok>, RULE_stat, 0, |_parentctx| StatContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena StatContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
-		let result: Result<(), ANTLRError> = (|| {
-			recog.base.set_state(10);
-			recog.err_handler.sync(&mut recog.base)?;
-			match recog.get_interpreter().adaptive_predict(0,&mut recog.base)? {
-				1 =>{
-					/*------- Outer Most Alt 1 -------*/
-					unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
-					{
-					/*InvokeRule expr*/
-					recog.base.set_state(4);
-					recog.expr_rec(0)?;
-					recog.base.set_state(5);
-					recog.base.match_token(Perf_T__0,&mut recog.err_handler)?;
-					}
+		recog.base.set_state(10);
+		recog.err_handler.sync(&mut recog.base)?;
+		match recog.get_interpreter().adaptive_predict(0,&mut recog.base)? {
+			1 =>{
+				/*------- Outer Most Alt 1 -------*/
+				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
+				{
+				recog.base.set_state(4);
+				recog.expr_rec(0)?;
+				recog.base.set_state(5);
+				recog.base.match_token(Perf_T__0,&mut recog.err_handler)?;
 				}
-			,
-				2 =>{
-					/*------- Outer Most Alt 2 -------*/
-					unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
-					{
-					/*InvokeRule expr*/
-					recog.base.set_state(7);
-					recog.expr_rec(0)?;
-					recog.base.set_state(8);
-					recog.base.match_token(Perf_T__1,&mut recog.err_handler)?;
-					}
+			}
+		,
+			2 =>{
+				/*------- Outer Most Alt 2 -------*/
+				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
+				{
+				recog.base.set_state(7);
+				recog.expr_rec(0)?;
+				recog.base.set_state(8);
+				recog.base.match_token(Perf_T__1,&mut recog.err_handler)?;
 				}
+			}
 
-				_ => {}
-			}
-			Ok(())
-		})();
-		match result {
-            Ok(_)=>{},
-            Err(e) if !e.is_recoverable() => return Err(e),
-            Err(ref re) => {
-				recog.err_handler.report_error(&mut recog.base, re);
-				recog.err_handler.recover(&mut recog.base, re)?;
-			}
+			_ => {}
 		}
-		recog.base.exit_rule().map(|ctx: &'arena _| { ctx.as_rule_context().unwrap() })
-        })
+		})
 	}
 }
 //------------------- expr ----------------
 pub type ExprContextAll<'input, 'arena, Tok = CommonToken<'input>> = ExprContext<'input, 'arena, Tok>;
 
-pub type ExprContext<'input, 'arena, Tok = CommonToken<'input>> = BaseParserRuleContext<'input, 'arena, ExprContextExt<'input, 'arena, Tok>, PerfParserNodeKind, Tok>;
-#[derive(Debug)]
-pub struct ExprContextExt<'input: 'arena, 'arena, Tok: Token + 'input = CommonToken<'input>> {
-    ph: PhantomData<(&'arena (), &'input Tok)>,
-}
-
-impl<'input: 'arena, 'arena, Tok> CustomRuleContext<'input, 'arena, Tok> for ExprContextExt<'input, 'arena, Tok>
-where
-    Tok: Token + 'input,
-{
-	type NodeKind = PerfParserNodeKind;
-    fn node_tag() -> PerfParserNodeKind { PerfParserNodeKind::ExprContext }
-	fn get_rule_index(&self) -> usize { RULE_expr }
-    fn make_node(
-        arena: &'arena Arena,
-        ctx: ExprContext<'input, 'arena, Tok>,
-    ) -> *mut PerfParserNode<'input, 'arena, Tok> {
-        arena.alloc_zeroed_node(ctx)}
-    fn cast_from<'a>(
-        node: &'a PerfParserNode<'input, 'arena, Tok>,
-    ) -> Option<&'a ExprContext<'input, 'arena, Tok>> {
-        if node.node_tag() == <Self as CustomRuleContext<'input, 'arena, Tok>>::node_tag() {
-            Some(dbt_antlr_runtime::cast_unchecked!(node.ctx_ptr() => ExprContext<'input, 'arena, Tok>))
-        } else {
-            None
-        }
-    }
-    fn cast_from_mut<'a>(
-        node: &'a mut PerfParserNode<'input, 'arena, Tok>,
-    ) -> Option<&'a mut ExprContext<'input, 'arena, Tok>> {
-        if node.node_tag() == <Self as CustomRuleContext<'input, 'arena, Tok>>::node_tag() {
-            Some(dbt_antlr_runtime::cast_unchecked!(node.ctx_ptr() => mut ExprContext<'input, 'arena, Tok>))
-        } else {
-            None
-        }
-    }
-}
-
-impl<'input: 'arena, 'arena, Tok: Token + 'input> ExprContextExt<'input, 'arena, Tok>{
-	fn create(arena: &'arena Arena, parent: Option<&'arena PerfParserNode<'input, 'arena, Tok>>, invoking_state: i32) -> Result<&'arena mut PerfParserNode<'input, 'arena, Tok>, ANTLRError>
-    {
-        BaseParserRuleContext::create(arena, parent, invoking_state, ExprContextExt {
-				ph: PhantomData
-			}
-		)
-	}
-}
+dbt_antlr_runtime::impl_ctx! { PerfParserNodeKind, ExprContext, ExprContextExt, RULE_expr }
 
 pub trait ExprContextAttrs<'input, 'arena, Tok>: ParserRuleContext<'input, 'arena>
 where
@@ -422,152 +263,129 @@ where
 	}
 
 	fn expr_rec(&mut self, _p: i32) -> Result<&'arena ExprContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::maybe_grow_stack!({
-		let recog = self;
-		let _parentctx = recog.base.take_ctx();
-		let _parentState = recog.base.get_state();
-		recog.base.enter_recursion_rule(ExprContextExt::create(recog.get_arena(), _parentctx, recog.get_state())?, 2, RULE_expr, _p)?;
+        dbt_antlr_runtime::parse_rule!(rec recog = self, _parentctx, _parentState, ExprContext<TF::Tok>, RULE_expr, 2, |_parentctx| ExprContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); _p; {
         let _local_ctx_fn = |recog: &Self| -> &'arena ExprContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let _startState = 2;
-		let result: Result<(), ANTLRError> = (|| {
-	        let mut _alt: i32;
-			/*------- Outer Most Alt 1 -------*/
-			unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
-			{
-			recog.base.set_state(25);
-			recog.err_handler.sync(&mut recog.base)?;
-			match recog.base.input.la(1) {
-			    Perf_ID  => {
-			        {
-			        recog.base.set_state(13);
-			        recog.base.match_token(Perf_ID,&mut recog.err_handler)?;
-			        }}
-			    Perf_T__2  => {
-			        {
-			        recog.base.set_state(14);
-			        recog.base.match_token(Perf_T__2,&mut recog.err_handler)?;
-			        /*InvokeRule expr*/
-			        recog.base.set_state(15);
-			        recog.expr_rec(6)?;
-			        }}
-			    Perf_T__5  => {
-			        {
-			        recog.base.set_state(16);
-			        recog.base.match_token(Perf_T__5,&mut recog.err_handler)?;
-			        recog.base.set_state(17);
-			        recog.base.match_token(Perf_ID,&mut recog.err_handler)?;
-			        recog.base.set_state(18);
-			        recog.base.match_token(Perf_T__6,&mut recog.err_handler)?;
-			        /*InvokeRule expr*/
-			        recog.base.set_state(19);
-			        recog.expr_rec(3)?;
-			        }}
-			    Perf_T__9  => {
-			        {
-			        recog.base.set_state(20);
-			        recog.base.match_token(Perf_T__9,&mut recog.err_handler)?;
-			        /*InvokeRule expr*/
-			        recog.base.set_state(21);
-			        recog.expr_rec(0)?;
-			        recog.base.set_state(22);
-			        recog.base.match_token(Perf_T__3,&mut recog.err_handler)?;
-			        /*InvokeRule expr*/
-			        recog.base.set_state(23);
-			        recog.expr_rec(1)?;
-			        }}
-				_ => Err(ANTLRError::no_alt(&mut recog.base))?
+        let mut _alt: i32;
+		/*------- Outer Most Alt 1 -------*/
+		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
+		{
+		recog.base.set_state(25);
+		recog.err_handler.sync(&mut recog.base)?;
+		match recog.base.input.la(1) {
+		    Perf_ID  => {
+		        {
+		        recog.base.set_state(13);
+		        recog.base.match_token(Perf_ID,&mut recog.err_handler)?;
+		        }}
+		    Perf_T__2  => {
+		        {
+		        recog.base.set_state(14);
+		        recog.base.match_token(Perf_T__2,&mut recog.err_handler)?;
+		        recog.base.set_state(15);
+		        recog.expr_rec(6)?;
+		        }}
+		    Perf_T__5  => {
+		        {
+		        recog.base.set_state(16);
+		        recog.base.match_token(Perf_T__5,&mut recog.err_handler)?;
+		        recog.base.set_state(17);
+		        recog.base.match_token(Perf_ID,&mut recog.err_handler)?;
+		        recog.base.set_state(18);
+		        recog.base.match_token(Perf_T__6,&mut recog.err_handler)?;
+		        recog.base.set_state(19);
+		        recog.expr_rec(3)?;
+		        }}
+		    Perf_T__9  => {
+		        {
+		        recog.base.set_state(20);
+		        recog.base.match_token(Perf_T__9,&mut recog.err_handler)?;
+		        recog.base.set_state(21);
+		        recog.expr_rec(0)?;
+		        recog.base.set_state(22);
+		        recog.base.match_token(Perf_T__3,&mut recog.err_handler)?;
+		        recog.base.set_state(23);
+		        recog.expr_rec(1)?;
+		        }}
+			_ => Err(ANTLRError::no_alt(&mut recog.base))?
+		}
+		let tmp = recog.input.lt(-1);
+		recog.base.with_mut_ctx(|ctx| { ctx.set_stop(tmp.map(|t| t as _)); });
+		recog.base.set_state(41);
+		recog.err_handler.sync(&mut recog.base)?;
+		_alt = recog.get_interpreter().adaptive_predict(3,&mut recog.base)?;
+		while { _alt!=2 && _alt!=INVALID_ALT } {
+			if _alt==1 {
+				recog.trigger_exit_rule_event()?;
+				{
+				recog.base.set_state(39);
+				recog.err_handler.sync(&mut recog.base)?;
+				match recog.get_interpreter().adaptive_predict(2,&mut recog.base)? {
+					1 =>{
+						{
+						/*recRuleAltStartAction*/
+						let tmp = ExprContextExt::create(recog.get_arena(), _parentctx, _parentState)?;
+						let _prevctx = recog.push_new_recursion_context(tmp.into(), _startState, RULE_expr)?;
+
+						recog.base.set_state(27);
+						if !({recog.precpred(None, 5)}) {
+							Err(ANTLRError::failed_predicate(&mut recog.base, Some("recog.precpred(None, 5)".to_owned()), None))?;
+						}
+						recog.base.set_state(28);
+						recog.base.match_token(Perf_T__3,&mut recog.err_handler)?;
+						recog.base.set_state(29);
+						recog.expr_rec(6)?;
+						}
+					}
+				,
+					2 =>{
+						{
+						/*recRuleAltStartAction*/
+						let tmp = ExprContextExt::create(recog.get_arena(), _parentctx, _parentState)?;
+						let _prevctx = recog.push_new_recursion_context(tmp.into(), _startState, RULE_expr)?;
+
+						recog.base.set_state(30);
+						if !({recog.precpred(None, 4)}) {
+							Err(ANTLRError::failed_predicate(&mut recog.base, Some("recog.precpred(None, 4)".to_owned()), None))?;
+						}
+						recog.base.set_state(31);
+						recog.base.match_token(Perf_T__4,&mut recog.err_handler)?;
+						recog.base.set_state(32);
+						recog.expr_rec(5)?;
+						}
+					}
+				,
+					3 =>{
+						{
+						/*recRuleAltStartAction*/
+						let tmp = ExprContextExt::create(recog.get_arena(), _parentctx, _parentState)?;
+						let _prevctx = recog.push_new_recursion_context(tmp.into(), _startState, RULE_expr)?;
+
+						recog.base.set_state(33);
+						if !({recog.precpred(None, 2)}) {
+							Err(ANTLRError::failed_predicate(&mut recog.base, Some("recog.precpred(None, 2)".to_owned()), None))?;
+						}
+						recog.base.set_state(34);
+						recog.base.match_token(Perf_T__7,&mut recog.err_handler)?;
+						recog.base.set_state(35);
+						recog.expr_rec(0)?;
+						recog.base.set_state(36);
+						recog.base.match_token(Perf_T__8,&mut recog.err_handler)?;
+						recog.base.set_state(37);
+						recog.expr_rec(3)?;
+						}
+					}
+
+					_ => {}
+				}
+				} 
 			}
-			let tmp = recog.input.lt(-1);
-			recog.base.with_mut_ctx(|ctx| { ctx.set_stop(tmp.map(|t| t as _)); });
-			recog.base.set_state(41);
+			recog.base.set_state(43);
 			recog.err_handler.sync(&mut recog.base)?;
 			_alt = recog.get_interpreter().adaptive_predict(3,&mut recog.base)?;
-			while { _alt!=2 && _alt!=INVALID_ALT } {
-				if _alt==1 {
-					recog.trigger_exit_rule_event()?;
-					{
-					recog.base.set_state(39);
-					recog.err_handler.sync(&mut recog.base)?;
-					match recog.get_interpreter().adaptive_predict(2,&mut recog.base)? {
-						1 =>{
-							{
-							/*recRuleAltStartAction*/
-							let tmp = ExprContextExt::create(recog.get_arena(), _parentctx, _parentState)?;
-							let _prevctx = recog.push_new_recursion_context(tmp.into(), _startState, RULE_expr)?;
-
-							recog.base.set_state(27);
-							if !({recog.precpred(None, 5)}) {
-								Err(ANTLRError::failed_predicate(&mut recog.base, Some("recog.precpred(None, 5)".to_owned()), None))?;
-							}
-							recog.base.set_state(28);
-							recog.base.match_token(Perf_T__3,&mut recog.err_handler)?;
-							/*InvokeRule expr*/
-							recog.base.set_state(29);
-							recog.expr_rec(6)?;
-							}
-						}
-					,
-						2 =>{
-							{
-							/*recRuleAltStartAction*/
-							let tmp = ExprContextExt::create(recog.get_arena(), _parentctx, _parentState)?;
-							let _prevctx = recog.push_new_recursion_context(tmp.into(), _startState, RULE_expr)?;
-
-							recog.base.set_state(30);
-							if !({recog.precpred(None, 4)}) {
-								Err(ANTLRError::failed_predicate(&mut recog.base, Some("recog.precpred(None, 4)".to_owned()), None))?;
-							}
-							recog.base.set_state(31);
-							recog.base.match_token(Perf_T__4,&mut recog.err_handler)?;
-							/*InvokeRule expr*/
-							recog.base.set_state(32);
-							recog.expr_rec(5)?;
-							}
-						}
-					,
-						3 =>{
-							{
-							/*recRuleAltStartAction*/
-							let tmp = ExprContextExt::create(recog.get_arena(), _parentctx, _parentState)?;
-							let _prevctx = recog.push_new_recursion_context(tmp.into(), _startState, RULE_expr)?;
-
-							recog.base.set_state(33);
-							if !({recog.precpred(None, 2)}) {
-								Err(ANTLRError::failed_predicate(&mut recog.base, Some("recog.precpred(None, 2)".to_owned()), None))?;
-							}
-							recog.base.set_state(34);
-							recog.base.match_token(Perf_T__7,&mut recog.err_handler)?;
-							/*InvokeRule expr*/
-							recog.base.set_state(35);
-							recog.expr_rec(0)?;
-							recog.base.set_state(36);
-							recog.base.match_token(Perf_T__8,&mut recog.err_handler)?;
-							/*InvokeRule expr*/
-							recog.base.set_state(37);
-							recog.expr_rec(3)?;
-							}
-						}
-
-						_ => {}
-					}
-					} 
-				}
-				recog.base.set_state(43);
-				recog.err_handler.sync(&mut recog.base)?;
-				_alt = recog.get_interpreter().adaptive_predict(3,&mut recog.base)?;
-			}
-			}
-			Ok(())
-		})();
-		match result {
-		Ok(_) => {},
-        Err(e) if !e.is_recoverable() => return Err(e),
-		Err(ref re)=>{
-			recog.err_handler.report_error(&mut recog.base, re);
-	        recog.err_handler.recover(&mut recog.base, re)?;}
 		}
-		recog.base.unroll_recursion_context(_parentctx).map(|ctx| { ctx.as_rule_context().unwrap() } )
-        })
+		}
+		})
 	}
 }
 

@@ -29,6 +29,9 @@ use crate::error::Diagnostic;
 use crate::grammar::compiler::{self, Compilation};
 use crate::grammar::loader::LoadOptions;
 use crate::optimization::static_lexer_dfa::build_static_lexer_tables;
+use crate::optimization::static_parser_dfa::{
+    build_static_parser_tables, dump_dfas, report_decisions,
+};
 use crate::optimization::{OptimizationOptions, OptimizationPlan};
 /// One generated source file.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -164,7 +167,15 @@ pub fn emit_files_with_flags(
     gen_visitor: bool,
 ) -> Result<Vec<EmittedFile>, EmitError> {
     let compilation = compile_grammar(grammar_path, library_dirs)?;
-    Ok(render_recognizer_files(&compilation, grammar_path, gen_listener, gen_visitor, false)?.0)
+    Ok(render_recognizer_files(
+        &compilation,
+        grammar_path,
+        gen_listener,
+        gen_visitor,
+        false,
+        false,
+    )?
+    .0)
 }
 
 /// Output of [`emit_files_with_options`].
@@ -181,6 +192,9 @@ pub struct EmittedOutput {
     /// Rendered `optimizations.txt` manifest, present when the selected
     /// transforms emit one.
     pub optimization_manifest: Option<String>,
+    /// Rendered decision reports and static DFA dumps (`--report-decisions`,
+    /// `--dump-dfas`).
+    pub reports: Vec<String>,
 }
 
 /// [`emit_files_with_flags`] with an explicit grammar transform selection.
@@ -212,10 +226,54 @@ pub fn emit_files_with_options(
 ) -> Result<EmittedOutput, EmitError> {
     let plan = OptimizationPlan::from_options(optimization)?;
     let compilation = compile_grammar_with(grammar_path, library_dirs, &plan)?;
-    let mut diagnostics = crate::compile_error::non_fatal_diagnostics(&compilation);
-    let optimization_messages = plan.diagnostic_messages(&compilation);
-    let optimization_manifest = plan.render_manifest(&compilation);
-    let files = if plan.report_only() {
+    let dfa_report_only = optimization.report_decisions || optimization.dump_dfas.is_some();
+    let mut diagnostics = if dfa_report_only {
+        Vec::new()
+    } else {
+        crate::compile_error::non_fatal_diagnostics(&compilation)
+    };
+    let optimization_messages = if dfa_report_only {
+        Vec::new()
+    } else {
+        plan.diagnostic_messages(&compilation)
+    };
+    let optimization_manifest = if dfa_report_only {
+        None
+    } else {
+        plan.render_manifest(&compilation)
+    };
+    let mut reports = Vec::new();
+    let files = if dfa_report_only {
+        let grammar_file_name = bare_file_name(grammar_path);
+        let grammar_name = grammar_path.file_stem().map_or_else(
+            || grammar_file_name.clone(),
+            |stem| stem.to_string_lossy().into_owned(),
+        );
+        for root in &compilation.roots {
+            if let Some(parser_id) = root.parser {
+                let compiled = &compilation.parsers[&parser_id];
+                if optimization.report_decisions {
+                    reports.push(report_decisions(
+                        compiled,
+                        &compilation.sources,
+                        &grammar_name,
+                    ));
+                }
+                if let Some(spec) = &optimization.dump_dfas {
+                    let (dump, dump_diagnostics) = dump_dfas(
+                        compiled,
+                        &compilation.sources,
+                        grammar_path,
+                        &grammar_name,
+                        spec,
+                    );
+                    reports.push(dump);
+                    diagnostics.extend(dump_diagnostics);
+                }
+            }
+        }
+        Vec::new()
+    } else if plan.report_only() {
         Vec::new()
     } else {
         let (files, static_diagnostics) = render_recognizer_files(
@@ -224,6 +282,7 @@ pub fn emit_files_with_options(
             gen_listener,
             gen_visitor,
             static_lexer_dfa,
+            optimization.static_parser_dfa,
         )?;
         diagnostics.extend(static_diagnostics);
         files
@@ -233,6 +292,7 @@ pub fn emit_files_with_options(
         diagnostics,
         optimization_messages,
         optimization_manifest,
+        reports,
     })
 }
 
@@ -242,6 +302,7 @@ fn render_recognizer_files(
     gen_listener: bool,
     gen_visitor: bool,
     static_lexer_dfa: bool,
+    static_parser_dfa: bool,
 ) -> Result<(Vec<EmittedFile>, Vec<Diagnostic>), EmitError> {
     let grammar_file_name = bare_file_name(grammar_path);
     let grammar_name = grammar_path.file_stem().map_or_else(
@@ -270,6 +331,11 @@ fn render_recognizer_files(
         }
         if let Some(parser_id) = root.parser {
             let compiled = &compilation.parsers[&parser_id];
+            if static_parser_dfa {
+                let static_build =
+                    build_static_parser_tables(compiled, &compilation.sources, grammar_path);
+                diagnostics.extend(static_build.diagnostics);
+            }
             let context = build_parser_file_context(
                 compiled,
                 &compilation.sources,

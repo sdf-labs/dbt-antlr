@@ -130,6 +130,27 @@ impl Config {
         self
     }
 
+    /// Toggles static parser SLL prediction DFA table generation (the command
+    /// line's `--static-parser-dfa`). Default: `false`.
+    pub const fn static_parser_dfa(&mut self, enabled: bool) -> &mut Self {
+        self.optimization.static_parser_dfa(enabled);
+        self
+    }
+
+    /// Toggles decision-report-only mode (the command line's
+    /// `--report-decisions`). Default: `false`.
+    pub const fn report_decisions(&mut self, enabled: bool) -> &mut Self {
+        self.optimization.report_decisions(enabled);
+        self
+    }
+
+    /// Dumps static parser DFA tables for the given selector specification (the
+    /// command line's `--dump-dfas`).
+    pub fn dump_dfas(&mut self, spec: impl Into<String>) -> &mut Self {
+        self.optimization.dump_dfas(spec);
+        self
+    }
+
     /// Returns the grammar transform selection for in-place configuration;
     /// see [`OptimizationOptions`] for the available transforms. The
     /// convenience setters below delegate to it.
@@ -308,6 +329,7 @@ impl Config {
             written,
             diagnostics: Vec::new(),
             optimization_messages: Vec::new(),
+            reports: Vec::new(),
         })
     }
 
@@ -330,6 +352,7 @@ impl Config {
         let mut written = Vec::new();
         let mut diagnostics = Vec::new();
         let mut optimization_messages = Vec::new();
+        let mut reports = Vec::new();
         for grammar in &self.grammars {
             let output = emit_files_with_options(
                 grammar,
@@ -350,11 +373,13 @@ impl Config {
             write_optimization_manifest(out_dir, output.optimization_manifest, &mut written)?;
             diagnostics.extend(output.diagnostics);
             optimization_messages.extend(output.optimization_messages);
+            reports.extend(output.reports);
         }
         Ok(Generation {
             written,
             diagnostics,
             optimization_messages,
+            reports,
         })
     }
 
@@ -414,6 +439,7 @@ pub struct Generation {
     written: Vec<PathBuf>,
     diagnostics: Vec<Diagnostic>,
     optimization_messages: Vec<String>,
+    reports: Vec<String>,
 }
 
 impl Generation {
@@ -432,6 +458,12 @@ impl Generation {
     /// Transform notes of the run (for example `pruned: ...` lines).
     pub fn optimization_messages(&self) -> &[String] {
         &self.optimization_messages
+    }
+
+    /// Decision reports and static DFA dumps of the run (`--report-decisions`,
+    /// `--dump-dfas`).
+    pub fn reports(&self) -> &[String] {
+        &self.reports
     }
 
     /// Consumes the generation and returns the written files.

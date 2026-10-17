@@ -11,6 +11,8 @@ mod options;
 mod report;
 #[cfg(feature = "generator")]
 pub(crate) mod static_lexer_dfa;
+#[cfg(feature = "generator")]
+pub(crate) mod static_parser_dfa;
 
 #[cfg(feature = "generator")]
 pub(crate) use config::OptimizationPlan;
