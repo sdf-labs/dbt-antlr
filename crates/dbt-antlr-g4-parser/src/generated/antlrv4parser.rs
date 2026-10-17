@@ -27,7 +27,7 @@ use std::sync::LazyLock;
 use std::rc::Rc;
 use std::ops::{DerefMut, Deref};
 
-dbt_antlr_runtime::check_version!("0","3");
+dbt_antlr_runtime::check_version!("0","4");
 pub const ANTLRv4Parser_TOKEN_REF:i32=1; 
 pub const ANTLRv4Parser_RULE_REF:i32=2; 
 pub const ANTLRv4Parser_LEXER_CHAR_SET:i32=3; 
