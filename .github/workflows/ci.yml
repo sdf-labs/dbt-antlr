@@ -153,7 +153,7 @@ jobs:
         run: cargo run -p runtime-testsuite --release --color never
 
       - name: Run static dfa runtime conformance suite
-        run: cargo run -p runtime-testsuite --release --color never -- --static-lexer-dfa
+        run: cargo run -p runtime-testsuite --release --color never -- --static-lexer-dfa --static-parser-dfa
 
   # Release PRs are opened by GITHUB_TOKEN, so they never trigger
   # pull_request workflows; the Release-plz workflow dispatches this

@@ -331,11 +331,8 @@ fn render_recognizer_files(
         }
         if let Some(parser_id) = root.parser {
             let compiled = &compilation.parsers[&parser_id];
-            if static_parser_dfa {
-                let static_build =
-                    build_static_parser_tables(compiled, &compilation.sources, grammar_path);
-                diagnostics.extend(static_build.diagnostics);
-            }
+            let static_build = static_parser_dfa
+                .then(|| build_static_parser_tables(compiled, &compilation.sources, grammar_path));
             let context = build_parser_file_context(
                 compiled,
                 &compilation.sources,
@@ -343,7 +340,11 @@ fn render_recognizer_files(
                 &grammar_file_name,
                 gen_listener,
                 gen_visitor,
+                static_build.as_ref(),
             )?;
+            if let Some(build) = static_build {
+                diagnostics.extend(build.diagnostics);
+            }
             let content = render_template(&minijinja::Value::from_serialize(&context))?;
             let name = format!("{}.rs", context.parser.name.to_lowercase());
             files.push(EmittedFile { name, content });

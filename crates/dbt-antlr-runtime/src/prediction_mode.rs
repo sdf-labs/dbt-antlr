@@ -5,7 +5,7 @@ use hashbrown::HashMap;
 use crate::atn::INVALID_ALT;
 use crate::atn_config::ATNConfig;
 use crate::atn_config_set::MutableATNConfigSet;
-use crate::atn_state::ATNStateRef;
+use crate::atn_state::{ATNStateRef, ATNStateType};
 use crate::prediction_context::{NoopHasherBuilder, PredictionContextRef};
 use crate::semantic_context::SemanticContext;
 
@@ -88,9 +88,9 @@ pub(crate) fn has_sll_conflict_terminating_prediction<'ephemeral>(
     mode: PredictionMode,
     configs: &MutableATNConfigSet<'ephemeral>,
 ) -> bool {
-    //    if all_configs_in_rule_stop_states(configs) {
-    //        return true          checked outside
-    //    }
+    if all_configs_in_rule_stop_states(configs) {
+        return true;
+    }
 
     if mode == PredictionMode::SLL && configs.has_semantic_context() {
         let mut dup = MutableATNConfigSet::new(ephemerals, true);
@@ -112,9 +112,11 @@ pub(crate) fn has_sll_conflict_terminating_prediction<'ephemeral>(
     }
 }
 
-//fn all_configs_in_rule_stop_states(configs: &ATNConfigSet) -> bool {
-//    for co
-//}
+fn all_configs_in_rule_stop_states(configs: &MutableATNConfigSet<'_>) -> bool {
+    configs
+        .get_items()
+        .all(|c| c.get_state().state_type() == ATNStateType::RuleStop)
+}
 
 pub(crate) fn resolves_to_just_one_viable_alt<'a>(
     altsets: impl Iterator<Item = &'a BitSet>,

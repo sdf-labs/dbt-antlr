@@ -225,6 +225,177 @@ impl<'sim> ParserATNSimulator<'sim> {
         Ok(result)
     }
 
+    pub fn adaptive_predict_conflict<'input, 'arena, TF, P>(
+        &self,
+        decision: i32,
+        sll_min_alt: i32,
+        parser: &mut P,
+    ) -> Result<i32, ANTLRError>
+    where
+        'input: 'arena,
+        'arena: 'sim,
+        TF: TokenFactory<'input, 'arena> + 'arena,
+        P: Parser<'input, 'arena, TF>,
+    {
+        match self.prediction_mode.get() {
+            PredictionMode::SLL => return Ok(sll_min_alt),
+            PredictionMode::LL_EXACT_AMBIG_DETECTION => {
+                return self.adaptive_predict(decision, parser);
+            }
+            PredictionMode::LL => {}
+        }
+
+        let start_idx = parser.get_input_stream_mut().index();
+        self.start_index.set(start_idx);
+        let scratch = bumpalo::Bump::new();
+        let mut merge_cache = MergeCache::new(&scratch);
+
+        let dfa_ref = self
+            .decision_to_dfa(decision as usize)
+            .expect("decision is valid");
+        let mut local = Local {
+            outer_context: parser.get_current_context_opt(),
+            dfa_ref,
+            merge_cache: &mut merge_cache,
+            precedence: parser.get_precedence(),
+            parser,
+            pd: PhantomData,
+        };
+
+        let m = local.input().mark();
+        let outer_ctx = match local.outer_context() {
+            Some(outer_context) => PredictionContext::from_rule_context(
+                self.atn(),
+                outer_context,
+                local.merge_cache.scratch,
+            ),
+            None => PredictionContextRef::new_empty(),
+        };
+        let s0_closure =
+            self.compute_start_state(dfa_ref.atn_start_state, outer_ctx, true, &mut local);
+        let result = self.exec_atn_with_full_context(&mut local, s0_closure);
+        local.input().seek(start_idx);
+        local.input().release(m);
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn resume_from_continuation<'input, 'arena, TF, P>(
+        &self,
+        decision: i32,
+        cont_slot: usize,
+        total_cont_slots: usize,
+        cont: &crate::dfa::static_parser_dfa::ParserContinuation,
+        depth: usize,
+        parser: &mut P,
+    ) -> Result<i32, ANTLRError>
+    where
+        'input: 'arena,
+        'arena: 'sim,
+        TF: TokenFactory<'input, 'arena> + 'arena,
+        P: Parser<'input, 'arena, TF>,
+    {
+        let start_idx = parser.get_input_stream_mut().index();
+        self.start_index.set(start_idx);
+        let scratch = bumpalo::Bump::new();
+        let mut merge_cache = MergeCache::new(&scratch);
+
+        let dfa_ref = self
+            .decision_to_dfa(decision as usize)
+            .expect("decision is valid");
+        let mut local = Local {
+            outer_context: parser.get_current_context_opt(),
+            dfa_ref,
+            merge_cache: &mut merge_cache,
+            precedence: parser.get_precedence(),
+            parser,
+            pd: PhantomData,
+        };
+
+        let s_cont = if let Some(s) = dfa_ref.get_continuation_state(cont_slot, total_cont_slots) {
+            s
+        } else {
+            let mut ctx_refs = Vec::with_capacity(cont.contexts.len());
+            for node in &cont.contexts {
+                match node {
+                    crate::dfa::static_parser_dfa::ContinuationContextNode::Singleton {
+                        parent,
+                        return_state,
+                    } => {
+                        let parent_ctx = if *parent == u32::MAX {
+                            Some(PredictionContextRef::new_empty())
+                        } else {
+                            Some(ctx_refs[*parent as usize])
+                        };
+                        let rs = if *return_state < 0 {
+                            ATNStateRef::invalid()
+                        } else {
+                            self.atn().make_state_ref(*return_state)
+                        };
+                        let ctx: PredictionContextRef<'_> = local
+                            .merge_cache
+                            .alloc(PredictionContext::new_singleton(parent_ctx, rs))
+                            .into();
+                        ctx_refs.push(ctx);
+                    }
+                    crate::dfa::static_parser_dfa::ContinuationContextNode::Array {
+                        parents,
+                        return_states,
+                    } => {
+                        let parents_iter = parents.iter().map(|&p| {
+                            if p == u32::MAX {
+                                Some(PredictionContextRef::new_empty())
+                            } else {
+                                Some(ctx_refs[p as usize])
+                            }
+                        });
+                        let parents_slice = local
+                            .merge_cache
+                            .scratch()
+                            .alloc_slice_fill_iter(parents_iter);
+                        let rs_iter = return_states.iter().map(|&rs| {
+                            if rs < 0 {
+                                ATNStateRef::invalid()
+                            } else {
+                                self.atn().make_state_ref(rs)
+                            }
+                        });
+                        let rs_slice = local.merge_cache.scratch().alloc_slice_fill_iter(rs_iter);
+                        let ctx: PredictionContextRef<'_> = local
+                            .merge_cache
+                            .alloc(PredictionContext::new_array(parents_slice, rs_slice))
+                            .into();
+                        ctx_refs.push(ctx);
+                    }
+                }
+            }
+
+            let mut config_set = MutableATNConfigSet::new(local.scratch(), false);
+            for cfg in &cont.configs {
+                let state_ref = self.atn().make_state_ref(cfg.state);
+                let ctx_ref = if cfg.context == u32::MAX {
+                    PredictionContextRef::new_empty()
+                } else {
+                    ctx_refs[cfg.context as usize]
+                };
+                let mut atn_cfg = ATNConfig::new(state_ref, cfg.alt, Some(ctx_ref));
+                atn_cfg.set_reaches_into_outer_context(cfg.reaches_into_outer_context);
+                config_set.add_cached(atn_cfg, local.merge_cache);
+            }
+            let s = self.add_dfastate(dfa_ref, ProposedDFAState::new(config_set))?;
+            dfa_ref.set_continuation_state(cont_slot, total_cont_slots, s);
+            s
+        };
+
+        let m = local.input().mark();
+        local.input().la(depth as isize + 1);
+        local.input().seek(start_idx + depth as isize);
+        let result = self.exec_atn(&mut local, s_cont);
+        local.input().seek(start_idx);
+        local.input().release(m);
+        result
+    }
+
     #[allow(non_snake_case)]
     fn exec_atn<'input, 'arena, 'scratch, 'cache, TF, P>(
         &self,

@@ -15,6 +15,7 @@ pub use crate::atn_simulator::{
 };
 pub use crate::char_stream::CharStream;
 pub use crate::dfa::static_lexer_dfa::StaticLexerTables;
+pub use crate::dfa::static_parser_dfa::VIRTUAL_ALT_BASE;
 pub use crate::error_strategy::{DefaultErrorStrategy, ErrorStrategy, ErrorStrategyDelegate};
 pub use crate::errors::ANTLRError;
 pub use crate::int_stream::{IntStream, EOF};

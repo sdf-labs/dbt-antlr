@@ -29,6 +29,7 @@ mod dfa_state;
 #[cfg(feature = "static-dfa-build")]
 pub mod static_dfa_build;
 pub mod static_lexer_dfa;
+pub mod static_parser_dfa;
 
 use bit_set::BitSet;
 pub use dfa_serializer::DFASerializer;
@@ -85,6 +86,7 @@ where
     s0: AtomicPtr<DFAState<'sim, CS>>,
 
     precedence_state: Option<Pin<Box<DFAState<'sim, CS>>>>,
+    continuations: OnceLock<Box<[AtomicI32]>>,
 
     allocated_bytes: AtomicUsize,
     dfa_state_bytes: AtomicUsize,
@@ -145,6 +147,7 @@ where
                 &**s as *const DFAState<'sim, CS> as *mut DFAState<'sim, CS>
             })),
             precedence_state,
+            continuations: OnceLock::new(),
             allocated_bytes: AtomicUsize::new(0),
             dfa_state_bytes: AtomicUsize::new(0),
         }
@@ -456,6 +459,46 @@ impl<'sim> DFA<'sim, ATNConfigSet<'sim>> {
                 &DFAState<'static, ATNConfigSet<'_>>,
                 &'sim DFAState<'sim, ATNConfigSet<'sim>>,
             >(&*dfa_state::ERROR_DFA_STATE_REF)
+        }
+    }
+
+    #[inline]
+    pub fn get_continuation_state(
+        &self,
+        index: usize,
+        total_slots: usize,
+    ) -> Option<&'sim ParserDFAState<'sim>> {
+        let slots = self.continuations.get_or_init(|| {
+            let mut slice = Box::new_uninit_slice(total_slots);
+            for slot in slice.iter_mut() {
+                slot.write(AtomicI32::new(i32::MIN));
+            }
+            unsafe { slice.assume_init() }
+        });
+        let state_num = slots.get(index)?.load(Ordering::Acquire);
+        if state_num == i32::MIN {
+            None
+        } else {
+            Some(unsafe { (*DFAStateId::new(state_num).deref(self.chunks)).assume_init_ref() })
+        }
+    }
+
+    #[inline]
+    pub fn set_continuation_state(
+        &self,
+        index: usize,
+        total_slots: usize,
+        state: &'sim ParserDFAState<'sim>,
+    ) {
+        let slots = self.continuations.get_or_init(|| {
+            let mut slice = Box::new_uninit_slice(total_slots);
+            for slot in slice.iter_mut() {
+                slot.write(AtomicI32::new(i32::MIN));
+            }
+            unsafe { slice.assume_init() }
+        });
+        if let Some(slot) = slots.get(index) {
+            slot.store(state.state_number(), Ordering::Release);
         }
     }
 }

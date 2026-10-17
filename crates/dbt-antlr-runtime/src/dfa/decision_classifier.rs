@@ -112,14 +112,52 @@ pub struct StaticParserDFA {
     pub guarded_alts: Vec<i32>,
     pub guard_danger: Vec<i32>,
     pub guard_pass: Vec<i32>,
+    pub conflict_min_alts: Vec<i32>,
+    pub continuations: Vec<crate::dfa::static_parser_dfa::ParserContinuation>,
 }
 
 impl StaticParserDFA {
     pub const fn is_virtual_alt(alt: i32) -> bool {
         alt >= VIRTUAL_ALT_BASE
     }
-}
 
+    pub fn to_table(&self, decision: i32) -> crate::dfa::static_parser_dfa::StaticDFATable {
+        let mut danger = BitSet::new();
+        for &d in &self.guard_danger {
+            danger.insert(d as usize);
+        }
+        let mut pass = BitSet::new();
+        for &p in &self.guard_pass {
+            pass.insert(p as usize);
+        }
+        crate::dfa::static_parser_dfa::StaticDFATable::from_triples(
+            decision,
+            self.num_states,
+            self.accepts.clone(),
+            self.fallbacks.clone(),
+            &self.edge_offsets,
+            &self.edges,
+            Some(self.guarded_alts.clone()),
+            danger,
+            pass,
+            Some(self.conflict_min_alts.clone()),
+            self.continuations.clone(),
+        )
+    }
+
+    pub fn content_eq(&self, other: &Self) -> bool {
+        self.num_states == other.num_states
+            && self.accepts == other.accepts
+            && self.fallbacks == other.fallbacks
+            && self.edge_offsets == other.edge_offsets
+            && self.edges == other.edges
+            && self.guarded_alts == other.guarded_alts
+            && self.guard_danger == other.guard_danger
+            && self.guard_pass == other.guard_pass
+            && self.conflict_min_alts == other.conflict_min_alts
+            && self.continuations == other.continuations
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrecedenceStaticParserDFA {
     pub decision: usize,
@@ -379,6 +417,89 @@ impl<'atn> DecisionClassifier<'atn> {
         results
     }
 
+    pub fn build_tables(
+        &mut self,
+    ) -> (
+        crate::dfa::static_parser_dfa::StaticDFATables,
+        Vec<DecisionResult>,
+    ) {
+        use crate::dfa::static_parser_dfa::{
+            DecisionTables, PrecedenceDispatch, StaticDFATable, StaticDFATables,
+        };
+
+        self.abort_on_untrusted_conflict = true;
+        let states = self.atn.decision_to_state.clone();
+        let mut results = Vec::with_capacity(states.len());
+        let mut plain_dfas: Vec<(usize, StaticParserDFA)> = Vec::new();
+        let mut prec_dfas: Vec<PrecedenceStaticParserDFA> = Vec::new();
+
+        for (decision, s) in states.into_iter().enumerate() {
+            if self.ll1_disjoint.get(decision).copied() == Some(true) {
+                let mut r = DecisionResult::new(s);
+                r.category = Category::LL1;
+                r.k = 1;
+                results.push(r);
+                continue;
+            }
+            let r = self.classify(s);
+            if let Some(dfa) = &r.dfa {
+                plain_dfas.push((decision, dfa.clone()));
+            } else if let Some(prec) = &r.prec_dfa {
+                prec_dfas.push(prec.clone());
+            }
+            results.push(r);
+        }
+
+        let mut num_slots = 0usize;
+        for &(d, _) in &plain_dfas {
+            num_slots = num_slots.max(d + 1);
+        }
+        for group in &prec_dfas {
+            num_slots = num_slots.max(group.decision + 1);
+        }
+        if num_slots == 0 {
+            return (StaticDFATables::empty(), results);
+        }
+
+        let mut raw_tables: Vec<(i32, StaticParserDFA)> = Vec::new();
+        let mut decisions = vec![DecisionTables::None; num_slots];
+
+        for (decision, dfa) in plain_dfas {
+            let idx = raw_tables.len();
+            raw_tables.push((decision as i32, dfa));
+            decisions[decision] = DecisionTables::Single(idx);
+        }
+
+        for group in prec_dfas {
+            let mut class_tables = Vec::with_capacity(group.tables.len());
+            for cls_dfa in group.tables {
+                if let Some(t) = cls_dfa {
+                    let idx = if let Some(pos) = raw_tables
+                        .iter()
+                        .position(|(_, existing)| existing.content_eq(&t))
+                    {
+                        pos as i32
+                    } else {
+                        let new_idx = raw_tables.len() as i32;
+                        raw_tables.push((-1, t));
+                        new_idx
+                    };
+                    class_tables.push(idx);
+                } else {
+                    class_tables.push(-1);
+                }
+            }
+            decisions[group.decision] =
+                DecisionTables::Dispatch(PrecedenceDispatch::new(group.cutoffs, class_tables));
+        }
+
+        let tables: Vec<StaticDFATable> = raw_tables
+            .into_iter()
+            .map(|(dec, dfa)| dfa.to_table(dec))
+            .collect();
+        (StaticDFATables::new(decisions, tables), results)
+    }
+
     pub fn classify(&mut self, s: ATNStateRef) -> DecisionResult {
         let mut res = DecisionResult::new(s);
         if s.is_nongreedy_decision() == Some(true) {
@@ -417,7 +538,8 @@ impl<'atn> DecisionClassifier<'atn> {
 
         if outcome.dfa.is_none()
             && (outcome.category == Category::OVERFLOW
-                || outcome.category == Category::CONTEXT_SENSITIVE)
+                || outcome.category == Category::CONTEXT_SENSITIVE
+                || (self.abort_on_untrusted_conflict && outcome.category == Category::PREDICATED))
         {
             if let Some(hybrid) = self.classify_hybrid(s) {
                 if hybrid.dfa.is_some() {
@@ -785,12 +907,48 @@ impl<'atn> DecisionClassifier<'atn> {
         work.push_back(0usize);
         let mut overflow = false;
 
+        let mut conflict_min_alts: Vec<i32> = vec![0; 1];
+        let mut continuations: Vec<crate::dfa::static_parser_dfa::ParserContinuation> = Vec::new();
+        let mut crossed_lr_loop = false;
+        for c in &states[0].configs {
+            if c.get_state().state_type() == ATNStateType::StarLoopEntry
+                && c.get_state()
+                    .try_as::<crate::atn_state::StarLoopEntryState>()
+                    .is_some_and(|sle| sle.is_precedence)
+            {
+                crossed_lr_loop = true;
+            }
+        }
+
         while let Some(d) = work.pop_front() {
             if overflow {
                 break;
             }
             let configs = states[d].configs.clone();
+            for c in &configs {
+                if c.get_state().state_type() == ATNStateType::StarLoopEntry
+                    && c.get_state()
+                        .try_as::<crate::atn_state::StarLoopEntryState>()
+                        .is_some_and(|sle| sle.is_precedence)
+                {
+                    crossed_lr_loop = true;
+                }
+            }
             let cs = to_config_set(&configs, &arena, &mut merge_cache);
+
+            if self.hybrid_mode {
+                let has_pred_taint = cs
+                    .get_items()
+                    .any(|c| (c.reaches_into_outer_context & PRED_TAINT) != 0);
+                if has_pred_taint {
+                    if d == 0 {
+                        res.category = Category::PREDICATED;
+                        return false;
+                    }
+                    accept_alts[d] = ESCAPE;
+                    continue;
+                }
+            }
 
             let mut alts = BitSet::new();
             for c in cs.get_items() {
@@ -854,12 +1012,19 @@ impl<'atn> DecisionClassifier<'atn> {
                         continue;
                     }
                     if untrusted {
-                        res.approx_conflicts.push(conflicting);
+                        res.approx_conflicts.push(conflicting.clone());
                     } else {
-                        res.context_sensitive_conflicts.push(conflicting);
+                        res.context_sensitive_conflicts.push(conflicting.clone());
                     }
                     if self.hybrid_mode {
                         accept_alts[d] = ESCAPE;
+                        if state_depth[d] > 0
+                            && !widened_tainted
+                            && !prec_tainted
+                            && self.prec_rule_index < 0
+                        {
+                            conflict_min_alts[d] = conflicting.iter().next().unwrap() as i32;
+                        }
                         if first_conflict_esc.is_none() {
                             first_conflict_esc = Some(d);
                         }
@@ -881,6 +1046,18 @@ impl<'atn> DecisionClassifier<'atn> {
                     || (states.len() >= self.hybrid_state_cap && state_depth[d] >= 2))
             {
                 accept_alts[d] = ESCAPE;
+                if state_depth[d] > 0
+                    && self.prec_rule_index < 0
+                    && !crossed_lr_loop
+                    && !res.saw_prec_predicate
+                    && configs.iter().all(|c| {
+                        (c.reaches_into_outer_context
+                            & (WIDENED_TAINT | PRECPRED_TAINT | PRED_TAINT))
+                            == 0
+                    })
+                {
+                    continuations.push(serialize_continuation(d as u32, &configs));
+                }
                 if first_budget_esc.is_none() {
                     first_budget_esc = Some(d);
                 }
@@ -920,6 +1097,7 @@ impl<'atn> DecisionClassifier<'atn> {
                     edge_labels.push(Vec::new());
                     accept_alts.push(0);
                     fallback_alts.push(0);
+                    conflict_min_alts.push(0);
                     state_depth.push(state_depth[d] + 1);
                     work.push_back(new_id);
                     new_id
@@ -944,7 +1122,7 @@ impl<'atn> DecisionClassifier<'atn> {
                 res.budget_witness = witness_path(&edge_labels, &edges, esc);
             }
         }
-        if res.saw_predicate {
+        if res.saw_predicate && !self.hybrid_mode {
             res.category = Category::PREDICATED;
             return false;
         }
@@ -979,8 +1157,15 @@ impl<'atn> DecisionClassifier<'atn> {
                     None,
                     Vec::new(),
                     Vec::new(),
+                    conflict_min_alts,
+                    continuations,
                 ));
             }
+            return false;
+        }
+
+        if res.saw_predicate {
+            res.category = Category::PREDICATED;
             return false;
         }
 
@@ -1009,6 +1194,8 @@ impl<'atn> DecisionClassifier<'atn> {
                 None,
                 Vec::new(),
                 Vec::new(),
+                conflict_min_alts,
+                continuations,
             ));
         }
         false
@@ -1895,6 +2082,8 @@ fn to_static_dfa(
     guard_alts: Option<&[i32]>,
     guard_danger: Vec<i32>,
     guard_pass: Vec<i32>,
+    conflict_min_alts: Vec<i32>,
+    continuations: Vec<crate::dfa::static_parser_dfa::ParserContinuation>,
 ) -> StaticParserDFA {
     let n = edge_targets.len();
     let accepts = accept_alts.to_vec();
@@ -1932,6 +2121,93 @@ fn to_static_dfa(
         guarded_alts,
         guard_danger,
         guard_pass,
+        conflict_min_alts,
+        continuations,
+    }
+}
+
+fn serialize_continuation(
+    state: u32,
+    configs: &[ATNConfig<'_>],
+) -> crate::dfa::static_parser_dfa::ParserContinuation {
+    use crate::dfa::static_parser_dfa::{
+        ContinuationConfigEntry, ContinuationContextNode, ParserContinuation,
+    };
+
+    fn intern_ctx<'a>(
+        ctx: PredictionContextRef<'a>,
+        nodes: &mut Vec<ContinuationContextNode>,
+        memo: &mut HashMap<usize, u32>,
+    ) -> u32 {
+        if ctx.is_empty() {
+            return u32::MAX;
+        }
+        let ptr = ctx.as_ref() as *const PredictionContext<'a> as usize;
+        if let Some(&idx) = memo.get(&ptr) {
+            return idx;
+        }
+        let node = if ctx.length() == 1 {
+            let parent = ctx
+                .get_parent(0)
+                .map_or(u32::MAX, |p| intern_ctx(p, nodes, memo));
+            let rs = ctx.get_return_state(0);
+            let return_state = if rs == ATNStateRef::invalid() {
+                -1
+            } else {
+                rs.get_state_number()
+            };
+            ContinuationContextNode::Singleton {
+                parent,
+                return_state,
+            }
+        } else {
+            let mut parents = Vec::with_capacity(ctx.length());
+            let mut return_states = Vec::with_capacity(ctx.length());
+            for i in 0..ctx.length() {
+                let p = ctx
+                    .get_parent(i)
+                    .map_or(u32::MAX, |p| intern_ctx(p, nodes, memo));
+                let rs = ctx.get_return_state(i);
+                let return_state = if rs == ATNStateRef::invalid() {
+                    -1
+                } else {
+                    rs.get_state_number()
+                };
+                parents.push(p);
+                return_states.push(return_state);
+            }
+            ContinuationContextNode::Array {
+                parents,
+                return_states,
+            }
+        };
+        let idx = nodes.len() as u32;
+        nodes.push(node);
+        memo.insert(ptr, idx);
+        idx
+    }
+
+    let mut contexts = Vec::new();
+    let mut memo = HashMap::new();
+    let mut entries = Vec::with_capacity(configs.len());
+    for c in configs {
+        let context = c
+            .get_context()
+            .map_or(u32::MAX, |ctx| intern_ctx(ctx, &mut contexts, &mut memo));
+        let reaches_into_outer_context =
+            i32::from((c.reaches_into_outer_context & BOUNDARY_TAINT) != 0);
+        entries.push(ContinuationConfigEntry {
+            state: c.get_state().get_state_number(),
+            alt: c.get_alt(),
+            context,
+            reaches_into_outer_context,
+        });
+    }
+
+    ParserContinuation {
+        state,
+        contexts,
+        configs: entries,
     }
 }
 

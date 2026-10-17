@@ -965,6 +965,14 @@ unsafe { {{ self() }}.ctx_mut().unwrap().as_rule_context_mut::<{{ actionChunk.ct
 {{ StarBlock(op.choice, op.alts, op.iteration, parser, file) }}
 {%- elif op.kind == "PlusBlock" -%}
 {{ PlusBlock(op.choice, op.alts, op.error, parser, file) }}
+{%- elif op.kind == "DFAAltBlock" -%}
+{{ DFAAltBlock(op.choice, op.preamble, op.alts, op.error, parser, file) }}
+{%- elif op.kind == "DFAOptionalBlock" -%}
+{{ DFAOptionalBlock(op.choice, op.alts, op.error, parser, file) }}
+{%- elif op.kind == "DFAStarBlock" -%}
+{{ DFAStarBlock(op.choice, op.alts, op.iteration, parser, file) }}
+{%- elif op.kind == "DFAPlusBlock" -%}
+{{ DFAPlusBlock(op.choice, op.alts, op.error, parser, file) }}
 {%- elif op.kind == "InvokeRule" -%}
 {{ InvokeRule(op, parser) }}
 {%- elif op.kind == "MatchToken" -%}

@@ -77,3 +77,17 @@ for i in "${!STATIC_GRAMMARS[@]}"; do
     "$GEN_BIN" --static-lexer-dfa -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/$grammar.g4"
     mv "$STATIC_TMP/${lexer}.rs" "$SCRIPT_DIR/tests/gen/${lexer}_static.rs"
 done
+
+# `--static-parser-dfa` parser witnesses. StaticDFA and LrDfa are generated
+# directly with `--static-parser-dfa`; FuzzExpr is generated both adaptive and
+# with `--static-parser-dfa` (`fuzzexprparser_static.rs`) for differential fuzzing.
+for grammar in "parser/StaticDFA" "parser/LrDfa"; do
+    echo "Generating: $grammar (--static-parser-dfa)"
+    "$GEN_BIN" -no-listener --static-parser-dfa -o "$SCRIPT_DIR/tests/gen" "$SCRIPT_DIR/grammars/${grammar}.g4"
+done
+
+echo "Generating: parser/FuzzExpr"
+"$GEN_BIN" -no-listener -o "$SCRIPT_DIR/tests/gen" "$SCRIPT_DIR/grammars/parser/FuzzExpr.g4"
+echo "Generating: fuzzexprparser_static"
+"$GEN_BIN" -no-listener --static-parser-dfa -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/FuzzExpr.g4"
+mv "$STATIC_TMP/fuzzexprparser.rs" "$SCRIPT_DIR/tests/gen/fuzzexprparser_static.rs"
