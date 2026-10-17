@@ -88,7 +88,11 @@ impl<'sim> ILexerATNSimulator<'sim> for LexerATNSimulator<'sim> {
             // back to the lazy path.
             if let Some(tables) = self.static_tables {
                 if let Some(table) = tables.mode(mode) {
-                    return self.match_static(table, lexer, &scratch);
+                    return if lexer.input().has_item_at() {
+                        self.match_static_random_access(table, lexer, &scratch)
+                    } else {
+                        self.match_static_cursor(table, lexer, &scratch)
+                    };
                 }
             }
             self.match_token_lazy(lexer, &scratch)
@@ -175,19 +179,9 @@ impl<'sim> LexerATNSimulator<'sim> {
         }
     }
 
-    /// Token matching driven by a statically-precomputed lexer DFA table
-    /// (see [`crate::dfa::static_lexer_dfa`]): one dense table lookup per input
-    /// symbol, no ATN simulation, no lazily-built DFA states. Mirrors
-    /// `exec_atn` + `fail_or_accept` exactly (maximal munch, accept fallback
-    /// with position restore, lexer actions at accept, EOF handling); the
-    /// tables are built by driving the reference simulator exhaustively at
-    /// generation time, so the behavior is identical by construction.
-    ///
-    /// Edges that cannot get a static target hold the `ESCAPE` sentinel;
-    /// the walk then hands the token to
-    /// [`LexerATNSimulator::match_token_from_continuation`] or restarts it
-    /// lazily when the escape carries no continuation.
-    fn match_static<'scratch, 'input, 'arena, Input, TF>(
+    /// Token matching with a precomputed [`StaticLexerDFA`] over a
+    /// random-access input stream.
+    fn match_static_random_access<'scratch, 'input, 'arena, Input, TF>(
         &mut self,
         table: &'static StaticLexerDFA,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
@@ -200,181 +194,180 @@ impl<'sim> LexerATNSimulator<'sim> {
     {
         let start_index = self.start_index;
         let mut s = table.start_state();
-        // (index, state) of the most recent accept state.
-        // Accept states are marked by accept_type >= 0 (not != 0): a rule
-        // with a `more`/`type(...)` command accepts with token type 0 (the
-        // tool assigns such rules no token type), so a zero-length match at
-        // the start state of a mode still counts as an accept.
+        // Accept states have accept_type >= 0. A rule with a `more` or
+        // `type(...)` command accepts with token type 0.
         let mut prev_accept: Option<(isize, u16)> = if table.accept_type(s) >= 0 {
             Some((start_index, s))
         } else {
             None
         };
-        // Consecutive EOF edges taken. EOF consumes no input and grammars
-        // can have unbounded EOF epsilon chains, so the walk bounds the
-        // chain and restarts the token lazily past the bound.
-        let mut eof_chain = 0u32;
 
-        // With a random-access input (InputStream) hold a local byte
-        // cursor and peek the next input byte directly - one load +
-        // high-bit test for ASCII - instead of a `la(1)` decode plus a
-        // `consume()` walk per char; other streams take the cursor-based
-        // path. On exit, `symbol` is the (unconsumed) char at the position
-        // the walk stopped.
-        let mut symbol;
-        if lexer.input().has_item_at() {
-            // Byte-cursor path: per input char, one byte peek plus one
-            // table entry (target state and accept bit in the same load).
-            let input = lexer.input();
-            let mut cursor = start_index;
-            let bytes = input.bytes_at(0);
-            symbol = input.item_at(cursor).unwrap_or(EOF);
-            loop {
-                let entry = table.edge_entry(s, symbol);
-                if entry == NO_EDGE {
-                    break;
-                }
-                if entry == ESCAPE {
-                    return self.static_escape(
-                        table,
-                        s,
-                        symbol,
-                        cursor,
-                        prev_accept,
-                        lexer,
-                        scratch,
-                    );
-                }
-                let target = entry & STATE_MASK;
-                if symbol != EOF {
-                    eof_chain = 0;
-                    cursor += if symbol < 0x80 {
-                        1
-                    } else {
-                        char::from_u32(symbol as u32).map_or(1, |c| c.len_utf8() as isize)
-                    };
+        let input = lexer.input();
+        let mut cursor = start_index;
+        let bytes = input.bytes_at(0);
+        let mut symbol = input.item_at(cursor).unwrap_or(EOF);
+        loop {
+            let entry = table.edge_entry(s, symbol);
+            if entry == NO_EDGE {
+                break;
+            }
+            if entry == ESCAPE {
+                return self.static_escape(table, s, symbol, cursor, prev_accept, lexer, scratch);
+            }
+            let target = entry & STATE_MASK;
+            if symbol != EOF {
+                cursor += if symbol < 0x80 {
+                    1
                 } else {
-                    eof_chain += 1;
-                    if eof_chain > MAX_STATIC_EOF_EDGES {
-                        return self.restart_token_lazy(lexer, scratch);
-                    }
-                }
-                if entry & ACCEPT_BIT != 0 {
-                    prev_accept = Some((cursor, target));
-                    if symbol == EOF {
-                        break;
-                    }
-                }
-                symbol = input.item_at(cursor).unwrap_or(EOF);
-                s = target;
-
-                if let Some(hay) = bytes {
-                    let tag = table.accel_tag(s);
-                    if tag != 0 {
-                        let accel = table.accel_payload(tag);
-                        let start = cursor as usize;
-                        let c = run_scan(hay, start, accel, scratch);
-                        if c > start {
-                            cursor = c as isize;
-                            // The entry's accept bit is s's: on an
-                            // accept state the run end is the
-                            // maximal-munch accept.
-                            if entry & ACCEPT_BIT != 0
-                                && !matches!(accel, Accel::CountedExclusion { .. })
-                            {
-                                prev_accept = Some((cursor, s));
-                            }
-                            symbol = match hay.get(c) {
-                                Some(&b) if b < 0x80 => b as i32,
-                                _ => input.item_at(cursor).unwrap_or(EOF),
-                            };
-                        }
-                    }
+                    char::from_u32(symbol as u32).map_or(1, |c| c.len_utf8() as isize)
+                };
+            }
+            if entry & ACCEPT_BIT != 0 {
+                prev_accept = Some((cursor, target));
+                if symbol == EOF {
+                    break;
                 }
             }
-            input.seek(cursor);
-        } else {
-            symbol = lexer.input().la(1);
-            loop {
-                let entry = table.edge_entry(s, symbol);
-                if entry == NO_EDGE {
-                    break;
-                }
-                if entry == ESCAPE {
-                    return self.static_escape(
-                        table,
-                        s,
-                        symbol,
-                        lexer.input().index(),
-                        prev_accept,
-                        lexer,
-                        scratch,
-                    );
-                }
-                let target = entry & STATE_MASK;
-                if symbol != EOF {
-                    eof_chain = 0;
-                    lexer.input().consume();
-                } else {
-                    eof_chain += 1;
-                    if eof_chain > MAX_STATIC_EOF_EDGES {
-                        return self.restart_token_lazy(lexer, scratch);
-                    }
-                }
-                if entry & ACCEPT_BIT != 0 {
-                    prev_accept = Some((lexer.input().index(), target));
-                    if symbol == EOF {
-                        break;
-                    }
-                }
-                symbol = lexer.input().la(1);
-                s = target;
+            symbol = input.item_at(cursor).unwrap_or(EOF);
+            s = target;
+
+            if let Some(hay) = bytes {
                 let tag = table.accel_tag(s);
                 if tag != 0 {
                     let accel = table.accel_payload(tag);
-                    if matches!(accel, Accel::CountedExclusion { .. }) {
-                        let input = lexer.input();
-                        let start = input.index() as usize;
-                        let c = {
-                            let text = input.get_text(0, input.size());
-                            run_scan(text.as_bytes(), start, accel, scratch)
-                        };
-                        if c > start {
-                            input.seek(c as isize);
-                            symbol = input.la(1);
+                    let start = cursor as usize;
+                    let c = run_scan(hay, start, accel, scratch);
+                    if c > start {
+                        cursor = c as isize;
+                        if entry & ACCEPT_BIT != 0
+                            && !matches!(accel, Accel::CountedExclusion { .. })
+                        {
+                            prev_accept = Some((cursor, s));
                         }
+                        symbol = match hay.get(c) {
+                            Some(&b) if b < 0x80 => b as i32,
+                            _ => input.item_at(cursor).unwrap_or(EOF),
+                        };
                     }
                 }
             }
         }
+        input.seek(cursor);
+        self.finish_static(table, prev_accept, symbol, lexer)
+    }
 
+    /// Token matching with a precomputed [`StaticLexerDFA`] over a cursor-only
+    /// input stream.
+    fn match_static_cursor<'scratch, 'input, 'arena, Input, TF>(
+        &mut self,
+        table: &'static StaticLexerDFA,
+        lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
+        scratch: &'scratch bumpalo::Bump,
+    ) -> Result<i32, ANTLRError>
+    where
+        'input: 'arena,
+        Input: CharStream<'input>,
+        TF: TokenFactory<'input, 'arena> + 'arena,
+    {
+        let start_index = self.start_index;
+        let mut s = table.start_state();
+        let mut prev_accept: Option<(isize, u16)> = if table.accept_type(s) >= 0 {
+            Some((start_index, s))
+        } else {
+            None
+        };
+
+        let mut symbol = lexer.input().la(1);
+        loop {
+            let entry = table.edge_entry(s, symbol);
+            if entry == NO_EDGE {
+                break;
+            }
+            if entry == ESCAPE {
+                return self.static_escape(
+                    table,
+                    s,
+                    symbol,
+                    lexer.input().index(),
+                    prev_accept,
+                    lexer,
+                    scratch,
+                );
+            }
+            let target = entry & STATE_MASK;
+            if symbol != EOF {
+                lexer.input().consume();
+            }
+            if entry & ACCEPT_BIT != 0 {
+                prev_accept = Some((lexer.input().index(), target));
+                if symbol == EOF {
+                    break;
+                }
+            }
+            symbol = lexer.input().la(1);
+            s = target;
+            let tag = table.accel_tag(s);
+            if tag != 0 {
+                if let Accel::CountedExclusion { opener, closer, n } = table.accel_payload(tag) {
+                    let input = lexer.input();
+                    let start = input.index() as usize;
+                    let c = {
+                        let text = input.get_text(0, input.size());
+                        run_scan_counted(
+                            text.as_bytes(),
+                            start,
+                            &opener[..n as usize],
+                            &closer[..n as usize],
+                            scratch,
+                        )
+                    };
+                    if c > start {
+                        input.seek(c as isize);
+                        symbol = input.la(1);
+                    }
+                }
+            }
+        }
+        self.finish_static(table, prev_accept, symbol, lexer)
+    }
+
+    #[inline]
+    fn finish_static<'input, 'arena, Input, TF>(
+        &self,
+        table: &'static StaticLexerDFA,
+        prev_accept: Option<(isize, u16)>,
+        symbol: i32,
+        lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
+    ) -> Result<i32, ANTLRError>
+    where
+        'input: 'arena,
+        Input: CharStream<'input>,
+        TF: TokenFactory<'input, 'arena> + 'arena,
+    {
         match prev_accept {
             Some((index, state)) => {
                 lexer.input().seek(index);
-                // Position-independent lexer actions only (skip, mode,
-                // channel, type, ...): the loader rejects everything else
-                // in accept lists, and their execution needs no match
-                // offset, so plain `execute` matches
-                // `LexerActionExecutor::execute` here.
                 for action in table.accept_actions(state) {
                     action.execute(lexer);
                 }
                 Ok(table.accept_type(state))
             }
             None => {
-                if symbol == EOF && lexer.input().index() == start_index {
+                if symbol == EOF && lexer.input().index() == self.start_index {
                     return Ok(TOKEN_EOF);
                 }
-                Err(ANTLRError::lexer_no_alt(start_index))
+                Err(ANTLRError::lexer_no_alt(self.start_index))
             }
         }
     }
 
-    /// Handles an ESCAPE edge hit by [`LexerATNSimulator::match_static`]:
-    /// positions the input at the unconsumed escape symbol, carries the best
-    /// accept so far into `self.prev_accept`, and resumes the lazy simulation
-    /// from the edge's continuation. A budget escape has no continuation and
-    /// restarts the token on the lazy path from the token start.
+    /// Handles an ESCAPE edge hit by
+    /// [`LexerATNSimulator::match_static_random_access`] or
+    /// [`LexerATNSimulator::match_static_cursor`]: positions the input at the
+    /// unconsumed escape symbol, carries the best accept so far into
+    /// `self.prev_accept`, and resumes the lazy simulation from the edge's
+    /// continuation. A budget escape has no continuation and restarts the token
+    /// on the lazy path from the token start.
     #[cold]
     #[allow(clippy::too_many_arguments)]
     fn static_escape<'scratch, 'input, 'arena, Input, TF>(
@@ -414,8 +407,7 @@ impl<'sim> LexerATNSimulator<'sim> {
     }
 
     /// Restarts the current token on the lazy path from the token start.
-    /// Used for budget escapes (no continuation) and for EOF epsilon chains
-    /// past the walk bound.
+    /// Used for budget escapes (no continuation).
     #[cold]
     fn restart_token_lazy<'scratch, 'input, 'arena, Input, TF>(
         &mut self,
@@ -868,14 +860,6 @@ impl<'sim> LexerATNSimulator<'sim> {
 
     // fn get_token_name(&self, _tt: i32) -> String { unimplemented!() }
 }
-
-/// Bound on consecutive EOF edges the table walker takes before it
-/// restarts the token lazily: EOF consumes no input, so an EOF-edge cycle
-/// would loop forever. Defensive only: the builder closes EOF-edge
-/// targets with the lazy `treat_eofas_epsilon` semantics, so a chained
-/// EOF edge always lands on an accept state and the walk breaks there
-/// before the bound.
-const MAX_STATIC_EOF_EDGES: u32 = 8;
 
 /// The best accept seen so far in a token match, with the action source
 /// resolved. The lazy path resolves a DFAState into this form at capture

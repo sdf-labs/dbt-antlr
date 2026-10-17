@@ -1,5 +1,5 @@
 //! Differential tests for the static lexer DFA walker: the table-driven
-//! `match_static` path (plus its escape/resume/restart handling) against the
+//! static table walker (plus its escape/resume/restart handling) against the
 //! pure lazy `LexerATNSimulator`, token for token.
 //!
 //! Every grammar under `grammars/` is compiled to a lexer ATN with
@@ -394,15 +394,13 @@ where
     }
 }
 
-/// Runs one input on both sides and returns the static-side counters.
-/// Panics on a mismatch. The static side runs twice per input: once over
-/// an `InputStream` (the byte-cursor fast path) and once over a
-/// `CursorStream` (the cursor-based fallback loop in `match_static`); both
-/// must match the truth side and each other, counters included. The
-/// comparison against the truth covers the token stream, the errors, and
-/// the custom-action log; the escape and restart counters are static-side
-/// instrumentation (the lazy truth side has no tables, so its counters
-/// are 0 by definition) and are asserted separately by the per-grammar
+/// Runs one input on both sides and returns the static-side counters. Panics on
+/// a mismatch. The static side runs twice per input: once over an `InputStream`
+/// (`match_static_random_access`) and once over a `CursorStream`
+/// (`match_static_cursor`); both must match the truth side and each other,
+/// counters included. The comparison against the truth covers the token stream,
+/// the errors, and the custom-action log; the escape and restart counters are
+/// static-side instrumentation and are asserted separately by the per-grammar
 /// tests.
 fn check(fixture: &Fixture, kind: GrammarKind, input: &str) -> (usize, usize) {
     let truth = run(fixture, kind, input, None, InputStream::new);
@@ -849,8 +847,7 @@ fn eof_chain_accepts_match_lazy() {
     // closure semantics: the closure follows the rest of an EOF epsilon
     // chain as epsilon, so every EOF-edge target is an accept state. The
     // walk breaks at the first EOF accept (like the lazy simulator's
-    // `capture_sim_state && symbol == EOF` break), so the walker's
-    // EOF-chain bound stays defensive and never fires for this grammar.
+    // `capture_sim_state && symbol == EOF` break).
     assert_eq!(
         restarts, 0,
         "every EOF-edge target accepts; the walk breaks at the first EOF accept"

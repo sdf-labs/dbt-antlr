@@ -6,7 +6,7 @@
 //! rule priority, non-greedy loops, and action accumulation match the lazy
 //! path by construction. The result is one [`StaticLexerDFA`] table per lexer
 //! mode plus the `Vec<u32>` word stream that generated code embeds
-//! ([`StaticLexerTables::to_words`]). The walker's `match_static` tokenizes
+//! ([`StaticLexerTables::to_words`]). The static table walker tokenizes
 //! from the tables without ATN simulation.
 //!
 //! # Build structure
@@ -59,10 +59,8 @@
 //!
 //! EOF consumes no input. The builder computes EOF edges with the
 //! `treat_eofas_epsilon` semantics of the lazy simulator. The walker must not
-//! advance the cursor on an EOF edge, must stop the walk on an EOF accept, and
-//! must bound the count of consecutive EOF edges it takes (grammars can have
-//! unbounded EOF epsilon chains). Past the bound, the walker restarts the
-//! token lazily. The table itself needs no extra data for this rule.
+//! advance the cursor on an EOF edge and must stop the walk on an EOF accept.
+//! The table itself needs no extra data for this rule.
 //!
 //! The build is deterministic: identical input ATNs produce identical words.
 
