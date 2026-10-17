@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-runtime-v0.3.0...dbt-antlr-runtime-v0.4.0) - 2026-10-17
+
+### Other
+
+- *(runtime)* remove eof_chain bound and split match_static ([#24](https://github.com/sdf-labs/dbt-antlr/pull/24))
+- *(runtime)* deduplicate lexer grammar fixtures ([#23](https://github.com/sdf-labs/dbt-antlr/pull/23))
+- *(runtime)* group static lexer fixtures and tests ([#20](https://github.com/sdf-labs/dbt-antlr/pull/20))
+
 ## [0.3.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-runtime-v0.2.1...dbt-antlr-runtime-v0.3.0) - 2026-10-16
 
 ### Other

@@ -27,7 +27,7 @@ use std::sync::LazyLock;
 use std::rc::Rc;
 use std::ops::{DerefMut, Deref};
 
-dbt_antlr_runtime::check_version!("0","3");
+dbt_antlr_runtime::check_version!("0","4");
 pub const Labels_T__0:i32=1; 
 pub const Labels_T__1:i32=2; 
 pub const Labels_T__2:i32=3; 

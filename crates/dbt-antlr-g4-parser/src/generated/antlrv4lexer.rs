@@ -22,7 +22,7 @@ use dbt_antlr_runtime::vocabulary::{Vocabulary,VocabularyImpl};
 use std::ops::{DerefMut, Deref};
 use std::sync::LazyLock;
 
-dbt_antlr_runtime::check_version!("0","3");
+dbt_antlr_runtime::check_version!("0","4");
 pub const TOKEN_REF:i32=1; 
 pub const RULE_REF:i32=2; 
 pub const LEXER_CHAR_SET:i32=3; 
