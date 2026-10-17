@@ -42,7 +42,7 @@ pub struct ATN {
 
     pub rule_to_token_type: Vec<i32>,
 
-    states: Vec<Pin<Box<ATNState>>>,
+    pub(crate) states: Vec<Pin<Box<ATNState>>>,
 }
 
 impl Debug for ATN {
