@@ -6,7 +6,7 @@
 //! rule priority, non-greedy loops, and action accumulation match the lazy
 //! path by construction. The result is one [`StaticLexerDFA`] table per lexer
 //! mode plus the `Vec<u32>` word stream that generated code embeds
-//! ([`StaticLexerTables::to_words`]). The walker's `match_static` tokenizes
+//! ([`StaticLexerTables::to_words`]). The static table walker tokenizes
 //! from the tables without ATN simulation.
 //!
 //! # Build structure
