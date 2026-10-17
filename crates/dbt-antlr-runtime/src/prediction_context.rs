@@ -237,7 +237,7 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
         let r = match (a.as_ref(), b.as_ref()) {
             (Singleton(sa), Singleton(sb)) => {
                 //                println!("single result = {}",result);
-                Self::merge_singletons(sa, sb, root_is_wildcard, cache)
+                Self::merge_singletons(a, b, sa, sb, root_is_wildcard, cache)
             }
             (sa, sb) => {
                 if root_is_wildcard {
@@ -266,13 +266,15 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
     }
 
     fn merge_singletons(
+        a_ref: PredictionContextRef<'ephemeral>,
+        b_ref: PredictionContextRef<'ephemeral>,
         a: &'ephemeral SingletonPredictionContext<'ephemeral>,
         b: &'ephemeral SingletonPredictionContext<'ephemeral>,
         root_is_wildcard: bool,
         merge_cache: &mut MergeCache<'ephemeral>,
     ) -> PredictionContextRef<'ephemeral> {
         Self::merge_root(a, b, root_is_wildcard, merge_cache).unwrap_or_else(|| {
-            let res = if a.return_state == b.return_state {
+            if a.return_state == b.return_state {
                 let parent = Self::merge(
                     *a.parent_ctx.as_ref().unwrap(),
                     *b.parent_ctx.as_ref().unwrap(),
@@ -280,29 +282,29 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
                     merge_cache,
                 );
                 if parent.ptr_eq(a.parent_ctx.as_ref().unwrap()) {
-                    Singleton(a.clone())
+                    return a_ref;
                 } else if parent.ptr_eq(b.parent_ctx.as_ref().unwrap()) {
-                    Singleton(b.clone())
-                } else {
-                    Self::new_singleton(Some(parent), a.return_state)
+                    return b_ref;
                 }
+                return merge_cache
+                    .alloc(Self::new_singleton(Some(parent), a.return_state))
+                    .into();
+            }
+            let parents = if a.parent_ctx == b.parent_ctx {
+                merge_cache.alloc([a.parent_ctx, a.parent_ctx])
             } else {
-                let parents = if a.parent_ctx == b.parent_ctx {
-                    merge_cache.alloc([a.parent_ctx, a.parent_ctx])
-                } else {
-                    merge_cache.alloc([a.parent_ctx, b.parent_ctx])
-                };
-                let return_states = merge_cache
-                    .scratch()
-                    .alloc([a.return_state, b.return_state]);
-
-                if return_states[0] > return_states[1] {
-                    parents.swap(0, 1);
-                    return_states.swap(0, 1);
-                }
-
-                Self::new_array(parents, return_states)
+                merge_cache.alloc([a.parent_ctx, b.parent_ctx])
             };
+            let return_states = merge_cache
+                .scratch()
+                .alloc([a.return_state, b.return_state]);
+
+            if return_states[0] > return_states[1] {
+                parents.swap(0, 1);
+                return_states.swap(0, 1);
+            }
+
+            let res = Self::new_array(parents, return_states);
             merge_cache.alloc(res).into()
         })
     }

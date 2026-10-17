@@ -22,6 +22,8 @@ use crate::prediction_context::NoopHasherBuilder;
 use crate::semantic_context::SemanticContext;
 use crate::vocabulary::Vocabulary;
 
+#[cfg(feature = "static-dfa-build")]
+pub mod decision_classifier;
 mod dfa_serializer;
 mod dfa_state;
 #[cfg(feature = "static-dfa-build")]
