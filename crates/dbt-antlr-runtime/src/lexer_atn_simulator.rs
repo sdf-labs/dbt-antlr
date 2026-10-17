@@ -210,10 +210,6 @@ impl<'sim> LexerATNSimulator<'sim> {
         } else {
             None
         };
-        // Consecutive EOF edges taken. EOF consumes no input and grammars
-        // can have unbounded EOF epsilon chains, so the walk bounds the
-        // chain and restarts the token lazily past the bound.
-        let mut eof_chain = 0u32;
 
         // With a random-access input (InputStream) hold a local byte
         // cursor and peek the next input byte directly - one load +
@@ -247,17 +243,11 @@ impl<'sim> LexerATNSimulator<'sim> {
                 }
                 let target = entry & STATE_MASK;
                 if symbol != EOF {
-                    eof_chain = 0;
                     cursor += if symbol < 0x80 {
                         1
                     } else {
                         char::from_u32(symbol as u32).map_or(1, |c| c.len_utf8() as isize)
                     };
-                } else {
-                    eof_chain += 1;
-                    if eof_chain > MAX_STATIC_EOF_EDGES {
-                        return self.restart_token_lazy(lexer, scratch);
-                    }
                 }
                 if entry & ACCEPT_BIT != 0 {
                     prev_accept = Some((cursor, target));
@@ -313,13 +303,7 @@ impl<'sim> LexerATNSimulator<'sim> {
                 }
                 let target = entry & STATE_MASK;
                 if symbol != EOF {
-                    eof_chain = 0;
                     lexer.input().consume();
-                } else {
-                    eof_chain += 1;
-                    if eof_chain > MAX_STATIC_EOF_EDGES {
-                        return self.restart_token_lazy(lexer, scratch);
-                    }
                 }
                 if entry & ACCEPT_BIT != 0 {
                     prev_accept = Some((lexer.input().index(), target));
@@ -414,8 +398,7 @@ impl<'sim> LexerATNSimulator<'sim> {
     }
 
     /// Restarts the current token on the lazy path from the token start.
-    /// Used for budget escapes (no continuation) and for EOF epsilon chains
-    /// past the walk bound.
+    /// Used for budget escapes (no continuation).
     #[cold]
     fn restart_token_lazy<'scratch, 'input, 'arena, Input, TF>(
         &mut self,
@@ -868,14 +851,6 @@ impl<'sim> LexerATNSimulator<'sim> {
 
     // fn get_token_name(&self, _tt: i32) -> String { unimplemented!() }
 }
-
-/// Bound on consecutive EOF edges the table walker takes before it
-/// restarts the token lazily: EOF consumes no input, so an EOF-edge cycle
-/// would loop forever. Defensive only: the builder closes EOF-edge
-/// targets with the lazy `treat_eofas_epsilon` semantics, so a chained
-/// EOF edge always lands on an accept state and the walk breaks there
-/// before the bound.
-const MAX_STATIC_EOF_EDGES: u32 = 8;
 
 /// The best accept seen so far in a token match, with the action source
 /// resolved. The lazy path resolves a DFAState into this form at capture

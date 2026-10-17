@@ -849,8 +849,7 @@ fn eof_chain_accepts_match_lazy() {
     // closure semantics: the closure follows the rest of an EOF epsilon
     // chain as epsilon, so every EOF-edge target is an accept state. The
     // walk breaks at the first EOF accept (like the lazy simulator's
-    // `capture_sim_state && symbol == EOF` break), so the walker's
-    // EOF-chain bound stays defensive and never fires for this grammar.
+    // `capture_sim_state && symbol == EOF` break).
     assert_eq!(
         restarts, 0,
         "every EOF-edge target accepts; the walk breaks at the first EOF accept"
