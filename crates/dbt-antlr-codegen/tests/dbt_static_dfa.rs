@@ -17,17 +17,11 @@ use dbt_antlr_codegen::{OptimizationOptions, Severity};
 
 fn emit(grammar_file: &str, static_lexer_dfa: bool) -> EmittedOutput {
     let grammar = grammars_dir().join(grammar_file);
-    emit_files_with_options(
-        &grammar,
-        &[grammars_dir()],
-        true,
-        false,
-        &OptimizationOptions::default(),
-        static_lexer_dfa,
-    )
-    .expect("emission succeeds")
+    let mut optimization = OptimizationOptions::new();
+    optimization.static_lexer_dfa(static_lexer_dfa);
+    emit_files_with_options(&grammar, &[grammars_dir()], true, false, &optimization)
+        .expect("emission succeeds")
 }
-
 fn lexer_content<'o>(output: &'o EmittedOutput, name: &str) -> &'o str {
     &output
         .files
@@ -157,15 +151,10 @@ fn spike_lexer_warnings_name_the_escape_reasons() {
 
     let rec_grammar = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/codegen-direct/fixtures/lexer-recursion/LexerRecursion.g4");
-    let rec_output = emit_files_with_options(
-        &rec_grammar,
-        &[],
-        true,
-        false,
-        &OptimizationOptions::default(),
-        true,
-    )
-    .expect("emission succeeds");
+    let mut rec_optimization = OptimizationOptions::new();
+    rec_optimization.static_lexer_dfa(true);
+    let rec_output = emit_files_with_options(&rec_grammar, &[], true, false, &rec_optimization)
+        .expect("emission succeeds");
     let rec_escape = rec_output
         .diagnostics
         .iter()

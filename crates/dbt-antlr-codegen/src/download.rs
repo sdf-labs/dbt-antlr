@@ -290,6 +290,9 @@ pub(crate) fn generate_with_pinned_binary(
     if optimization.report_ladders() {
         command.arg("--report-precedence-ladders");
     }
+    if optimization.static_dfa() {
+        command.arg("--static-lexer-dfa");
+    }
     command.args(grammars);
     let status = command.status().map_err(|error| {
         EmitError::Download(format!("failed to launch {}: {error}", binary.display()))

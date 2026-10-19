@@ -2,16 +2,18 @@
 // Copyright (c) 2026 Konstantin Vyatkin
 use std::collections::BTreeMap;
 
+use crate::optimization::OptimizationPlan;
+use crate::optimization::static_lexer_dfa::{StaticLexerBuild, build_static_lexer_tables};
+
 use super::action::{ActionReferenceParser, action_references};
 use super::atn::{CompiledLexer, CompiledParser, compile_lexer, compile_parser};
 use super::diagnostic::{CompilationError, Diagnostic};
 use super::integration::{IntegratedVocabularySource, RootOutputs, integrate_loaded};
 use super::loader::{LoadOptions, LoadedSources, load_recovering};
 use super::model::{GrammarId, GrammarKind};
-use super::rule_reachability::EntryRuleConfig;
 use super::semantics::SemanticGrammarSet;
 use super::source::SourceSet;
-use super::transform::{TransformRegistry, TransformReport};
+use super::transform::TransformReport;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CompiledRoot {
@@ -27,6 +29,7 @@ pub(crate) struct Compilation {
     pub(crate) roots: Vec<CompiledRoot>,
     pub(crate) lexers: BTreeMap<GrammarId, CompiledLexer>,
     pub(crate) parsers: BTreeMap<GrammarId, CompiledParser>,
+    pub(crate) static_lexers: BTreeMap<GrammarId, StaticLexerBuild>,
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) transform_report: TransformReport,
 }
@@ -48,6 +51,10 @@ impl Compilation {
         self.parsers.get(&grammar)
     }
 
+    pub(crate) fn static_lexer(&self, grammar: GrammarId) -> Option<&StaticLexerBuild> {
+        self.static_lexers.get(&grammar)
+    }
+
     pub(crate) fn lexer_named(&self, name: &str) -> Option<&CompiledLexer> {
         self.lexers
             .values()
@@ -62,36 +69,24 @@ impl Compilation {
 }
 
 pub(crate) fn compile(options: LoadOptions) -> Result<Compilation, CompilationError> {
-    compile_with_transforms(
-        options,
-        &TransformRegistry::default(),
-        false,
-        &EntryRuleConfig::default(),
-    )
+    compile_with_plan(options, &OptimizationPlan::default())
 }
 
-pub(crate) fn compile_with_transforms(
+pub(crate) fn compile_with_plan(
     options: LoadOptions,
-    transforms: &TransformRegistry,
-    report_only: bool,
-    entry_rules: &EntryRuleConfig,
+    plan: &OptimizationPlan,
 ) -> Result<Compilation, CompilationError> {
-    compile_with_action_reference_parser(
-        options,
-        transforms,
-        report_only,
-        entry_rules,
-        action_references,
-    )
+    compile_with_action_reference_parser(options, plan, action_references)
 }
 
 pub(crate) fn compile_with_action_reference_parser(
     options: LoadOptions,
-    transforms: &TransformRegistry,
-    report_only: bool,
-    entry_rules: &EntryRuleConfig,
+    plan: &OptimizationPlan,
     action_reference_parser: ActionReferenceParser,
 ) -> Result<Compilation, CompilationError> {
+    let entry_rules = plan.entry_rules();
+    let transforms = plan.transforms();
+    let report_only = plan.report_only();
     let loaded = load_recovering(options);
     let root_order = loaded.grammars.roots.clone();
     let mut integrated =
@@ -177,6 +172,7 @@ pub(crate) fn compile_with_action_reference_parser(
         root_order,
         semantics,
         transform_report,
+        plan.static_lexer_dfa(),
     )
 }
 
@@ -205,6 +201,7 @@ fn compile_semantics(
     root_order: Vec<GrammarId>,
     semantics: SemanticGrammarSet,
     transform_report: TransformReport,
+    static_lexer_dfa: bool,
 ) -> Result<Compilation, CompilationError> {
     let SemanticGrammarSet {
         grammars,
@@ -213,7 +210,7 @@ fn compile_semantics(
         provenance,
         ..
     } = semantics;
-    let roots = root_order
+    let roots: Vec<CompiledRoot> = root_order
         .into_iter()
         .map(|source| {
             let RootOutputs { lexer, parser } = roots[&source];
@@ -226,6 +223,7 @@ fn compile_semantics(
         .collect();
     let mut lexers = BTreeMap::new();
     let mut parsers = BTreeMap::new();
+    let mut static_lexers = BTreeMap::new();
     for grammar in grammars {
         let grammar_id = grammar.unit.id;
         match grammar.unit.kind {
@@ -233,6 +231,11 @@ fn compile_semantics(
                 let compiled = compile_lexer(grammar, provenance.clone())
                     .map_err(|error| error.with_sources(&sources))?;
                 all_diagnostics.extend(compiled.analysis.diagnostics.iter().cloned());
+                if static_lexer_dfa && roots.iter().any(|root| root.lexer == Some(grammar_id)) {
+                    let static_build = build_static_lexer_tables(&compiled);
+                    all_diagnostics.extend(static_build.diagnostics.iter().cloned());
+                    static_lexers.insert(grammar_id, static_build);
+                }
                 lexers.insert(grammar_id, compiled);
             }
             GrammarKind::Parser => {
@@ -252,6 +255,7 @@ fn compile_semantics(
         roots,
         lexers,
         parsers,
+        static_lexers,
         diagnostics: all_diagnostics,
         transform_report,
     })
@@ -260,6 +264,8 @@ fn compile_semantics(
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
+
+    use crate::OptimizationOptions;
 
     use super::super::diagnostic::Severity;
     use super::*;
@@ -275,18 +281,49 @@ mod tests {
         let [root] = compilation.roots.as_slice() else {
             panic!("one requested root should produce one compiled root");
         };
+        let lexer_id = root.lexer.expect("combined root has a lexer");
         let lexer = compilation
-            .lexer(root.lexer.expect("combined root has a lexer"))
+            .lexer(lexer_id)
             .expect("root lexer artifact exists");
         let parser = compilation
             .parser(root.parser.expect("combined root has a parser"))
             .expect("root parser artifact exists");
         assert_eq!(lexer.semantic.unit.name, "sentencesLexer");
         assert_eq!(parser.semantic.unit.name, "sentencesParser");
+        assert!(compilation.static_lexer(lexer_id).is_none());
         assert_eq!(compilation.sources.len(), 1);
         assert_eq!(compilation.transform_report.entries, []);
     }
 
+    #[test]
+    fn static_lexer_dfa_plan_populates_static_lexer_and_diagnostics() {
+        let mut options = OptimizationOptions::new();
+        options.static_lexer_dfa(true);
+        let plan = OptimizationPlan::from_options(&options).expect("plan should be valid");
+        let compilation = compile_with_plan(
+            LoadOptions {
+                roots: vec![fixture("lexer-recursion").join("LexerRecursion.g4")],
+                library_directories: Vec::new(),
+            },
+            &plan,
+        )
+        .expect("lexer fixture should compile");
+
+        let [root] = compilation.roots.as_slice() else {
+            panic!("one requested root should produce one compiled root");
+        };
+        let lexer_id = root.lexer.expect("lexer root has a lexer");
+        let static_build = compilation
+            .static_lexer(lexer_id)
+            .expect("static lexer tables built");
+        assert!(!static_build.model.words.is_empty());
+        assert!(
+            compilation
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "G4S188")
+        );
+    }
     #[test]
     fn missing_token_vocab_matches_java_diagnostic_site() {
         let error = compile_fixture("vscode-split-errors", &["TLexer2.g4", "TParser2.g4"])

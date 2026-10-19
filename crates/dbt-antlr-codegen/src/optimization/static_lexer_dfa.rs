@@ -1,21 +1,17 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Bo Lin
-//! `--static-lexer-dfa` support of the dbt emission layer (lexer scope).
+//! `--static-lexer-dfa` optimization pass (lexer scope).
 //!
-//! When the flag is on, the compiled lexer ATN (the Java-format word stream
-//! of the runtime artifact) is deserialized with the runtime's
-//! `ATNDeserializer` and handed to the runtime's static lexer DFA builder
-//! (`static-dfa-build` feature). The builder drives the reference
-//! `LexerATNSimulator` move/closure code exhaustively, so the tables match
-//! the lazy path by construction, and the build is deterministic: one
-//! grammar produces one word stream.
+//! When the flag is on, the pass deserializes the compiled lexer ATN with the
+//! runtime `ATNDeserializer`. Then it runs the runtime static lexer DFA
+//! builder (`static-dfa-build` feature). The builder drives the reference
+//! `LexerATNSimulator` move and closure code exhaustively. As a result, the
+//! tables match the lazy path by construction, and the build is deterministic:
+//! one grammar produces one word stream.
 //!
-//! The build result becomes the `StaticLexerTablesModel` of the lexer
-//! output model. Modes the builder could not compile, and edges that
-//! escape to the lazy simulator, become codegen warnings in the style of
-//! the upstream tool's `ErrorType` 188/189.
-
-use std::path::{Path, PathBuf};
+//! The build result becomes the `StaticLexerTablesModel` of the lexer output
+//! model. Modes that the builder cannot compile, and edges that escape to the
+//! lazy simulator, produce compiler warnings (`G4S188` and `G4S189`).
 
 use dbt_antlr_runtime::atn_deserializer::ATNDeserializer;
 use dbt_antlr_runtime::dfa::static_dfa_build::{
@@ -24,9 +20,17 @@ use dbt_antlr_runtime::dfa::static_dfa_build::{
 };
 
 use crate::emission::model::StaticLexerTablesModel;
-use crate::error::{Diagnostic, Severity};
 use crate::grammar::atn::CompiledLexer;
+use crate::grammar::diagnostic::Diagnostic;
 use crate::grammar::model::{Block, ElementKind, GrammarUnit, Rule, RuleId};
+use crate::grammar::transform::SafetyClass;
+
+pub(crate) struct StaticLexerDfa;
+
+impl StaticLexerDfa {
+    pub(crate) const NAME: &'static str = "static-lexer-dfa";
+    pub(crate) const SAFETY: SafetyClass = SafetyClass::TreeAndApiPreserving;
+}
 
 /// The table payload and the warnings of one `--static-lexer-dfa` lexer build.
 #[derive(Clone, Debug)]
@@ -36,13 +40,7 @@ pub(crate) struct StaticLexerBuild {
 }
 
 /// Builds the static lexer DFA tables of one compiled lexer unit.
-///
-/// `grammar_path` becomes the path of the emitted diagnostics; the build
-/// itself is a pure function of the compiled unit.
-pub(crate) fn build_static_lexer_tables(
-    compiled: &CompiledLexer,
-    grammar_path: &Path,
-) -> StaticLexerBuild {
+pub(crate) fn build_static_lexer_tables(compiled: &CompiledLexer) -> StaticLexerBuild {
     let words = &compiled.runtime_artifact.atn_words;
     let atn = ATNDeserializer::new(None).deserialize(&mut words.iter());
     let build = StaticLexerDfaBuilder::new().build(&atn);
@@ -66,7 +64,6 @@ pub(crate) fn build_static_lexer_tables(
         if let Some(failure) = mode.failure {
             all_present = false;
             diagnostics.push(mode_failure_diagnostic(
-                grammar_path,
                 grammar_name,
                 name,
                 failure,
@@ -80,7 +77,6 @@ pub(crate) fn build_static_lexer_tables(
     }
     if escape_total(total_escapes) > 0 {
         diagnostics.push(escape_summary_diagnostic(
-            grammar_path,
             grammar_name,
             &build,
             compiled,
@@ -102,26 +98,19 @@ fn escape_total(counts: EscapeCounts) -> usize {
     counts.predicate + counts.custom_action + counts.recursive_context + counts.budget
 }
 
-fn warning(grammar_path: &Path, code: &'static str, message: String) -> Diagnostic {
-    Diagnostic::new(
-        code,
-        Severity::Warning,
-        message,
-        PathBuf::from(grammar_path),
-        None,
-        None,
-    )
+fn warning(unit: &GrammarUnit, code: &'static str, message: String) -> Diagnostic {
+    Diagnostic::warning(code, unit.span.clone(), message)
 }
 
 /// The per-mode failure warning: why the whole mode has no static table.
 /// Mirrors the reason split of the upstream tool's `ErrorType` 188/189.
 fn mode_failure_diagnostic(
-    grammar_path: &Path,
     grammar_name: &str,
     mode_name: &str,
     failure: ModeFailure,
     compiled: &CompiledLexer,
 ) -> Diagnostic {
+    let unit = &compiled.semantic.unit;
     let reason = match failure {
         ModeFailure::StartClosurePredicate => format!(
             "its start-state closure crosses a predicate{}",
@@ -137,7 +126,7 @@ fn mode_failure_diagnostic(
         ),
         ModeFailure::StartStateBudgetExceeded => {
             return warning(
-                grammar_path,
+                unit,
                 "G4S189",
                 format!(
                     "--static-lexer-dfa: static lexer DFA expansion of mode '{mode_name}' of lexer \
@@ -148,7 +137,7 @@ fn mode_failure_diagnostic(
         }
     };
     warning(
-        grammar_path,
+        unit,
         "G4S188",
         format!(
             "--static-lexer-dfa: mode '{mode_name}' of lexer '{grammar_name}' is not compiled to a \
@@ -161,7 +150,6 @@ fn mode_failure_diagnostic(
 /// by reason, with the modes and rules behind each reason where the grammar
 /// model names them.
 fn escape_summary_diagnostic(
-    grammar_path: &Path,
     grammar_name: &str,
     build: &StaticLexerDfaBuild,
     compiled: &CompiledLexer,
@@ -219,7 +207,7 @@ fn escape_summary_diagnostic(
     );
     collect(total.budget, None, "exceed the state budget");
     warning(
-        grammar_path,
+        &compiled.semantic.unit,
         "G4S188",
         format!(
             "--static-lexer-dfa: lexer '{grammar_name}' keeps {} edge(s) on the lazy simulator: {}",

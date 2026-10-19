@@ -2,22 +2,23 @@
 // Copyright (c) 2026 Konstantin Vyatkin
 use std::collections::BTreeSet;
 
-/// Grammar transform selection for one generation run.
+/// Optimization selection for one generation run.
 ///
-/// All transforms are pure tool-side rewrites of the grammar model before ATN
-/// construction: they are guaranteed to be recognition-preserving (i.e. the
-/// generated parser accepts exactly the same language); however they are **NOT
-/// tree-preserving**! Enabling these transformations may cause the generated
-/// parse tree to deviate from what is implied by the .g4 grammar.
+/// Grammar transforms rewrite the grammar model before ATN construction.
+/// These transforms preserve recognition (that is, the generated parser
+/// accepts the same language). However, they are **NOT tree-preserving**!
+/// When enabled, the generated parse tree can differ from the `.g4` grammar.
 ///
-/// If enabled, every applied transform is recorded in an `optimizations.txt`
-/// manifest emitted next to the generated files, so optimization is explicit
-/// and auditable.
+/// Every applied grammar transform writes an entry to an `optimizations.txt`
+/// manifest next to the generated files.
 ///
-/// The `report_*` variants run the transform in projection mode only: no
-/// recognizer files are emitted, and the manifest describes what *would*
-/// change. A `report_*` flag conflicts with the apply flag of the same
-/// transform.
+/// The `report_*` variants run the transform in projection mode only. The
+/// generator emits no recognizer files, and the manifest describes the
+/// projected changes. A `report_*` flag conflicts with the apply flag of the
+/// same transform.
+///
+/// Static lexer DFA generation ([`Self::static_lexer_dfa`]) precomputes lexer
+/// DFA tables after ATN construction and preserves both tokens and APIs.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct OptimizationOptions {
     pub(crate) entry_rules: BTreeSet<String>,
@@ -26,10 +27,11 @@ pub struct OptimizationOptions {
     pub(crate) report_trivial_rules: bool,
     pub(crate) optimize_precedence_ladders: bool,
     pub(crate) report_precedence_ladders: bool,
+    pub(crate) static_lexer_dfa: bool,
 }
 
 impl OptimizationOptions {
-    /// Starts an empty selection (no transforms).
+    /// Starts an empty selection.
     pub fn new() -> Self {
         Self::default()
     }
@@ -77,6 +79,13 @@ impl OptimizationOptions {
         self
     }
 
+    /// Precomputes static lexer DFA tables (`--static-lexer-dfa`, lexer scope
+    /// only). Default: `false`.
+    pub const fn static_lexer_dfa(&mut self, enabled: bool) -> &mut Self {
+        self.static_lexer_dfa = enabled;
+        self
+    }
+
     #[cfg(feature = "download")]
     pub(crate) fn entry_rules(&self) -> impl Iterator<Item = &str> {
         self.entry_rules.iter().map(String::as_str)
@@ -105,5 +114,10 @@ impl OptimizationOptions {
     #[cfg(feature = "download")]
     pub(crate) const fn report_ladders(&self) -> bool {
         self.report_precedence_ladders
+    }
+
+    #[cfg(feature = "download")]
+    pub(crate) const fn static_dfa(&self) -> bool {
+        self.static_lexer_dfa
     }
 }

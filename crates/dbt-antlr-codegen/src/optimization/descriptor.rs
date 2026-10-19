@@ -5,9 +5,12 @@ use crate::grammar::transform::passes::inline_trivial::InlineTrivialRules;
 use crate::grammar::transform::passes::precedence_ladder::CollapsePrecedenceLadders;
 use crate::grammar::transform::passes::prune_unreachable::PruneUnreachableRules;
 
+use super::static_lexer_dfa::StaticLexerDfa;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum OptimizationStage {
     IntegratedGrammar,
+    StaticLexerDfa,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,6 +46,15 @@ pub(super) const COLLAPSE_PRECEDENCE_LADDERS: PassDescriptor = PassDescriptor {
     stage: OptimizationStage::IntegratedGrammar,
     safety: SafetyClass::RecognitionPreserving,
     canonical_order: 200,
+    prerequisites: &[],
+    conflicts: &[],
+};
+
+pub(super) const STATIC_LEXER_DFA: PassDescriptor = PassDescriptor {
+    id: StaticLexerDfa::NAME,
+    stage: OptimizationStage::StaticLexerDfa,
+    safety: StaticLexerDfa::SAFETY,
+    canonical_order: 300,
     prerequisites: &[],
     conflicts: &[],
 };
