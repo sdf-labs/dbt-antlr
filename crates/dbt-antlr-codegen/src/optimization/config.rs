@@ -183,7 +183,7 @@ fn configure_precedence_ladders(settings: &SelectionSettings) -> Option<Configur
 fn configure_static_lexer_dfa(settings: &SelectionSettings) -> Option<ConfiguredPass> {
     settings.static_lexer_dfa.then_some(ConfiguredPass {
         stage: ConfiguredPassStage::StaticLexerDfa,
-        emit_manifest: false,
+        emit_manifest: true,
         messages: None,
     })
 }

@@ -1,0 +1,353 @@
+---
+source: crates/dbt-antlr-codegen/tests/dbt_antlr_cli/transforms.rs
+expression: manifest
+---
+{
+    "passes": [
+        {
+            "changed": True,
+            "id": 0,
+            "lexers": [
+                {
+                    "acceleratedStates": 2,
+                    "acceptStates": 2,
+                    "atnWords": 324,
+                    "compiledModes": 1,
+                    "continuations": 1,
+                    "escapedEdges": 2,
+                    "failedModes": 0,
+                    "grammar": "LexerRecursion",
+                    "modes": [
+                        {
+                            "acceleratedStates": [
+                                {
+                                    "accel": {
+                                        "asciiCount": 26,
+                                        "asciiIntervals": [
+                                            "'a'..='z'",
+                                        ],
+                                        "bitmapHex": "0x07fffffe000000000000000000000000",
+                                        "excludedAscii": [],
+                                        "hiSelfLoop": False,
+                                        "hint": None,
+                                        "kind": "positive",
+                                    },
+                                    "acceptRule": "PLAIN",
+                                    "acceptTokenType": 2,
+                                    "rules": [
+                                        "PLAIN",
+                                    ],
+                                    "selfLoopIntervals": [
+                                        "'a'..='z'",
+                                    ],
+                                    "state": 1,
+                                },
+                                {
+                                    "accel": {
+                                        "kind": "exclusion",
+                                        "needleBytes": [
+                                            123,
+                                            125,
+                                        ],
+                                        "needleCount": 2,
+                                        "needles": [
+                                            "'{'",
+                                            "'}'",
+                                        ],
+                                    },
+                                    "acceptRule": None,
+                                    "acceptTokenType": None,
+                                    "rules": [
+                                        "TEXT",
+                                        "LEVEL_A",
+                                    ],
+                                    "selfLoopIntervals": [
+                                        "U+0000..='z'",
+                                        "'|'",
+                                        "'~'..=U+10FFFF",
+                                    ],
+                                    "state": 3,
+                                },
+                            ],
+                            "escapedEdges": [
+                                {
+                                    "continuation": {
+                                        "configCount": 1,
+                                        "contextCount": 3,
+                                        "id": 0,
+                                        "kind": "moved-configs",
+                                        "nonGreedyConfigs": 0,
+                                        "rules": [
+                                            "LEVEL_A",
+                                        ],
+                                    },
+                                    "hint": "general recursive lexer rules require runtime context stacks; rewrite as a non-recursive loop or a direct self-recursive delimiter rule ('opener' (RULE | .)*? 'closer') to enable static CountedExclusion acceleration",
+                                    "message": "reach a recursive rule context",
+                                    "reason": "recursive-context",
+                                    "rule": "LEVEL_B",
+                                    "source": {
+                                        "byteEnd": 123,
+                                        "byteStart": 116,
+                                        "end": {
+                                            "column": 26,
+                                            "line": 5,
+                                        },
+                                        "path": "tests/codegen-direct/fixtures/lexer-recursion/LexerRecursion.g4",
+                                        "start": {
+                                            "column": 19,
+                                            "line": 5,
+                                        },
+                                    },
+                                    "state": 2,
+                                    "stateRules": [
+                                        "LEVEL_A",
+                                        "TEXT",
+                                    ],
+                                    "symbolEnd": 123,
+                                    "symbolStart": 123,
+                                    "symbols": "'{'",
+                                },
+                                {
+                                    "continuation": {
+                                        "configCount": 1,
+                                        "contextCount": 3,
+                                        "id": 0,
+                                        "kind": "moved-configs",
+                                        "nonGreedyConfigs": 0,
+                                        "rules": [
+                                            "LEVEL_A",
+                                        ],
+                                    },
+                                    "hint": "general recursive lexer rules require runtime context stacks; rewrite as a non-recursive loop or a direct self-recursive delimiter rule ('opener' (RULE | .)*? 'closer') to enable static CountedExclusion acceleration",
+                                    "message": "reach a recursive rule context",
+                                    "reason": "recursive-context",
+                                    "rule": "LEVEL_B",
+                                    "source": {
+                                        "byteEnd": 123,
+                                        "byteStart": 116,
+                                        "end": {
+                                            "column": 26,
+                                            "line": 5,
+                                        },
+                                        "path": "tests/codegen-direct/fixtures/lexer-recursion/LexerRecursion.g4",
+                                        "start": {
+                                            "column": 19,
+                                            "line": 5,
+                                        },
+                                    },
+                                    "state": 3,
+                                    "stateRules": [
+                                        "TEXT",
+                                        "LEVEL_A",
+                                    ],
+                                    "symbolEnd": 123,
+                                    "symbolStart": 123,
+                                    "symbols": "'{'",
+                                },
+                            ],
+                            "failure": None,
+                            "index": 0,
+                            "mode": "DEFAULT_MODE",
+                            "ruleFootprint": [
+                                {
+                                    "acceleratedStates": 0,
+                                    "acceptStates": 1,
+                                    "countedExclusion": False,
+                                    "escapedEdges": 0,
+                                    "rule": "NESTED",
+                                    "source": {
+                                        "byteEnd": 49,
+                                        "byteStart": 31,
+                                        "end": {
+                                            "column": 18,
+                                            "line": 3,
+                                        },
+                                        "path": "tests/codegen-direct/fixtures/lexer-recursion/LexerRecursion.g4",
+                                        "start": {
+                                            "column": 0,
+                                            "line": 3,
+                                        },
+                                    },
+                                    "states": 1,
+                                },
+                                {
+                                    "acceleratedStates": 1,
+                                    "acceptStates": 0,
+                                    "countedExclusion": False,
+                                    "escapedEdges": 0,
+                                    "rule": "LEVEL_A",
+                                    "source": {
+                                        "byteEnd": 96,
+                                        "byteStart": 50,
+                                        "end": {
+                                            "column": 46,
+                                            "line": 4,
+                                        },
+                                        "path": "tests/codegen-direct/fixtures/lexer-recursion/LexerRecursion.g4",
+                                        "start": {
+                                            "column": 0,
+                                            "line": 4,
+                                        },
+                                    },
+                                    "states": 3,
+                                },
+                                {
+                                    "acceleratedStates": 0,
+                                    "acceptStates": 0,
+                                    "countedExclusion": False,
+                                    "escapedEdges": 2,
+                                    "rule": "LEVEL_B",
+                                    "source": {
+                                        "byteEnd": 125,
+                                        "byteStart": 97,
+                                        "end": {
+                                            "column": 28,
+                                            "line": 5,
+                                        },
+                                        "path": "tests/codegen-direct/fixtures/lexer-recursion/LexerRecursion.g4",
+                                        "start": {
+                                            "column": 0,
+                                            "line": 5,
+                                        },
+                                    },
+                                    "states": 0,
+                                },
+                                {
+                                    "acceleratedStates": 1,
+                                    "acceptStates": 0,
+                                    "countedExclusion": False,
+                                    "escapedEdges": 0,
+                                    "rule": "TEXT",
+                                    "source": {
+                                        "byteEnd": 150,
+                                        "byteStart": 126,
+                                        "end": {
+                                            "column": 24,
+                                            "line": 6,
+                                        },
+                                        "path": "tests/codegen-direct/fixtures/lexer-recursion/LexerRecursion.g4",
+                                        "start": {
+                                            "column": 0,
+                                            "line": 6,
+                                        },
+                                    },
+                                    "states": 2,
+                                },
+                                {
+                                    "acceleratedStates": 1,
+                                    "acceptStates": 1,
+                                    "countedExclusion": False,
+                                    "escapedEdges": 0,
+                                    "rule": "PLAIN",
+                                    "source": {
+                                        "byteEnd": 167,
+                                        "byteStart": 151,
+                                        "end": {
+                                            "column": 16,
+                                            "line": 7,
+                                        },
+                                        "path": "tests/codegen-direct/fixtures/lexer-recursion/LexerRecursion.g4",
+                                        "start": {
+                                            "column": 0,
+                                            "line": 7,
+                                        },
+                                    },
+                                    "states": 2,
+                                },
+                            ],
+                            "simpleRecursiveRules": [],
+                            "source": {
+                                "byteEnd": 168,
+                                "byteStart": 0,
+                                "end": {
+                                    "column": 0,
+                                    "line": 8,
+                                },
+                                "path": "tests/codegen-direct/fixtures/lexer-recursion/LexerRecursion.g4",
+                                "start": {
+                                    "column": 0,
+                                    "line": 1,
+                                },
+                            },
+                            "statistics": {
+                                "continuations": {
+                                    "movedConfigs": 1,
+                                    "sourceSet": 0,
+                                    "total": 1,
+                                },
+                                "edges": {
+                                    "asciiPopulatedCells": 309,
+                                    "eof": 0,
+                                    "escapeCounts": {
+                                        "budget": 0,
+                                        "customAction": 0,
+                                        "predicate": 0,
+                                        "recursiveContext": 2,
+                                        "total": 2,
+                                    },
+                                    "escaped": 2,
+                                    "hiDistinctRows": 2,
+                                    "hiSymbolClasses": 1,
+                                    "selfLoopIntervals": 4,
+                                    "target": 11,
+                                    "total": 13,
+                                },
+                                "states": {
+                                    "accelerated": 2,
+                                    "accept": 2,
+                                    "maxConfigs": 3,
+                                    "nonAccept": 3,
+                                    "total": 5,
+                                    "totalConfigs": 11,
+                                    "withEscapes": 2,
+                                },
+                            },
+                            "status": "partial",
+                        },
+                    ],
+                    "numModes": 1,
+                    "omitAtn": False,
+                    "source": {
+                        "byteEnd": 168,
+                        "byteStart": 0,
+                        "end": {
+                            "column": 0,
+                            "line": 8,
+                        },
+                        "path": "tests/codegen-direct/fixtures/lexer-recursion/LexerRecursion.g4",
+                        "start": {
+                            "column": 0,
+                            "line": 1,
+                        },
+                    },
+                    "tableBytes": 2900,
+                    "tableWords": 725,
+                    "targetEdges": 11,
+                    "totalEdges": 13,
+                    "totalStates": 5,
+                },
+            ],
+            "metrics": {
+                "acceleratedStates": 2,
+                "acceptStates": 2,
+                "atnWords": 324,
+                "compiledModes": 1,
+                "continuations": 1,
+                "edges": 13,
+                "escapedEdges": 2,
+                "failedModes": 0,
+                "fullyStaticLexers": 0,
+                "lexers": 1,
+                "modes": 1,
+                "states": 5,
+                "tableBytes": 2900,
+                "tableWords": 725,
+                "targetEdges": 11,
+            },
+            "name": "static-lexer-dfa",
+            "safetyClass": "tree-and-api-preserving",
+        },
+    ],
+    "reportOnly": False,
+    "version": 1,
+}
