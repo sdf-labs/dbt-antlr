@@ -1,8 +1,7 @@
 #![cfg(feature = "generator")]
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Bo Lin
-//! Golden-diff test for the dbt parser emission layer: left-recursive rules
-//! (milestone 4.4).
+//! Golden-diff test for the parser emission layer: left-recursive rules
 //!
 //! Renders the `SimpleLR` combined grammar (direct left recursion in rule `a`,
 //! plus an `@after` named action on rule `s`) and compares the emitted

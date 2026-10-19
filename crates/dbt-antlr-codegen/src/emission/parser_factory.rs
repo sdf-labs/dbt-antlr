@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Bo Lin
-//! Builds the dbt parser output model from a compiled parser grammar unit.
+//! Builds the parser output model from a compiled parser grammar unit.
 //!
 //! This is a port of the Java tool's parser-path model construction:
 //! `OutputModelController.buildParserOutputModel` /
@@ -13,11 +13,6 @@
 //! left-recursive rule handling of `OutputModelController
 //! .buildLeftRecursiveRuleFunction` (the `recRule*` op injection) and
 //! `LeftRecursiveRule.getUnlabeledAltASTs`.
-//!
-//! Later milestones: rule args/locals, throws/catch/finally, list (`+=`)
-//! labels, labels on sets and wildcards, non-local attribute references,
-//! and user-authored sempreds are rejected with [`EmitError::Unsupported`]
-//! for now.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 

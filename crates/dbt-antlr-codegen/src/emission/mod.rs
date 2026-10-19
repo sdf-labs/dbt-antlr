@@ -9,7 +9,7 @@
 //! `OutputModelController` / `LexerFactory` / `ParserFactory` walks on top of
 //! the `grammar` analysis layer.
 //!
-//! Public entry point of the dbt emission layer: generate Rust recognizer
+//! Public entry point of the emission layer: generate Rust recognizer
 //! sources for the `dbt-antlr-runtime` runtime from `.g4` grammars.
 
 mod action_translator;
@@ -28,20 +28,15 @@ use crate::emission::template::render_template;
 use crate::error::Diagnostic;
 use crate::grammar::compiler::{self, Compilation};
 use crate::grammar::loader::LoadOptions;
-use crate::optimization::static_lexer_dfa::build_static_lexer_tables;
 use crate::optimization::{OptimizationOptions, OptimizationPlan};
+
 /// One generated source file.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmittedFile {
     /// File name as the Java tool's `RustTarget` derives it (lowercased
     /// recognizer name plus `.rs`).
     pub name: String,
-    /// File content, byte-identical to the Java tool's output modulo the
-    /// `grammarFileName` canonicalization documented on
-    /// [`emit_lexer_files`] and the lint allow header: the Java tool emits
-    /// inner `#![allow(...)]` attributes, which make the files unusable with
-    /// `include!`, so generated files carry no lint attributes and consumers
-    /// put `#[allow]` on the wrapping module instead.
+    /// Generated file content
     pub content: String,
 }
 
@@ -51,13 +46,7 @@ fn compile_grammar(
     grammar_path: &Path,
     library_dirs: &[PathBuf],
 ) -> Result<Compilation, EmitError> {
-    let roots = vec![grammar_path.to_path_buf()];
-    compiler::compile(LoadOptions {
-        roots: roots.clone(),
-        library_directories: library_dirs.to_vec(),
-    })
-    .map_err(|error| crate::compile_error::compilation_error(&error, &roots))
-    .map_err(EmitError::from)
+    compile_grammar_with(grammar_path, library_dirs, &OptimizationPlan::default())
 }
 
 fn compile_grammar_with(
@@ -66,14 +55,12 @@ fn compile_grammar_with(
     plan: &OptimizationPlan,
 ) -> Result<Compilation, EmitError> {
     let roots = vec![grammar_path.to_path_buf()];
-    compiler::compile_with_transforms(
+    compiler::compile_with_plan(
         LoadOptions {
             roots: roots.clone(),
             library_directories: library_dirs.to_vec(),
         },
-        plan.transforms(),
-        plan.report_only(),
-        plan.entry_rules(),
+        plan,
     )
     .map_err(|error| crate::compile_error::compilation_error(&error, &roots))
     .map_err(EmitError::from)
@@ -123,19 +110,7 @@ pub fn emit_lexer_files(
     Ok(files)
 }
 
-/// Emits all recognizer source files for the grammars rooted at
-/// `grammar_path`.
-///
-/// A combined grammar yields both its implicit lexer file and its parser
-/// file (`csvlexer.rs`, `csvparser.rs`), matching the Java tool's
-/// single-input behavior.
-///
-/// The listener/visitor flags are fixed to `true` here, matching how the
-/// CSV golden files were generated; use [`emit_files_with_flags`] for
-/// grammars generated without the visitor (for example `SimpleLR`).
-///
-/// The same `grammarFileName` canonicalization deviation as
-/// [`emit_lexer_files`] applies.
+/// Emits all recognizer source files for the grammars rooted at `grammar_path`.
 ///
 /// # Errors
 ///
@@ -149,11 +124,6 @@ pub fn emit_files(
 
 /// [`emit_files`] with explicit listener/visitor generation flags.
 ///
-/// The file set matches the Java tool's `CodeGenPipeline`: the listener
-/// flags gates `<g>listener.rs` plus `<g>baselistener.rs`, the visitor flag
-/// gates `<g>visitor.rs` plus `<g>basevisitor.rs` (`wantsBaseListener`/
-/// `wantsBaseVisitor` are true for the Rust target).
-///
 /// # Errors
 ///
 /// See [`emit_lexer_files`].
@@ -164,69 +134,50 @@ pub fn emit_files_with_flags(
     gen_visitor: bool,
 ) -> Result<Vec<EmittedFile>, EmitError> {
     let compilation = compile_grammar(grammar_path, library_dirs)?;
-    Ok(render_recognizer_files(&compilation, grammar_path, gen_listener, gen_visitor, false)?.0)
+    render_recognizer_files(&compilation, grammar_path, gen_listener, gen_visitor)
 }
 
 /// Output of [`emit_files_with_options`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmittedOutput {
-    /// Generated recognizer source files. Empty when the selected transforms
-    /// run in report-only mode.
+    /// Generated recognizer source files. Empty when [`OptimizationOptions::report_only`]
+    /// is enabled.
     pub files: Vec<EmittedFile>,
     /// Non-fatal compiler diagnostics (for example unreachable-rule
     /// warnings).
     pub diagnostics: Vec<Diagnostic>,
-    /// Transform notes for the user (for example `pruned: ...` lines).
+    /// Optimization notes for the user (for example `pruned: ...` lines).
     pub optimization_messages: Vec<String>,
     /// Rendered `optimizations.txt` manifest, present when the selected
-    /// transforms emit one.
+    /// optimizations emit one.
     pub optimization_manifest: Option<String>,
 }
 
-/// [`emit_files_with_flags`] with an explicit grammar transform selection.
+/// [`emit_files_with_flags`] with an explicit optimization selection.
 ///
-/// Applies the configured [`OptimizationOptions`] to the grammar model
-/// before ATN construction. When the selection runs in report-only mode (a
-/// `report_*` flag), no recognizer files are produced and
-/// [`EmittedOutput::optimization_manifest`] describes what the transform
-/// *would* change.
-///
-/// `static_lexer_dfa` is the command line's `--static-lexer-dfa`: the
-/// lexer units get
-/// static DFA tables (plus `G4S188`/`G4S189` warnings for the modes and
-/// edges that stay on the lazy simulator). With `false` the output is
-/// byte-identical to [`emit_files_with_flags`].
+/// Applies the configured [`OptimizationOptions`] to the compilation and
+/// emission pipeline. When [`OptimizationOptions::report_only`] is enabled,
+/// the generator does not write any files to disk.
 ///
 /// # Errors
 ///
-/// See [`emit_lexer_files`]. Also returns [`EmitError::Config`] when the
-/// transform selection is internally inconsistent (for example apply and
-/// report modes of one transform combined).
+/// See [`emit_lexer_files`].
 pub fn emit_files_with_options(
     grammar_path: &Path,
     library_dirs: &[PathBuf],
     gen_listener: bool,
     gen_visitor: bool,
     optimization: &OptimizationOptions,
-    static_lexer_dfa: bool,
 ) -> Result<EmittedOutput, EmitError> {
     let plan = OptimizationPlan::from_options(optimization)?;
     let compilation = compile_grammar_with(grammar_path, library_dirs, &plan)?;
-    let mut diagnostics = crate::compile_error::non_fatal_diagnostics(&compilation);
+    let diagnostics = crate::compile_error::non_fatal_diagnostics(&compilation);
     let optimization_messages = plan.diagnostic_messages(&compilation);
     let optimization_manifest = plan.render_manifest(&compilation);
     let files = if plan.report_only() {
         Vec::new()
     } else {
-        let (files, static_diagnostics) = render_recognizer_files(
-            &compilation,
-            grammar_path,
-            gen_listener,
-            gen_visitor,
-            static_lexer_dfa,
-        )?;
-        diagnostics.extend(static_diagnostics);
-        files
+        render_recognizer_files(&compilation, grammar_path, gen_listener, gen_visitor)?
     };
     Ok(EmittedOutput {
         files,
@@ -241,8 +192,7 @@ fn render_recognizer_files(
     grammar_path: &Path,
     gen_listener: bool,
     gen_visitor: bool,
-    static_lexer_dfa: bool,
-) -> Result<(Vec<EmittedFile>, Vec<Diagnostic>), EmitError> {
+) -> Result<Vec<EmittedFile>, EmitError> {
     let grammar_file_name = bare_file_name(grammar_path);
     let grammar_name = grammar_path.file_stem().map_or_else(
         || grammar_file_name.clone(),
@@ -250,20 +200,13 @@ fn render_recognizer_files(
     );
 
     let mut files = Vec::new();
-    let mut diagnostics = Vec::new();
     for root in &compilation.roots {
         if let Some(lexer_id) = root.lexer {
             let compiled = &compilation.lexers[&lexer_id];
-            let static_build =
-                static_lexer_dfa.then(|| build_static_lexer_tables(compiled, grammar_path));
-            let context = build_lexer_file_context(
-                compiled,
-                &grammar_file_name,
-                static_build.as_ref().map(|build| build.model.clone()),
-            );
-            if let Some(build) = static_build {
-                diagnostics.extend(build.diagnostics);
-            }
+            let static_tables = compilation
+                .static_lexer(lexer_id)
+                .map(|build| build.model.clone());
+            let context = build_lexer_file_context(compiled, &grammar_file_name, static_tables);
             let content = render_template(&minijinja::Value::from_serialize(&context))?;
             let name = format!("{}.rs", compiled.semantic.unit.name.to_lowercase());
             files.push(EmittedFile { name, content });
@@ -290,17 +233,14 @@ fn render_recognizer_files(
             )?);
         }
     }
-    Ok((files, diagnostics))
+    Ok(files)
 }
 
 /// Emits only the listener/visitor source files for the grammars rooted at
 /// `grammar_path`.
 ///
-/// These are the Java `generateListener`/`generateBaseListener`/
-/// `generateVisitor`/`generateBaseVisitor` entry points without the
-/// recognizer files. Unlike [`emit_files_with_flags`] this does not build
-/// the parser output model, so grammars whose parser emission is not
-/// supported yet (alt labels, milestone 4.6) still emit these files.
+/// This does NOT build the parser output model, so grammars whose parser
+/// emission would have failed can still emit these files.
 ///
 /// # Errors
 ///

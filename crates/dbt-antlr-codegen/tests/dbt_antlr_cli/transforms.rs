@@ -14,17 +14,12 @@ fn precedence_ladder_optimization_is_explicit_auditable_and_recognition_preservi
         temp.path(),
         "tests/fixtures/transforms/precedence-ladder/Ladder.g4",
         "--optimize-precedence-ladders",
-        "--report-precedence-ladders",
     );
+    assert!(!report.exists());
 
     let manifest = fs::read_to_string(optimized.join("optimizations.txt"))
         .expect("applied optimization manifest should be emitted");
     insta::assert_snapshot!("precedence_ladder_optimization_manifest", manifest);
-    let dry_run_manifest = fs::read_to_string(report.join("optimizations.txt"))
-        .expect("dry-run optimization manifest should be emitted");
-    assert!(dry_run_manifest.contains("\"reportOnly\": True"));
-    assert!(dry_run_manifest.contains("\"status\": \"eligible\""));
-    assert!(!dry_run_manifest.contains("\"status\": \"applied\""));
 
     let baseline_parser = fs::read_to_string(baseline.join("ladderparser.rs"))
         .expect("baseline parser should be emitted");
@@ -324,27 +319,27 @@ WS : [ \t\r\n]+ -> skip ;
         // its rendered output at a fixed width, so absolute paths would make
         // the wrap points (and this snapshot) depend on the machine.
         let grammar = format!("{grammar_name}/{grammar_name}.g4");
-        for flag in [
-            "--optimize-precedence-ladders",
-            "--report-precedence-ladders",
+        for flags in [
+            &["--optimize-precedence-ladders"][..],
+            &["--optimize-precedence-ladders", "--report-only"][..],
         ] {
-            let output = run_dbt_antlr_in(
-                temp.path(),
-                &[
-                    OsStr::new(&grammar),
-                    OsStr::new(flag),
-                    OsStr::new("-o"),
-                    OsStr::new("generated"),
-                ],
-            );
+            let mut args = vec![
+                OsStr::new(&grammar),
+                OsStr::new("-o"),
+                OsStr::new("generated"),
+            ];
+            for flag in flags {
+                args.push(OsStr::new(flag));
+            }
+            let output = run_dbt_antlr_in(temp.path(), &args);
             assert!(
                 !output.status.success(),
-                "{grammar_name} unexpectedly succeeded with {flag}"
+                "{grammar_name} unexpectedly succeeded with {flags:?}"
             );
             let stderr = utf8(&output.stderr);
             assert!(stderr.contains(code), "{stderr}");
             assert!(stderr.contains(message), "{stderr}");
-            diagnostics.push((grammar_name, flag, stderr.to_owned()));
+            diagnostics.push((grammar_name, flags.join(" "), stderr.to_owned()));
         }
     }
 
@@ -476,18 +471,12 @@ fn trivial_rule_inlining_is_explicit_auditable_and_recognition_preserving() {
         temp.path(),
         "tests/fixtures/transforms/trivial-inline/Inline.g4",
         "--inline-trivial-rules",
-        "--report-trivial-rules",
     );
+    assert!(!report.exists());
 
     let manifest = fs::read_to_string(optimized.join("optimizations.txt"))
         .expect("applied optimization manifest should be emitted");
     insta::assert_snapshot!("trivial_inline_optimization_manifest", manifest);
-    let dry_run_manifest = fs::read_to_string(report.join("optimizations.txt"))
-        .expect("dry-run optimization manifest should be emitted");
-    assert!(dry_run_manifest.contains("\"reportOnly\": True"));
-    assert!(dry_run_manifest.contains("\"status\": \"eligible\""));
-    assert!(dry_run_manifest.contains("\"status\": \"declined\""));
-    assert!(!dry_run_manifest.contains("\"status\": \"applied\""));
 
     let baseline_parser = fs::read_to_string(baseline.join("inlineparser.rs"))
         .expect("baseline parser should be emitted");

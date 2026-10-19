@@ -1,32 +1,40 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Bo Lin
-//! `--static-lexer-dfa` support of the dbt emission layer (lexer scope).
+//! `--static-lexer-dfa` optimization pass (lexer scope).
 //!
-//! When the flag is on, the compiled lexer ATN (the Java-format word stream
-//! of the runtime artifact) is deserialized with the runtime's
-//! `ATNDeserializer` and handed to the runtime's static lexer DFA builder
-//! (`static-dfa-build` feature). The builder drives the reference
-//! `LexerATNSimulator` move/closure code exhaustively, so the tables match
-//! the lazy path by construction, and the build is deterministic: one
-//! grammar produces one word stream.
+//! When the flag is on, the pass deserializes the compiled lexer ATN with the
+//! runtime `ATNDeserializer`. Then it runs the runtime static lexer DFA
+//! builder (`static-dfa-build` feature). The builder drives the reference
+//! `LexerATNSimulator` move and closure code exhaustively. As a result, the
+//! tables match the lazy path by construction, and the build is deterministic:
+//! one grammar produces one word stream.
 //!
-//! The build result becomes the `StaticLexerTablesModel` of the lexer
-//! output model. Modes the builder could not compile, and edges that
-//! escape to the lazy simulator, become codegen warnings in the style of
-//! the upstream tool's `ErrorType` 188/189.
-
-use std::path::{Path, PathBuf};
+//! The build result becomes the `StaticLexerTablesModel` of the lexer output
+//! model. Modes that the builder cannot compile, and edges that escape to the
+//! lazy simulator, produce compiler warnings (`G4S188` and `G4S189`).
 
 use dbt_antlr_runtime::atn_deserializer::ATNDeserializer;
 use dbt_antlr_runtime::dfa::static_dfa_build::{
-    DEFAULT_MAX_STATES_PER_MODE, EscapeCounts, ModeFailure, StaticLexerDfaBuild,
-    StaticLexerDfaBuilder,
+    DEFAULT_MAX_STATES_PER_MODE, EscapeReason, EscapedEdge, ModeFailure, StaticLexerDfaBuilder,
 };
+use dbt_antlr_runtime::int_stream::EOF;
 
 use crate::emission::model::StaticLexerTablesModel;
-use crate::error::{Diagnostic, Severity};
-use crate::grammar::atn::CompiledLexer;
-use crate::grammar::model::{Block, ElementKind, GrammarUnit, Rule, RuleId};
+use crate::grammar::atn::{CompiledLexer, FinalizedTransitionKind};
+use crate::grammar::diagnostic::Diagnostic;
+use crate::grammar::frontend::SourceSpan;
+use crate::grammar::model::{
+    Block, BuildTransitionId, ElementId, ElementKind, GrammarUnit, ModelNodeId, Rule, RuleId,
+};
+use crate::grammar::provenance::{Origin, ProvenanceIndex};
+use crate::grammar::transform::SafetyClass;
+
+pub(crate) struct StaticLexerDfa;
+
+impl StaticLexerDfa {
+    pub(crate) const NAME: &'static str = "static-lexer-dfa";
+    pub(crate) const SAFETY: SafetyClass = SafetyClass::TreeAndApiPreserving;
+}
 
 /// The table payload and the warnings of one `--static-lexer-dfa` lexer build.
 #[derive(Clone, Debug)]
@@ -36,13 +44,7 @@ pub(crate) struct StaticLexerBuild {
 }
 
 /// Builds the static lexer DFA tables of one compiled lexer unit.
-///
-/// `grammar_path` becomes the path of the emitted diagnostics; the build
-/// itself is a pure function of the compiled unit.
-pub(crate) fn build_static_lexer_tables(
-    compiled: &CompiledLexer,
-    grammar_path: &Path,
-) -> StaticLexerBuild {
+pub(crate) fn build_static_lexer_tables(compiled: &CompiledLexer) -> StaticLexerBuild {
     let words = &compiled.runtime_artifact.atn_words;
     let atn = ATNDeserializer::new(None).deserialize(&mut words.iter());
     let build = StaticLexerDfaBuilder::new().build(&atn);
@@ -60,35 +62,27 @@ pub(crate) fn build_static_lexer_tables(
 
     let mut diagnostics = Vec::new();
     let mut all_present = true;
-    let mut total_escapes = EscapeCounts::default();
+    let mut has_escapes = false;
     for (index, mode) in build.modes.iter().enumerate() {
         let name = mode_name(index);
         if let Some(failure) = mode.failure {
             all_present = false;
             diagnostics.push(mode_failure_diagnostic(
-                grammar_path,
                 grammar_name,
                 name,
                 failure,
                 compiled,
             ));
         }
-        total_escapes.predicate += mode.escape_counts.predicate;
-        total_escapes.custom_action += mode.escape_counts.custom_action;
-        total_escapes.recursive_context += mode.escape_counts.recursive_context;
-        total_escapes.budget += mode.escape_counts.budget;
-    }
-    if escape_total(total_escapes) > 0 {
-        diagnostics.push(escape_summary_diagnostic(
-            grammar_path,
-            grammar_name,
-            &build,
-            compiled,
-            total_escapes,
-        ));
+        if !mode.escaped_edges.is_empty() {
+            has_escapes = true;
+            for edge in &mode.escaped_edges {
+                diagnostics.push(escaped_edge_diagnostic(grammar_name, name, edge, compiled));
+            }
+        }
     }
 
-    let omit_atn = all_present && escape_total(total_escapes) == 0;
+    let omit_atn = all_present && !has_escapes;
     StaticLexerBuild {
         model: StaticLexerTablesModel {
             words: build.words,
@@ -98,163 +92,293 @@ pub(crate) fn build_static_lexer_tables(
     }
 }
 
-fn escape_total(counts: EscapeCounts) -> usize {
-    counts.predicate + counts.custom_action + counts.recursive_context + counts.budget
-}
-
-fn warning(grammar_path: &Path, code: &'static str, message: String) -> Diagnostic {
-    Diagnostic::new(
-        code,
-        Severity::Warning,
-        message,
-        PathBuf::from(grammar_path),
-        None,
-        None,
-    )
-}
-
-/// The per-mode failure warning: why the whole mode has no static table.
-/// Mirrors the reason split of the upstream tool's `ErrorType` 188/189.
+/// Per-mode failure warning when a whole mode has no static table.
 fn mode_failure_diagnostic(
-    grammar_path: &Path,
     grammar_name: &str,
     mode_name: &str,
     failure: ModeFailure,
     compiled: &CompiledLexer,
 ) -> Diagnostic {
+    let unit = &compiled.semantic.unit;
+    let span = mode_span(unit, mode_name);
+    let detail = edge_attribution_note(grammar_name, mode_name, None);
+
     let reason = match failure {
         ModeFailure::StartClosurePredicate => format!(
-            "its start-state closure crosses a predicate{}",
+            "start-state closure crosses a predicate{}",
             rule_names_note(rules_with(compiled, mode_name, Construct::Predicate)),
         ),
         ModeFailure::StartClosureCustomAction => format!(
-            "its start-state closure runs a position-dependent action{}",
+            "start-state closure runs a position-dependent action{}",
             rule_names_note(rules_with(compiled, mode_name, Construct::Action)),
         ),
         ModeFailure::StartClosureRecursiveContext => format!(
-            "its start-state closure reaches a recursive rule context{}",
+            "start-state closure reaches a recursive rule context{}",
             rule_names_note(rules_with(compiled, mode_name, Construct::Recursive)),
         ),
         ModeFailure::StartStateBudgetExceeded => {
-            return warning(
-                grammar_path,
+            return Diagnostic::warning(
                 "G4S189",
+                span,
                 format!(
-                    "--static-lexer-dfa: static lexer DFA expansion of mode '{mode_name}' of lexer \
-                     '{grammar_name}' exceeded the cap of {DEFAULT_MAX_STATES_PER_MODE} states; \
-                     the mode uses the lazy simulator"
+                    "{detail}: static DFA expansion exceeded the cap of {DEFAULT_MAX_STATES_PER_MODE} states; \
+                     the whole mode is deferred to runtime expansion"
                 ),
             );
         }
     };
-    warning(
-        grammar_path,
+    Diagnostic::warning(
         "G4S188",
+        span,
         format!(
-            "--static-lexer-dfa: mode '{mode_name}' of lexer '{grammar_name}' is not compiled to a \
-             static table: {reason}; the mode uses the lazy simulator"
+            "{detail}: static DFA expansion failed: {reason}; the whole mode is deferred to runtime expansion"
         ),
     )
 }
 
-/// The per-grammar escape summary: one warning with the escape edge counts
-/// by reason, with the modes and rules behind each reason where the grammar
-/// model names them.
-fn escape_summary_diagnostic(
-    grammar_path: &Path,
+/// Per-edge warning for one escaped DFA edge, with a source span in the `.g4` file.
+fn escaped_edge_diagnostic(
     grammar_name: &str,
-    build: &StaticLexerDfaBuild,
+    mode_name: &str,
+    edge: &EscapedEdge,
     compiled: &CompiledLexer,
-    total: EscapeCounts,
 ) -> Diagnostic {
-    let mut reasons = Vec::new();
-    let mut collect = |count: usize, construct: Option<Construct>, text: &str| {
-        if count == 0 {
-            return;
+    let (span, rule_name, reason) = resolve_escape_site(compiled, edge.reason);
+    let detail = edge_attribution_note(grammar_name, mode_name, rule_name);
+    let symbol = format_edge_label(edge.lo, edge.hi);
+    Diagnostic::warning(
+        "G4S188",
+        span,
+        format!(
+            "{detail}: static-lexer-dfa failed to expand edge on {symbol} (state {}) \
+             due to: {reason}",
+            edge.state,
+        ),
+    )
+}
+
+fn resolve_escape_site(
+    compiled: &CompiledLexer,
+    reason: EscapeReason,
+) -> (SourceSpan, Option<&str>, &'static str) {
+    let unit = &compiled.semantic.unit;
+    match reason {
+        EscapeReason::Predicate {
+            rule_index,
+            pred_index,
+        } => {
+            let binding = compiled
+                .semantic
+                .bindings
+                .predicates
+                .values()
+                .find(|binding| binding.index == pred_index);
+            let rule = binding
+                .and_then(|binding| rule_by_id(unit, binding.rule))
+                .or_else(|| unit.rules.get(rule_index));
+            let span = binding
+                .and_then(|binding| element_span(compiled, binding.rule, binding.element))
+                .or_else(|| rule.map(|rule| rule.span.clone()))
+                .unwrap_or_else(|| unit.span.clone());
+            (
+                span,
+                rule.map(|rule| rule.name.as_str()),
+                "cross a predicate",
+            )
         }
-        let mut modes: Vec<&str> = Vec::new();
-        for (index, mode) in build.modes.iter().enumerate() {
-            let escapes = mode.escape_counts;
-            let hit = match construct {
-                Some(Construct::Predicate) => escapes.predicate,
-                Some(Construct::Action) => escapes.custom_action,
-                Some(Construct::Recursive) => escapes.recursive_context,
-                None => escapes.budget,
-            };
-            if hit > 0 {
-                modes.push(
+        EscapeReason::CustomAction {
+            rule_index,
+            action_index,
+        } => {
+            let binding = compiled
+                .semantic
+                .bindings
+                .actions
+                .values()
+                .find(|binding| binding.index == action_index);
+            let rule = binding
+                .and_then(|binding| rule_by_id(unit, binding.rule))
+                .or_else(|| unit.rules.get(rule_index));
+            let span = binding
+                .and_then(|binding| element_span(compiled, binding.rule, binding.element))
+                .or_else(|| rule.map(|rule| rule.span.clone()))
+                .unwrap_or_else(|| unit.span.clone());
+            (
+                span,
+                rule.map(|rule| rule.name.as_str()),
+                "run a position-dependent action",
+            )
+        }
+        EscapeReason::RecursiveContext {
+            rule_index,
+            state_number,
+            return_state,
+        } => {
+            let rule_transition = compiled.graph.transitions.iter().find(|transition| {
+                matches!(
+                    transition.kind,
+                    FinalizedTransitionKind::Rule { follow, .. } if follow == return_state
+                )
+            });
+            let rule = rule_transition
+                .and_then(|transition| compiled.graph.states.get(transition.source))
+                .and_then(|state| state.rule)
+                .and_then(|id| rule_by_id(unit, id))
+                .or_else(|| {
                     compiled
-                        .semantic
-                        .recognizer
-                        .mode_names
-                        .get(index)
-                        .map_or("DEFAULT_MODE", String::as_str),
-                );
+                        .graph
+                        .states
+                        .get(return_state)
+                        .and_then(|state| state.rule)
+                        .and_then(|id| rule_by_id(unit, id))
+                })
+                .or_else(|| unit.rules.get(rule_index));
+            let span = rule_transition
+                .and_then(|transition| transition_span(compiled, transition.original))
+                .or_else(|| state_span(compiled, return_state))
+                .or_else(|| state_span(compiled, state_number))
+                .or_else(|| rule.map(|rule| rule.span.clone()))
+                .unwrap_or_else(|| unit.span.clone());
+            (
+                span,
+                rule.map(|rule| rule.name.as_str()),
+                "reach a recursive rule context",
+            )
+        }
+        EscapeReason::Budget {
+            rule_index,
+            state_number,
+        } => {
+            let rule = compiled
+                .graph
+                .states
+                .get(state_number)
+                .and_then(|state| state.rule)
+                .and_then(|id| rule_by_id(unit, id))
+                .or_else(|| unit.rules.get(rule_index));
+            let span = state_span(compiled, state_number)
+                .or_else(|| rule.map(|rule| rule.span.clone()))
+                .unwrap_or_else(|| unit.span.clone());
+            (
+                span,
+                rule.map(|rule| rule.name.as_str()),
+                "exceed the state budget",
+            )
+        }
+    }
+}
+
+fn mode_span(unit: &GrammarUnit, mode_name: &str) -> SourceSpan {
+    if mode_name != "DEFAULT_MODE"
+        && let Some(mode) = unit.modes.iter().find(|mode| mode.name == mode_name)
+    {
+        return mode.span.clone();
+    }
+    unit.span.clone()
+}
+
+fn rule_by_id(unit: &GrammarUnit, id: RuleId) -> Option<&Rule> {
+    unit.rules.iter().find(|rule| rule.id == id)
+}
+
+fn element_span(
+    compiled: &CompiledLexer,
+    rule_id: RuleId,
+    element_id: ElementId,
+) -> Option<SourceSpan> {
+    if let Some(rule) = rule_by_id(&compiled.semantic.unit, rule_id)
+        && let Some(span) = find_element_span(&rule.block, element_id)
+    {
+        return Some(span);
+    }
+    origins_span(
+        &compiled.provenance,
+        compiled
+            .provenance
+            .origins(ModelNodeId::Element(element_id)),
+    )
+}
+
+fn find_element_span(block: &Block, target: ElementId) -> Option<SourceSpan> {
+    for alternative in &block.alternatives {
+        for element in &alternative.elements {
+            if element.id == target {
+                return Some(element.span.clone());
+            }
+            if let ElementKind::Block(nested) = &element.kind
+                && let Some(span) = find_element_span(nested, target)
+            {
+                return Some(span);
             }
         }
-        let rules = match construct {
-            Some(construct) => modes
-                .iter()
-                .flat_map(|mode| rules_with(compiled, mode, construct))
-                .collect::<Vec<_>>(),
-            None => Vec::new(),
-        };
-        let detail = attribution_note(&modes, &rules);
-        reasons.push(format!("{count} {text}{detail}"));
-    };
-    collect(
-        total.predicate,
-        Some(Construct::Predicate),
-        "cross a predicate",
-    );
-    collect(
-        total.custom_action,
-        Some(Construct::Action),
-        "run a position-dependent action",
-    );
-    collect(
-        total.recursive_context,
-        Some(Construct::Recursive),
-        "reach a recursive rule context",
-    );
-    collect(total.budget, None, "exceed the state budget");
-    warning(
-        grammar_path,
-        "G4S188",
-        format!(
-            "--static-lexer-dfa: lexer '{grammar_name}' keeps {} edge(s) on the lazy simulator: {}",
-            escape_total(total),
-            reasons.join(", ")
-        ),
+    }
+    None
+}
+
+fn state_span(compiled: &CompiledLexer, state_number: usize) -> Option<SourceSpan> {
+    let state = compiled.graph.states.get(state_number)?;
+    origins_span(
+        &compiled.provenance,
+        compiled.provenance.state_origins(state.original),
     )
 }
 
-/// ` (rule 'A')` / ` (rules 'A', 'B')` for a non-empty rule list, else
-/// empty.
+fn transition_span(compiled: &CompiledLexer, transition: BuildTransitionId) -> Option<SourceSpan> {
+    origins_span(
+        &compiled.provenance,
+        compiled.provenance.transition_origins(transition),
+    )
+}
+
+fn origins_span(provenance: &ProvenanceIndex, origins: &[Origin]) -> Option<SourceSpan> {
+    for origin in origins {
+        match origin {
+            Origin::Authored { span, .. } => return Some(span.clone()),
+            Origin::Synthetic { owner, .. } => {
+                if let Some(span) = origins_span(provenance, provenance.origins(*owner)) {
+                    return Some(span);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn format_edge_label(lo: i32, hi: i32) -> String {
+    if lo == hi {
+        format_symbol(lo)
+    } else {
+        format!("{}..={}", format_symbol(lo), format_symbol(hi))
+    }
+}
+
+fn format_symbol(symbol: i32) -> String {
+    if symbol == EOF {
+        return "EOF".to_owned();
+    }
+    match symbol {
+        0x09 => "'\\t'".to_owned(),
+        0x0A => "'\\n'".to_owned(),
+        0x0D => "'\\r'".to_owned(),
+        0x20..=0x7E => format!("{:?}", char::from_u32(symbol as u32).unwrap()),
+        _ => format!("U+{symbol:04X}"),
+    }
+}
+
+fn edge_attribution_note(grammar_name: &str, mode_name: &str, rule_name: Option<&str>) -> String {
+    match rule_name {
+        Some(rule) => format!(" ({grammar_name}, mode '{mode_name}', rule '{rule}')"),
+        None => format!(" ({grammar_name}, mode '{mode_name}')"),
+    }
+}
+
 fn rule_names_note(rules: Vec<&str>) -> String {
     if rules.is_empty() {
         return String::new();
     }
     let label = if rules.len() == 1 { "rule" } else { "rules" };
     format!(" ({label} {})", quote_join(rules.iter().copied()))
-}
-
-/// ` (mode 'DEFAULT_MODE', rule 'KWLET')`-style attribution of an escape
-/// reason. Rules that the grammar model cannot name drop out.
-fn attribution_note(modes: &[&str], rules: &[&str]) -> String {
-    let mut parts = Vec::new();
-    if !modes.is_empty() {
-        let label = if modes.len() == 1 { "mode" } else { "modes" };
-        parts.push(format!("{label} {}", quote_join(modes.iter().copied())));
-    }
-    if !rules.is_empty() {
-        let label = if rules.len() == 1 { "rule" } else { "rules" };
-        parts.push(format!("{label} {}", quote_join(rules.iter().copied())));
-    }
-    if parts.is_empty() {
-        return String::new();
-    }
-    format!(" ({})", parts.join(", "))
 }
 
 fn quote_join(names: impl Iterator<Item = impl AsRef<str>>) -> String {
@@ -264,7 +388,6 @@ fn quote_join(names: impl Iterator<Item = impl AsRef<str>>) -> String {
         .join(", ")
 }
 
-/// The grammar constructs behind an escape reason, for rule attribution.
 #[derive(Clone, Copy)]
 enum Construct {
     Predicate,
@@ -272,9 +395,6 @@ enum Construct {
     Recursive,
 }
 
-/// The names of the rules of one lexer mode that contain the construct:
-/// rules with a predicate, with an embedded action, or that can reach
-/// themselves through the rule call graph.
 fn rules_with<'u>(
     compiled: &'u CompiledLexer,
     mode_name: &str,
@@ -292,8 +412,6 @@ fn rules_with<'u>(
         .collect()
 }
 
-/// The rules of one lexer mode: the default mode holds the rules without a
-/// `mode` member, named modes hold their `mode.rules` list.
 fn mode_rules<'u>(unit: &'u GrammarUnit, mode_name: &str) -> Vec<&'u Rule> {
     if mode_name == "DEFAULT_MODE" {
         return unit
@@ -333,8 +451,6 @@ fn block_has(block: &Block, kind: &ElementDiscriminator) -> bool {
     })
 }
 
-/// Whether `rule` can reach itself through the lexer rule call graph
-/// (direct or indirect recursion).
 fn is_recursive(compiled: &CompiledLexer, rule: RuleId) -> bool {
     let call_graph = &compiled.semantic.call_graph;
     let mut visited = std::collections::BTreeSet::new();

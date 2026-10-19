@@ -56,7 +56,6 @@ pub struct Config {
     gen_listener: bool,
     gen_visitor: bool,
     cargo_directives: bool,
-    static_lexer_dfa: bool,
     optimization: OptimizationOptions,
     pinned_release_version: Option<String>,
     pinned_release_sha256: Option<String>,
@@ -73,7 +72,6 @@ impl Config {
             gen_listener: true,
             gen_visitor: false,
             cargo_directives: true,
-            static_lexer_dfa: false,
             optimization: OptimizationOptions::default(),
             pinned_release_version: None,
             pinned_release_sha256: None,
@@ -121,18 +119,18 @@ impl Config {
         self
     }
 
-    /// Toggles static lexer DFA table generation (the command line's
-    /// `--static-lexer-dfa`; lexer scope only for now). Default: `false`.
-    /// With the flag off the generated output is byte-identical to a run
+    /// Precomputes static lexer DFA tables (`--static-lexer-dfa`, lexer scope
+    /// only). Default: `false`.
+    /// When the flag is off, the generated output is byte-identical to a run
     /// without it.
     pub const fn static_lexer_dfa(&mut self, enabled: bool) -> &mut Self {
-        self.static_lexer_dfa = enabled;
+        self.optimization.static_lexer_dfa(enabled);
         self
     }
 
-    /// Returns the grammar transform selection for in-place configuration;
-    /// see [`OptimizationOptions`] for the available transforms. The
-    /// convenience setters below delegate to it.
+    /// Returns the optimization selection for in-place configuration.
+    /// See [`OptimizationOptions`] for the available options. The
+    /// convenience setters on [`Config`] delegate to it.
     pub const fn optimization(&mut self) -> &mut OptimizationOptions {
         &mut self.optimization
     }
@@ -158,26 +156,17 @@ impl Config {
         self
     }
 
-    /// Reports what [`Config::inline_trivial_rules`] would change without
-    /// applying it (the command line's `--report-trivial-rules`).
-    pub const fn report_trivial_rules(&mut self, enabled: bool) -> &mut Self {
-        self.optimization.report_trivial_rules(enabled);
-        self
-    }
-
     /// Collapses precedence-ladder rule chains into left-recursive rules
-    /// (the command line's `--optimize-precedence-ladders`). Default:
-    /// `false`.
+    /// (`--optimize-precedence-ladders`). Default: `false`.
     pub const fn optimize_precedence_ladders(&mut self, enabled: bool) -> &mut Self {
         self.optimization.optimize_precedence_ladders(enabled);
         self
     }
 
-    /// Reports what [`Config::optimize_precedence_ladders`] would change
-    /// without applying it (the command line's
-    /// `--report-precedence-ladders`).
-    pub const fn report_precedence_ladders(&mut self, enabled: bool) -> &mut Self {
-        self.optimization.report_precedence_ladders(enabled);
+    /// Compiles, analyzes, and optimizes the input grammars without writing
+    /// output files (`--report-only`, `--dry-run`, `-n`). Default: `false`.
+    pub const fn report_only(&mut self, enabled: bool) -> &mut Self {
+        self.optimization.report_only(enabled);
         self
     }
 
@@ -272,10 +261,12 @@ impl Config {
                 println!("cargo:rerun-if-changed={}", dir.display());
             }
         }
-        std::fs::create_dir_all(&out_dir).map_err(|source| EmitError::Write {
-            path: out_dir.clone(),
-            source,
-        })?;
+        if !self.optimization.is_report_only() || self.pinned_release_version.is_some() {
+            std::fs::create_dir_all(&out_dir).map_err(|source| EmitError::Write {
+                path: out_dir.clone(),
+                source,
+            })?;
+        }
 
         if let Some(version) = &self.pinned_release_version {
             self.generate_pinned(version, &out_dir)
@@ -318,7 +309,6 @@ impl Config {
         out_dir: &std::path::Path,
     ) -> Result<Generation, EmitError> {
         let _ = (version, out_dir);
-        let _ = (self.static_lexer_dfa,);
         let _ = (&self.pinned_release_sha256, &self.pinned_release_base_url);
         Err(EmitError::Config(
             "pinned_release requires the `download` feature of dbt-antlr-codegen".to_owned(),
@@ -337,17 +327,18 @@ impl Config {
                 self.gen_listener,
                 self.gen_visitor,
                 &self.optimization,
-                self.static_lexer_dfa,
             )?;
-            for file in &output.files {
-                let path = out_dir.join(&file.name);
-                std::fs::write(&path, &file.content).map_err(|source| EmitError::Write {
-                    path: path.clone(),
-                    source,
-                })?;
-                written.push(path);
+            if !self.optimization.is_report_only() {
+                for file in &output.files {
+                    let path = out_dir.join(&file.name);
+                    std::fs::write(&path, &file.content).map_err(|source| EmitError::Write {
+                        path: path.clone(),
+                        source,
+                    })?;
+                    written.push(path);
+                }
+                write_optimization_manifest(out_dir, output.optimization_manifest, &mut written)?;
             }
-            write_optimization_manifest(out_dir, output.optimization_manifest, &mut written)?;
             diagnostics.extend(output.diagnostics);
             optimization_messages.extend(output.optimization_messages);
         }

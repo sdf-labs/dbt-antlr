@@ -604,9 +604,6 @@ pub enum SrcOpModel {
         bitsets: Vec<BitsetModel>,
     },
     ThrowNoViableAlt,
-    /// `SemPred`: only the `recRuleAltPredicate` form (left-recursion
-    /// precedence predicates) is produced so far; the `fail` option and
-    /// user-authored predicates are milestone 4.6.
     SemPred {
         state_number: i32,
         /// The translated predicate expression (`chunks`).

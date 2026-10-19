@@ -379,15 +379,10 @@ fn clickhouse_static_lexer_stress() {
     // build must complete and the emitted lexer must carry the table
     // statics.
     let library = [grammar.parent().expect("grammar has a dir").to_path_buf()];
-    let output = emit_files_with_options(
-        &grammar,
-        &library,
-        false,
-        false,
-        &OptimizationOptions::default(),
-        true,
-    )
-    .expect("--static-lexer-dfa emission succeeds");
+    let mut optimization = OptimizationOptions::new();
+    optimization.static_lexer_dfa(true);
+    let output = emit_files_with_options(&grammar, &library, false, false, &optimization)
+        .expect("--static-lexer-dfa emission succeeds");
     let lexer_file = output
         .files
         .iter()

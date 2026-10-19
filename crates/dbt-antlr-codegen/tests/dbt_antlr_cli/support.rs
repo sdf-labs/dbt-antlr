@@ -150,8 +150,8 @@ pub(super) fn fixture(relative: &str) -> PathBuf {
 
 /// Generates one grammar three ways — unoptimized baseline, applied
 /// optimization, and report-only — asserting each run succeeds, that the
-/// baseline emits no optimization manifest, and that report mode emits only
-/// `optimizations.txt`. Returns the three output directories.
+/// baseline emits no optimization manifest, and that report mode writes no
+/// output files. Returns the three output directories.
 ///
 /// `grammar` is a path relative to the crate manifest directory, which the
 /// CLI runs in: rendered source paths in `optimizations.txt` are then
@@ -160,18 +160,17 @@ pub(super) fn run_optimization_matrix(
     root: &Path,
     grammar: &str,
     apply_flag: &str,
-    report_flag: &str,
 ) -> (PathBuf, PathBuf, PathBuf) {
     let baseline = root.join("baseline");
     let optimized = root.join("optimized");
     let report = root.join("report");
     for (out, extra) in [
-        (&baseline, None),
-        (&optimized, Some(apply_flag)),
-        (&report, Some(report_flag)),
+        (&baseline, &[][..]),
+        (&optimized, &[apply_flag][..]),
+        (&report, &[apply_flag, "--report-only"][..]),
     ] {
         let mut args = vec![OsStr::new(grammar), OsStr::new("-o"), out.as_os_str()];
-        if let Some(flag) = extra {
+        for flag in extra {
             args.push(OsStr::new(flag));
         }
         let output = run_dbt_antlr_in(Path::new(env!("CARGO_MANIFEST_DIR")), &args);
@@ -183,17 +182,7 @@ pub(super) fn run_optimization_matrix(
         );
     }
     assert!(!baseline.join("optimizations.txt").exists());
-    let report_files = fs::read_dir(&report)
-        .expect("report directory should exist")
-        .map(|entry| {
-            entry
-                .expect("report entry should be readable")
-                .file_name()
-                .to_string_lossy()
-                .into_owned()
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(report_files, ["optimizations.txt"]);
+    assert!(!report.exists());
     (baseline, optimized, report)
 }
 

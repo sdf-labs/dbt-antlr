@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Konstantin Vyatkin
+#![warn(clippy::print_stdout)]
+#![warn(clippy::print_stderr)]
+
 #[cfg(feature = "generator")]
 mod config;
 #[cfg(feature = "generator")]

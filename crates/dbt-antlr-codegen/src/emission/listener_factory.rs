@@ -8,8 +8,7 @@
 //! `listenerNames`/`visitorNames` sets and the `*LabelRuleNames` maps,
 //! including the `Rule.getAltLabels`/`LeftRecursiveRule.getAltLabels`
 //! label enumeration. The listener/visitor models do not depend on the
-//! parser walk, so grammars whose parser emission is not supported yet
-//! (alt-label context structs, milestone 4.6) still emit these files.
+//! parser walk.
 
 use std::collections::BTreeMap;
 
