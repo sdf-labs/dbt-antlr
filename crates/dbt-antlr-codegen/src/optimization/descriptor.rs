@@ -10,7 +10,7 @@ use super::static_lexer_dfa::StaticLexerDfa;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum OptimizationStage {
     IntegratedGrammar,
-    StaticLexerDfa,
+    StaticDfa,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -52,7 +52,7 @@ pub(super) const COLLAPSE_PRECEDENCE_LADDERS: PassDescriptor = PassDescriptor {
 
 pub(super) const STATIC_LEXER_DFA: PassDescriptor = PassDescriptor {
     id: StaticLexerDfa::NAME,
-    stage: OptimizationStage::StaticLexerDfa,
+    stage: OptimizationStage::StaticDfa,
     safety: StaticLexerDfa::SAFETY,
     canonical_order: 300,
     prerequisites: &[],

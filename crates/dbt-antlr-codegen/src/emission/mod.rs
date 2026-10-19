@@ -110,19 +110,7 @@ pub fn emit_lexer_files(
     Ok(files)
 }
 
-/// Emits all recognizer source files for the grammars rooted at
-/// `grammar_path`.
-///
-/// A combined grammar yields both its implicit lexer file and its parser
-/// file (`csvlexer.rs`, `csvparser.rs`), matching the Java tool's
-/// single-input behavior.
-///
-/// The listener/visitor flags are fixed to `true` here, matching how the
-/// CSV golden files were generated; use [`emit_files_with_flags`] for
-/// grammars generated without the visitor (for example `SimpleLR`).
-///
-/// The same `grammarFileName` canonicalization deviation as
-/// [`emit_lexer_files`] applies.
+/// Emits all recognizer source files for the grammars rooted at `grammar_path`.
 ///
 /// # Errors
 ///
@@ -135,11 +123,6 @@ pub fn emit_files(
 }
 
 /// [`emit_files`] with explicit listener/visitor generation flags.
-///
-/// The file set matches the Java tool's `CodeGenPipeline`: the listener
-/// flags gates `<g>listener.rs` plus `<g>baselistener.rs`, the visitor flag
-/// gates `<g>visitor.rs` plus `<g>basevisitor.rs` (`wantsBaseListener`/
-/// `wantsBaseVisitor` are true for the Rust target).
 ///
 /// # Errors
 ///
@@ -163,10 +146,10 @@ pub struct EmittedOutput {
     /// Non-fatal compiler diagnostics (for example unreachable-rule
     /// warnings).
     pub diagnostics: Vec<Diagnostic>,
-    /// Transform notes for the user (for example `pruned: ...` lines).
+    /// Optimization notes for the user (for example `pruned: ...` lines).
     pub optimization_messages: Vec<String>,
     /// Rendered `optimizations.txt` manifest, present when the selected
-    /// transforms emit one.
+    /// optimizations emit one.
     pub optimization_manifest: Option<String>,
 }
 
@@ -174,7 +157,7 @@ pub struct EmittedOutput {
 ///
 /// Applies the configured [`OptimizationOptions`] to the compilation and
 /// emission pipeline. When [`OptimizationOptions::report_only`] is enabled,
-/// the generator produces no recognizer files.
+/// the generator does not write any files to disk.
 ///
 /// # Errors
 ///
@@ -256,11 +239,8 @@ fn render_recognizer_files(
 /// Emits only the listener/visitor source files for the grammars rooted at
 /// `grammar_path`.
 ///
-/// These are the Java `generateListener`/`generateBaseListener`/
-/// `generateVisitor`/`generateBaseVisitor` entry points without the
-/// recognizer files. Unlike [`emit_files_with_flags`] this does not build
-/// the parser output model, so grammars whose parser emission is not
-/// supported yet (alt labels, milestone 4.6) still emit these files.
+/// This does NOT build the parser output model, so grammars whose parser
+/// emission would have failed can still emit these files.
 ///
 /// # Errors
 ///

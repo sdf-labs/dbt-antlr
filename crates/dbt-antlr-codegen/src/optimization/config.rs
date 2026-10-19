@@ -247,9 +247,9 @@ fn validate_configured_pass(
             }
         }
         ConfiguredPassStage::StaticLexerDfa => {
-            if descriptor.stage != OptimizationStage::StaticLexerDfa {
+            if descriptor.stage != OptimizationStage::StaticDfa {
                 return Err(invalid_registry(&format!(
-                    "pass {} is not a static-lexer-dfa pass",
+                    "pass {} is not a static-dfa pass",
                     descriptor.id
                 )));
             }

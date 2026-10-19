@@ -101,17 +101,19 @@ fn mode_failure_diagnostic(
 ) -> Diagnostic {
     let unit = &compiled.semantic.unit;
     let span = mode_span(unit, mode_name);
+    let detail = edge_attribution_note(grammar_name, mode_name, None);
+
     let reason = match failure {
         ModeFailure::StartClosurePredicate => format!(
-            "its start-state closure crosses a predicate{}",
+            "start-state closure crosses a predicate{}",
             rule_names_note(rules_with(compiled, mode_name, Construct::Predicate)),
         ),
         ModeFailure::StartClosureCustomAction => format!(
-            "its start-state closure runs a position-dependent action{}",
+            "start-state closure runs a position-dependent action{}",
             rule_names_note(rules_with(compiled, mode_name, Construct::Action)),
         ),
         ModeFailure::StartClosureRecursiveContext => format!(
-            "its start-state closure reaches a recursive rule context{}",
+            "start-state closure reaches a recursive rule context{}",
             rule_names_note(rules_with(compiled, mode_name, Construct::Recursive)),
         ),
         ModeFailure::StartStateBudgetExceeded => {
@@ -119,9 +121,8 @@ fn mode_failure_diagnostic(
                 "G4S189",
                 span,
                 format!(
-                    "--static-lexer-dfa: static lexer DFA expansion of mode '{mode_name}' of lexer \
-                     '{grammar_name}' exceeded the cap of {DEFAULT_MAX_STATES_PER_MODE} states; \
-                     the mode uses the lazy simulator"
+                    "{detail}: static DFA expansion exceeded the cap of {DEFAULT_MAX_STATES_PER_MODE} states; \
+                     the whole mode is deferred to runtime expansion"
                 ),
             );
         }
@@ -130,8 +131,7 @@ fn mode_failure_diagnostic(
         "G4S188",
         span,
         format!(
-            "--static-lexer-dfa: mode '{mode_name}' of lexer '{grammar_name}' is not compiled to a \
-             static table: {reason}; the mode uses the lazy simulator"
+            "{detail}: static DFA expansion failed: {reason}; the whole mode is deferred to runtime expansion"
         ),
     )
 }
@@ -144,14 +144,14 @@ fn escaped_edge_diagnostic(
     compiled: &CompiledLexer,
 ) -> Diagnostic {
     let (span, rule_name, reason) = resolve_escape_site(compiled, edge.reason);
-    let detail = edge_attribution_note(mode_name, rule_name);
+    let detail = edge_attribution_note(grammar_name, mode_name, rule_name);
     let symbol = format_edge_label(edge.lo, edge.hi);
     Diagnostic::warning(
         "G4S188",
         span,
         format!(
-            "--static-lexer-dfa: lexer '{grammar_name}' keeps edge on {symbol} (state {}) on the \
-             lazy simulator to {reason}{detail}",
+            "{detail}: static-lexer-dfa failed to expand edge on {symbol} (state {}) \
+             due to: {reason}",
             edge.state,
         ),
     )
@@ -366,10 +366,10 @@ fn format_symbol(symbol: i32) -> String {
     }
 }
 
-fn edge_attribution_note(mode_name: &str, rule_name: Option<&str>) -> String {
+fn edge_attribution_note(grammar_name: &str, mode_name: &str, rule_name: Option<&str>) -> String {
     match rule_name {
-        Some(rule) => format!(" (mode '{mode_name}', rule '{rule}')"),
-        None => format!(" (mode '{mode_name}')"),
+        Some(rule) => format!(" ({grammar_name}, mode '{mode_name}', rule '{rule}')"),
+        None => format!(" ({grammar_name}, mode '{mode_name}')"),
     }
 }
 

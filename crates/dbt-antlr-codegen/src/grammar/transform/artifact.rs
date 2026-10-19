@@ -13,10 +13,7 @@ use crate::grammar::frontend::{SourceId, SourceSpan};
 use crate::grammar::source::SourceSet;
 
 /// Renders the optimization manifest with minijinja's built-in `Value`
-/// formatting. The manifest is inspection-only output — nothing parses it
-/// back — so the debug-pretty dump (sorted keys, `True`/`False`/`None`
-/// scalars, Python-literal compatible) suffices and keeps a dedicated JSON
-/// serializer out of the `generator` feature.
+/// formatting.
 pub(crate) fn render_optimization_manifest(
     report: &TransformReport,
     sources: &SourceSet,
