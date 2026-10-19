@@ -12,22 +12,19 @@ use std::collections::BTreeSet;
 /// Every applied grammar transform writes an entry to an `optimizations.txt`
 /// manifest next to the generated files.
 ///
-/// The `report_*` variants run the transform in projection mode only. The
-/// generator emits no recognizer files, and the manifest describes the
-/// projected changes. A `report_*` flag conflicts with the apply flag of the
-/// same transform.
-///
 /// Static lexer DFA generation ([`Self::static_lexer_dfa`]) precomputes lexer
 /// DFA tables after ATN construction and preserves both tokens and APIs.
+///
+/// When [`Self::report_only`] is enabled, the generator compiles, analyzes,
+/// and optimizes the input grammars without emitting recognizer files.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct OptimizationOptions {
     pub(crate) entry_rules: BTreeSet<String>,
     pub(crate) prune_unreachable: bool,
     pub(crate) inline_trivial_rules: bool,
-    pub(crate) report_trivial_rules: bool,
     pub(crate) optimize_precedence_ladders: bool,
-    pub(crate) report_precedence_ladders: bool,
     pub(crate) static_lexer_dfa: bool,
+    pub(crate) report_only: bool,
 }
 
 impl OptimizationOptions {
@@ -58,24 +55,10 @@ impl OptimizationOptions {
         self
     }
 
-    /// Reports what [`Self::inline_trivial_rules`] would change without
-    /// applying it. Conflicts with `inline_trivial_rules`.
-    pub const fn report_trivial_rules(&mut self, enabled: bool) -> &mut Self {
-        self.report_trivial_rules = enabled;
-        self
-    }
-
     /// Collapses precedence-ladder rule chains (`a: b (op b)*; b: c ...`)
     /// into a single left-recursive rule. Default: `false`.
     pub const fn optimize_precedence_ladders(&mut self, enabled: bool) -> &mut Self {
         self.optimize_precedence_ladders = enabled;
-        self
-    }
-
-    /// Reports what [`Self::optimize_precedence_ladders`] would change
-    /// without applying it. Conflicts with `optimize_precedence_ladders`.
-    pub const fn report_precedence_ladders(&mut self, enabled: bool) -> &mut Self {
-        self.report_precedence_ladders = enabled;
         self
     }
 
@@ -84,6 +67,17 @@ impl OptimizationOptions {
     pub const fn static_lexer_dfa(&mut self, enabled: bool) -> &mut Self {
         self.static_lexer_dfa = enabled;
         self
+    }
+
+    /// Compiles, analyzes, and optimizes the input grammars without writing
+    /// output files (`--report-only`, `--dry-run`, `-n`). Default: `false`.
+    pub const fn report_only(&mut self, enabled: bool) -> &mut Self {
+        self.report_only = enabled;
+        self
+    }
+
+    pub(crate) const fn is_report_only(&self) -> bool {
+        self.report_only
     }
 
     #[cfg(feature = "download")]
@@ -102,18 +96,8 @@ impl OptimizationOptions {
     }
 
     #[cfg(feature = "download")]
-    pub(crate) const fn report_trivial(&self) -> bool {
-        self.report_trivial_rules
-    }
-
-    #[cfg(feature = "download")]
     pub(crate) const fn optimize_ladders(&self) -> bool {
         self.optimize_precedence_ladders
-    }
-
-    #[cfg(feature = "download")]
-    pub(crate) const fn report_ladders(&self) -> bool {
-        self.report_precedence_ladders
     }
 
     #[cfg(feature = "download")]

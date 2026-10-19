@@ -10,9 +10,6 @@ use super::descriptor::PassDescriptor;
 
 impl OptimizationPlan {
     pub(crate) fn diagnostic_messages(&self, compilation: &Compilation) -> Vec<String> {
-        if self.report_only {
-            return Vec::new();
-        }
         self.selected
             .iter()
             .filter_map(|pass| {

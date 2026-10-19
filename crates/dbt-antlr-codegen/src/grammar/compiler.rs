@@ -86,7 +86,6 @@ pub(crate) fn compile_with_action_reference_parser(
 ) -> Result<Compilation, CompilationError> {
     let entry_rules = plan.entry_rules();
     let transforms = plan.transforms();
-    let report_only = plan.report_only();
     let loaded = load_recovering(options);
     let root_order = loaded.grammars.roots.clone();
     let mut integrated =
@@ -146,7 +145,7 @@ pub(crate) fn compile_with_action_reference_parser(
         .run_with_action_reference_parser(
             &mut integrated.grammar,
             &mut integrated.ids,
-            report_only,
+            false,
             action_reference_parser,
         )
         .map_err(|diagnostic| {

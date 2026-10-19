@@ -130,6 +130,8 @@ pub struct ModeBuildOutcome {
     pub num_continuations: usize,
     /// Escape edge counts by reason.
     pub escape_counts: EscapeCounts,
+    /// Escaped edges in state and symbol order.
+    pub escaped_edges: Vec<EscapedEdge>,
 }
 
 /// Why a whole mode has no table.
@@ -158,13 +160,52 @@ pub struct EscapeCounts {
     pub budget: usize,
 }
 
+/// One escaped DFA edge of a mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EscapedEdge {
+    /// The source DFA state index of the edge.
+    pub state: usize,
+    /// The lower bound of the symbol interval (or [`EOF`]).
+    pub lo: i32,
+    /// The upper bound of the symbol interval (or [`EOF`]).
+    pub hi: i32,
+    /// Why the edge escaped to the lazy simulator.
+    pub reason: EscapeReason,
+}
+
 /// The escape reason of one edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EscapeReason {
-    Predicate,
-    CustomAction,
-    RecursiveContext,
-    Budget,
+pub enum EscapeReason {
+    /// The closure crossed a predicate `(rule_index, pred_index)`.
+    Predicate {
+        /// Rule index of the predicate transition.
+        rule_index: usize,
+        /// Predicate index of the predicate transition.
+        pred_index: usize,
+    },
+    /// The closure accumulated a position-dependent action `(rule_index, action_index)`.
+    CustomAction {
+        /// Rule index of the custom action.
+        rule_index: usize,
+        /// Action index of the custom action.
+        action_index: usize,
+    },
+    /// A closed config has a recursive prediction context.
+    RecursiveContext {
+        /// Rule index of the config with the recursive context.
+        rule_index: usize,
+        /// ATN state number of the config with the recursive context.
+        state_number: usize,
+        /// Repeated or overflowed return ATN state number in the prediction context.
+        return_state: usize,
+    },
+    /// The mode reached its state budget before interning the target state.
+    Budget {
+        /// Rule index of the first closed config on the edge.
+        rule_index: usize,
+        /// ATN state number of the first closed config on the edge.
+        state_number: usize,
+    },
 }
 
 /// Builds static lexer DFA tables from a lexer [`ATN`].
@@ -257,14 +298,11 @@ impl StaticLexerDfaBuilder {
         let mut env = BuildEnv::default();
         let start_set = start_state_core(atn, start_state.as_ref(), &mut env, fin.store.arena());
         let start_configs = fin.finalize_all(start_set.get_items().cloned());
-        let failure = if env.predicate_crossed {
+        let failure = if env.predicate_crossed.is_some() {
             Some(ModeFailure::StartClosurePredicate)
-        } else if has_position_dependent_action(&start_configs) {
+        } else if first_position_dependent_action(&start_configs).is_some() {
             Some(ModeFailure::StartClosureCustomAction)
-        } else if start_configs
-            .iter()
-            .any(|c| has_recursive_context(c.get_context()))
-        {
+        } else if first_recursive_context(&start_configs).is_some() {
             Some(ModeFailure::StartClosureRecursiveContext)
         } else {
             None
@@ -279,7 +317,7 @@ impl StaticLexerDfaBuilder {
         let mut cursor = 0;
         while cursor < mode.states.len() {
             let source = mode.states[cursor].configs.clone();
-            let rows = compute_state_rows(&mut mode, atn, fin, &source);
+            let rows = compute_state_rows(&mut mode, atn, fin, cursor, &source);
             mode.rows.push(rows);
             cursor += 1;
         }
@@ -287,12 +325,14 @@ impl StaticLexerDfaBuilder {
         let num_states = mode.states.len();
         let num_continuations = mode.continuations.len();
         let escape_counts = mode.counts;
+        let escaped_edges = mode.escaped_edges.clone();
         ModeBuildOutcome {
             table: Some(mode.finalize(atn)),
             failure: None,
             num_states,
             num_continuations,
             escape_counts,
+            escaped_edges,
         }
     }
 }
@@ -305,6 +345,7 @@ impl ModeBuildOutcome {
             num_states: 0,
             num_continuations: 0,
             escape_counts: EscapeCounts::default(),
+            escaped_edges: Vec::new(),
         }
     }
 }
@@ -313,7 +354,7 @@ impl ModeBuildOutcome {
 /// `true` and flag the edge.
 #[derive(Debug, Default)]
 struct BuildEnv {
-    predicate_crossed: bool,
+    predicate_crossed: Option<(usize, usize)>,
 }
 
 impl LexerClosureEnv for BuildEnv {
@@ -321,8 +362,9 @@ impl LexerClosureEnv for BuildEnv {
         0
     }
 
-    fn eval_predicate(&mut self, _rule_index: i32, _pred_index: i32, _speculative: bool) -> bool {
-        self.predicate_crossed = true;
+    fn eval_predicate(&mut self, rule_index: i32, pred_index: i32, _speculative: bool) -> bool {
+        self.predicate_crossed
+            .get_or_insert((rule_index as usize, pred_index as usize));
         true
     }
 }
@@ -460,18 +502,45 @@ impl<'sc> Finalizer<'sc> {
     }
 }
 
-/// True when a config of the set accumulated a position-dependent (custom)
-/// lexer action.
-fn has_position_dependent_action(configs: &[LexerATNConfig<'_>]) -> bool {
-    configs.iter().any(|c| {
-        c.get_lexer_executor()
-            .is_some_and(|ex| ex.actions().iter().any(LexerAction::is_position_dependent))
+/// Returns the `(rule_index, action_index)` of the first position-dependent
+/// (custom) lexer action accumulated in `configs`.
+fn first_position_dependent_action(configs: &[LexerATNConfig<'_>]) -> Option<(usize, usize)> {
+    configs.iter().find_map(|c| {
+        c.get_lexer_executor()?
+            .actions()
+            .iter()
+            .find_map(custom_action_coordinates)
     })
 }
 
-/// True when the context chain has a repeated return state or is deeper than
-/// [`MAX_CONTEXT_DEPTH`]. Lexer contexts are empty or singleton chains.
-fn has_recursive_context(mut ctx: Option<PredictionContextRef>) -> bool {
+fn custom_action_coordinates(action: &LexerAction<'_>) -> Option<(usize, usize)> {
+    match action {
+        &LexerAction::Custom {
+            rule_index,
+            action_index,
+        } => Some((rule_index as usize, action_index as usize)),
+        LexerAction::IndexedCustom(indexed) => custom_action_coordinates(&indexed.action),
+        _ => None,
+    }
+}
+
+/// Returns `(rule_index, state_number, return_state)` for the first config in
+/// `configs` whose prediction context is recursive.
+fn first_recursive_context(configs: &[LexerATNConfig<'_>]) -> Option<(usize, usize, usize)> {
+    configs.iter().find_map(|c| {
+        let return_state = recursive_return_state(c.get_context())?;
+        let state = c.get_state();
+        Some((
+            state.get_rule_index() as usize,
+            state.get_state_number() as usize,
+            return_state,
+        ))
+    })
+}
+
+/// Returns the repeated or depth-overflowing return state when the context
+/// chain is recursive. Lexer contexts are empty or singleton chains.
+fn recursive_return_state(mut ctx: Option<PredictionContextRef>) -> Option<usize> {
     let mut seen = HashSet::new();
     let mut depth = 0;
     while let Some(c) = ctx {
@@ -484,12 +553,18 @@ fn has_recursive_context(mut ctx: Option<PredictionContextRef>) -> bool {
             "lexer prediction contexts are singleton chains"
         );
         depth += 1;
-        if depth > MAX_CONTEXT_DEPTH || !seen.insert(c.get_return_state(0).get_state_number()) {
-            return true;
+        let return_state = c.get_return_state(0).get_state_number();
+        if depth > MAX_CONTEXT_DEPTH || !seen.insert(return_state) {
+            return Some(return_state as usize);
         }
         ctx = c.get_parent(0);
     }
-    false
+    None
+}
+
+#[cfg(test)]
+fn has_recursive_context(ctx: Option<PredictionContextRef>) -> bool {
+    recursive_return_state(ctx).is_some()
 }
 
 /// The ATN indices of the actions of the executor of a config. Fails on a
@@ -588,6 +663,7 @@ struct ModeBuild<'sc> {
     continuations: Vec<PendingContinuation<'sc>>,
     cont_ids: HashMap<PendingContinuation<'sc>, u32>,
     counts: EscapeCounts,
+    escaped_edges: Vec<EscapedEdge>,
     max_states: usize,
     recursive_rules: Vec<SimpleRecursiveRule>,
 }
@@ -601,6 +677,7 @@ impl<'sc> ModeBuild<'sc> {
             continuations: Vec::new(),
             cont_ids: HashMap::new(),
             counts: EscapeCounts::default(),
+            escaped_edges: Vec::new(),
             max_states,
             recursive_rules,
         }
@@ -608,10 +685,10 @@ impl<'sc> ModeBuild<'sc> {
 
     fn count_escape(&mut self, reason: EscapeReason) {
         match reason {
-            EscapeReason::Predicate => self.counts.predicate += 1,
-            EscapeReason::CustomAction => self.counts.custom_action += 1,
-            EscapeReason::RecursiveContext => self.counts.recursive_context += 1,
-            EscapeReason::Budget => self.counts.budget += 1,
+            EscapeReason::Predicate { .. } => self.counts.predicate += 1,
+            EscapeReason::CustomAction { .. } => self.counts.custom_action += 1,
+            EscapeReason::RecursiveContext { .. } => self.counts.recursive_context += 1,
+            EscapeReason::Budget { .. } => self.counts.budget += 1,
         }
     }
 
@@ -1097,7 +1174,7 @@ fn compute_edge<'sc>(
     fin: Finalizer<'sc>,
     source: &[LexerATNConfig<'sc>],
     t: i32,
-) -> EdgeEntry {
+) -> (EdgeEntry, Option<EscapeReason>) {
     let mut env = BuildEnv::default();
     let mut reach = MutableLexerATNConfigSet::new(fin.store.arena());
     let mut capture = ReachCapture::default();
@@ -1113,15 +1190,23 @@ fn compute_edge<'sc>(
     );
     let mut closed = fin.finalize_all(reach.get_items().cloned());
     strip_simple_recursion(&mut closed, &mode.recursive_rules);
-    let reason = if env.predicate_crossed {
-        Some(EscapeReason::Predicate)
-    } else if has_position_dependent_action(&closed) {
-        Some(EscapeReason::CustomAction)
-    } else if closed
-        .iter()
-        .any(|c| has_recursive_context(c.get_context()))
+    let reason = if let Some((rule_index, pred_index)) = env.predicate_crossed {
+        Some(EscapeReason::Predicate {
+            rule_index,
+            pred_index,
+        })
+    } else if let Some((rule_index, action_index)) = first_position_dependent_action(&closed) {
+        Some(EscapeReason::CustomAction {
+            rule_index,
+            action_index,
+        })
+    } else if let Some((rule_index, state_number, return_state)) = first_recursive_context(&closed)
     {
-        Some(EscapeReason::RecursiveContext)
+        Some(EscapeReason::RecursiveContext {
+            rule_index,
+            state_number,
+            return_state,
+        })
     } else {
         None
     };
@@ -1132,7 +1217,7 @@ fn compute_edge<'sc>(
         // (predicates can only remove configs), so it stays empty. With
         // pruning activity, pruned configs can move at runtime: escape.
         if closed.is_empty() && !capture.pruning_activity {
-            return EdgeEntry::None;
+            return (EdgeEntry::None, None);
         }
         mode.count_escape(reason);
         let cont = if capture.pruning_activity {
@@ -1147,17 +1232,24 @@ fn compute_edge<'sc>(
                     .finalize_pairs(capture.moved.iter().map(|(c, flag)| (c.clone(), *flag))),
             })
         };
-        return EdgeEntry::Escape(Some(cont));
+        return (EdgeEntry::Escape(Some(cont)), Some(reason));
     }
 
     if closed.is_empty() {
-        return EdgeEntry::None;
+        return (EdgeEntry::None, None);
     }
+    let first_state = closed[0].get_state();
+    let first_rule_index = first_state.get_rule_index() as usize;
+    let first_state_number = first_state.get_state_number() as usize;
     match intern(mode, atn, closed) {
-        Some(target) => EdgeEntry::Target(target),
+        Some(target) => (EdgeEntry::Target(target), None),
         None => {
-            mode.count_escape(EscapeReason::Budget);
-            EdgeEntry::Escape(None)
+            let reason = EscapeReason::Budget {
+                rule_index: first_rule_index,
+                state_number: first_state_number,
+            };
+            mode.count_escape(reason);
+            (EdgeEntry::Escape(None), Some(reason))
         }
     }
 }
@@ -1246,9 +1338,18 @@ fn compute_state_rows<'sc>(
     mode: &mut ModeBuild<'sc>,
     atn: &ATN,
     fin: Finalizer<'sc>,
+    state: usize,
     source: &[LexerATNConfig<'sc>],
 ) -> StateRows {
-    let eof = compute_edge(mode, atn, fin, source, EOF);
+    let (eof, eof_escape) = compute_edge(mode, atn, fin, source, EOF);
+    if let Some(reason) = eof_escape {
+        mode.escaped_edges.push(EscapedEdge {
+            state,
+            lo: EOF,
+            hi: EOF,
+            reason,
+        });
+    }
     let mut bounds = BTreeSet::from([0, MAX_SYMBOL + 1]);
     for config in source {
         for tr in config.get_state().get_transitions() {
@@ -1260,7 +1361,7 @@ fn compute_state_rows<'sc>(
     for b in bounds {
         if lo < b {
             let hi = b - 1;
-            let edge = compute_edge(mode, atn, fin, source, lo);
+            let (edge, escape_reason) = compute_edge(mode, atn, fin, source, lo);
             if edge == EdgeEntry::None {
                 lo = b;
                 continue;
@@ -1268,9 +1369,27 @@ fn compute_state_rows<'sc>(
             if let Some(last) = intervals.last_mut() {
                 if last.entry == edge && last.hi + 1 == lo {
                     last.hi = hi;
+                    if escape_reason.is_some() {
+                        if let Some(last_escape) = mode.escaped_edges.last_mut() {
+                            if last_escape.state == state
+                                && last_escape.lo != EOF
+                                && last_escape.hi + 1 == lo
+                            {
+                                last_escape.hi = hi;
+                            }
+                        }
+                    }
                     lo = b;
                     continue;
                 }
+            }
+            if let Some(reason) = escape_reason {
+                mode.escaped_edges.push(EscapedEdge {
+                    state,
+                    lo,
+                    hi,
+                    reason,
+                });
             }
             intervals.push(EdgeInterval {
                 lo,

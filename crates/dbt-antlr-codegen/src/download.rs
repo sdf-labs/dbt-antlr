@@ -281,17 +281,14 @@ pub(crate) fn generate_with_pinned_binary(
     if optimization.inline_trivial() {
         command.arg("--inline-trivial-rules");
     }
-    if optimization.report_trivial() {
-        command.arg("--report-trivial-rules");
-    }
     if optimization.optimize_ladders() {
         command.arg("--optimize-precedence-ladders");
     }
-    if optimization.report_ladders() {
-        command.arg("--report-precedence-ladders");
-    }
     if optimization.static_dfa() {
         command.arg("--static-lexer-dfa");
+    }
+    if optimization.is_report_only() {
+        command.arg("--report-only");
     }
     command.args(grammars);
     let status = command.status().map_err(|error| {

@@ -10,7 +10,7 @@ expression: diagnostics
     ),
     (
         "DuplicateRule",
-        "--report-precedence-ladders",
+        "--optimize-precedence-ladders --report-only",
         "Error:   × cannot emit DuplicateRule/DuplicateRule.g4\n  ├─▶ grammar compilation failed: error[G4S002]: DuplicateRule/\n  │   DuplicateRule.g4:5:0: rule low is redefined\n  │   \n  ╰─▶ error[G4S002]: DuplicateRule/DuplicateRule.g4:5:0: rule low is redefined\n      \n\n",
     ),
     (
@@ -20,7 +20,7 @@ expression: diagnostics
     ),
     (
         "DuplicateLabel",
-        "--report-precedence-ladders",
+        "--optimize-precedence-ladders --report-only",
         "Error:   × cannot emit DuplicateLabel/DuplicateLabel.g4\n  ├─▶ grammar compilation failed: error[G4S013]: DuplicateLabel/\n  │   DuplicateLabel.g4:4:25: alternative label Shared is redefined\n  │   \n  ╰─▶ error[G4S013]: DuplicateLabel/DuplicateLabel.g4:4:25: alternative label\n      Shared is redefined\n      \n\n",
     ),
 ]

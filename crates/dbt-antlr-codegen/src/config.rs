@@ -156,26 +156,17 @@ impl Config {
         self
     }
 
-    /// Reports what [`Config::inline_trivial_rules`] would change without
-    /// applying it (the command line's `--report-trivial-rules`).
-    pub const fn report_trivial_rules(&mut self, enabled: bool) -> &mut Self {
-        self.optimization.report_trivial_rules(enabled);
-        self
-    }
-
     /// Collapses precedence-ladder rule chains into left-recursive rules
-    /// (the command line's `--optimize-precedence-ladders`). Default:
-    /// `false`.
+    /// (`--optimize-precedence-ladders`). Default: `false`.
     pub const fn optimize_precedence_ladders(&mut self, enabled: bool) -> &mut Self {
         self.optimization.optimize_precedence_ladders(enabled);
         self
     }
 
-    /// Reports what [`Config::optimize_precedence_ladders`] would change
-    /// without applying it (the command line's
-    /// `--report-precedence-ladders`).
-    pub const fn report_precedence_ladders(&mut self, enabled: bool) -> &mut Self {
-        self.optimization.report_precedence_ladders(enabled);
+    /// Compiles, analyzes, and optimizes the input grammars without writing
+    /// output files (`--report-only`, `--dry-run`, `-n`). Default: `false`.
+    pub const fn report_only(&mut self, enabled: bool) -> &mut Self {
+        self.optimization.report_only(enabled);
         self
     }
 
@@ -270,10 +261,12 @@ impl Config {
                 println!("cargo:rerun-if-changed={}", dir.display());
             }
         }
-        std::fs::create_dir_all(&out_dir).map_err(|source| EmitError::Write {
-            path: out_dir.clone(),
-            source,
-        })?;
+        if !self.optimization.is_report_only() || self.pinned_release_version.is_some() {
+            std::fs::create_dir_all(&out_dir).map_err(|source| EmitError::Write {
+                path: out_dir.clone(),
+                source,
+            })?;
+        }
 
         if let Some(version) = &self.pinned_release_version {
             self.generate_pinned(version, &out_dir)
@@ -335,15 +328,17 @@ impl Config {
                 self.gen_visitor,
                 &self.optimization,
             )?;
-            for file in &output.files {
-                let path = out_dir.join(&file.name);
-                std::fs::write(&path, &file.content).map_err(|source| EmitError::Write {
-                    path: path.clone(),
-                    source,
-                })?;
-                written.push(path);
+            if !self.optimization.is_report_only() {
+                for file in &output.files {
+                    let path = out_dir.join(&file.name);
+                    std::fs::write(&path, &file.content).map_err(|source| EmitError::Write {
+                        path: path.clone(),
+                        source,
+                    })?;
+                    written.push(path);
+                }
+                write_optimization_manifest(out_dir, output.optimization_manifest, &mut written)?;
             }
-            write_optimization_manifest(out_dir, output.optimization_manifest, &mut written)?;
             diagnostics.extend(output.diagnostics);
             optimization_messages.extend(output.optimization_messages);
         }

@@ -9,7 +9,7 @@
 //! `OutputModelController` / `LexerFactory` / `ParserFactory` walks on top of
 //! the `grammar` analysis layer.
 //!
-//! Public entry point of the dbt emission layer: generate Rust recognizer
+//! Public entry point of the emission layer: generate Rust recognizer
 //! sources for the `dbt-antlr-runtime` runtime from `.g4` grammars.
 
 mod action_translator;
@@ -29,18 +29,14 @@ use crate::error::Diagnostic;
 use crate::grammar::compiler::{self, Compilation};
 use crate::grammar::loader::LoadOptions;
 use crate::optimization::{OptimizationOptions, OptimizationPlan};
+
 /// One generated source file.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmittedFile {
     /// File name as the Java tool's `RustTarget` derives it (lowercased
     /// recognizer name plus `.rs`).
     pub name: String,
-    /// File content, byte-identical to the Java tool's output modulo the
-    /// `grammarFileName` canonicalization documented on
-    /// [`emit_lexer_files`] and the lint allow header: the Java tool emits
-    /// inner `#![allow(...)]` attributes, which make the files unusable with
-    /// `include!`, so generated files carry no lint attributes and consumers
-    /// put `#[allow]` on the wrapping module instead.
+    /// Generated file content
     pub content: String,
 }
 
@@ -161,8 +157,8 @@ pub fn emit_files_with_flags(
 /// Output of [`emit_files_with_options`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmittedOutput {
-    /// Generated recognizer source files. Empty when the selected transforms
-    /// run in report-only mode.
+    /// Generated recognizer source files. Empty when [`OptimizationOptions::report_only`]
+    /// is enabled.
     pub files: Vec<EmittedFile>,
     /// Non-fatal compiler diagnostics (for example unreachable-rule
     /// warnings).
@@ -177,15 +173,12 @@ pub struct EmittedOutput {
 /// [`emit_files_with_flags`] with an explicit optimization selection.
 ///
 /// Applies the configured [`OptimizationOptions`] to the compilation and
-/// emission pipeline. When the selection runs in report-only mode (a
-/// `report_*` flag), the generator produces no recognizer files and
-/// [`EmittedOutput::optimization_manifest`] describes the projected changes.
+/// emission pipeline. When [`OptimizationOptions::report_only`] is enabled,
+/// the generator produces no recognizer files.
 ///
 /// # Errors
 ///
-/// See [`emit_lexer_files`]. Also returns [`EmitError::Config`] when the
-/// optimization selection is internally inconsistent (for example apply and
-/// report modes of one transform combined).
+/// See [`emit_lexer_files`].
 pub fn emit_files_with_options(
     grammar_path: &Path,
     library_dirs: &[PathBuf],

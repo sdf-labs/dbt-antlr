@@ -64,6 +64,38 @@ fn cli_accepts_the_static_lexer_dfa_flag() {
 }
 
 #[test]
+fn cli_report_only_runs_static_lexer_dfa_without_writing_files() {
+    let grammar = grammars_dir().join("lexer/Spike.g4");
+    for flag in ["-n", "--dry-run", "--report-only"] {
+        let out_dir = std::env::temp_dir().join(format!(
+            "dbt-static-lexer-dfa-dry-run-{}-{}",
+            flag.trim_start_matches('-'),
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&out_dir);
+
+        let args = vec![
+            "-o".to_owned(),
+            out_dir.to_string_lossy().into_owned(),
+            flag.to_owned(),
+            "--static-lexer-dfa".to_owned(),
+            grammar.to_string_lossy().into_owned(),
+        ];
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        cli::run(&args, &mut stdout, &mut stderr).expect("CLI dry-run succeeds");
+
+        assert!(stdout.is_empty(), "{flag} prints no written files");
+        assert!(!out_dir.exists(), "{flag} writes no output files");
+        let warnings = String::from_utf8(stderr).expect("stderr is utf-8");
+        assert!(
+            warnings.contains("Spike.g4:4:16:"),
+            "{flag} prints the span-annotated static lexer DFA warning: {warnings}"
+        );
+    }
+}
+
+#[test]
 fn help_text_lists_the_static_lexer_dfa_flag() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -127,11 +159,13 @@ fn flag_off_emits_no_tables() {
 #[test]
 fn spike_lexer_warnings_name_the_escape_reasons() {
     let output = emit("lexer/Spike.g4", true);
-    let escape = output
+    let escapes: Vec<_> = output
         .diagnostics
         .iter()
-        .find(|diagnostic| diagnostic.code() == "G4S188")
-        .expect("escape warning reported");
+        .filter(|diagnostic| diagnostic.code() == "G4S188")
+        .collect();
+    assert_eq!(escapes.len(), 1, "one escaped edge in Spike.g4");
+    let escape = escapes[0];
     assert_eq!(escape.severity(), Severity::Warning);
     assert!(
         escape.message().contains("cross a predicate"),
@@ -139,8 +173,8 @@ fn spike_lexer_warnings_name_the_escape_reasons() {
         escape.message()
     );
     assert!(
-        !escape.message().contains("reach a recursive rule context"),
-        "nested comment compiles without recursion escape: {}",
+        escape.message().contains("rule 'KWLET'"),
+        "predicate escape attributes rule KWLET: {}",
         escape.message()
     );
     assert!(
@@ -148,25 +182,73 @@ fn spike_lexer_warnings_name_the_escape_reasons() {
         "warning path is the grammar: {}",
         escape.path().display()
     );
+    assert_eq!(escape.line(), Some(4), "points to KWLET predicate line");
+    assert_eq!(
+        escape.column(),
+        Some(16),
+        "points to KWLET predicate column"
+    );
+
+    let xml_output = emit("XMLLexer.g4", true);
+    let xml_escapes: Vec<_> = xml_output
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == "G4S188")
+        .collect();
+    assert_eq!(
+        xml_escapes.len(),
+        3,
+        "separate diagnostic per escaped edge in XMLLexer.g4: {xml_escapes:?}"
+    );
+    for comment_escape in &xml_escapes[..2] {
+        assert_eq!(comment_escape.line(), Some(4));
+        assert_eq!(comment_escape.column(), Some(33));
+        assert!(comment_escape.message().contains("cross a predicate"));
+    }
+    assert_eq!(xml_escapes[2].line(), Some(25));
+    assert_eq!(xml_escapes[2].column(), Some(40));
+    assert!(
+        xml_escapes[2]
+            .message()
+            .contains("run a position-dependent action")
+    );
 
     let rec_grammar = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/codegen-direct/fixtures/lexer-recursion/LexerRecursion.g4");
     let mut rec_optimization = OptimizationOptions::new();
-    rec_optimization.static_lexer_dfa(true);
+    rec_optimization.static_lexer_dfa(true).report_only(true);
     let rec_output = emit_files_with_options(&rec_grammar, &[], true, false, &rec_optimization)
         .expect("emission succeeds");
-    let rec_escape = rec_output
+    assert!(rec_output.files.is_empty(), "report_only emits no files");
+    let rec_escapes: Vec<_> = rec_output
         .diagnostics
         .iter()
-        .find(|diagnostic| diagnostic.code() == "G4S188")
-        .expect("recursion escape warning reported");
-    assert!(
-        rec_escape
-            .message()
-            .contains("reach a recursive rule context"),
-        "recursion escape reason: {}",
-        rec_escape.message()
+        .filter(|diagnostic| diagnostic.code() == "G4S188")
+        .collect();
+    assert_eq!(
+        rec_escapes.len(),
+        2,
+        "one diagnostic per escaped edge in LexerRecursion.g4: {rec_escapes:?}"
     );
+    for rec_escape in rec_escapes {
+        assert!(
+            rec_escape
+                .message()
+                .contains("reach a recursive rule context"),
+            "recursion escape reason: {}",
+            rec_escape.message()
+        );
+        assert_eq!(
+            rec_escape.line(),
+            Some(5),
+            "points to LEVEL_B recursion site"
+        );
+        assert_eq!(
+            rec_escape.column(),
+            Some(19),
+            "points to LEVEL_A call in LEVEL_B"
+        );
+    }
 }
 
 #[test]
