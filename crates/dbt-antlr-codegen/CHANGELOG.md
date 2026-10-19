@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-codegen-v0.4.0...dbt-antlr-codegen-v0.5.0) - 2026-10-19
+
+### Other
+
+- *(codegen)* integrate static_lexer_dfa into the optimization pipeline ([#28](https://github.com/sdf-labs/dbt-antlr/pull/28))
+
 ## [0.4.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-codegen-v0.3.0...dbt-antlr-codegen-v0.4.0) - 2026-10-17
 
 ### Other
