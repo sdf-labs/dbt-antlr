@@ -7,6 +7,7 @@ use crate::grammar::transform::render_optimization_manifest;
 
 use super::config::OptimizationPlan;
 use super::descriptor::PassDescriptor;
+use super::static_lexer_dfa::StaticLexerDfa;
 
 impl OptimizationPlan {
     pub(crate) fn diagnostic_messages(&self, compilation: &Compilation) -> Vec<String> {
@@ -21,16 +22,29 @@ impl OptimizationPlan {
     }
 
     pub(crate) fn render_manifest(&self, compilation: &Compilation) -> Option<String> {
-        self.selected
+        let manifest_passes = self
+            .selected
             .iter()
-            .any(|pass| pass.emit_manifest)
-            .then(|| {
-                render_optimization_manifest(
-                    &compilation.transform_report,
-                    &compilation.sources,
-                    self.report_only,
-                )
-            })
+            .filter(|pass| pass.emit_manifest)
+            .map(|pass| pass.descriptor.id)
+            .collect::<BTreeSet<_>>();
+        if manifest_passes.is_empty() {
+            return None;
+        }
+        let static_lexers = manifest_passes.contains(StaticLexerDfa::NAME).then(|| {
+            compilation
+                .static_lexers
+                .values()
+                .map(|build| &build.report)
+                .collect::<Vec<_>>()
+        });
+        Some(render_optimization_manifest(
+            &compilation.transform_report,
+            &manifest_passes,
+            static_lexers.as_deref(),
+            &compilation.sources,
+            self.report_only,
+        ))
     }
 }
 

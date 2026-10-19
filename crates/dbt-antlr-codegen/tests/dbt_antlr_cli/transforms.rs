@@ -905,3 +905,19 @@ fn lexer_fragments_and_mode_rules_are_not_parser_reachability_candidates() {
     assert!(lexer.contains("\"UNUSED\""));
     assert!(lexer.contains("\"MODE_UNUSED\""));
 }
+
+#[allow(clippy::disallowed_methods)] // `insta` assertion macros unwrap internal I/O.
+#[test]
+fn static_lexer_dfa_emits_auditable_optimization_manifest() {
+    let temp = temporary_directory("static-lexer-dfa-manifest");
+    let (_baseline, optimized, report) = run_optimization_matrix(
+        temp.path(),
+        "tests/codegen-direct/fixtures/lexer-recursion/LexerRecursion.g4",
+        "--static-lexer-dfa",
+    );
+    assert!(!report.exists());
+
+    let manifest = fs::read_to_string(optimized.join("optimizations.txt"))
+        .expect("static-lexer-dfa optimization manifest should be emitted");
+    insta::assert_snapshot!("static_lexer_dfa_optimization_manifest", manifest);
+}

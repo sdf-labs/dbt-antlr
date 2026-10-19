@@ -9,11 +9,11 @@ use std::collections::BTreeSet;
 /// accepts the same language). However, they are **NOT tree-preserving**!
 /// When enabled, the generated parse tree can differ from the `.g4` grammar.
 ///
-/// Every applied grammar transform writes an entry to an `optimizations.txt`
-/// manifest next to the generated files.
-///
 /// Static lexer DFA generation ([`Self::static_lexer_dfa`]) precomputes lexer
 /// DFA tables after ATN construction and preserves both tokens and APIs.
+///
+/// Selected optimization passes write their reports to an `optimizations.txt`
+/// manifest next to the generated files.
 ///
 /// When [`Self::report_only`] is enabled, the generator compiles, analyzes,
 /// and optimizes the input grammars without emitting recognizer files.
