@@ -132,6 +132,46 @@ pub struct ModeBuildOutcome {
     pub escape_counts: EscapeCounts,
     /// Escaped edges in state and symbol order.
     pub escaped_edges: Vec<EscapedEdge>,
+    /// Per-state summaries in state index order.
+    pub states: Vec<StateSummary>,
+    /// Self-recursive rules compiled into [`Accel::CountedExclusion`].
+    pub simple_recursive_rules: Vec<CompiledRecursiveRule>,
+}
+
+/// Build-time summary of one DFA state in a mode table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateSummary {
+    /// Number of finalized ATN configs in this DFA state.
+    pub num_configs: usize,
+    /// Distinct lexer rule indices in the config set of this state, in config order.
+    pub rule_indices: Vec<usize>,
+    /// Winning accept rule index when the state is an accept state.
+    pub accept_rule_index: Option<usize>,
+    /// Accepted token type (`-1` when not an accept state).
+    pub accept_type: i32,
+    /// Number of position-independent lexer actions executed on accept.
+    pub num_accept_actions: usize,
+    /// Whether the state has an outgoing EOF edge.
+    pub has_eof_edge: bool,
+    /// Number of outgoing target edge intervals.
+    pub target_intervals: usize,
+    /// Number of outgoing escaped edge intervals.
+    pub escaped_intervals: usize,
+    /// Disjoint symbol intervals `(lo, hi)` that self-loop back to this state.
+    pub self_loop_intervals: Vec<(i32, i32)>,
+    /// Whether every non-ASCII symbol (`128..=0x10FFFF`) self-loops back to this state.
+    pub hi_all_self_loop: bool,
+    /// Run-acceleration descriptor of this state, if any.
+    pub accel: Option<Accel>,
+}
+
+/// A self-recursive lexer rule compiled into [`Accel::CountedExclusion`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompiledRecursiveRule {
+    /// Rule index in the lexer ATN.
+    pub rule_index: usize,
+    /// The counted-exclusion descriptor for this rule.
+    pub accel: Accel,
 }
 
 /// Why a whole mode has no table.
@@ -171,6 +211,8 @@ pub struct EscapedEdge {
     pub hi: i32,
     /// Why the edge escaped to the lazy simulator.
     pub reason: EscapeReason,
+    /// Pool index of the resume continuation, or `None` for a budget escape.
+    pub continuation: Option<u32>,
 }
 
 /// The escape reason of one edge.
@@ -326,13 +368,28 @@ impl StaticLexerDfaBuilder {
         let num_continuations = mode.continuations.len();
         let escape_counts = mode.counts;
         let escaped_edges = mode.escaped_edges.clone();
+        let simple_recursive_rules = mode
+            .recursive_rules
+            .iter()
+            .map(|rule| CompiledRecursiveRule {
+                rule_index: rule.rule_index as usize,
+                accel: rule.accel,
+            })
+            .collect();
+        let mut states = build_state_summaries(&mode.states, &mode.rows);
+        let table = mode.finalize(atn);
+        for (index, state) in states.iter_mut().enumerate() {
+            state.accel = table.state_accel(index as u16);
+        }
         ModeBuildOutcome {
-            table: Some(mode.finalize(atn)),
+            table: Some(table),
             failure: None,
             num_states,
             num_continuations,
             escape_counts,
             escaped_edges,
+            states,
+            simple_recursive_rules,
         }
     }
 }
@@ -346,8 +403,70 @@ impl ModeBuildOutcome {
             num_continuations: 0,
             escape_counts: EscapeCounts::default(),
             escaped_edges: Vec::new(),
+            states: Vec::new(),
+            simple_recursive_rules: Vec::new(),
         }
     }
+}
+
+fn build_state_summaries(states: &[StateData<'_>], rows: &[StateRows]) -> Vec<StateSummary> {
+    states
+        .iter()
+        .zip(rows.iter())
+        .enumerate()
+        .map(|(state_index, (state_data, state_rows))| {
+            let mut rule_indices = Vec::new();
+            for config in &state_data.configs {
+                let rule_index = config.get_state().get_rule_index();
+                if rule_index >= 0 {
+                    let index = rule_index as usize;
+                    if !rule_indices.contains(&index) {
+                        rule_indices.push(index);
+                    }
+                }
+            }
+            let accept_rule_index = state_data
+                .configs
+                .iter()
+                .find(|config| config.get_state().state_type() == ATNStateType::RuleStop)
+                .map(|config| config.get_state().get_rule_index() as usize);
+            let has_eof_edge = state_rows.eof != EdgeEntry::None;
+            let mut target_intervals = usize::from(matches!(state_rows.eof, EdgeEntry::Target(_)));
+            let mut escaped_intervals = usize::from(matches!(state_rows.eof, EdgeEntry::Escape(_)));
+            let mut self_loop_intervals = Vec::new();
+            let mut hi_covered_to = ASCII_MAX;
+            for iv in &state_rows.intervals {
+                match iv.entry {
+                    EdgeEntry::Target(target) => {
+                        target_intervals += 1;
+                        if target == state_index as u32 {
+                            self_loop_intervals.push((iv.lo, iv.hi));
+                            if iv.hi > ASCII_MAX && iv.lo <= hi_covered_to + 1 {
+                                hi_covered_to = hi_covered_to.max(iv.hi);
+                            }
+                        }
+                    }
+                    EdgeEntry::Escape(_) => {
+                        escaped_intervals += 1;
+                    }
+                    EdgeEntry::None => {}
+                }
+            }
+            StateSummary {
+                num_configs: state_data.configs.len(),
+                rule_indices,
+                accept_rule_index,
+                accept_type: state_data.accept_type,
+                num_accept_actions: state_data.accept_actions.len(),
+                has_eof_edge,
+                target_intervals,
+                escaped_intervals,
+                self_loop_intervals,
+                hi_all_self_loop: hi_covered_to == MAX_SYMBOL,
+                accel: None,
+            }
+        })
+        .collect()
 }
 
 /// The build-time [`LexerClosureEnv`]: no live input, predicates evaluate as
@@ -1343,11 +1462,16 @@ fn compute_state_rows<'sc>(
 ) -> StateRows {
     let (eof, eof_escape) = compute_edge(mode, atn, fin, source, EOF);
     if let Some(reason) = eof_escape {
+        let continuation = match eof {
+            EdgeEntry::Escape(cont) => cont,
+            _ => None,
+        };
         mode.escaped_edges.push(EscapedEdge {
             state,
             lo: EOF,
             hi: EOF,
             reason,
+            continuation,
         });
     }
     let mut bounds = BTreeSet::from([0, MAX_SYMBOL + 1]);
@@ -1384,11 +1508,16 @@ fn compute_state_rows<'sc>(
                 }
             }
             if let Some(reason) = escape_reason {
+                let continuation = match edge {
+                    EdgeEntry::Escape(cont) => cont,
+                    _ => None,
+                };
                 mode.escaped_edges.push(EscapedEdge {
                     state,
                     lo,
                     hi,
                     reason,
+                    continuation,
                 });
             }
             intervals.push(EdgeInterval {

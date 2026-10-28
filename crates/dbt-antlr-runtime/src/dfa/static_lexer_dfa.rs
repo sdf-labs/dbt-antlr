@@ -238,23 +238,26 @@ pub(crate) struct ContinuationConfig {
 
 /// Per-state run-acceleration descriptor.
 ///
-/// When a run of consecutive input bytes all loops back to the same state, the
-/// walker consumes the whole run with a single scan instead of the per-char
-/// table chase. A run ends on the first byte that does not loop, which is then
-/// handed back to the normal table chase.
+/// When a run of consecutive input bytes loops back to the same state, the
+/// walker consumes the run with one scan. A run ends on the first byte that
+/// does not loop, and the normal table walk resumes from that byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Accel {
-    /// Run over the ASCII bytes set in the bitmap
+pub enum Accel {
+    /// Run over the ASCII bytes set in the bitmap.
     Positive(u128),
-    /// Run over all input until the first occurance of the needle char
+    /// Run over all input until the first occurrence of the needle byte.
     Exclude(u8),
-    /// Run over all input until the first occurance of either needles
+    /// Run over all input until the first occurrence of either needle byte.
     Exclude2(u8, u8),
-    /// Run over all input until the first occurance of any of the 3 needles
+    /// Run over all input until the first occurrence of any of the three needle bytes.
     Exclude3(u8, u8, u8),
+    /// Counted nested run over equal-length 1..=3-byte opener and closer delimiters.
     CountedExclusion {
+        /// ASCII bytes of the opening delimiter (zero-padded).
         opener: [u8; 3],
+        /// ASCII bytes of the closing delimiter (zero-padded).
         closer: [u8; 3],
+        /// Byte length of `opener` and `closer` (`1..=3`).
         n: u8,
     },
 }
@@ -1045,6 +1048,56 @@ impl StaticLexerDFA {
         let row = &self.escape_ranges
             [self.escape_off[s as usize] as usize..self.escape_off[s as usize + 1] as usize];
         row.iter().map(|r| (r.lo, r.hi, r.continuation)).collect()
+    }
+
+    /// Run-acceleration descriptor of state `s`, if any.
+    pub fn state_accel(&self, s: u16) -> Option<Accel> {
+        let tag = self.accel_tag(s);
+        (tag != 0).then(|| self.accel_payload(tag))
+    }
+
+    /// Number of deduplicated hi-symbol class rows in this mode.
+    pub fn num_distinct_hi_rows(&self) -> usize {
+        self.hi_rows
+            .len()
+            .checked_div(self.num_classes)
+            .unwrap_or(0)
+    }
+
+    /// Number of populated ASCII edge entries (`0..=127`) across all states.
+    pub fn ascii_populated_edges(&self) -> usize {
+        let num_states = self.num_states();
+        let mut count = 0;
+        for s in 0..num_states {
+            count += self.low[s * LOW_ROW + 1..(s + 1) * LOW_ROW]
+                .iter()
+                .filter(|&&entry| entry != NO_EDGE)
+                .count();
+        }
+        count
+    }
+
+    /// Number of singleton context nodes in continuation `index`.
+    pub fn continuation_num_contexts(&self, index: u32) -> usize {
+        self.continuations[index as usize].ctxs.len()
+    }
+
+    /// Number of non-greedy configs in continuation `index`.
+    pub fn continuation_num_non_greedy_configs(&self, index: u32) -> usize {
+        self.continuations[index as usize]
+            .configs
+            .iter()
+            .filter(|config| config.non_greedy)
+            .count()
+    }
+
+    /// ATN state numbers of the configs in continuation `index`, in config order.
+    pub fn continuation_config_states(&self, index: u32) -> Vec<usize> {
+        self.continuations[index as usize]
+            .configs
+            .iter()
+            .map(|config| config.state as usize)
+            .collect()
     }
 }
 

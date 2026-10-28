@@ -53,6 +53,12 @@ fn cli_accepts_the_static_lexer_dfa_flag() {
         written.contains("_STATIC_LEXER_TABLE_WORDS"),
         "the flag puts the table statics into the emitted lexer"
     );
+    let manifest =
+        std::fs::read_to_string(out_dir.join("optimizations.txt")).expect("manifest written");
+    assert!(
+        manifest.contains("\"name\": \"static-lexer-dfa\""),
+        "the flag writes the static-lexer-dfa entry into optimizations.txt"
+    );
 
     let warnings = String::from_utf8(stderr).expect("stderr is utf-8");
     assert!(
@@ -274,5 +280,51 @@ fn fully_static_csv_reports_no_escape_warnings() {
             .all(|diagnostic| diagnostic.code() != "G4S188"),
         "a fully static lexer has no escape warning: {:?}",
         output.diagnostics
+    );
+}
+
+#[test]
+fn static_lexer_dfa_emits_optimization_manifest_with_stats_accel_and_continuations() {
+    let off = emit("lexer/Spike.g4", false);
+    assert!(
+        off.optimization_manifest.is_none(),
+        "no manifest when --static-lexer-dfa is off"
+    );
+
+    let csv_manifest = emit("CSV.g4", true)
+        .optimization_manifest
+        .expect("CSV manifest emitted");
+    assert!(csv_manifest.contains("\"name\": \"static-lexer-dfa\""));
+    assert!(csv_manifest.contains("\"safetyClass\": \"tree-and-api-preserving\""));
+    assert!(csv_manifest.contains("\"omitAtn\": True"));
+    assert!(csv_manifest.contains("\"status\": \"compiled\""));
+    assert!(csv_manifest.contains("\"kind\": \"exclusion\""));
+    assert!(csv_manifest.contains("\"kind\": \"positive\""));
+
+    let spike_manifest = emit("lexer/Spike.g4", true)
+        .optimization_manifest
+        .expect("Spike manifest emitted");
+    assert!(spike_manifest.contains("\"grammar\": \"Spike\""));
+    assert!(spike_manifest.contains("\"omitAtn\": False"));
+    assert!(spike_manifest.contains("\"status\": \"partial\""));
+    assert!(spike_manifest.contains("\"kind\": \"counted-exclusion\""));
+    assert!(spike_manifest.contains("\"opener\": \"/*\""));
+    assert!(spike_manifest.contains("\"closer\": \"*/\""));
+    assert!(spike_manifest.contains("\"reason\": \"predicate\""));
+    assert!(spike_manifest.contains("\"symbols\": \"'t'\""));
+    assert!(spike_manifest.contains("\"kind\": \"source-set\""));
+
+    let xml_manifest = emit("XMLLexer.g4", true)
+        .optimization_manifest
+        .expect("XMLLexer manifest emitted");
+    assert!(xml_manifest.contains("\"numModes\": 3"));
+    assert!(xml_manifest.contains("\"mode\": \"DEFAULT_MODE\""));
+    assert!(xml_manifest.contains("\"mode\": \"INSIDE\""));
+    assert!(xml_manifest.contains("\"mode\": \"PROC_INSTR\""));
+    assert!(xml_manifest.contains("\"reason\": \"custom-action\""));
+    assert!(
+        xml_manifest.contains(
+            "replace the embedded action {...} with a position-independent lexer command"
+        )
     );
 }
