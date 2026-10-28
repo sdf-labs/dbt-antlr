@@ -23,6 +23,8 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
+use crate::optimization::StaticLexerTables;
+
 /// Root render context: the formal arguments of the `LexerFile` template.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -183,6 +185,15 @@ pub struct StaticLexerTablesModel {
     pub words: Vec<u32>,
     /// Whether the generated lexer needs no ATN at runtime.
     pub omit_atn: bool,
+}
+
+impl StaticLexerTablesModel {
+    pub(crate) fn from_pass(tables: &StaticLexerTables) -> Self {
+        Self {
+            words: tables.words.clone(),
+            omit_atn: tables.omit_atn,
+        }
+    }
 }
 
 /// Packed parser-ATN words of the vendored packed format (`PATN` v3).

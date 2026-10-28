@@ -1241,7 +1241,7 @@ mod tests {
     use crate::grammar::loader::{LoadOptions, load};
     use crate::grammar::semantics::analyze;
     use crate::grammar::transform::analysis::AnalysisInvalidation;
-    use crate::grammar::transform::artifact::render_unmodified_sources;
+    use crate::grammar::transform::test_support::render_unmodified_sources;
     use crate::grammar::transform::{
         GrammarTransform, SafetyClass, TransformContext, TransformRegistry, TransformReport,
     };

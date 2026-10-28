@@ -8,13 +8,21 @@ mod config;
 #[cfg(feature = "generator")]
 mod descriptor;
 #[cfg(feature = "generator")]
-pub(crate) mod metrics;
+mod manifest;
+#[cfg(feature = "generator")]
+mod metrics;
 mod options;
 #[cfg(feature = "generator")]
 mod report;
 #[cfg(feature = "generator")]
-pub(crate) mod static_lexer_dfa;
+mod static_lexer_dfa;
 
 #[cfg(feature = "generator")]
-pub(crate) use config::OptimizationPlan;
+pub(crate) use config::{OptimizationPlan, StaticDfaPass};
+#[cfg(feature = "generator")]
+pub(crate) use metrics::{StructuralMetrics, integrated_grammar_metrics};
 pub use options::OptimizationOptions;
+#[cfg(feature = "generator")]
+pub(crate) use report::OptimizationReport;
+#[cfg(feature = "generator")]
+pub(crate) use static_lexer_dfa::{StaticLexerDfa, StaticLexerTables};

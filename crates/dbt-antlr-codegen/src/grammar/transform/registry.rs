@@ -8,7 +8,7 @@ use crate::grammar::action::{ActionReferenceParser, action_references};
 use crate::grammar::diagnostic::Diagnostic;
 use crate::grammar::model::{ModelIdAllocator, TransformId};
 use crate::grammar::validation::validate_model;
-use crate::optimization::metrics::integrated_grammar_metrics;
+use crate::optimization::integrated_grammar_metrics;
 
 #[derive(Default)]
 pub(crate) struct TransformRegistry {

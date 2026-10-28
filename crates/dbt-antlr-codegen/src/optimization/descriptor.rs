@@ -9,8 +9,8 @@ use super::static_lexer_dfa::StaticLexerDfa;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum OptimizationStage {
-    IntegratedGrammar,
-    StaticDfa,
+    GrammarTransforms,
+    StaticDfaBuilds,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -25,7 +25,7 @@ pub(super) struct PassDescriptor {
 
 pub(super) const PRUNE_UNREACHABLE_RULES: PassDescriptor = PassDescriptor {
     id: PruneUnreachableRules::NAME,
-    stage: OptimizationStage::IntegratedGrammar,
+    stage: OptimizationStage::GrammarTransforms,
     safety: SafetyClass::RecognitionPreserving,
     canonical_order: 100,
     prerequisites: &[],
@@ -34,7 +34,7 @@ pub(super) const PRUNE_UNREACHABLE_RULES: PassDescriptor = PassDescriptor {
 
 pub(super) const INLINE_TRIVIAL_RULES: PassDescriptor = PassDescriptor {
     id: InlineTrivialRules::NAME,
-    stage: OptimizationStage::IntegratedGrammar,
+    stage: OptimizationStage::GrammarTransforms,
     safety: SafetyClass::RecognitionPreserving,
     canonical_order: 150,
     prerequisites: &[],
@@ -43,7 +43,7 @@ pub(super) const INLINE_TRIVIAL_RULES: PassDescriptor = PassDescriptor {
 
 pub(super) const COLLAPSE_PRECEDENCE_LADDERS: PassDescriptor = PassDescriptor {
     id: CollapsePrecedenceLadders::NAME,
-    stage: OptimizationStage::IntegratedGrammar,
+    stage: OptimizationStage::GrammarTransforms,
     safety: SafetyClass::RecognitionPreserving,
     canonical_order: 200,
     prerequisites: &[],
@@ -52,7 +52,7 @@ pub(super) const COLLAPSE_PRECEDENCE_LADDERS: PassDescriptor = PassDescriptor {
 
 pub(super) const STATIC_LEXER_DFA: PassDescriptor = PassDescriptor {
     id: StaticLexerDfa::NAME,
-    stage: OptimizationStage::StaticDfa,
+    stage: OptimizationStage::StaticDfaBuilds,
     safety: StaticLexerDfa::SAFETY,
     canonical_order: 300,
     prerequisites: &[],
