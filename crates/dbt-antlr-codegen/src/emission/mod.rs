@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 
 use crate::emission::lexer_factory::build_lexer_file_context;
 use crate::emission::listener_factory::build_tree_walk_file_contexts;
+use crate::emission::model::StaticLexerTablesModel;
 use crate::emission::parser_factory::build_parser_file_context;
 use crate::emission::template::render_template;
 use crate::error::Diagnostic;
@@ -172,8 +173,10 @@ pub fn emit_files_with_options(
     let plan = OptimizationPlan::from_options(optimization)?;
     let compilation = compile_grammar_with(grammar_path, library_dirs, &plan)?;
     let diagnostics = crate::compile_error::non_fatal_diagnostics(&compilation);
-    let optimization_messages = plan.diagnostic_messages(&compilation);
-    let optimization_manifest = plan.render_manifest(&compilation);
+    let optimization_messages =
+        plan.diagnostic_messages(compilation.optimization_report(), &compilation.sources);
+    let optimization_manifest =
+        plan.render_manifest(compilation.optimization_report(), &compilation.sources);
     let files = if plan.report_only() {
         Vec::new()
     } else {
@@ -204,8 +207,8 @@ fn render_recognizer_files(
         if let Some(lexer_id) = root.lexer {
             let compiled = &compilation.lexers[&lexer_id];
             let static_tables = compilation
-                .static_lexer(lexer_id)
-                .map(|build| build.model.clone());
+                .static_lexer_tables(lexer_id)
+                .map(StaticLexerTablesModel::from_pass);
             let context = build_lexer_file_context(compiled, &grammar_file_name, static_tables);
             let content = render_template(&minijinja::Value::from_serialize(&context))?;
             let name = format!("{}.rs", compiled.semantic.unit.name.to_lowercase());

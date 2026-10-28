@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Konstantin Vyatkin
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::optimization::OptimizationPlan;
-use crate::optimization::static_lexer_dfa::{StaticLexerBuild, build_static_lexer_tables};
+use crate::optimization::{
+    OptimizationPlan, OptimizationReport, StaticDfaPass, StaticLexerDfa, StaticLexerTables,
+};
 
 use super::action::{ActionReferenceParser, action_references};
 use super::atn::{CompiledLexer, CompiledParser, compile_lexer, compile_parser};
 use super::diagnostic::{CompilationError, Diagnostic};
-use super::integration::{IntegratedVocabularySource, RootOutputs, integrate_loaded};
+use super::integration::{
+    IntegratedGrammarSet, IntegratedVocabularySource, RootOutputs, integrate_loaded,
+};
 use super::loader::{LoadOptions, LoadedSources, load_recovering};
 use super::model::{GrammarId, GrammarKind};
 use super::semantics::SemanticGrammarSet;
@@ -29,9 +32,9 @@ pub(crate) struct Compilation {
     pub(crate) roots: Vec<CompiledRoot>,
     pub(crate) lexers: BTreeMap<GrammarId, CompiledLexer>,
     pub(crate) parsers: BTreeMap<GrammarId, CompiledParser>,
-    pub(crate) static_lexers: BTreeMap<GrammarId, StaticLexerBuild>,
+    static_lexer_tables: BTreeMap<GrammarId, StaticLexerTables>,
     pub(crate) diagnostics: Vec<Diagnostic>,
-    pub(crate) transform_report: TransformReport,
+    optimization_report: OptimizationReport,
 }
 
 impl Compilation {
@@ -51,8 +54,12 @@ impl Compilation {
         self.parsers.get(&grammar)
     }
 
-    pub(crate) fn static_lexer(&self, grammar: GrammarId) -> Option<&StaticLexerBuild> {
-        self.static_lexers.get(&grammar)
+    pub(crate) fn static_lexer_tables(&self, grammar: GrammarId) -> Option<&StaticLexerTables> {
+        self.static_lexer_tables.get(&grammar)
+    }
+
+    pub(crate) const fn optimization_report(&self) -> &OptimizationReport {
+        &self.optimization_report
     }
 
     pub(crate) fn lexer_named(&self, name: &str) -> Option<&CompiledLexer> {
@@ -79,13 +86,41 @@ pub(crate) fn compile_with_plan(
     compile_with_action_reference_parser(options, plan, action_references)
 }
 
+/// Runs the compile-optimization pipeline.
+///
+/// The stages always run in this order, and the [`OptimizationPlan`] decides
+/// what each optimization stage does:
+///
+/// 1. [`load_grammar`] loads, integrates, and validates the requested roots.
+/// 2. [`grammar_transforms`] runs the selected grammar-transform passes.
+/// 3. [`compile_semantics`] compiles and analyzes the transformed grammar.
+/// 4. [`static_dfa_builds`] runs the selected static DFA build passes.
 pub(crate) fn compile_with_action_reference_parser(
     options: LoadOptions,
     plan: &OptimizationPlan,
     action_reference_parser: ActionReferenceParser,
 ) -> Result<Compilation, CompilationError> {
+    let grammar = load_grammar(options, plan)?;
+    let grammar = transform_grammar(grammar, plan, action_reference_parser)?;
+    let compilation = compile_semantics(grammar, plan, action_reference_parser)?;
+    Ok(static_dfa_builds(compilation, plan))
+}
+
+/// The loaded and integrated grammar handed from the load stage to the
+/// grammar-transform stage.
+struct LoadedGrammar {
+    sources: SourceSet,
+    non_grammar_inputs: Vec<std::path::PathBuf>,
+    root_order: Vec<GrammarId>,
+    integrated: IntegratedGrammarSet,
+}
+
+/// Loads, integrates, and validates the requested grammar roots.
+fn load_grammar(
+    options: LoadOptions,
+    plan: &OptimizationPlan,
+) -> Result<LoadedGrammar, CompilationError> {
     let entry_rules = plan.entry_rules();
-    let transforms = plan.transforms();
     let loaded = load_recovering(options);
     let root_order = loaded.grammars.roots.clone();
     let mut integrated =
@@ -127,13 +162,41 @@ pub(crate) fn compile_with_action_reference_parser(
     }
     integrated.grammar.preserved_rules =
         entry_rules.matching_rule_ids(&integrated.grammar.units, &integrated.grammar.target_units);
+    let LoadedSources { sources, .. } = loaded;
+    Ok(LoadedGrammar {
+        sources,
+        non_grammar_inputs,
+        root_order,
+        integrated,
+    })
+}
+
+/// The transformed grammar handed from the grammar-transform stage to the
+/// semantic-compilation stage.
+struct TransformedGrammar {
+    loaded: LoadedGrammar,
+    authored_diagnostics: Option<Vec<Diagnostic>>,
+    transform_report: TransformReport,
+}
+
+/// Runs the grammar-transform passes selected by the plan.
+///
+/// The authored grammar is analyzed first when transforms are selected, so that
+/// semantic diagnostics still point at what the author wrote.
+fn transform_grammar(
+    mut loaded: LoadedGrammar,
+    plan: &OptimizationPlan,
+    action_reference_parser: ActionReferenceParser,
+) -> Result<TransformedGrammar, CompilationError> {
+    let entry_rules = plan.entry_rules();
+    let transforms = plan.transforms();
     let authored_diagnostics = if transforms.is_empty() {
         None
     } else {
         Some(
             super::semantics::analyze_with_action_reference_parser(
                 &loaded.sources,
-                integrated.clone(),
+                loaded.integrated.clone(),
                 entry_rules,
                 action_reference_parser,
             )
@@ -141,38 +204,23 @@ pub(crate) fn compile_with_action_reference_parser(
             .diagnostics,
         )
     };
+    // Report-only runs still apply the transforms: the later stages must
+    // analyze the real result, and only file emission is suppressed.
     let transform_report = transforms
         .run_with_action_reference_parser(
-            &mut integrated.grammar,
-            &mut integrated.ids,
+            &mut loaded.integrated.grammar,
+            &mut loaded.integrated.ids,
             false,
             action_reference_parser,
         )
         .map_err(|diagnostic| {
             CompilationError::new(vec![diagnostic]).with_sources(&loaded.sources)
         })?;
-    let mut semantics = super::semantics::analyze_with_action_reference_parser(
-        &loaded.sources,
-        integrated,
-        entry_rules,
-        action_reference_parser,
-    )
-    .map_err(|error| error.with_sources(&loaded.sources))?;
-    if let Some(authored_diagnostics) = authored_diagnostics {
-        semantics.diagnostics = merge_diagnostics(
-            authored_diagnostics,
-            std::mem::take(&mut semantics.diagnostics),
-        );
-    }
-    let LoadedSources { sources, .. } = loaded;
-    compile_semantics(
-        sources,
-        non_grammar_inputs,
-        root_order,
-        semantics,
+    Ok(TransformedGrammar {
+        loaded,
+        authored_diagnostics,
         transform_report,
-        plan.static_lexer_dfa(),
-    )
+    })
 }
 
 fn merge_diagnostics(
@@ -194,14 +242,36 @@ fn merge_diagnostics(
     authored
 }
 
+/// Compiles the transformed grammar into recognizer artifacts.
 fn compile_semantics(
-    sources: SourceSet,
-    non_grammar_inputs: Vec<std::path::PathBuf>,
-    root_order: Vec<GrammarId>,
-    semantics: SemanticGrammarSet,
-    transform_report: TransformReport,
-    static_lexer_dfa: bool,
+    transformed: TransformedGrammar,
+    plan: &OptimizationPlan,
+    action_reference_parser: ActionReferenceParser,
 ) -> Result<Compilation, CompilationError> {
+    let TransformedGrammar {
+        loaded,
+        authored_diagnostics,
+        transform_report,
+    } = transformed;
+    let LoadedGrammar {
+        sources,
+        non_grammar_inputs,
+        root_order,
+        integrated,
+    } = loaded;
+    let mut semantics = super::semantics::analyze_with_action_reference_parser(
+        &sources,
+        integrated,
+        plan.entry_rules(),
+        action_reference_parser,
+    )
+    .map_err(|error| error.with_sources(&sources))?;
+    if let Some(authored_diagnostics) = authored_diagnostics {
+        semantics.diagnostics = merge_diagnostics(
+            authored_diagnostics,
+            std::mem::take(&mut semantics.diagnostics),
+        );
+    }
     let SemanticGrammarSet {
         grammars,
         roots,
@@ -222,7 +292,6 @@ fn compile_semantics(
         .collect();
     let mut lexers = BTreeMap::new();
     let mut parsers = BTreeMap::new();
-    let mut static_lexers = BTreeMap::new();
     for grammar in grammars {
         let grammar_id = grammar.unit.id;
         match grammar.unit.kind {
@@ -230,11 +299,6 @@ fn compile_semantics(
                 let compiled = compile_lexer(grammar, provenance.clone())
                     .map_err(|error| error.with_sources(&sources))?;
                 all_diagnostics.extend(compiled.analysis.diagnostics.iter().cloned());
-                if static_lexer_dfa && roots.iter().any(|root| root.lexer == Some(grammar_id)) {
-                    let static_build = build_static_lexer_tables(&compiled);
-                    all_diagnostics.extend(static_build.diagnostics.iter().cloned());
-                    static_lexers.insert(grammar_id, static_build);
-                }
                 lexers.insert(grammar_id, compiled);
             }
             GrammarKind::Parser => {
@@ -254,10 +318,46 @@ fn compile_semantics(
         roots,
         lexers,
         parsers,
-        static_lexers,
+        static_lexer_tables: BTreeMap::new(),
         diagnostics: all_diagnostics,
-        transform_report,
+        optimization_report: OptimizationReport::new(transform_report),
     })
+}
+
+/// Runs the static DFA build passes selected by the plan.
+///
+/// The stage runs after semantic compilation, so the pass diagnostics it
+/// appends follow the lexer and parser diagnostics.
+fn static_dfa_builds(mut compilation: Compilation, plan: &OptimizationPlan) -> Compilation {
+    for pass in plan.static_dfa_passes() {
+        match pass {
+            StaticDfaPass::StaticLexerDfa => build_static_lexer_dfas(&mut compilation),
+        }
+    }
+    compilation
+}
+
+/// Builds the static lexer DFA tables of every root lexer and records their
+/// diagnostics and optimization reports.
+fn build_static_lexer_dfas(compilation: &mut Compilation) {
+    let lexer_ids = compilation
+        .roots
+        .iter()
+        .filter_map(|root| root.lexer)
+        .collect::<BTreeSet<_>>();
+    for lexer_id in lexer_ids {
+        let Some(compiled) = compilation.lexers.get(&lexer_id) else {
+            continue;
+        };
+        let build = StaticLexerDfa::build(compiled);
+        compilation.diagnostics.extend(build.diagnostics);
+        compilation
+            .optimization_report
+            .push_static_lexer_dfa(build.report);
+        compilation
+            .static_lexer_tables
+            .insert(lexer_id, build.tables);
+    }
 }
 
 #[cfg(test)]
@@ -289,9 +389,9 @@ mod tests {
             .expect("root parser artifact exists");
         assert_eq!(lexer.semantic.unit.name, "sentencesLexer");
         assert_eq!(parser.semantic.unit.name, "sentencesParser");
-        assert!(compilation.static_lexer(lexer_id).is_none());
+        assert!(compilation.static_lexer_tables(lexer_id).is_none());
         assert_eq!(compilation.sources.len(), 1);
-        assert_eq!(compilation.transform_report.entries, []);
+        assert_eq!(compilation.optimization_report().transforms.entries, []);
     }
 
     #[test]
@@ -312,10 +412,11 @@ mod tests {
             panic!("one requested root should produce one compiled root");
         };
         let lexer_id = root.lexer.expect("lexer root has a lexer");
-        let static_build = compilation
-            .static_lexer(lexer_id)
+        let tables = compilation
+            .static_lexer_tables(lexer_id)
             .expect("static lexer tables built");
-        assert!(!static_build.model.words.is_empty());
+        assert!(!tables.words.is_empty());
+        assert_eq!(compilation.optimization_report().static_lexer_dfa.len(), 1);
         assert!(
             compilation
                 .diagnostics

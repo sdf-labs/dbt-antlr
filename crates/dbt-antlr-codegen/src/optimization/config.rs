@@ -4,25 +4,62 @@ use std::collections::BTreeSet;
 
 use super::options::OptimizationOptions;
 use crate::error::EmitError;
-use crate::grammar::compiler::Compilation;
 use crate::grammar::rule_reachability::EntryRuleConfig;
+use crate::grammar::source::SourceSet;
 use crate::grammar::transform::passes::inline_trivial::InlineTrivialRules;
 use crate::grammar::transform::passes::precedence_ladder::CollapsePrecedenceLadders;
 use crate::grammar::transform::passes::prune_unreachable::PruneUnreachableRules;
-use crate::grammar::transform::{GrammarTransform, TransformRegistry};
+use crate::grammar::transform::{GrammarTransform, SafetyClass, TransformRegistry};
 
 use super::descriptor::{
     COLLAPSE_PRECEDENCE_LADDERS, INLINE_TRIVIAL_RULES, OptimizationStage, PRUNE_UNREACHABLE_RULES,
     PassDescriptor, STATIC_LEXER_DFA,
 };
-use super::report::pruned_unreachable_rule_messages;
+use super::report::{OptimizationReport, pruned_unreachable_rule_messages};
 use super::static_lexer_dfa::StaticLexerDfa;
 
-type MessageRenderer = fn(&Compilation, &PassDescriptor) -> Vec<String>;
+type MessageRenderer = fn(&OptimizationReport, &SourceSet, &PassDescriptor) -> Vec<String>;
 
+/// One configured pass body, before the plan fixes the pass order.
 enum ConfiguredPassStage {
-    IntegratedGrammar(Box<dyn GrammarTransform>),
+    GrammarTransforms(Box<dyn GrammarTransform>),
+    StaticDfaBuilds(StaticDfaPass),
+}
+
+/// One static DFA build selected by the plan.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StaticDfaPass {
     StaticLexerDfa,
+}
+
+impl StaticDfaPass {
+    pub(super) const fn id(self) -> &'static str {
+        match self {
+            Self::StaticLexerDfa => StaticLexerDfa::NAME,
+        }
+    }
+
+    pub(super) const fn safety_class(self) -> SafetyClass {
+        match self {
+            Self::StaticLexerDfa => StaticLexerDfa::SAFETY,
+        }
+    }
+}
+
+/// The pipeline stage a selected pass runs in.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SelectedPassStage {
+    GrammarTransforms,
+    StaticDfaBuilds(StaticDfaPass),
+}
+
+impl ConfiguredPassStage {
+    const fn selected(&self) -> SelectedPassStage {
+        match self {
+            Self::GrammarTransforms(_) => SelectedPassStage::GrammarTransforms,
+            Self::StaticDfaBuilds(pass) => SelectedPassStage::StaticDfaBuilds(*pass),
+        }
+    }
 }
 
 struct ConfiguredPass {
@@ -61,6 +98,7 @@ impl SelectionSettings {
 
 pub(super) struct SelectedPass {
     pub(super) descriptor: &'static PassDescriptor,
+    pub(super) stage: SelectedPassStage,
     pub(super) emit_manifest: bool,
     pub(super) messages: Option<MessageRenderer>,
 }
@@ -69,7 +107,6 @@ pub(super) struct SelectedPass {
 pub(crate) struct OptimizationPlan {
     pub(super) entry_rules: EntryRuleConfig,
     pub(super) transforms: TransformRegistry,
-    pub(super) static_lexer_dfa: bool,
     pub(super) selected: Vec<SelectedPass>,
     pub(super) report_only: bool,
 }
@@ -104,23 +141,19 @@ impl OptimizationPlan {
         validate_registry(&registrations)?;
 
         let mut transforms = TransformRegistry::default();
-        let mut static_lexer_dfa = false;
         let mut selected = Vec::new();
         for registration in registrations {
             let Some(configured) = (registration.configure)(&settings) else {
                 continue;
             };
             validate_configured_pass(registration.descriptor, &configured)?;
-            match configured.stage {
-                ConfiguredPassStage::IntegratedGrammar(transform) => {
-                    transforms.push_boxed(transform);
-                }
-                ConfiguredPassStage::StaticLexerDfa => {
-                    static_lexer_dfa = true;
-                }
+            let stage = configured.stage.selected();
+            if let ConfiguredPassStage::GrammarTransforms(transform) = configured.stage {
+                transforms.push_boxed(transform);
             }
             selected.push(SelectedPass {
                 descriptor: registration.descriptor,
+                stage,
                 emit_manifest: configured.emit_manifest,
                 messages: configured.messages,
             });
@@ -129,7 +162,6 @@ impl OptimizationPlan {
         Ok(Self {
             entry_rules: settings.entry_rules,
             transforms,
-            static_lexer_dfa,
             selected,
             report_only: settings.report_only,
         })
@@ -143,8 +175,12 @@ impl OptimizationPlan {
         &self.transforms
     }
 
-    pub(crate) const fn static_lexer_dfa(&self) -> bool {
-        self.static_lexer_dfa
+    /// The static DFA build passes selected by the plan, in canonical order.
+    pub(crate) fn static_dfa_passes(&self) -> impl Iterator<Item = StaticDfaPass> + '_ {
+        self.selected.iter().filter_map(|pass| match pass.stage {
+            SelectedPassStage::StaticDfaBuilds(pass) => Some(pass),
+            SelectedPassStage::GrammarTransforms => None,
+        })
     }
 
     pub(crate) const fn report_only(&self) -> bool {
@@ -154,7 +190,7 @@ impl OptimizationPlan {
 
 fn configure_prune_unreachable(settings: &SelectionSettings) -> Option<ConfiguredPass> {
     settings.prune_unreachable.then(|| ConfiguredPass {
-        stage: ConfiguredPassStage::IntegratedGrammar(Box::new(PruneUnreachableRules::new(
+        stage: ConfiguredPassStage::GrammarTransforms(Box::new(PruneUnreachableRules::new(
             settings.entry_rules.clone(),
         ))),
         emit_manifest: false,
@@ -164,7 +200,7 @@ fn configure_prune_unreachable(settings: &SelectionSettings) -> Option<Configure
 
 fn configure_trivial_inlining(settings: &SelectionSettings) -> Option<ConfiguredPass> {
     settings.trivial_inlining.then(|| ConfiguredPass {
-        stage: ConfiguredPassStage::IntegratedGrammar(Box::new(InlineTrivialRules::new(
+        stage: ConfiguredPassStage::GrammarTransforms(Box::new(InlineTrivialRules::new(
             settings.entry_rules.clone(),
         ))),
         emit_manifest: true,
@@ -174,7 +210,7 @@ fn configure_trivial_inlining(settings: &SelectionSettings) -> Option<Configured
 
 fn configure_precedence_ladders(settings: &SelectionSettings) -> Option<ConfiguredPass> {
     settings.precedence_ladders.then(|| ConfiguredPass {
-        stage: ConfiguredPassStage::IntegratedGrammar(Box::new(CollapsePrecedenceLadders)),
+        stage: ConfiguredPassStage::GrammarTransforms(Box::new(CollapsePrecedenceLadders)),
         emit_manifest: true,
         messages: None,
     })
@@ -182,7 +218,7 @@ fn configure_precedence_ladders(settings: &SelectionSettings) -> Option<Configur
 
 fn configure_static_lexer_dfa(settings: &SelectionSettings) -> Option<ConfiguredPass> {
     settings.static_lexer_dfa.then_some(ConfiguredPass {
-        stage: ConfiguredPassStage::StaticLexerDfa,
+        stage: ConfiguredPassStage::StaticDfaBuilds(StaticDfaPass::StaticLexerDfa),
         emit_manifest: true,
         messages: None,
     })
@@ -225,10 +261,10 @@ fn validate_configured_pass(
     configured: &ConfiguredPass,
 ) -> Result<(), EmitError> {
     match &configured.stage {
-        ConfiguredPassStage::IntegratedGrammar(transform) => {
-            if descriptor.stage != OptimizationStage::IntegratedGrammar {
+        ConfiguredPassStage::GrammarTransforms(transform) => {
+            if descriptor.stage != OptimizationStage::GrammarTransforms {
                 return Err(invalid_registry(&format!(
-                    "pass {} is not an integrated-grammar pass",
+                    "pass {} is not a grammar-transform pass",
                     descriptor.id
                 )));
             }
@@ -246,21 +282,21 @@ fn validate_configured_pass(
                 )));
             }
         }
-        ConfiguredPassStage::StaticLexerDfa => {
-            if descriptor.stage != OptimizationStage::StaticDfa {
+        ConfiguredPassStage::StaticDfaBuilds(pass) => {
+            if descriptor.stage != OptimizationStage::StaticDfaBuilds {
                 return Err(invalid_registry(&format!(
-                    "pass {} is not a static-dfa pass",
+                    "pass {} is not a static-dfa-build pass",
                     descriptor.id
                 )));
             }
-            if descriptor.id != StaticLexerDfa::NAME {
+            if descriptor.id != pass.id() {
                 return Err(invalid_registry(&format!(
                     "descriptor ID {} does not match pass ID {}",
                     descriptor.id,
-                    StaticLexerDfa::NAME
+                    pass.id()
                 )));
             }
-            if descriptor.safety != StaticLexerDfa::SAFETY {
+            if descriptor.safety != pass.safety_class() {
                 return Err(invalid_registry(&format!(
                     "descriptor safety for {} does not match its pass",
                     descriptor.id
@@ -339,7 +375,10 @@ mod tests {
                 (StaticLexerDfa::NAME, 300),
             ]
         );
-        assert!(plan.static_lexer_dfa());
+        assert_eq!(
+            plan.static_dfa_passes().collect::<Vec<_>>(),
+            [StaticDfaPass::StaticLexerDfa]
+        );
         assert!(!plan.report_only());
     }
 
@@ -349,7 +388,10 @@ mod tests {
             .expect("registered optimization passes should be valid");
 
         assert!(plan.report_only());
-        assert!(plan.static_lexer_dfa());
+        assert_eq!(
+            plan.static_dfa_passes().collect::<Vec<_>>(),
+            [StaticDfaPass::StaticLexerDfa]
+        );
         assert_eq!(plan.selected.len(), 3);
     }
 }

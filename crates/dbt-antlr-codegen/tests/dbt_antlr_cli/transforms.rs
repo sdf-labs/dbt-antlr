@@ -921,3 +921,80 @@ fn static_lexer_dfa_emits_auditable_optimization_manifest() {
         .expect("static-lexer-dfa optimization manifest should be emitted");
     insta::assert_snapshot!("static_lexer_dfa_optimization_manifest", manifest);
 }
+
+#[test]
+fn optimization_manifest_lists_passes_in_plan_order() {
+    let temp = temporary_directory("manifest-pass-order");
+    let out = temp.path().join("out");
+    let output = run_dbt_antlr_in(
+        Path::new(env!("CARGO_MANIFEST_DIR")),
+        &[
+            OsStr::new("tests/fixtures/transforms/precedence-ladder/Ladder.g4"),
+            OsStr::new("-o"),
+            out.as_os_str(),
+            OsStr::new("--prune-unreachable-rules"),
+            OsStr::new("--inline-trivial-rules"),
+            OsStr::new("--optimize-precedence-ladders"),
+            OsStr::new("--static-lexer-dfa"),
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        utf8(&output.stdout),
+        utf8(&output.stderr)
+    );
+
+    let manifest = fs::read_to_string(out.join("optimizations.txt"))
+        .expect("every selected manifest pass should emit an entry");
+    let mut cursor = 0;
+    for (id, name) in [
+        (0, "inline-trivial-rules"),
+        (1, "collapse-precedence-ladders"),
+        (2, "static-lexer-dfa"),
+    ] {
+        let name_at = manifest[cursor..]
+            .find(&format!("\"name\": \"{name}\""))
+            .map_or_else(
+                || panic!("missing manifest pass {name}:\n{manifest}"),
+                |offset| cursor + offset,
+            );
+        let id_at = manifest[..name_at]
+            .rfind(&format!("\"id\": {id},"))
+            .expect("pass ID must precede its name");
+        assert!(
+            id_at > cursor,
+            "passes must follow the canonical plan order:\n{manifest}"
+        );
+        cursor = name_at;
+    }
+    assert!(!manifest.contains("\"name\": \"prune-unreachable-rules\""));
+    assert!(manifest.contains("\"reportOnly\": False"));
+}
+
+#[test]
+fn static_lexer_dfa_manifest_reports_no_lexers_for_parser_grammars() {
+    let temp = temporary_directory("static-lexer-dfa-parser-only");
+    let out = temp.path().join("out");
+    let output = run_dbt_antlr_in(
+        Path::new(env!("CARGO_MANIFEST_DIR")),
+        &[
+            OsStr::new("tests/fixtures/grammar-semantics/common-alternative-label/Labels.g4"),
+            OsStr::new("-o"),
+            out.as_os_str(),
+            OsStr::new("--static-lexer-dfa"),
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        utf8(&output.stdout),
+        utf8(&output.stderr)
+    );
+
+    let manifest = fs::read_to_string(out.join("optimizations.txt"))
+        .expect("static-lexer-dfa should still emit a manifest entry");
+    assert!(manifest.contains("\"name\": \"static-lexer-dfa\""));
+    assert!(manifest.contains("\"changed\": False"));
+    assert!(manifest.contains("\"lexers\": []"));
+}

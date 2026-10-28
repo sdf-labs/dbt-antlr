@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Konstantin Vyatkin
 pub(crate) mod analysis;
-pub(crate) mod artifact;
 pub(crate) mod clone;
 mod registry;
 
@@ -20,8 +19,7 @@ use super::model::{GrammarId, GrammarUnit, ModelIdAllocator, RuleId, TransformId
 use super::provenance::ProvenanceIndex;
 use analysis::{AnalysisInvalidation, TransformAnalysis};
 
-pub(crate) use crate::optimization::metrics::StructuralMetrics;
-pub(crate) use artifact::render_optimization_manifest;
+pub(crate) use crate::optimization::StructuralMetrics;
 pub(crate) use registry::TransformRegistry;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -153,12 +151,13 @@ pub(crate) trait GrammarTransform {
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use super::TransformGrammar;
     use crate::grammar::frontend::{SourceId, parse_source};
     use crate::grammar::model::{GrammarId, ModelIdAllocator};
     use crate::grammar::provenance::ProvenanceIndex;
+    use crate::grammar::source::SourceSet;
     use crate::grammar::syntax::parse_grammar_unit;
 
     /// Parses one grammar source into a single-unit [`TransformGrammar`]
@@ -177,5 +176,13 @@ pub(crate) mod test_support {
             },
             ids,
         )
+    }
+
+    /// Renders every source in the set, keyed by its source ID.
+    pub(crate) fn render_unmodified_sources(sources: &SourceSet) -> BTreeMap<SourceId, String> {
+        sources
+            .iter()
+            .map(|source| (source.id(), source.text().to_owned()))
+            .collect()
     }
 }

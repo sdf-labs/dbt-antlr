@@ -2,70 +2,94 @@
 // Copyright (c) 2026 Konstantin Vyatkin
 use std::collections::BTreeSet;
 
-use crate::grammar::compiler::Compilation;
-use crate::grammar::transform::render_optimization_manifest;
+use crate::grammar::source::SourceSet;
+use crate::grammar::transform::TransformReport;
 
 use super::config::OptimizationPlan;
 use super::descriptor::PassDescriptor;
-use super::static_lexer_dfa::StaticLexerDfa;
+use super::manifest::render_optimization_manifest;
+use super::static_lexer_dfa::StaticLexerDfaReport;
+
+/// Everything the optimization pipeline reports about one compilation.
+///
+/// Each optimization stage appends its own pass report here, so the manifest
+/// and user-facing messages are rendered from one place.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct OptimizationReport {
+    pub(crate) transforms: TransformReport,
+    pub(crate) static_lexer_dfa: Vec<StaticLexerDfaReport>,
+}
+
+impl OptimizationReport {
+    pub(crate) const fn new(transforms: TransformReport) -> Self {
+        Self {
+            transforms,
+            static_lexer_dfa: Vec::new(),
+        }
+    }
+
+    pub(crate) fn push_static_lexer_dfa(&mut self, report: StaticLexerDfaReport) {
+        self.static_lexer_dfa.push(report);
+    }
+}
 
 impl OptimizationPlan {
-    pub(crate) fn diagnostic_messages(&self, compilation: &Compilation) -> Vec<String> {
+    pub(crate) fn diagnostic_messages(
+        &self,
+        report: &OptimizationReport,
+        sources: &SourceSet,
+    ) -> Vec<String> {
         self.selected
             .iter()
             .filter_map(|pass| {
                 pass.messages
-                    .map(|render| render(compilation, pass.descriptor))
+                    .map(|render| render(report, sources, pass.descriptor))
             })
             .flatten()
             .collect()
     }
 
-    pub(crate) fn render_manifest(&self, compilation: &Compilation) -> Option<String> {
+    pub(crate) fn render_manifest(
+        &self,
+        report: &OptimizationReport,
+        sources: &SourceSet,
+    ) -> Option<String> {
         let manifest_passes = self
             .selected
             .iter()
             .filter(|pass| pass.emit_manifest)
-            .map(|pass| pass.descriptor.id)
-            .collect::<BTreeSet<_>>();
+            .collect::<Vec<_>>();
         if manifest_passes.is_empty() {
             return None;
         }
-        let static_lexers = manifest_passes.contains(StaticLexerDfa::NAME).then(|| {
-            compilation
-                .static_lexers
-                .values()
-                .map(|build| &build.report)
-                .collect::<Vec<_>>()
-        });
         Some(render_optimization_manifest(
-            &compilation.transform_report,
+            report,
             &manifest_passes,
-            static_lexers.as_deref(),
-            &compilation.sources,
+            sources,
             self.report_only,
         ))
     }
 }
 
 pub(super) fn pruned_unreachable_rule_messages(
-    compilation: &Compilation,
+    report: &OptimizationReport,
+    sources: &SourceSet,
     descriptor: &PassDescriptor,
 ) -> Vec<String> {
-    let pass_ids = compilation
-        .transform_report
+    let pass_ids = report
+        .transforms
         .entries
         .iter()
         .filter(|entry| entry.name == descriptor.id)
         .map(|entry| entry.id)
         .collect::<BTreeSet<_>>();
-    compilation
-        .transform_report
+    report
+        .transforms
         .rule_removals
         .iter()
         .filter(|removal| pass_ids.contains(&removal.pass))
         .map(|removal| {
-            let source = compilation.sources.get(removal.source_span.source);
+            let source = sources.get(removal.source_span.source);
             let path = source.map_or_else(
                 || "<grammar>".to_owned(),
                 |source| source.logical_path().display().to_string(),
