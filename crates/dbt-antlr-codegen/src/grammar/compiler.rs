@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::optimization::{
     OptimizationPlan, OptimizationReport, StaticDfaPass, StaticLexerDfa, StaticLexerTables,
-    StaticParserDfa,
+    StaticParserDfa, StaticParserTables,
 };
 
 use super::action::{ActionReferenceParser, action_references};
@@ -34,6 +34,7 @@ pub(crate) struct Compilation {
     pub(crate) lexers: BTreeMap<GrammarId, CompiledLexer>,
     pub(crate) parsers: BTreeMap<GrammarId, CompiledParser>,
     static_lexer_tables: BTreeMap<GrammarId, StaticLexerTables>,
+    static_parser_tables: BTreeMap<GrammarId, StaticParserTables>,
     pub(crate) diagnostics: Vec<Diagnostic>,
     optimization_report: OptimizationReport,
 }
@@ -57,6 +58,10 @@ impl Compilation {
 
     pub(crate) fn static_lexer_tables(&self, grammar: GrammarId) -> Option<&StaticLexerTables> {
         self.static_lexer_tables.get(&grammar)
+    }
+
+    pub(crate) fn static_parser_tables(&self, grammar: GrammarId) -> Option<&StaticParserTables> {
+        self.static_parser_tables.get(&grammar)
     }
 
     pub(crate) const fn optimization_report(&self) -> &OptimizationReport {
@@ -320,6 +325,7 @@ fn compile_semantics(
         lexers,
         parsers,
         static_lexer_tables: BTreeMap::new(),
+        static_parser_tables: BTreeMap::new(),
         diagnostics: all_diagnostics,
         optimization_report: OptimizationReport::new(transform_report),
     })
@@ -362,7 +368,8 @@ fn build_static_lexer_dfas(compilation: &mut Compilation) {
     }
 }
 
-/// Inventories the decisions of every root parser and records the pass report.
+/// Builds the static prediction tables of every root parser, stores them for
+/// the emitter, and records the pass diagnostics and report.
 fn build_static_parser_dfas(compilation: &mut Compilation) {
     let parser_ids = compilation
         .roots
@@ -378,6 +385,9 @@ fn build_static_parser_dfas(compilation: &mut Compilation) {
         compilation
             .optimization_report
             .push_static_parser_dfa(build.report);
+        compilation
+            .static_parser_tables
+            .insert(parser_id, build.tables);
     }
 }
 

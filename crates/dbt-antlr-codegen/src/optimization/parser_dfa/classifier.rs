@@ -7,11 +7,14 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use dbt_antlr_runtime::analysis::DFA;
 use dbt_antlr_runtime::analysis::{
     ATN, ATNConfigSet, ATNStateRef, ATNStateType, Arena, BOUNDARY_TAINT, BitSet, Bump, DFAState,
-    EOF, FOREIGN_CONSUME_TAINT, IATNSimulator, INTERIOR_TAINT, PRECPRED_TAINT, ParserATNSimulator,
-    ParserATNSimulatorManager, PrecedencePredicateTransition, PredictionContext,
-    PredictionContextRef, PredictionMode, ProposedDFAState, RuleStartState, WIDENED_TAINT,
-    all_subsets_conflict, all_subsets_equal, conflicting_alt_subsets, get_alts,
+    EOF, FOREIGN_CONSUME_TAINT, IATNSimulator, INTERIOR_TAINT, PRECPRED_TAINT, PRED_TAINT,
+    ParserATNSimulator, ParserATNSimulatorManager, PrecedencePredicateTransition,
+    PredictionContext, PredictionContextRef, PredictionMode, ProposedDFAState, RuleStartState,
+    WIDENED_TAINT, all_subsets_conflict, all_subsets_equal, conflicting_alt_subsets, get_alts,
     has_sll_conflict_terminating_prediction,
+};
+use dbt_antlr_runtime::dfa::static_parser_dfa::{
+    ContinuationConfigEntry, ContinuationContextNode, ParserContinuation,
 };
 
 use super::closure::{ClosedSet, Closure, ClosureFacts, PrecedenceClass, Taint};
@@ -26,6 +29,17 @@ pub(crate) const HYBRID_DEPTH_CAP: usize = 4;
 pub(crate) const HYBRID_STATE_CAP: usize = 64;
 /// Below this share of useful start edges a hybrid table is not emitted.
 pub(crate) const HYBRID_MIN_COVERAGE_PERCENT: u32 = 10;
+/// Largest continuation a hybrid table emits, counted in wire words.
+///
+/// A continuation saves the `k` steps of a Stage 1 restart, but replaying its
+/// config set costs a closure over that set, and storing it costs
+/// `continuation_words` words of the emitted table. Both grow with the set, so
+/// only small frontier sets are worth serializing: on `CPP14.g4` the median
+/// continuation is 112 words and the pool is 61% of the whole section, while
+/// the measured runtime difference is a fraction of a percent. 64 words is the
+/// largest continuation that still beats a restart on our corpora
+/// (`FuzzExpr.g4`'s `item` frontier).
+pub(crate) const MAX_CONTINUATION_WORDS: usize = 64;
 
 /// Taint bits that invalidate a trusted verdict when a second path adds them
 /// to an already interned state.
@@ -63,6 +77,11 @@ struct StateFacts {
     resolved_conflict: bool,
     /// The state's successors were computed at least once.
     expanded: bool,
+    /// The lowest conflicting alternative of a conflict escape state, `0` when
+    /// the runtime cannot resolve the conflict directly.
+    conflict_min_alt: i32,
+    /// The closed config set of a frontier escape state.
+    continuation: Option<ParserContinuation>,
 }
 
 /// The attempt-level bookkeeping one classification commits.
@@ -79,6 +98,9 @@ struct ClassifyEffects {
     approximation: Option<BitSet>,
     context_sensitive: Option<BitSet>,
     conflict: Option<Vec<i32>>,
+    /// The decision state of the attempt is behind a predicate, so the whole
+    /// decision depends on parser state and no table can decide it.
+    fail_predicated: bool,
     abort: bool,
 }
 
@@ -163,6 +185,10 @@ struct Attempt {
     /// The same config set was reached by two paths with different trust
     /// taint, so no verdict derived from the first path can be trusted.
     taint_conflict: bool,
+    /// The attempt ran under the hybrid policy.
+    hybrid: bool,
+    /// The decision state is behind a predicate: the decision is predicated.
+    predicated: bool,
 }
 
 /// The precedence classes of one precedence-loop decision.
@@ -190,6 +216,9 @@ pub(crate) struct DecisionResult {
     pub(crate) cyclic: bool,
     pub(crate) used_widening: bool,
     pub(crate) saw_predicate: bool,
+    /// The decision state itself sits behind a predicate, so no construction
+    /// can decide it and a hybrid retry cannot help.
+    pub(crate) predicated_start: bool,
     pub(crate) first_predicate: Option<(i32, i32)>,
     pub(crate) saw_precedence_predicate: bool,
     pub(crate) utrust_resolutions: usize,
@@ -216,6 +245,7 @@ impl DecisionResult {
             cyclic: false,
             used_widening: false,
             saw_predicate: false,
+            predicated_start: false,
             first_predicate: None,
             saw_precedence_predicate: false,
             utrust_resolutions: 0,
@@ -375,9 +405,10 @@ impl DecisionClassifier {
         }
         let mut result = self.finalize(outcome);
         if result.table.is_none()
+            && !result.predicated_start
             && matches!(
                 result.category,
-                Category::OVERFLOW | Category::CONTEXT_SENSITIVE
+                Category::OVERFLOW | Category::CONTEXT_SENSITIVE | Category::PREDICATED
             )
         {
             let hybrid_attempt = self.attempt(decision, AttemptPolicy::hybrid(), None);
@@ -402,8 +433,20 @@ impl DecisionClassifier {
             return result;
         }
 
+        if outcome.predicated || (outcome.facts.saw_predicate && !outcome.hybrid) {
+            result.predicated_start = outcome.predicated;
+            // A predicate in front of the decision, or anywhere in a
+            // construction that cannot escape, makes viability depend on the
+            // parse state, so no table can decide it.
+            result.category = Category::PREDICATED;
+            result.num_dfa_states = outcome.state_count;
+            return result;
+        }
+
         let Some(table) = outcome.table else {
-            result.category = if !outcome.conflicts.is_empty() {
+            result.category = if outcome.facts.saw_predicate {
+                Category::PREDICATED
+            } else if !outcome.conflicts.is_empty() {
                 Category::CONTEXT_SENSITIVE
             } else {
                 Category::OVERFLOW
@@ -430,12 +473,6 @@ impl DecisionClassifier {
             result.budget_witness = table.witness(state);
         }
 
-        if outcome.facts.saw_predicate {
-            // User predicates gate viability in ways a table cannot represent,
-            // so a decision that crosses one is never table-eligible.
-            result.category = Category::PREDICATED;
-            return result;
-        }
         if outcome.taint_conflict {
             // Two paths disagreed on the taint of one config set, so no accept
             // derived from it is trustworthy.
@@ -557,7 +594,7 @@ impl DecisionClassifier {
                 let attempt = self.attempt(result.decision, widened, Some(class));
                 outcome = self.finalize(attempt);
             }
-            if outcome.table.is_none() && outcome.category != Category::PREDICATED {
+            if outcome.table.is_none() {
                 let mut hybrid = AttemptPolicy::hybrid();
                 hybrid.trust_exact_ambiguity = false;
                 let attempt = self.attempt(result.decision, hybrid, Some(class));
@@ -643,6 +680,8 @@ impl DecisionClassifier {
                     self.visit_budget,
                 ),
                 policy,
+                allow_continuations: policy.hybrid && precedence.is_none(),
+                precedence_class: precedence.is_some(),
                 decision_state: atn.decision_to_state[decision],
                 decision,
                 info: HashMap::new(),
@@ -651,6 +690,7 @@ impl DecisionClassifier {
                 completion_depths: &mut completion_depths,
                 attempt: Attempt {
                     decision,
+                    hybrid: policy.hybrid,
                     ..Attempt::default()
                 },
             };
@@ -691,6 +731,13 @@ struct DecisionBuild<'b, 'sim, 'a> {
     scratch: &'a Bump,
     closure: Closure<'static, 'a>,
     policy: AttemptPolicy,
+    /// Whether frontier escape states may carry a continuation. Precedence
+    /// classes never do: their tables are selected by the parser's precedence,
+    /// which the resumed SLL simulation cannot reproduce from a config set.
+    allow_continuations: bool,
+    /// `true` when this attempt builds one precedence class of a precedence
+    /// loop decision.
+    precedence_class: bool,
     decision: usize,
     decision_state: ATNStateRef,
     info: HashMap<i32, StateFacts>,
@@ -709,18 +756,15 @@ where
         let start = self.closure.start(self.decision_state);
         if self.closure.exhausted {
             self.attempt.overflow = true;
-            return std::mem::take(&mut self.attempt);
+            return self.take_attempt();
         }
         let Some(start_state) = self.intern(start, 0) else {
             self.attempt.overflow = true;
-            return std::mem::take(&mut self.attempt);
+            return self.take_attempt();
         };
         self.dfa.set_s0(start_state);
-        if self.attempt.overflow || self.closure.exhausted {
-            self.attempt.decision = self.decision;
-            self.attempt.state_count = self.states.len();
-            self.attempt.facts = std::mem::take(&mut self.closure.facts);
-            return std::mem::take(&mut self.attempt);
+        if self.attempt.overflow || self.closure.exhausted || self.attempt.predicated {
+            return self.take_attempt();
         }
 
         while let Some(number) = self.queue.pop_front() {
@@ -775,12 +819,52 @@ where
         }
 
         if !self.attempt.overflow {
+            self.attach_continuations();
             self.attempt.table = Some(self.snapshot());
         }
+        self.take_attempt()
+    }
+
+    /// Moves the attempt out of the build, recording what it observed.
+    fn take_attempt(&mut self) -> Attempt {
         self.attempt.decision = self.decision;
         self.attempt.state_count = self.states.len();
         self.attempt.facts = std::mem::take(&mut self.closure.facts);
         std::mem::take(&mut self.attempt)
+    }
+
+    /// Attaches a [`ParserContinuation`] to every frontier escape state whose
+    /// config set the resumed SLL simulation can rebuild faithfully.
+    ///
+    /// A continuation replays a config set without the input, so it must not
+    /// carry any approximation: a widened context would erase the caller that
+    /// only exists at run time, and a precedence-filtered set would need the
+    /// parser's precedence. Decisions that reach a left-recursive loop are
+    /// excluded for the same reason - a resumed simulation cannot reapply the
+    /// precedence filter the static construction applied.
+    fn attach_continuations(&mut self) {
+        if !self.allow_continuations {
+            return;
+        }
+        for number in 0..self.states.len() as i32 {
+            let Some(facts) = self.info.get(&number) else {
+                continue;
+            };
+            if facts.depth == 0 || facts.verdict != Verdict::Escape(ESCAPE) {
+                continue;
+            }
+            let configs = self.states[number as usize].configs();
+            if !continuation_is_faithful(configs, &facts.taint) {
+                continue;
+            }
+            let continuation = serialize_continuation(number as u32, configs, &facts.taint);
+            if continuation_words(&continuation) > MAX_CONTINUATION_WORDS {
+                continue;
+            }
+            if let Some(facts) = self.info.get_mut(&number) {
+                facts.continuation = Some(continuation);
+            }
+        }
     }
 
     /// Classifies a closed set and interns it as a DFA state.
@@ -808,7 +892,7 @@ where
             // verdict that trusted the config set, so the attempt gives up
             // rather than emit a table the runtime could disagree with.
             let state_configs = self.states[number as usize].configs();
-            let mut new_trust_taint = false;
+            let mut new_trust_taint = 0;
             let mut verdict = Verdict::Decide;
             let mut resolved_conflict = false;
             if let Some(existing) = self.info.get_mut(&number) {
@@ -816,17 +900,15 @@ where
                 resolved_conflict = existing.resolved_conflict;
                 for (key, taint) in &facts.taint {
                     let entry = existing.taint.entry(*key).or_insert(0);
-                    if *taint & !*entry & TRUST_TAINT != 0 {
-                        new_trust_taint = true;
-                    }
+                    new_trust_taint |= *taint & !*entry & TRUST_TAINT;
                     *entry |= *taint;
                 }
                 // The fallback is a property of the whole set's taint, so a
                 // later boundary path can add one.
                 existing.fallback = fallback_of(state_configs, &existing.taint);
             }
-            if new_trust_taint {
-                self.on_taint_increase(number, verdict, resolved_conflict);
+            if new_trust_taint != 0 {
+                self.on_taint_increase(number, verdict, resolved_conflict, new_trust_taint);
             }
             return Some(state);
         }
@@ -855,7 +937,13 @@ where
     /// escape (hybrid) or invalidates the whole attempt (a non-hybrid table has
     /// no escapes), while a decision state is queued again so its successors
     /// see the union of both paths' taint.
-    fn on_taint_increase(&mut self, number: i32, verdict: Verdict, resolved_conflict: bool) {
+    fn on_taint_increase(
+        &mut self,
+        number: i32,
+        verdict: Verdict,
+        resolved_conflict: bool,
+        added: i32,
+    ) {
         match verdict {
             // A single-viable-alternative accept does not depend on taint: no
             // other alternative survives the lookahead, so there is nothing a
@@ -865,8 +953,13 @@ where
             Verdict::Accept(_) if resolved_conflict => {
                 self.attempt.first_conflict_state.get_or_insert(number);
                 if self.policy.hybrid {
+                    let approximated = added & (WIDENED_TAINT | PRECPRED_TAINT) != 0;
                     if let Some(facts) = self.info.get_mut(&number) {
                         facts.verdict = Verdict::Escape(CONFLICT_ESCAPE);
+                        if !approximated {
+                            facts.conflict_min_alt =
+                                facts.conflicts.iter().min().copied().unwrap_or(0);
+                        }
                     }
                 } else {
                     self.attempt.taint_conflict = true;
@@ -894,6 +987,9 @@ where
         if let Some(alts) = effects.conflict {
             self.attempt.conflicts.push(alts);
         }
+        if effects.fail_predicated {
+            self.attempt.predicated = true;
+        }
         if effects.abort {
             self.attempt.stopped = true;
             self.attempt.overflow = true;
@@ -906,12 +1002,15 @@ where
         let mut effects = ClassifyEffects::default();
         let mut fallback = 0;
         let mut alts = BitSet::new();
+        let mut predicated = false;
         for config in &closed.configs {
             alts.insert(config.get_alt() as usize);
-            if closed.taint_of(config) & BOUNDARY_TAINT != 0
-                && (fallback == 0 || config.get_alt() < fallback)
-            {
+            let taint = closed.taint_of(config);
+            if taint & BOUNDARY_TAINT != 0 && (fallback == 0 || config.get_alt() < fallback) {
                 fallback = config.get_alt();
+            }
+            if taint & PRED_TAINT != 0 {
+                predicated = true;
             }
         }
         let mut facts = StateFacts {
@@ -922,7 +1021,22 @@ where
             conflicts: Vec::new(),
             resolved_conflict: false,
             expanded: false,
+            conflict_min_alt: 0,
+            continuation: None,
         };
+        if self.policy.hybrid && predicated {
+            // A config behind a predicate is only viable when that predicate
+            // holds for the current parse, so this state can never decide:
+            // predicated branches escape while the unpredicated ones stay
+            // static. A predicate in front of the decision itself makes the
+            // whole decision predicated.
+            if depth == 0 {
+                effects.fail_predicated = true;
+            } else {
+                facts.verdict = Verdict::Escape(ESCAPE);
+            }
+            return (facts, effects);
+        }
         if alts.len() <= 1 {
             facts.verdict = Verdict::Accept(alts.iter().next().map_or(0, |alt| alt as i32));
             return (facts, effects);
@@ -1001,6 +1115,16 @@ where
 
         if self.policy.hybrid {
             facts.verdict = Verdict::Escape(CONFLICT_ESCAPE);
+            // The conflict already ended Stage 1, so the runtime can resume at
+            // Stage 2 without re-walking, but only while the set is a faithful
+            // SLL set: a widened or precedence-filtered set is an approximation
+            // whose conflicting alternatives the runtime may not reproduce.
+            // A precedence class table never takes the conflict short cut: the
+            // runtime's full-context restart would have to reapply the
+            // precedence filter, which the table cannot carry.
+            if depth > 0 && !widened_tainted && !precedence_tainted && !self.precedence_class {
+                facts.conflict_min_alt = conflicting.iter().next().map_or(0, |alt| alt as i32);
+            }
         } else if self.policy.abort_on_untrusted_conflict {
             effects.abort = true;
         }
@@ -1030,6 +1154,8 @@ where
                     conflicts: facts
                         .map(|facts| facts.conflicts.clone())
                         .unwrap_or_default(),
+                    conflict_min_alt: facts.map_or(0, |facts| facts.conflict_min_alt),
+                    continuation: facts.and_then(|facts| facts.continuation.clone()),
                     edges: Vec::new(),
                 }
             })
@@ -1187,6 +1313,122 @@ where
 
 /// The lowest alternative that already left the decision, over the union of
 /// every path's taint.
+/// `true` when the config set can be replayed without the input.
+///
+/// Widening, an unevaluated precedence guard, or a predicate each stand for
+/// information only the run time has, so a continuation never carries them.
+fn continuation_is_faithful(configs: &ATNConfigSet<'_>, taint: &Taint) -> bool {
+    // `INTERIOR_TAINT` and `BOUNDARY_TAINT` are facts about where the config
+    // came from, not approximations: the replay reproduces them.
+    const APPROXIMATION: i32 = WIDENED_TAINT | PRECPRED_TAINT | PRED_TAINT;
+    configs.get_items().all(|config| {
+        let taint = taint
+            .get(&(config.get_state().get_state_number(), config.get_alt()))
+            .copied()
+            .unwrap_or(0);
+        taint & APPROXIMATION == 0
+    })
+}
+
+/// The wire size of a serialized continuation, in `u32` words.
+fn continuation_words(continuation: &ParserContinuation) -> usize {
+    let contexts = continuation
+        .contexts
+        .iter()
+        .map(|node| match node {
+            ContinuationContextNode::Singleton { .. } => 3,
+            ContinuationContextNode::Array { parents, .. } => 1 + parents.len() * 2,
+        })
+        .sum::<usize>();
+    // state + node count + config count, plus one config entry each.
+    3 + contexts + continuation.configs.len() * 4
+}
+
+/// Serializes the closed config set of a frontier escape state.
+///
+/// The contexts become a topological node table: parents are always written
+/// before the nodes that name them, so the run time rebuilds the DAG in one
+/// pass.
+fn serialize_continuation(
+    state: u32,
+    configs: &ATNConfigSet<'_>,
+    taint: &Taint,
+) -> ParserContinuation {
+    fn return_state_number(return_state: ATNStateRef) -> i32 {
+        if return_state == ATNStateRef::invalid() {
+            -1
+        } else {
+            return_state.get_state_number()
+        }
+    }
+
+    fn intern_context<'a>(
+        context: PredictionContextRef<'a>,
+        nodes: &mut Vec<ContinuationContextNode>,
+        seen: &mut HashMap<usize, u32>,
+    ) -> u32 {
+        const EMPTY_CONTEXT: u32 = u32::MAX;
+        if context.is_empty() {
+            return EMPTY_CONTEXT;
+        }
+        let key = context.as_ref() as *const PredictionContext<'a> as usize;
+        if let Some(&index) = seen.get(&key) {
+            return index;
+        }
+        let node = if context.length() == 1 {
+            ContinuationContextNode::Singleton {
+                parent: context
+                    .get_parent(0)
+                    .map_or(EMPTY_CONTEXT, |parent| intern_context(parent, nodes, seen)),
+                return_state: return_state_number(context.get_return_state(0)),
+            }
+        } else {
+            let mut parents = Vec::with_capacity(context.length());
+            let mut return_states = Vec::with_capacity(context.length());
+            for index in 0..context.length() {
+                parents.push(
+                    context
+                        .get_parent(index)
+                        .map_or(EMPTY_CONTEXT, |parent| intern_context(parent, nodes, seen)),
+                );
+                return_states.push(return_state_number(context.get_return_state(index)));
+            }
+            ContinuationContextNode::Array {
+                parents,
+                return_states,
+            }
+        };
+        let index = nodes.len() as u32;
+        nodes.push(node);
+        seen.insert(key, index);
+        index
+    }
+
+    let mut contexts = Vec::new();
+    let mut seen = HashMap::new();
+    let mut entries = Vec::with_capacity(configs.length());
+    for config in configs.get_items() {
+        let context = config.get_context().map_or(u32::MAX, |context| {
+            intern_context(context, &mut contexts, &mut seen)
+        });
+        let taint = taint
+            .get(&(config.get_state().get_state_number(), config.get_alt()))
+            .copied()
+            .unwrap_or(0);
+        entries.push(ContinuationConfigEntry {
+            state: config.get_state().get_state_number(),
+            alt: config.get_alt(),
+            context,
+            outer_depth: i32::from(taint & BOUNDARY_TAINT != 0),
+        });
+    }
+    ParserContinuation {
+        state,
+        contexts,
+        configs: entries,
+    }
+}
+
 fn fallback_of(configs: &ATNConfigSet<'_>, taint: &Taint) -> i32 {
     let mut fallback = 0;
     for config in configs.get_items() {

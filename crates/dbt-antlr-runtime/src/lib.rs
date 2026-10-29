@@ -312,7 +312,10 @@ macro_rules! impl_node_kind_common {
 #[macro_export]
 macro_rules! impl_node_kind {
     // No Listener and no Visitor
-    ($enum_name:ident { $($labeled_variant:ident($inner:ident),)* ; $($variant:ident),* }; ) => {
+    //
+    // The template still emits the empty visit-method slot per variant
+    // (`SContext()`), so the arm accepts both spellings.
+    ($enum_name:ident { $($labeled_variant:ident($inner:ident),)* ; $($variant:ident $(())?,)* }; ) => {
         impl<'arena, Tok: Token + 'arena> NodeKindType<'arena, Tok> for $enum_name {
             type Listener = dyn ParseTreeListener<'arena, Self, Tok>;
 

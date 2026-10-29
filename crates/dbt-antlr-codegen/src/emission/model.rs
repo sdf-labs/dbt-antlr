@@ -319,6 +319,9 @@ pub struct ChoiceModel {
     /// `LL1Choice.altLook`: one sorted token list per alternative. Empty
     /// for non-LL(1) choices.
     pub alt_look: Vec<Vec<TokenInfoModel>>,
+    /// `Choice.tableCanDefer`: whether the static table prediction can return
+    /// no alternative and has to fall back to `adaptivePredict`.
+    pub table_can_defer: bool,
 }
 
 /// One bitset window of `TestSetInline.Bitset`.
@@ -559,6 +562,29 @@ pub enum SrcOpModel {
         iteration: Vec<Self>,
     },
     PlusBlock {
+        choice: ChoiceModel,
+        alts: Vec<Self>,
+        error: Box<Self>,
+    },
+    /// A `(A | B | C)` block predicted from a static SLL DFA table.
+    DFAAltBlock {
+        choice: ChoiceModel,
+        preamble: Vec<Self>,
+        alts: Vec<Self>,
+    },
+    /// An optional `(...)?` block predicted from a static SLL DFA table.
+    DFAOptionalBlock {
+        choice: ChoiceModel,
+        alts: Vec<Self>,
+    },
+    /// A `(...)*` loop predicted from a static SLL DFA table.
+    DFAStarBlock {
+        choice: ChoiceModel,
+        alts: Vec<Self>,
+        iteration: Vec<Self>,
+    },
+    /// A `(...)+` loop predicted from a static SLL DFA table.
+    DFAPlusBlock {
         choice: ChoiceModel,
         alts: Vec<Self>,
         error: Box<Self>,

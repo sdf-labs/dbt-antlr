@@ -50,6 +50,9 @@ pub struct ATN {
     pub rule_to_token_type: Vec<i32>,
 
     states: Vec<Pin<Box<ATNState>>>,
+
+    /// The static parser DFA tables decoded from the packed ATN's `SDFA` tail.
+    pub(crate) static_dfas: crate::dfa::static_parser_dfa::StaticParserTables,
 }
 
 impl Debug for ATN {
@@ -82,7 +85,14 @@ impl ATN {
             rule_to_stop_state: Vec::new(),
             rule_to_token_type: Vec::new(),
             states: Vec::new(),
+            static_dfas: crate::dfa::static_parser_dfa::StaticParserTables::empty(),
         }
+    }
+
+    /// The static parser SLL DFA tables of this ATN, empty when the unit was
+    /// generated without `--static-parser-dfa`.
+    pub fn static_dfas(&self) -> &crate::dfa::static_parser_dfa::StaticParserTables {
+        &self.static_dfas
     }
 
     /// Leaks this ATN for the rest of the process and returns a `'static`

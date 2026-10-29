@@ -234,6 +234,7 @@ fn render_recognizer_files(
                 &grammar_file_name,
                 gen_listener,
                 gen_visitor,
+                compilation.static_parser_tables(parser_id),
             )?;
             let content = render_template(&minijinja::Value::from_serialize(&context))?;
             let name = format!("{}.rs", context.parser.name.to_lowercase());

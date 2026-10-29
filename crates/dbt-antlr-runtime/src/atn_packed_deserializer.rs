@@ -202,6 +202,11 @@ pub enum PackedATNError {
         /// The flag word value.
         value: u32,
     },
+    /// The trailing `SDFA` section is malformed.
+    InvalidStaticTables {
+        /// The decoder error.
+        error: crate::dfa::static_parser_dfa::StaticParserDfaError,
+    },
 }
 
 impl fmt::Display for PackedATNError {
@@ -305,6 +310,9 @@ impl fmt::Display for PackedATNError {
             PackedATNError::InvalidBooleanFlag { what, value } => {
                 write!(f, "{what} flag is {value}; expected 0 or 1")
             }
+            PackedATNError::InvalidStaticTables { error } => {
+                write!(f, "invalid static parser DFA tables: {error}")
+            }
         }
     }
 }
@@ -338,6 +346,29 @@ impl PackedATNDeserializer {
         self.read_transitions(&mut atn, words, &layout, &transition_ranges, &sets)?;
         self.read_decisions(&mut atn, words, &layout)?;
         self.add_rule_return_edges(&mut atn);
+        let packed_end = [
+            layout.states,
+            layout.transitions,
+            layout.sets,
+            layout.intervals,
+            layout.decisions,
+            layout.rule_starts,
+            layout.rule_stops,
+            layout.token_bits,
+        ]
+        .iter()
+        .map(|section| section.offset + section.len)
+        .max()
+        .unwrap_or(HEADER_WORDS);
+        if words.len() > packed_end {
+            let tables =
+                crate::dfa::static_parser_dfa::StaticParserTables::from_words(&words[packed_end..])
+                    .map_err(|error| PackedATNError::InvalidStaticTables { error })?;
+            tables
+                .validate_for_atn(&atn)
+                .map_err(|error| PackedATNError::InvalidStaticTables { error })?;
+            atn.static_dfas = tables;
+        }
         Ok(atn)
     }
 
@@ -709,6 +740,7 @@ struct Layout {
     decisions: Section,
     rule_starts: Section,
     rule_stops: Section,
+    token_bits: Section,
 }
 
 impl Layout {
@@ -791,6 +823,7 @@ impl Layout {
             decisions,
             rule_starts,
             rule_stops,
+            token_bits,
         })
     }
 }

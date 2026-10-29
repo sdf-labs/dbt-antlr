@@ -124,7 +124,7 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
         .modify_with(|x| x.calc_hash())
     }
 
-    fn new_array(
+    pub(crate) fn new_array(
         parents: &'ephemeral [Option<PredictionContextRef<'ephemeral>>],
         return_states: &'ephemeral [ATNStateRef],
     ) -> Self {

@@ -17,7 +17,7 @@ use crate::interval_set::IntervalSet;
 use crate::parser_atn_simulator::ParserATNSimulator;
 use crate::recognizer::{Actions, Recognizer};
 use crate::rule_context::{states_stack, RuleContext as _};
-use crate::token::{Token, TOKEN_EOF};
+use crate::token::{OwningToken, Token, TOKEN_EOF};
 use crate::token_factory::TokenFactory;
 use crate::token_stream::TokenStream;
 use crate::tree::{NodeKindType, ParseTreeListener, Tree as _, TreeNode};
@@ -516,6 +516,96 @@ where
 
     pub fn get_interpreter_mut(&mut self) -> &mut ParserATNSimulator<'arena> {
         self.interp.as_mut().unwrap()
+    }
+
+    /// Predicts the alternative of a decision with its static SLL DFA table.
+    ///
+    /// Returns [`INVALID_ALT`] when the decision has no table and when the walk
+    /// leaves the table at an escape state the generated code must handle with
+    /// [`ParserATNSimulator::adaptive_predict`]. A lookahead that has no table
+    /// edge and no fallback alternative fails like the adaptive simulation does.
+    ///
+    /// The walk consumes tokens while it reads them and rewinds afterwards, so
+    /// every step costs one `la(1)` and one `consume`. It must not read
+    /// `la(k)`: a channel-filtering token stream resolves `la(k)` by scanning
+    /// from the current token, which would make a k-token lookahead O(k^2).
+    ///
+    /// [`INVALID_ALT`]: crate::atn::INVALID_ALT
+    pub fn dfa_predict(&mut self, decision: i32) -> Result<i32, ANTLRError> {
+        use crate::dfa::static_parser_dfa::{CONFLICT_ESCAPE, ESCAPE};
+
+        let tables = self.get_interpreter().atn().static_dfas();
+        if tables.is_empty() {
+            return Ok(crate::atn::INVALID_ALT);
+        }
+        let Some(table) = tables.table(decision, self.get_precedence()) else {
+            return Ok(crate::atn::INVALID_ALT);
+        };
+        let start_index = self.input.index();
+        let mark = self.input.mark();
+        let mut state = 0_i32;
+        let result = loop {
+            let accept = table.accept(state);
+            if accept > 0 {
+                self.input.seek(start_index);
+                break Ok(accept);
+            }
+            if accept == CONFLICT_ESCAPE {
+                self.input.seek(start_index);
+                break match table.conflict_min_alt(state) {
+                    Some(min_alt) => self
+                        .get_interpreter()
+                        .adaptive_predict_conflict(decision, min_alt, self),
+                    None => Ok(crate::atn::INVALID_ALT),
+                };
+            }
+            if accept == ESCAPE {
+                // A frontier continuation resumes from the position the walk
+                // reached, so it must not rewind first.
+                break match table.continuation(state) {
+                    Some((slot, continuation)) => self.get_interpreter().resume_from_continuation(
+                        decision,
+                        slot,
+                        table.num_continuations(),
+                        continuation,
+                        start_index,
+                        self,
+                    ),
+                    None => {
+                        self.input.seek(start_index);
+                        Ok(crate::atn::INVALID_ALT)
+                    }
+                };
+            }
+            let token = self.input.la(1);
+            match table.edge(state, token) {
+                Some(target) => {
+                    state = target;
+                    if token != TOKEN_EOF {
+                        self.input.consume();
+                    }
+                }
+                None => {
+                    if let Some(fallback) = table.fallback(state) {
+                        self.input.seek(start_index);
+                        break Ok(fallback);
+                    }
+                    let start = OwningToken::from(self.input.get(start_index) as &dyn Token);
+                    let error = match self.input.lt(1) {
+                        Some(offending) => ANTLRError::no_alt_full(
+                            self,
+                            start,
+                            OwningToken::from(offending as &dyn Token),
+                        ),
+                        None => ANTLRError::no_alt(self),
+                    };
+                    self.input.seek(start_index);
+                    break Err(error);
+                }
+            }
+        };
+        self.input.release(mark);
+        result
     }
 
     /// If current context is same as the given one by pointer comparison

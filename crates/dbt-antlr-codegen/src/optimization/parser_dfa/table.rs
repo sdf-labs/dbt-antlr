@@ -4,6 +4,8 @@
 
 use std::collections::VecDeque;
 
+use dbt_antlr_runtime::dfa::static_parser_dfa::ParserContinuation;
+
 use super::{CONFLICT_ESCAPE, ESCAPE};
 
 /// One DFA state of a decision table.
@@ -22,6 +24,12 @@ pub(crate) struct StaticDfaState {
     /// Alternatives SLL could not separate here, when this state is a
     /// conflict.
     pub(crate) conflicts: Vec<i32>,
+    /// The lowest conflicting alternative of a conflict escape state, when the
+    /// table can hand the conflict over to full-context prediction directly.
+    pub(crate) conflict_min_alt: i32,
+    /// The closed config set of a frontier escape state, when SLL can resume
+    /// from it instead of restarting at the decision start.
+    pub(crate) continuation: Option<ParserContinuation>,
     pub(crate) edges: Vec<StaticDfaEdge>,
 }
 

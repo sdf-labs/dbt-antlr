@@ -2,9 +2,10 @@
 // Copyright (c) 2026 Bo Lin
 //! `--static-parser-dfa` optimization pass (parser scope).
 //!
-//! The pass classifies the prediction decisions of every root parser unit and,
-//! once the table emission lands, precomputes the static prediction tables that
-//! ride in the trailing `SDFA` section of the packed parser ATN. It reads the
+//! The pass classifies the prediction decisions of every root parser unit,
+//! builds the static prediction tables, and hands the emitter both the tables
+//! (which it turns into `dfa_predict` call sites) and the `SDFA` word stream
+//! that rides in the trailing section of the packed parser ATN. It reads the
 //! runtime ATN of the compiled unit directly, so the analysis never serializes
 //! or deserializes words.
 //!
@@ -18,6 +19,8 @@ use minijinja::Value;
 
 use super::descriptor::PassDescriptor;
 use super::manifest::{object, source_value};
+use dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables as RuntimeTables;
+
 use super::parser_dfa::{Category, DecisionClassifier, DecisionResult, StaticDfaTable};
 use crate::grammar::atn::CompiledParser;
 use crate::grammar::diagnostic::Diagnostic;
@@ -34,19 +37,71 @@ const NOT_FULLY_STATIC: &str = "G4S190";
 /// The diagnostic code of an unmatched `--dump-dfas` selector.
 const DUMP_SELECTOR_NO_MATCH: &str = "G4S191";
 
+/// The static tables of one parser unit, as the emitter and the packed ATN
+/// need them.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct StaticParserTables {
+    tables: RuntimeTables,
+    /// `true` per decision that has at least one static table.
+    has_table: Vec<bool>,
+    /// `true` per decision that keeps an adaptive path, so the generated code
+    /// has to defer to `adaptivePredict` when prediction returns no
+    /// alternative.
+    defers: Vec<bool>,
+}
+
+impl StaticParserTables {
+    fn new(results: &[DecisionResult]) -> Self {
+        let mut has_table = Vec::with_capacity(results.len());
+        let mut defers = Vec::with_capacity(results.len());
+        for result in results {
+            has_table.push(
+                result.table.is_some()
+                    || result
+                        .precedence
+                        .as_ref()
+                        .is_some_and(|precedence| precedence.tables.iter().any(Option::is_some)),
+            );
+            defers.push(!result.is_fully_static());
+        }
+        Self {
+            tables: super::parser_dfa::build_tables(results),
+            has_table,
+            defers,
+        }
+    }
+
+    /// `true` when the decision predicts from a static table.
+    pub(crate) fn has_table(&self, decision: usize) -> bool {
+        self.has_table.get(decision).copied().unwrap_or(false)
+    }
+
+    /// `true` when the decision still reaches the adaptive simulation.
+    pub(crate) fn defers(&self, decision: usize) -> bool {
+        self.defers.get(decision).copied().unwrap_or(false)
+    }
+
+    /// The `SDFA` word stream, empty when the unit has no table.
+    pub(crate) fn words(&self) -> Vec<u32> {
+        self.tables.to_words()
+    }
+}
+
 pub(crate) struct StaticParserDfa;
 
 impl StaticParserDfa {
     pub(crate) const NAME: &'static str = "static-parser-dfa";
     pub(crate) const SAFETY: SafetyClass = SafetyClass::TreeAndApiPreserving;
 
-    /// Classifies the decisions of one compiled parser unit and records the
-    /// diagnostics of the decisions that stay partly adaptive.
+    /// Classifies the decisions of one compiled parser unit, builds the tables
+    /// the generated parser will decode, and records the diagnostics of the
+    /// decisions that stay partly adaptive.
     pub(crate) fn build(compiled: &CompiledParser) -> StaticParserDfaArtifact {
         let atn = compiled.atn;
         let recognizer = &compiled.semantic.recognizer;
         let ll1_disjoint = ll1_disjointness(compiled);
         let results = DecisionClassifier::new(atn, ll1_disjoint).classify_all();
+        let tables = StaticParserTables::new(&results);
         let decisions = results
             .iter()
             .map(|result| StaticParserDecisionReport {
@@ -72,6 +127,7 @@ impl StaticParserDfa {
         StaticParserDfaArtifact {
             diagnostics: not_fully_static_diagnostics(compiled, &report),
             report,
+            tables,
         }
     }
 
@@ -134,6 +190,8 @@ impl StaticParserDfa {
 pub(crate) struct StaticParserDfaArtifact {
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) report: StaticParserDfaReport,
+    /// The tables the generated parser decodes from its packed ATN.
+    pub(crate) tables: StaticParserTables,
 }
 
 /// The report modes `--report-decisions` and `--dump-dfas` select.

@@ -27,6 +27,7 @@ mod dfa_state;
 #[cfg(feature = "static-dfa-build")]
 pub mod static_dfa_build;
 pub mod static_lexer_dfa;
+pub mod static_parser_dfa;
 
 use bit_set::BitSet;
 pub use dfa_serializer::DFASerializer;
@@ -83,6 +84,11 @@ where
     s0: AtomicPtr<DFAState<'sim, CS>>,
 
     precedence_state: Option<Pin<Box<DFAState<'sim, CS>>>>,
+
+    /// Dynamic DFA states materialized from static table continuations, one
+    /// per continuation slot. The slots belong to this decision's DFA, so the
+    /// state is interned at most once per escape state.
+    continuations: OnceLock<Box<[AtomicI32]>>,
 
     allocated_bytes: AtomicUsize,
     dfa_state_bytes: AtomicUsize,
@@ -143,6 +149,7 @@ where
                 &**s as *const DFAState<'sim, CS> as *mut DFAState<'sim, CS>
             })),
             precedence_state,
+            continuations: OnceLock::new(),
             allocated_bytes: AtomicUsize::new(0),
             dfa_state_bytes: AtomicUsize::new(0),
         }
@@ -456,7 +463,47 @@ impl<'sim> DFA<'sim, ATNConfigSet<'sim>> {
             >(&*dfa_state::ERROR_DFA_STATE_REF)
         }
     }
+
+    /// The dynamic state materialized from continuation `slot`, if it is
+    /// already cached.
+    ///
+    /// Continuations are post-closure, input-independent config sets, so the
+    /// first escape materializes the state and every later escape of the same
+    /// state reuses it instead of rebuilding the config set.
+    #[inline]
+    pub fn get_continuation_state(
+        &self,
+        slot: usize,
+    ) -> Option<&'sim DFAState<'sim, ATNConfigSet<'sim>>> {
+        let slots = self.continuations.get()?;
+        let state_number = slots.get(slot)?.load(Ordering::Acquire);
+        if state_number == UNMATERIALIZED_CONTINUATION {
+            return None;
+        }
+        Some(unsafe { (*DFAStateId::new(state_number).deref(self.chunks)).assume_init_ref() })
+    }
+
+    /// Caches the dynamic state materialized from continuation `slot`.
+    #[inline]
+    pub fn set_continuation_state(
+        &self,
+        slot: usize,
+        total_slots: usize,
+        state: &'sim DFAState<'sim, ATNConfigSet<'sim>>,
+    ) {
+        let slots = self.continuations.get_or_init(|| {
+            let mut slots = Vec::with_capacity(total_slots);
+            slots.resize_with(total_slots, || AtomicI32::new(UNMATERIALIZED_CONTINUATION));
+            slots.into_boxed_slice()
+        });
+        if let Some(slot) = slots.get(slot) {
+            slot.store(state.state_number(), Ordering::Release);
+        }
+    }
 }
+
+/// Slot value of a continuation that was not materialized yet.
+const UNMATERIALIZED_CONTINUATION: i32 = i32::MIN;
 
 impl<'sim> DFA<'sim, LexerATNConfigSet<'sim>> {
     #[inline]

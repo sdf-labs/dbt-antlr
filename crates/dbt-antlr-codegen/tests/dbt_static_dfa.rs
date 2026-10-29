@@ -653,3 +653,60 @@ fn precedence_dumps_list_every_class() {
         "{dump}"
     );
 }
+
+#[test]
+fn static_parser_dfa_emits_table_prediction_for_hybrid_decisions() {
+    let output = emit_grammar("ReferenceToATN.g4", |options| {
+        options.static_parser_dfa(true);
+    });
+    let parser = lexer_content(&output, "referencetoatnparser.rs");
+    assert!(
+        parser.contains("recog.base.dfa_predict(0)?"),
+        "decision 0 has a table, so its block predicts from it"
+    );
+    assert_eq!(
+        parser.matches("adaptive_predict(").count(),
+        parser.matches("if _sdp == INVALID_ALT").count(),
+        "the hybrid table only defers from inside its DFA blocks"
+    );
+}
+
+#[test]
+fn fully_static_parser_never_defers() {
+    let output = emit_grammar("parser/StaticDFA.g4", |options| {
+        options.static_parser_dfa(true);
+    });
+    let parser = lexer_content(&output, "staticdfaparser.rs");
+    assert!(parser.contains("dfa_predict("), "expected table prediction");
+    assert_eq!(
+        parser.matches("adaptive_predict(").count(),
+        0,
+        "every decision of StaticDFA.g4 is fully static"
+    );
+}
+
+#[test]
+fn static_parser_dfa_embeds_the_sdfa_section() {
+    // The `SDFA` magic (`0x5344_4641`) as the decimal word the generated
+    // `_serializedATN` vector carries.
+    const SDFA_MAGIC_DECIMAL: &str = "1396983361";
+    let with_tables = emit_grammar("ReferenceToATN.g4", |options| {
+        options.static_parser_dfa(true);
+    });
+    let parser = lexer_content(&with_tables, "referencetoatnparser.rs");
+    assert!(
+        parser.contains(SDFA_MAGIC_DECIMAL),
+        "the packed ATN carries the appended table section"
+    );
+
+    let without_tables = emit_grammar("ReferenceToATN.g4", |_options| {});
+    let plain = lexer_content(&without_tables, "referencetoatnparser.rs");
+    assert!(
+        !plain.contains(SDFA_MAGIC_DECIMAL),
+        "flag-off output carries no table section"
+    );
+    assert!(
+        !plain.contains("dfa_predict"),
+        "flag-off output predicts adaptively"
+    );
+}

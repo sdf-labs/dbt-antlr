@@ -649,7 +649,7 @@ loop {
 {%- macro staticDFAPredict(choice) -%}
 { let _sdp = {{ self() }}.base.dfa_predict({{ choice.decision }})?; {% if choice.tableCanDefer %}if _sdp == INVALID_ALT { {{ self() }}.get_interpreter().adaptive_predict({{ choice.decision }},&mut {{ self() }}.base)? } else { _sdp }{% else %}_sdp{% endif %} }
 {%- endmacro -%}
-{%- macro DFAAltBlock(choice, preamble, alts, error, parser, file) -%}
+{%- macro DFAAltBlock(choice, preamble, alts, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
 {{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
 {% if preamble %}{{ Ops(preamble, parser, file) }}
@@ -663,6 +663,10 @@ loop {
 	_ => {}
 }
 {%- endmacro -%}
+{#- The virtual-alt, factored, descent, and resume macros below are staged for
+    Phase 6 (prefix-factor and shared-descent codegen): no `SrcOpModel` variant
+    reaches them yet, so they are inert. They stay next to the DFA* macros
+    because both families share `tableCanDefer` and the walker protocol. -#}
 {%- macro virtualAltPredict(choice) -%}
 { let _vap = {{ self() }}.base.dfa_predict_virtual({{ choice.decision }})?; {% if choice.tableCanDefer %}if _vap == INVALID_ALT { {{ self() }}.get_interpreter().adaptive_predict({{ choice.decision }},&mut {{ self() }}.base)? } else { _vap }{% else %}_vap{% endif %} }
 {%- endmacro -%}
@@ -759,7 +763,7 @@ if let Some(_node) = self.base.resume_take(RULE_{{ currentRule.escapedName }})? 
 {% endif %}	_ => {}
 }
 {%- endmacro -%}
-{%- macro DFAOptionalBlock(choice, alts, error, parser, file) -%}
+{%- macro DFAOptionalBlock(choice, alts, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
 {{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
 match {{ staticDFAPredict(choice) }} {
@@ -965,6 +969,14 @@ unsafe { {{ self() }}.ctx_mut().unwrap().as_rule_context_mut::<{{ actionChunk.ct
 {{ StarBlock(op.choice, op.alts, op.iteration, parser, file) }}
 {%- elif op.kind == "PlusBlock" -%}
 {{ PlusBlock(op.choice, op.alts, op.error, parser, file) }}
+{%- elif op.kind == "DFAAltBlock" -%}
+{{ DFAAltBlock(op.choice, op.preamble, op.alts, parser, file) }}
+{%- elif op.kind == "DFAOptionalBlock" -%}
+{{ DFAOptionalBlock(op.choice, op.alts, parser, file) }}
+{%- elif op.kind == "DFAStarBlock" -%}
+{{ DFAStarBlock(op.choice, op.alts, op.iteration, parser, file) }}
+{%- elif op.kind == "DFAPlusBlock" -%}
+{{ DFAPlusBlock(op.choice, op.alts, op.error, parser, file) }}
 {%- elif op.kind == "InvokeRule" -%}
 {{ InvokeRule(op, parser) }}
 {%- elif op.kind == "MatchToken" -%}

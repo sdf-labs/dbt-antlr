@@ -225,6 +225,210 @@ impl<'sim> ParserATNSimulator<'sim> {
         Ok(result)
     }
 
+    /// Prediction for a static table state where the construction found an SLL
+    /// conflict (Tier 1 handoff).
+    ///
+    /// The static walk reached this state by consuming the same lookahead the
+    /// lazy simulation would have consumed, and Stage 1 SLL has already
+    /// terminated in conflict. In SLL mode the conflict's lowest alternative is
+    /// the answer, so prediction is O(1). In LL mode the answer needs the
+    /// parser's outer context, so prediction restarts at Stage 2 directly
+    /// instead of re-walking `la(1)..la(k)` through Stage 1 to rediscover the
+    /// conflict.
+    pub fn adaptive_predict_conflict<'input, 'arena, TF, P>(
+        &self,
+        decision: i32,
+        sll_min_alt: i32,
+        parser: &mut P,
+    ) -> Result<i32, ANTLRError>
+    where
+        'input: 'arena,
+        'arena: 'sim,
+        TF: TokenFactory<'input, 'arena> + 'arena,
+        P: Parser<'input, 'arena, TF>,
+    {
+        let dfa_ref = self
+            .decision_to_dfa(decision as usize)
+            .expect("decision is valid");
+        // A precedence loop restart has to reapply the precedence filter, which
+        // only the lazy path does, so those decisions take it.
+        if dfa_ref.is_precedence_dfa() {
+            return self.adaptive_predict(decision, parser);
+        }
+        match self.prediction_mode.get() {
+            PredictionMode::SLL => return Ok(sll_min_alt),
+            // Exact-ambiguity detection reports through the ambiguity path of
+            // `adaptive_predict`, so that mode keeps the lazy route.
+            PredictionMode::LL_EXACT_AMBIG_DETECTION => {
+                return self.adaptive_predict(decision, parser)
+            }
+            PredictionMode::LL => {}
+        }
+
+        // The caller rewound the input to the decision start and keeps its own
+        // mark, so this routine neither marks again nor rewinds first.
+        let start_index = parser.get_input_stream_mut().index();
+        self.start_index.set(start_index);
+        // `Bump::new()` allocates nothing until the first bump allocation, and a
+        // warm continuation only follows cached dynamic DFA edges, so a warm
+        // escape allocates nothing here.
+        let scratch = bumpalo::Bump::new();
+        let mut merge_cache = MergeCache::new(&scratch);
+        let mut local = Local {
+            outer_context: parser.get_current_context_opt(),
+            dfa_ref,
+            merge_cache: &mut merge_cache,
+            precedence: parser.get_precedence(),
+            parser,
+            pd: PhantomData,
+        };
+
+        let outer_context = match local.outer_context() {
+            Some(outer_context) => PredictionContext::from_rule_context(
+                self.atn(),
+                outer_context,
+                local.merge_cache.scratch,
+            ),
+            None => PredictionContextRef::new_empty(),
+        };
+        let s0_closure = self.compute_start_state(
+            local.dfa_ref.atn_start_state,
+            outer_context,
+            true,
+            &mut local,
+        );
+        // Unlike `exec_atn`, this path does not report
+        // `report_attempting_full_context`: the table state carries the
+        // conflicting alternatives but not the config set that report prints,
+        // and the diagnostic listeners are only attached to adaptive parsers.
+        let result = self.exec_atn_with_full_context(&mut local, s0_closure);
+        local.input().seek(start_index);
+        result
+    }
+
+    /// Resumes Stage 1 SLL prediction from a static table's frontier escape
+    /// state (Tier 2 handoff).
+    ///
+    /// The input stands on the token the table walk stopped at, so the lookahead
+    /// continues exactly there. The continuation is the closed SLL config set
+    /// the construction stopped at: it is materialized into a dynamic DFA state
+    /// on the first escape of that state and reused afterwards, which removes
+    /// the double-walk penalty of restarting Stage 1 from the decision start.
+    pub fn resume_from_continuation<'input, 'arena, TF, P>(
+        &self,
+        decision: i32,
+        slot: usize,
+        total_slots: usize,
+        continuation: &crate::dfa::static_parser_dfa::ParserContinuation,
+        start_index: isize,
+        parser: &mut P,
+    ) -> Result<i32, ANTLRError>
+    where
+        'input: 'arena,
+        'arena: 'sim,
+        TF: TokenFactory<'input, 'arena> + 'arena,
+        P: Parser<'input, 'arena, TF>,
+    {
+        self.start_index.set(start_index);
+        let scratch = bumpalo::Bump::new();
+        let mut merge_cache = MergeCache::new(&scratch);
+        let mut local = Local {
+            outer_context: parser.get_current_context_opt(),
+            dfa_ref: self
+                .decision_to_dfa(decision as usize)
+                .expect("decision is valid"),
+            merge_cache: &mut merge_cache,
+            precedence: parser.get_precedence(),
+            parser,
+            pd: PhantomData,
+        };
+
+        let s_cont = match local.dfa_ref.get_continuation_state(slot) {
+            Some(state) => state,
+            None => {
+                match self.materialize_continuation(&mut local, continuation, slot, total_slots) {
+                    Ok(state) => state,
+                    Err(error) => {
+                        local.input().seek(start_index);
+                        return Err(error);
+                    }
+                }
+            }
+        };
+
+        let result = self.exec_atn(&mut local, s_cont);
+        local.input().seek(start_index);
+        result
+    }
+
+    /// Materializes the dynamic DFA state of a continuation and caches it in
+    /// the decision's continuation slot.
+    fn materialize_continuation<'input, 'arena, 'scratch, 'cache, TF, P>(
+        &self,
+        local: &mut Local<'input, 'arena, 'sim, 'scratch, 'cache, TF, P>,
+        continuation: &crate::dfa::static_parser_dfa::ParserContinuation,
+        slot: usize,
+        total_slots: usize,
+    ) -> Result<&'sim DFAState<'sim, ATNConfigSet<'sim>>, ANTLRError>
+    where
+        'input: 'arena,
+        'sim: 'scratch,
+        TF: TokenFactory<'input, 'arena> + 'arena,
+        P: Parser<'input, 'arena, TF>,
+    {
+        use crate::dfa::static_parser_dfa::ContinuationContextNode;
+
+        let atn = self.atn();
+        // The context DAG is topological, so every parent is built before the
+        // node that names it.
+        let mut contexts: Vec<PredictionContextRef<'scratch>> =
+            Vec::with_capacity(continuation.contexts.len());
+        for node in &continuation.contexts {
+            let context = match node {
+                ContinuationContextNode::Singleton {
+                    parent,
+                    return_state,
+                } => PredictionContext::new_singleton(
+                    Some(context_ref(&contexts, *parent)),
+                    return_state_ref(atn, *return_state),
+                ),
+                ContinuationContextNode::Array {
+                    parents,
+                    return_states,
+                } => {
+                    let parents = local.scratch().alloc_slice_fill_iter(
+                        parents
+                            .iter()
+                            .map(|&parent| Some(context_ref(&contexts, parent))),
+                    );
+                    let return_states = local.scratch().alloc_slice_fill_iter(
+                        return_states
+                            .iter()
+                            .map(|&return_state| return_state_ref(atn, return_state)),
+                    );
+                    PredictionContext::new_array(parents, return_states)
+                }
+            };
+            contexts.push(PredictionContextRef::from(local.scratch().alloc(context)));
+        }
+
+        let mut configs = MutableATNConfigSet::new(local.scratch(), false);
+        for config in &continuation.configs {
+            let mut atn_config = ATNConfig::new(
+                atn.make_state_ref(config.state),
+                config.alt,
+                Some(context_ref(&contexts, config.context)),
+            );
+            atn_config.set_reaches_into_outer_context(config.outer_depth);
+            configs.add_cached(atn_config, local.merge_cache);
+        }
+        let state = self.add_dfastate(local.dfa_ref, ProposedDFAState::new(configs))?;
+        local
+            .dfa_ref
+            .set_continuation_state(slot, total_slots, state);
+        Ok(state)
+    }
+
     #[allow(non_snake_case)]
     fn exec_atn<'input, 'arena, 'scratch, 'cache, TF, P>(
         &self,
@@ -1682,5 +1886,23 @@ impl<'scratch> MergeKey<'scratch> {
             left: self.right,
             right: self.left,
         }
+    }
+}
+
+/// The prediction context a continuation node index names.
+fn context_ref<'a>(contexts: &[PredictionContextRef<'a>], index: u32) -> PredictionContextRef<'a> {
+    if index == crate::dfa::static_parser_dfa::EMPTY_CONTEXT {
+        PredictionContextRef::new_empty()
+    } else {
+        contexts[index as usize]
+    }
+}
+
+/// The ATN state a continuation return state number names.
+fn return_state_ref(atn: &ATN, return_state: i32) -> ATNStateRef {
+    if return_state < 0 {
+        ATNStateRef::invalid()
+    } else {
+        atn.make_state_ref(return_state)
     }
 }
