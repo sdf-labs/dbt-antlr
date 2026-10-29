@@ -52,12 +52,6 @@ pub(crate) struct LexerAnalysis {
 pub(crate) struct CompiledLexer {
     pub(crate) semantic: SemanticGrammar,
     pub(crate) graph: FinalizedAtnGraph,
-    /// Runtime ATN of the graph, leaked for the process lifetime.
-    ///
-    /// The runtime ATN/DFA layer holds `ATNStateRef`s into the ATN, so it only
-    /// accepts a `&'static ATN` (see [`ATN::into_static`]). The
-    /// `--static-lexer-dfa` pass reads this ATN directly, and the emitted word
-    /// stream is its serialized form ([`encode_lexer_atn`]).
     pub(crate) atn: &'static ATN,
     pub(crate) analysis: LexerAnalysis,
     pub(crate) provenance: ProvenanceIndex,

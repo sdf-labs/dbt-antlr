@@ -50,7 +50,7 @@ pub type ParserInterpreterBase<'input, 'arena, Input, TF> =
 /// interpreter receives it at construction time. The ATN is passed in as a
 /// `&'static ATN` (see [`ATN::into_static`]) and the ATN simulator manager is
 /// leaked on construction; each interpreter instance gets its own (not shared)
-/// decision DFAs, matching the Java runtime.
+/// decision DFAs.
 pub struct ParserInterpreterExt {
     grammar_file_name: &'static str,
     rule_names: &'static [&'static str],

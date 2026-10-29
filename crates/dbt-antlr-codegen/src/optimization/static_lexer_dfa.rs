@@ -28,7 +28,7 @@ use minijinja::Value;
 
 use super::descriptor::PassDescriptor;
 use super::manifest::{object, option, source_value};
-use crate::grammar::atn::{CompiledLexer, FinalizedTransitionKind, encode_lexer_atn};
+use crate::grammar::atn::{CompiledLexer, FinalizedTransitionKind};
 use crate::grammar::diagnostic::Diagnostic;
 use crate::grammar::frontend::SourceSpan;
 use crate::grammar::model::{
@@ -118,9 +118,6 @@ pub(crate) struct StaticLexerDfaReport {
     pub(crate) source_span: SourceSpan,
     pub(crate) omit_atn: bool,
     pub(crate) table_words: usize,
-    /// Words of the ATN stream the generated lexer embeds, which is zero when
-    /// `omit_atn` elides the ATN.
-    pub(crate) atn_words: usize,
     pub(crate) modes: Vec<StaticLexerModeReport>,
 }
 
@@ -289,14 +286,6 @@ fn build_lexer_report(
         source_span: unit.span.clone(),
         omit_atn,
         table_words: build.words.len(),
-        // The report counts the words the generated lexer embeds, so it
-        // serializes exactly what emission serializes, and reports zero when
-        // the ATN statics are elided.
-        atn_words: if omit_atn {
-            0
-        } else {
-            encode_lexer_atn(compiled.atn).len()
-        },
         modes,
     }
 }
@@ -1174,7 +1163,6 @@ impl StaticLexerDfa {
             .map(|mode| mode.continuations.total)
             .sum();
         let table_words: usize = lexers.iter().map(|lexer| lexer.table_words).sum();
-        let atn_words: usize = lexers.iter().map(|lexer| lexer.atn_words).sum();
 
         let metrics = object(vec![
             ("lexers", Value::from(lexers.len())),
@@ -1191,7 +1179,6 @@ impl StaticLexerDfa {
             ("continuations", Value::from(continuations)),
             ("tableWords", Value::from(table_words)),
             ("tableBytes", Value::from(table_words * 4)),
-            ("atnWords", Value::from(atn_words)),
         ]);
         let rendered_lexers = Value::from_iter(
             lexers
@@ -1233,7 +1220,6 @@ fn static_lexer_report_value(lexer: &StaticLexerDfaReport, sources: &SourceSet) 
         ("omitAtn", Value::from(lexer.omit_atn)),
         ("tableWords", Value::from(lexer.table_words)),
         ("tableBytes", Value::from(lexer.table_words * 4)),
-        ("atnWords", Value::from(lexer.atn_words)),
         ("numModes", Value::from(lexer.modes.len())),
         ("compiledModes", Value::from(compiled_modes)),
         ("failedModes", Value::from(failed_modes)),
