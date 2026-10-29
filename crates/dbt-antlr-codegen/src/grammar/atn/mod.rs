@@ -11,13 +11,14 @@ mod lexer;
 mod optimize;
 mod packed;
 mod parser;
+mod runtime_build;
 mod state_kind;
 
 pub(crate) use analysis::DecisionLookahead;
 pub(crate) use build::{FinalizedAtnGraph, FinalizedTransitionKind};
 pub(crate) use interval_set::IntervalSet;
 pub(crate) use lexer::{CompiledLexer, compile_lexer};
-pub(crate) use packed::ParserAtn;
+pub(crate) use packed::encode_packed_atn;
 pub(crate) use parser::{CompiledParser, compile_parser};
 pub(crate) use state_kind::AtnStateKind;
 

@@ -4,9 +4,9 @@
 //!
 //! The pass classifies the decisions of every root parser unit and, once the
 //! SLL classifier lands, precomputes the static prediction tables that ride in
-//! the trailing `SDFA` section of the packed parser ATN. It reads the packed
-//! `ParserAtn` of the compiled unit directly, so the analysis never
-//! deserializes a runtime ATN.
+//! the trailing `SDFA` section of the packed parser ATN. It reads the runtime
+//! ATN of the compiled unit directly, so the analysis never serializes or
+//! deserializes words.
 //!
 //! `--report-decisions` renders the decision inventory of the pass to stdout
 //! and `--dump-dfas` renders the tables of the selected decisions. Both flags
@@ -16,12 +16,13 @@ use minijinja::Value;
 
 use super::descriptor::PassDescriptor;
 use super::manifest::{object, source_value};
-use crate::grammar::atn::{CompiledParser, ParserAtn};
+use crate::grammar::atn::CompiledParser;
 use crate::grammar::diagnostic::Diagnostic;
 use crate::grammar::frontend::SourceSpan;
 use crate::grammar::model::RecognizerModel;
 use crate::grammar::source::SourceSet;
 use crate::grammar::transform::SafetyClass;
+use dbt_antlr_runtime::atn_state::ATNState;
 
 pub(crate) struct StaticParserDfa;
 
@@ -31,19 +32,20 @@ impl StaticParserDfa {
 
     /// Inventories the decisions of one compiled parser unit.
     pub(crate) fn report(compiled: &CompiledParser) -> StaticParserDfaReport {
-        let atn = &compiled.packed;
+        let atn = &compiled.atn;
         let recognizer = &compiled.semantic.recognizer;
         let decisions = atn
-            .decision_to_state()
+            .decision_to_state
             .iter()
             .enumerate()
             .map(|(decision, state)| StaticParserDecisionReport {
                 decision,
-                state,
-                rule: rule_name(atn, recognizer, state),
+                state: usize::try_from(state.get_state_number())
+                    .expect("decision state has a state number"),
+                rule: rule_name(state, recognizer),
             })
             .collect();
-        let vocabulary = (1..=atn.max_token_type())
+        let vocabulary = (1..=atn.max_token_type)
             .map(|token_type| token_display_name(recognizer, token_type))
             .collect();
         StaticParserDfaReport {
@@ -143,9 +145,9 @@ fn parser_report_value(parser: &StaticParserDfaReport, sources: &SourceSet) -> V
     ])
 }
 
-fn rule_name(atn: &ParserAtn, recognizer: &RecognizerModel, state: usize) -> String {
-    atn.state(state)
-        .and_then(|state| state.rule_index())
+fn rule_name(state: &ATNState, recognizer: &RecognizerModel) -> String {
+    usize::try_from(state.get_rule_index())
+        .ok()
         .and_then(|rule| recognizer.rule_names.get(rule))
         .cloned()
         .unwrap_or_default()
