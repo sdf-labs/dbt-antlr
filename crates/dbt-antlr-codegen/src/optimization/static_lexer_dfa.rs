@@ -2,12 +2,12 @@
 // Copyright (c) 2026 Bo Lin
 //! `--static-lexer-dfa` optimization pass (lexer scope).
 //!
-//! When the flag is on, the pass deserializes the compiled lexer ATN with the
-//! runtime `ATNDeserializer`. Then it runs the runtime static lexer DFA
-//! builder (`static-dfa-build` feature). The builder drives the reference
-//! `LexerATNSimulator` move and closure code exhaustively. As a result, the
-//! tables match the lazy path by construction, and the build is deterministic:
-//! one grammar produces one word stream.
+//! When the flag is on, the pass reads the runtime ATN that the lexer compiler
+//! built and runs the runtime static lexer DFA builder (`static-dfa-build`
+//! feature). The builder drives the reference `LexerATNSimulator` move and
+//! closure code exhaustively. As a result, the tables match the lazy path by
+//! construction, and the build is deterministic: one grammar produces one word
+//! stream.
 //!
 //! The build result becomes the `StaticLexerTables` of the lexer output
 //! model. Modes that the builder cannot compile, and edges that escape to the
@@ -16,7 +16,6 @@
 //! [`OptimizationReport`](super::report::OptimizationReport), which renders the
 //! `static-lexer-dfa` manifest entry.
 
-use dbt_antlr_runtime::atn_deserializer::ATNDeserializer;
 use dbt_antlr_runtime::dfa::static_dfa_build::{
     DEFAULT_MAX_STATES_PER_MODE, EscapeCounts, EscapeReason, EscapedEdge, ModeBuildOutcome,
     ModeFailure, StaticLexerDfaBuild, StaticLexerDfaBuilder,
@@ -45,9 +44,7 @@ impl StaticLexerDfa {
 
     /// Builds the static lexer DFA tables of one compiled lexer unit.
     pub(crate) fn build(compiled: &CompiledLexer) -> StaticLexerDfaArtifact {
-        let words = &compiled.runtime_artifact.atn_words;
-        let atn = ATNDeserializer::new(None).deserialize(&mut words.iter());
-        let build = StaticLexerDfaBuilder::new().build(&atn);
+        let build = StaticLexerDfaBuilder::new().build(&compiled.atn);
 
         let unit = &compiled.semantic.unit;
         let grammar_name = unit.name.as_str();

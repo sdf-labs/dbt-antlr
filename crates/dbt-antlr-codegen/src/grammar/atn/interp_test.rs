@@ -800,7 +800,7 @@ mod tests {
             22
         );
         let lexer = lexer_named(&compilation, "OddExprLexer");
-        assert_eq!(lexer.atn.states().len(), 101_246);
+        assert_eq!(lexer.atn.states_count(), 101_246);
         assert_lexer_interp(
             lexer,
             &fixture("vscode-odd-expr").join("OddExprLexer.interp"),
@@ -1267,6 +1267,15 @@ mod tests {
                 dbt_antlr_runtime::atn_dump::dump_atn(&expected_atn),
             );
         }
+        // The word stream does not carry every part of the ATN that the
+        // compiler builds (rule stop links, decision numbers), so compare the
+        // compiled ATN with the fixture deserialization structurally too.
+        let fixture_atn = ATNDeserializer::new(None).deserialize(&mut expected.iter());
+        assert_eq!(
+            dbt_antlr_runtime::atn_dump::dump_atn(&fixture_atn),
+            dbt_antlr_runtime::atn_dump::dump_atn(&compiled.atn),
+            "compiled lexer ATN differs from the Java fixture ATN",
+        );
         assert_complete_interp(
             &serialize_interp(
                 &compiled.semantic.recognizer,

@@ -12,9 +12,13 @@ pub(crate) const LEXER_ACTION_TYPE_PUSH_MODE: i32 = 5;
 pub(crate) const LEXER_ACTION_TYPE_SKIP: i32 = 6;
 pub(crate) const LEXER_ACTION_TYPE_TYPE: i32 = 7;
 
+/// One lexer command attached to an action transition.
+///
+/// Every variant except the runtime-only `IndexedCustom` maps onto an entry of
+/// the serialized ATN action table.
 #[allow(clippy::enum_variant_names)]
 #[derive(Clone, Default, Eq, Debug, Hash)]
-pub(crate) enum LexerAction<'ephemeral> {
+pub enum LexerAction<'ephemeral> {
     Channel(i32),
     Custom {
         rule_index: i32,
@@ -31,7 +35,7 @@ pub(crate) enum LexerAction<'ephemeral> {
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
-pub(crate) struct LexerIndexedCustomAction<'ephemeral> {
+pub struct LexerIndexedCustomAction<'ephemeral> {
     pub(crate) offset: isize,
     pub(crate) action: LexerAction<'ephemeral>,
 }
@@ -73,8 +77,7 @@ impl<'ephemeral> LexerAction<'ephemeral> {
     ///
     /// Panics on `IndexedCustom`: a position-fixed action has no ATN
     /// encoding (serialize the underlying custom action instead).
-    #[cfg(feature = "static-dfa-build")]
-    pub(crate) fn to_serialized(&self) -> (i32, i32, i32) {
+    pub fn to_serialized(&self) -> (i32, i32, i32) {
         match self {
             &LexerAction::Channel(channel) => (LEXER_ACTION_TYPE_CHANNEL, channel, 0),
             &LexerAction::Custom {
@@ -98,11 +101,7 @@ impl<'ephemeral> LexerAction<'ephemeral> {
     /// Panics on an unknown action type: the encoding is produced together
     /// with the ATN, so an invalid value is a build inconsistency, not a
     /// runtime condition.
-    pub(crate) fn from_serialized(
-        action_type: i32,
-        data1: i32,
-        data2: i32,
-    ) -> LexerAction<'static> {
+    pub fn from_serialized(action_type: i32, data1: i32, data2: i32) -> LexerAction<'static> {
         match action_type {
             LEXER_ACTION_TYPE_CHANNEL => LexerAction::Channel(data1),
             LEXER_ACTION_TYPE_CUSTOM => LexerAction::Custom {

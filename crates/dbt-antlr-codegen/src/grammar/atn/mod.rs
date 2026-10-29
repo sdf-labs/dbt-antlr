@@ -8,7 +8,6 @@ mod general_bug_test;
 mod interp_test;
 mod interval_set;
 mod lexer;
-mod lexer_atn;
 mod optimize;
 mod packed;
 mod parser;

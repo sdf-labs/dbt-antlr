@@ -282,7 +282,7 @@ impl<CS: ConfigSet<'static> + 'static> ATNSimulatorMan<CS> {
 /// fails fast instead of silently mis-tokenizing.
 fn empty_lexer_atn() -> &'static ATN {
     static EMPTY_LEXER_ATN: std::sync::LazyLock<ATN> =
-        std::sync::LazyLock::new(|| ATN::new_atn(crate::atn_type::ATNType::Lexer, 0));
+        std::sync::LazyLock::new(|| ATN::new(crate::atn_type::ATNType::Lexer, 0));
     &EMPTY_LEXER_ATN
 }
 

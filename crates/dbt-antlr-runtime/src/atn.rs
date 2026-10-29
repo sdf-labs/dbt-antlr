@@ -28,7 +28,7 @@ pub struct ATN {
 
     pub grammar_type: ATNType,
 
-    pub(crate) lexer_actions: Vec<LexerAction<'static>>,
+    pub lexer_actions: Vec<LexerAction<'static>>,
 
     pub max_token_type: i32,
 
@@ -57,7 +57,13 @@ impl Debug for ATN {
 }
 
 impl ATN {
-    pub(crate) fn new_atn(grammar_type: ATNType, max_token_type: i32) -> ATN {
+    /// Creates an empty ATN.
+    ///
+    /// Start here, both in the word-stream deserializers and in grammar
+    /// compilers that build an ATN directly. Fill the states with
+    /// [`Self::alloc_states`] and [`Self::add_state`], then fill the rule,
+    /// mode, decision, and lexer action tables.
+    pub fn new(grammar_type: ATNType, max_token_type: i32) -> ATN {
         ATN {
             decision_to_state: Vec::new(),
             grammar_type,
@@ -97,19 +103,29 @@ impl ATN {
         analyzer.look(s, None, ctx)
     }
 
-    pub(crate) fn add_state(&mut self, state: ATNState) {
+    /// Installs `state` at the slot reserved by [`Self::alloc_states`] for its
+    /// state number.
+    ///
+    /// This is the construction path shared by the word-stream deserializers
+    /// and by grammar compilers that build an [`ATN`] directly.
+    pub fn add_state(&mut self, state: ATNState) {
         let state_number = state.get_state_number();
+        assert!(
+            usize::try_from(state_number).is_ok_and(|number| number < self.states.len()),
+            "state number {state_number} is not an allocated state slot"
+        );
         *self.get_state_mut(state_number) = state;
     }
 
-    pub(crate) fn alloc_states(&mut self, count: usize) {
+    /// Reserves `count` state slots after the existing states.
+    ///
+    /// Reserved states are placeholders until [`Self::add_state`] installs a
+    /// real state for their number. State references stay valid across
+    /// installation because the states are boxed.
+    pub fn alloc_states(&mut self, count: usize) {
         self.states
             .resize_with(self.states.len() + count, || Box::pin(ATNState::default()));
     }
-
-    // fn remove_state(&self, _state: ATNStateRef) { unimplemented!() }
-
-    // fn define_decision_state(&self, _s: ATNStateRef) -> i32 { unimplemented!() }
 
     pub fn get_decision_state(&self, decision: i32) -> ATNStateRef {
         self.decision_to_state[decision as usize]

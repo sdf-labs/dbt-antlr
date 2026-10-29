@@ -331,7 +331,7 @@ impl PackedATNDeserializer {
     /// Returns [`PackedATNError`] when the stream violates the format.
     pub fn deserialize(&self, words: &[u32]) -> Result<ATN, PackedATNError> {
         let layout = Layout::read(words)?;
-        let mut atn = ATN::new_atn(ATNType::Parser, layout.max_token_type);
+        let mut atn = ATN::new(ATNType::Parser, layout.max_token_type);
         let transition_ranges = self.read_states(&mut atn, words, &layout)?;
         self.read_rules(&mut atn, words, &layout)?;
         let sets = self.read_sets(words, &layout)?;

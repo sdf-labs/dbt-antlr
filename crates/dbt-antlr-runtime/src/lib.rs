@@ -59,7 +59,8 @@ pub mod atn_config;
 #[doc(hidden)]
 pub mod atn_simulator;
 pub mod int_stream;
-mod lexer_action;
+#[doc(hidden)]
+pub mod lexer_action;
 mod ll1_analyzer;
 #[doc(hidden)]
 pub mod recognizer;
@@ -115,7 +116,8 @@ pub mod token;
 pub mod trees;
 mod utils;
 //pub mod tokenstream_rewriter_test;
-mod atn_type;
+#[doc(hidden)]
+pub mod atn_type;
 // mod context_factory;
 pub mod prelude;
 pub mod rule_context;
