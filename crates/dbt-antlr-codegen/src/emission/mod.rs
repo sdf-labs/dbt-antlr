@@ -141,24 +141,30 @@ pub fn emit_files_with_flags(
 /// Output of [`emit_files_with_options`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmittedOutput {
-    /// Generated recognizer source files. Empty when [`OptimizationOptions::report_only`]
-    /// is enabled.
+    /// Generated recognizer source files. Empty when
+    /// [`OptimizationOptions::report_only`] is enabled or a report mode
+    /// implies it ([`OptimizationOptions::report_decisions`],
+    /// [`OptimizationOptions::dump_dfas`]).
     pub files: Vec<EmittedFile>,
-    /// Non-fatal compiler diagnostics (for example unreachable-rule
-    /// warnings).
+    /// Diagnostics that did not abort the run: warnings (for example
+    /// unreachable-rule warnings) and errors a caller must surface (for
+    /// example an unmatched `--dump-dfas` selector).
     pub diagnostics: Vec<Diagnostic>,
     /// Optimization notes for the user (for example `pruned: ...` lines).
     pub optimization_messages: Vec<String>,
     /// Rendered `optimizations.txt` manifest, present when the selected
     /// optimizations emit one.
     pub optimization_manifest: Option<String>,
+    /// Rendered stdout reports of the selected passes (`--report-decisions`
+    /// and `--dump-dfas`).
+    pub reports: Vec<String>,
 }
 
 /// [`emit_files_with_flags`] with an explicit optimization selection.
 ///
 /// Applies the configured [`OptimizationOptions`] to the compilation and
-/// emission pipeline. When [`OptimizationOptions::report_only`] is enabled,
-/// the generator does not write any files to disk.
+/// emission pipeline. When [`OptimizationOptions::report_only`] is enabled
+/// (or a report mode implies it), no files are generated.
 ///
 /// # Errors
 ///
@@ -172,11 +178,15 @@ pub fn emit_files_with_options(
 ) -> Result<EmittedOutput, EmitError> {
     let plan = OptimizationPlan::from_options(optimization)?;
     let compilation = compile_grammar_with(grammar_path, library_dirs, &plan)?;
-    let diagnostics = crate::compile_error::non_fatal_diagnostics(&compilation);
+    let mut diagnostics = crate::compile_error::non_fatal_diagnostics(&compilation);
     let optimization_messages =
         plan.diagnostic_messages(compilation.optimization_report(), &compilation.sources);
     let optimization_manifest =
         plan.render_manifest(compilation.optimization_report(), &compilation.sources);
+    let reports = plan.rendered_reports(compilation.optimization_report());
+    diagnostics.extend(reports.diagnostics.iter().map(|diagnostic| {
+        crate::compile_error::public_diagnostic(diagnostic, &compilation.sources)
+    }));
     let files = if plan.report_only() {
         Vec::new()
     } else {
@@ -187,6 +197,7 @@ pub fn emit_files_with_options(
         diagnostics,
         optimization_messages,
         optimization_manifest,
+        reports: reports.reports,
     })
 }
 

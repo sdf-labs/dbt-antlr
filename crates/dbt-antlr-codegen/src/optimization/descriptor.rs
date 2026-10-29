@@ -6,6 +6,7 @@ use crate::grammar::transform::passes::precedence_ladder::CollapsePrecedenceLadd
 use crate::grammar::transform::passes::prune_unreachable::PruneUnreachableRules;
 
 use super::static_lexer_dfa::StaticLexerDfa;
+use super::static_parser_dfa::StaticParserDfa;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum OptimizationStage {
@@ -55,6 +56,15 @@ pub(super) const STATIC_LEXER_DFA: PassDescriptor = PassDescriptor {
     stage: OptimizationStage::StaticDfaBuilds,
     safety: StaticLexerDfa::SAFETY,
     canonical_order: 300,
+    prerequisites: &[],
+    conflicts: &[],
+};
+
+pub(super) const STATIC_PARSER_DFA: PassDescriptor = PassDescriptor {
+    id: StaticParserDfa::NAME,
+    stage: OptimizationStage::StaticDfaBuilds,
+    safety: StaticParserDfa::SAFETY,
+    canonical_order: 310,
     prerequisites: &[],
     conflicts: &[],
 };

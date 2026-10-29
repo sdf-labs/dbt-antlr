@@ -128,6 +128,29 @@ impl Config {
         self
     }
 
+    /// Precomputes static parser DFA tables (`--static-parser-dfa`, parser
+    /// scope only). Default: `false`.
+    pub const fn static_parser_dfa(&mut self, enabled: bool) -> &mut Self {
+        self.optimization.static_parser_dfa(enabled);
+        self
+    }
+
+    /// Renders the parser decision report of the static parser DFA pass into
+    /// [`Generation::reports`] (`--report-decisions`, printed to stdout by the
+    /// CLI). Implies report-only mode.
+    pub const fn report_decisions(&mut self, enabled: bool) -> &mut Self {
+        self.optimization.report_decisions(enabled);
+        self
+    }
+
+    /// Renders the static parser DFA tables matching `spec` into
+    /// [`Generation::reports`] (`--dump-dfas <SPEC>`, printed to stdout by the
+    /// CLI). Implies report-only mode.
+    pub fn dump_dfas(&mut self, spec: impl Into<String>) -> &mut Self {
+        self.optimization.dump_dfas(spec);
+        self
+    }
+
     /// Returns the optimization selection for in-place configuration.
     /// See [`OptimizationOptions`] for the available options. The
     /// convenience setters on [`Config`] delegate to it.
@@ -227,9 +250,10 @@ impl Config {
         Ok(self.generate_detailed()?.into_written_files())
     }
 
-    /// [`generate`](Config::generate) with the non-fatal output of the run:
-    /// compiler warnings (for example unreachable parser rules) and
-    /// transform notes (for example `pruned: ...` lines).
+    /// [`generate`](Config::generate) with the rest of the run output:
+    /// compiler diagnostics (for example unreachable parser rules), transform
+    /// notes (for example `pruned: ...` lines), and the reports of the report
+    /// modes (`report_decisions`, `dump_dfas`).
     ///
     /// # Errors
     ///
@@ -240,16 +264,6 @@ impl Config {
         if self.grammars.is_empty() {
             return Err(EmitError::Config("no grammars configured".to_owned()));
         }
-        let out_dir = match &self.out_dir {
-            Some(dir) => dir.clone(),
-            None => PathBuf::from(std::env::var_os("OUT_DIR").ok_or_else(|| {
-                EmitError::Config(
-                    "no output directory: call Config::out_dir or run from a build \
-                     script (OUT_DIR is not set)"
-                        .to_owned(),
-                )
-            })?),
-        };
         if self.cargo_directives {
             for grammar in &self.grammars {
                 println!("cargo:rerun-if-changed={}", grammar.display());
@@ -261,18 +275,36 @@ impl Config {
                 println!("cargo:rerun-if-changed={}", dir.display());
             }
         }
-        if !self.optimization.is_report_only() || self.pinned_release_version.is_some() {
-            std::fs::create_dir_all(&out_dir).map_err(|source| EmitError::Write {
-                path: out_dir.clone(),
-                source,
-            })?;
-        }
-
         if let Some(version) = &self.pinned_release_version {
-            self.generate_pinned(version, &out_dir)
-        } else {
-            self.generate_in_process(&out_dir)
+            let out_dir = self.output_dir()?;
+            create_out_dir(&out_dir)?;
+            return self.generate_pinned(version, &out_dir);
         }
+        // Report-only runs render their reports without touching the output
+        // directory, so it stays optional here.
+        let out_dir = if self.optimization.is_report_only() {
+            None
+        } else {
+            let out_dir = self.output_dir()?;
+            create_out_dir(&out_dir)?;
+            Some(out_dir)
+        };
+        self.generate_in_process(out_dir.as_deref())
+    }
+
+    /// The configured output directory, defaulting to Cargo's `OUT_DIR`.
+    fn output_dir(&self) -> Result<PathBuf, EmitError> {
+        if let Some(dir) = &self.out_dir {
+            return Ok(dir.clone());
+        }
+        let out_dir = std::env::var_os("OUT_DIR").ok_or_else(|| {
+            EmitError::Config(
+                "no output directory: call Config::out_dir or run from a build \
+                 script (OUT_DIR is not set)"
+                    .to_owned(),
+            )
+        })?;
+        Ok(PathBuf::from(out_dir))
     }
 
     #[cfg(feature = "download")]
@@ -281,6 +313,13 @@ impl Config {
         version: &str,
         out_dir: &std::path::Path,
     ) -> Result<Generation, EmitError> {
+        if self.optimization.has_parser_reports() {
+            return Err(EmitError::Config(
+                "report_decisions and dump_dfas need the in-process generator; \
+                 pinned-release generation cannot render their reports"
+                    .to_owned(),
+            ));
+        }
         let release = crate::download::PinnedRelease {
             version: version.to_owned(),
             expected_sha256: self.pinned_release_sha256.clone(),
@@ -299,6 +338,7 @@ impl Config {
             written,
             diagnostics: Vec::new(),
             optimization_messages: Vec::new(),
+            reports: Vec::new(),
         })
     }
 
@@ -315,11 +355,17 @@ impl Config {
         ))
     }
 
+    /// Generates in process. `out_dir` is `None` in report-only mode, where
+    /// the run renders reports instead of writing files.
     #[cfg(feature = "generator")]
-    fn generate_in_process(&self, out_dir: &std::path::Path) -> Result<Generation, EmitError> {
+    fn generate_in_process(
+        &self,
+        out_dir: Option<&std::path::Path>,
+    ) -> Result<Generation, EmitError> {
         let mut written = Vec::new();
         let mut diagnostics = Vec::new();
         let mut optimization_messages = Vec::new();
+        let mut reports = Vec::new();
         for grammar in &self.grammars {
             let output = emit_files_with_options(
                 grammar,
@@ -328,7 +374,7 @@ impl Config {
                 self.gen_visitor,
                 &self.optimization,
             )?;
-            if !self.optimization.is_report_only() {
+            if let Some(out_dir) = out_dir {
                 for file in &output.files {
                     let path = out_dir.join(&file.name);
                     std::fs::write(&path, &file.content).map_err(|source| EmitError::Write {
@@ -341,16 +387,21 @@ impl Config {
             }
             diagnostics.extend(output.diagnostics);
             optimization_messages.extend(output.optimization_messages);
+            reports.extend(output.reports);
         }
         Ok(Generation {
             written,
             diagnostics,
             optimization_messages,
+            reports,
         })
     }
 
     #[cfg(not(feature = "generator"))]
-    fn generate_in_process(&self, out_dir: &std::path::Path) -> Result<Generation, EmitError> {
+    fn generate_in_process(
+        &self,
+        out_dir: Option<&std::path::Path>,
+    ) -> Result<Generation, EmitError> {
         let _ = out_dir;
         Err(EmitError::Config(
             "this build of dbt-antlr-codegen was compiled without the `generator` feature; \
@@ -358,6 +409,13 @@ impl Config {
                 .to_owned(),
         ))
     }
+}
+
+fn create_out_dir(out_dir: &std::path::Path) -> Result<(), EmitError> {
+    std::fs::create_dir_all(out_dir).map_err(|source| EmitError::Write {
+        path: out_dir.to_path_buf(),
+        source,
+    })
 }
 
 /// Writes `optimizations.txt` next to the generated files when the
@@ -405,6 +463,7 @@ pub struct Generation {
     written: Vec<PathBuf>,
     diagnostics: Vec<Diagnostic>,
     optimization_messages: Vec<String>,
+    reports: Vec<String>,
 }
 
 impl Generation {
@@ -413,9 +472,11 @@ impl Generation {
         &self.written
     }
 
-    /// Non-fatal compiler diagnostics of the run (for example unreachable
-    /// parser rule warnings). Empty for pinned-release generation, where
-    /// diagnostics stay on the release binary's stderr.
+    /// Diagnostics of the run that did not abort it: warnings (for example
+    /// unreachable parser rule warnings) and errors a caller must surface
+    /// (for example an unmatched `--dump-dfas` selector). Empty for
+    /// pinned-release generation, where diagnostics stay on the release
+    /// binary's stderr.
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
     }
@@ -423,6 +484,12 @@ impl Generation {
     /// Transform notes of the run (for example `pruned: ...` lines).
     pub fn optimization_messages(&self) -> &[String] {
         &self.optimization_messages
+    }
+
+    /// Rendered reports of the report modes (`report_decisions` and
+    /// `dump_dfas`), in selection order.
+    pub fn reports(&self) -> &[String] {
+        &self.reports
     }
 
     /// Consumes the generation and returns the written files.

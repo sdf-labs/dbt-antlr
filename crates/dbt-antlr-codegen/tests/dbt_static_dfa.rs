@@ -107,10 +107,17 @@ fn help_text_lists_the_static_lexer_dfa_flag() {
     let mut stderr = Vec::new();
     let error = cli::run(&["--help".to_owned()], &mut stdout, &mut stderr)
         .expect_err("--help prints the usage and stops");
-    assert!(
-        error.to_string().contains("--static-lexer-dfa"),
-        "usage lists --static-lexer-dfa: {error}"
-    );
+    for flag in [
+        "--static-lexer-dfa",
+        "--static-parser-dfa",
+        "--report-decisions",
+        "--dump-dfas",
+    ] {
+        assert!(
+            error.to_string().contains(flag),
+            "usage lists {flag}: {error}"
+        );
+    }
 }
 
 #[test]
@@ -326,5 +333,197 @@ fn static_lexer_dfa_emits_optimization_manifest_with_stats_accel_and_continuatio
         xml_manifest.contains(
             "replace the embedded action {...} with a position-independent lexer command"
         )
+    );
+}
+
+fn emit_with(configure: impl FnOnce(&mut OptimizationOptions)) -> EmittedOutput {
+    let grammar = grammars_dir().join("CSV.g4");
+    let mut optimization = OptimizationOptions::new();
+    configure(&mut optimization);
+    emit_files_with_options(&grammar, &[grammars_dir()], true, false, &optimization)
+        .expect("emission succeeds")
+}
+
+#[test]
+fn static_parser_dfa_writes_the_manifest_entry() {
+    let output = emit_with(|options| {
+        options.static_parser_dfa(true);
+    });
+    let manifest = output
+        .optimization_manifest
+        .expect("the flag writes optimizations.txt");
+    assert!(manifest.contains("\"name\": \"static-parser-dfa\""));
+    assert!(manifest.contains("\"safetyClass\": \"tree-and-api-preserving\""));
+    assert!(manifest.contains("\"decisions\": 4"));
+    assert!(manifest.contains("\"staticDecisions\": 0"));
+    assert!(manifest.contains("\"grammar\": \"CSVParser\""));
+    assert!(
+        output.reports.is_empty(),
+        "the tables flag alone prints nothing"
+    );
+    assert!(
+        !output.files.is_empty(),
+        "the tables flag still emits files"
+    );
+}
+
+#[test]
+fn report_decisions_prints_the_decision_inventory() {
+    let output = emit_with(|options| {
+        options.report_decisions(true);
+    });
+    assert!(output.files.is_empty(), "report mode emits no files");
+    let manifest = output
+        .optimization_manifest
+        .expect("manifest is still rendered");
+    assert!(manifest.contains("\"reportOnly\": True"), "{manifest}");
+    let [report] = output.reports.as_slice() else {
+        panic!("one report per parser unit: {:?}", output.reports);
+    };
+    assert_eq!(
+        report.lines().next(),
+        Some("=== parser decision report: CSVParser (4 decisions) ==="),
+        "{report}"
+    );
+    for row in [
+        "  0  csvFile  12",
+        "  1  row      21",
+        "  2  row      25",
+        "  3  field    32",
+    ] {
+        assert!(report.contains(row), "missing {row:?} in:\n{report}");
+    }
+}
+
+#[test]
+fn dump_dfas_prints_the_selected_decisions() {
+    let output = emit_with(|options| {
+        options.dump_dfas("row:1");
+    });
+    assert!(output.files.is_empty(), "report mode emits no files");
+    assert!(
+        output.diagnostics.is_empty(),
+        "a matched selector reports nothing: {:?}",
+        output.diagnostics
+    );
+    let [dump] = output.reports.as_slice() else {
+        panic!("one dump per parser unit: {:?}", output.reports);
+    };
+    assert!(dump.contains("=== static DFA dump: grammar CSVParser ==="));
+    assert!(
+        dump.contains("vocabulary: EOF=-1 ','=1 '\\r'=2 '\\n'=3 WS=4 TEXT=5 STRING=6"),
+        "{dump}"
+    );
+    assert!(dump.contains("--- decision 1: rule 'row' ---"), "{dump}");
+    assert!(!dump.contains("--- decision 0:"), "{dump}");
+    assert!(!dump.contains("--- decision 2:"), "{dump}");
+    assert!(dump.contains("(1 of 4 decisions dumped)"), "{dump}");
+}
+
+#[test]
+fn dump_dfas_reports_every_unmatched_selector() {
+    let output = emit_with(|options| {
+        options.dump_dfas("row,zzz,row:99");
+    });
+    let messages = output
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == "G4S191")
+        .map(|diagnostic| {
+            assert_eq!(diagnostic.severity(), Severity::Error);
+            diagnostic.message()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        messages,
+        [
+            "--dump-dfas: no parser decision of grammar CSVParser matches 'zzz'",
+            "--dump-dfas: no parser decision of grammar CSVParser matches 'row:99'",
+        ]
+    );
+}
+
+#[test]
+fn cli_report_modes_print_reports_and_write_no_files() {
+    let grammar = grammars_dir().join("CSV.g4");
+    let out_dir =
+        std::env::temp_dir().join(format!("dbt-parser-dfa-report-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    for (flags, header) in [
+        (
+            vec!["--report-decisions".to_owned()],
+            "=== parser decision report: CSVParser (4 decisions) ===",
+        ),
+        (
+            vec!["--dump-dfas".to_owned(), "row".to_owned()],
+            "=== static DFA dump: grammar CSVParser ===",
+        ),
+    ] {
+        let mut args = vec![
+            "-o".to_owned(),
+            out_dir.to_string_lossy().into_owned(),
+            "-no-listener".to_owned(),
+        ];
+        args.extend(flags.clone());
+        args.push(grammar.to_string_lossy().into_owned());
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        cli::run(&args, &mut stdout, &mut stderr).expect("CLI run succeeds");
+
+        let stdout = String::from_utf8(stdout).expect("stdout is utf-8");
+        assert!(stdout.contains(header), "{flags:?}: {stdout}");
+        assert!(
+            String::from_utf8(stderr)
+                .expect("stderr is utf-8")
+                .is_empty(),
+            "{flags:?} prints no diagnostics"
+        );
+        assert!(!out_dir.exists(), "{flags:?} writes no output files");
+    }
+}
+
+#[test]
+fn cli_dump_dfas_fails_the_run_on_an_unmatched_selector() {
+    let grammar = grammars_dir().join("CSV.g4");
+    let args = vec![
+        "--dump-dfas=zzz".to_owned(),
+        grammar.to_string_lossy().into_owned(),
+    ];
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let error =
+        cli::run(&args, &mut stdout, &mut stderr).expect_err("an unmatched selector fails the run");
+
+    assert!(
+        error.to_string().contains("failed with 1 error(s)"),
+        "{error}"
+    );
+    let stderr = String::from_utf8(stderr).expect("stderr is utf-8");
+    assert!(stderr.contains("error[G4S191]"), "{stderr}");
+    assert!(
+        stderr.contains("no parser decision of grammar CSVParser matches 'zzz'"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn dump_dfas_deduplicates_repeated_selectors() {
+    let output = emit_with(|options| {
+        options.dump_dfas("zzz,zzz,row:99,:1,row:99");
+    });
+    let messages = output
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == "G4S191")
+        .map(|diagnostic| diagnostic.message())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        messages,
+        [
+            "--dump-dfas: no parser decision of grammar CSVParser matches ':1'",
+            "--dump-dfas: no parser decision of grammar CSVParser matches 'zzz'",
+            "--dump-dfas: no parser decision of grammar CSVParser matches 'row:99'",
+        ]
     );
 }

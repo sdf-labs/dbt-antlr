@@ -12,6 +12,7 @@ use super::config::{SelectedPass, SelectedPassStage, StaticDfaPass};
 use super::descriptor::PassDescriptor;
 use super::report::OptimizationReport;
 use super::static_lexer_dfa::StaticLexerDfa;
+use super::static_parser_dfa::StaticParserDfa;
 use crate::grammar::frontend::SourceSpan;
 use crate::grammar::source::SourceSet;
 use crate::grammar::transform::{
@@ -74,6 +75,14 @@ fn manifest_pass_value(
                 id,
                 pass.descriptor,
                 &report.static_lexer_dfa,
+                sources,
+            ))
+        }
+        SelectedPassStage::StaticDfaBuilds(StaticDfaPass::StaticParserDfa) => {
+            Some(StaticParserDfa::manifest_pass_value(
+                id,
+                pass.descriptor,
+                &report.static_parser_dfa,
                 sources,
             ))
         }

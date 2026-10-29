@@ -1,25 +1,6 @@
 // Generated from CSV.g4 by ANTLR 4.13.2
-use dbt_antlr_runtime::Arena;
-use dbt_antlr_runtime::atn::ATN;
-use dbt_antlr_runtime::char_stream::CharStream;
-use dbt_antlr_runtime::int_stream::IntStream;
-use dbt_antlr_runtime::lexer::{BaseLexer, LexerRecog, Lexer as _};
-use dbt_antlr_runtime::atn_config_set::LexerATNConfigSet;
-use dbt_antlr_runtime::atn_deserializer::ATNDeserializer;
-use dbt_antlr_runtime::atn_simulator::BaseATNSimulator;
+use dbt_antlr_runtime::prelude::*;
 use dbt_antlr_runtime::atn_simulator::LexerATNSimulatorManager as ATNSimulatorManager;
-use dbt_antlr_runtime::TokenSource;
-use dbt_antlr_runtime::lexer_atn_simulator::{LexerATNSimulator, ILexerATNSimulator};
-use dbt_antlr_runtime::PredictionContextCache;
-use dbt_antlr_runtime::recognizer::Actions;
-use dbt_antlr_runtime::token_factory::{CommonTokenFactory, TokenFactory};
-use dbt_antlr_runtime::rule_context::{BaseRuleContext,EmptyNodeKind,EmptyCustomRuleContext,EmptyRuleNode};
-use dbt_antlr_runtime::vocabulary::{Vocabulary,VocabularyImpl};
-
-use dbt_antlr_runtime::dfa::static_lexer_dfa::StaticLexerTables;
-
-use std::ops::{DerefMut, Deref};
-use std::sync::LazyLock;
 
 dbt_antlr_runtime::check_version!("0","5");
 pub const T__0:i32=1; 
@@ -85,27 +66,7 @@ pub struct CSVLexerActions {
 impl CSVLexerActions {
 }
 
-impl<'input, 'arena, Input, TF> Actions<'input, 'arena, BaseLexerType<'input, 'arena, Input, TF>, TF::Tok>
-    for CSVLexerActions
-where
-    'input: 'arena,
-    Input: CharStream<'input>,
-    TF: TokenFactory<'input, 'arena> + 'arena,
- {}
-
-impl<'input, 'arena, Input, TF> LexerRecog<'input, 'arena, TF, BaseLexerType<'input, 'arena, Input, TF>>
-    for CSVLexerActions
-where
-    'input: 'arena,
-    Input: CharStream<'input>,
-    TF: TokenFactory<'input, 'arena> + 'arena,
-{
-    fn get_rule_names(&self) -> &'static [&'static str] { &ruleNames }
-    fn get_literal_names(&self) -> &[Option<&str>] { &_LITERAL_NAMES }
-    fn get_symbolic_names(&self) -> &[Option<&str>] { &_SYMBOLIC_NAMES }
-    fn get_grammar_file_name(&self) -> &'static str { "CSVLexer.g4" }
-    fn get_atn_simulator_man(&self) -> &'static ATNSimulatorManager { &ATN_SIMULATOR_MANAGER }
-}
+dbt_antlr_runtime::impl_lexer_recog! { CSVLexerActions, "CSVLexer.g4" }
 
 static ATN_SIMULATOR_MANAGER: LazyLock<ATNSimulatorManager> = LazyLock::new(|| ATNSimulatorManager::new_static_lexer(&_STATIC_LEXER_TABLES));
 static _STATIC_LEXER_TABLES: LazyLock<StaticLexerTables> =

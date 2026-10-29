@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::optimization::{
     OptimizationPlan, OptimizationReport, StaticDfaPass, StaticLexerDfa, StaticLexerTables,
+    StaticParserDfa,
 };
 
 use super::action::{ActionReferenceParser, action_references};
@@ -332,6 +333,7 @@ fn static_dfa_builds(mut compilation: Compilation, plan: &OptimizationPlan) -> C
     for pass in plan.static_dfa_passes() {
         match pass {
             StaticDfaPass::StaticLexerDfa => build_static_lexer_dfas(&mut compilation),
+            StaticDfaPass::StaticParserDfa => build_static_parser_dfas(&mut compilation),
         }
     }
     compilation
@@ -357,6 +359,24 @@ fn build_static_lexer_dfas(compilation: &mut Compilation) {
         compilation
             .static_lexer_tables
             .insert(lexer_id, build.tables);
+    }
+}
+
+/// Inventories the decisions of every root parser and records the pass report.
+fn build_static_parser_dfas(compilation: &mut Compilation) {
+    let parser_ids = compilation
+        .roots
+        .iter()
+        .filter_map(|root| root.parser)
+        .collect::<BTreeSet<_>>();
+    for parser_id in parser_ids {
+        let Some(compiled) = compilation.parsers.get(&parser_id) else {
+            continue;
+        };
+        let report = StaticParserDfa::report(compiled);
+        compilation
+            .optimization_report
+            .push_static_parser_dfa(report);
     }
 }
 
@@ -423,6 +443,46 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.code == "G4S188")
         );
+    }
+
+    #[test]
+    fn static_parser_dfa_plan_records_the_decision_inventory() {
+        let mut options = OptimizationOptions::new();
+        options.static_parser_dfa(true);
+        let plan = OptimizationPlan::from_options(&options).expect("plan should be valid");
+        let compilation = compile_with_plan(
+            LoadOptions {
+                roots: vec![fixture("parser-shapes").join("ParserShapes.g4")],
+                library_directories: Vec::new(),
+            },
+            &plan,
+        )
+        .expect("parser fixture should compile");
+
+        let [root] = compilation.roots.as_slice() else {
+            panic!("one requested root should produce one compiled root");
+        };
+        let parser = compilation
+            .parser(root.parser.expect("parser root has a parser"))
+            .expect("root parser artifact exists");
+        let [report] = compilation
+            .optimization_report()
+            .static_parser_dfa
+            .as_slice()
+        else {
+            panic!("the parser pass records one report");
+        };
+        assert_eq!(report.grammar, "ParserShapes");
+        assert_eq!(report.decisions.len(), parser.packed.decision_count());
+        assert!(
+            report
+                .decisions
+                .iter()
+                .any(|decision| decision.rule == "optional"),
+            "the inventory names the decisions by rule: {:?}",
+            report.decisions
+        );
+        assert!(!report.vocabulary.is_empty());
     }
     #[test]
     fn missing_token_vocab_matches_java_diagnostic_site() {

@@ -2,25 +2,8 @@
 
 use dbt_antlr_runtime::token::TOKEN_INVALID_TYPE;
 
-use dbt_antlr_runtime::Arena;
-use dbt_antlr_runtime::atn::ATN;
-use dbt_antlr_runtime::char_stream::CharStream;
-use dbt_antlr_runtime::int_stream::IntStream;
-use dbt_antlr_runtime::lexer::{BaseLexer, LexerRecog, Lexer as _};
-use dbt_antlr_runtime::atn_config_set::LexerATNConfigSet;
-use dbt_antlr_runtime::atn_deserializer::ATNDeserializer;
-use dbt_antlr_runtime::atn_simulator::BaseATNSimulator;
+use dbt_antlr_runtime::prelude::*;
 use dbt_antlr_runtime::atn_simulator::LexerATNSimulatorManager as ATNSimulatorManager;
-use dbt_antlr_runtime::TokenSource;
-use dbt_antlr_runtime::lexer_atn_simulator::{LexerATNSimulator, ILexerATNSimulator};
-use dbt_antlr_runtime::PredictionContextCache;
-use dbt_antlr_runtime::recognizer::Actions;
-use dbt_antlr_runtime::token_factory::{CommonTokenFactory, TokenFactory};
-use dbt_antlr_runtime::rule_context::{BaseRuleContext,EmptyNodeKind,EmptyCustomRuleContext,EmptyRuleNode};
-use dbt_antlr_runtime::vocabulary::{Vocabulary,VocabularyImpl};
-
-use std::ops::{DerefMut, Deref};
-use std::sync::LazyLock;
 
 dbt_antlr_runtime::check_version!("0","5");
 pub const TOKEN_REF:i32=1; 
@@ -216,66 +199,39 @@ impl ANTLRv4LexerActions {
 	}
 }
 
-impl<'input, 'arena, Input, TF> Actions<'input, 'arena, BaseLexerType<'input, 'arena, Input, TF>, TF::Tok>
-    for ANTLRv4LexerActions
-where
-    'input: 'arena,
-    Input: CharStream<'input>,
-    TF: TokenFactory<'input, 'arena> + 'arena,
-{
-    fn action(_localctx: Option<&EmptyRuleNode<'input, 'arena, TF::Tok>>, rule_index: i32, action_index: i32, recog:&mut BaseLexerType<'input, 'arena, Input, TF>) {
-        match rule_index {
-            6 => ANTLRv4LexerActions::BEGIN_ARGUMENT_action(action_index, recog), 
-            54 => ANTLRv4LexerActions::END_ARGUMENT_action(action_index, recog), 
-            _ => {}
+dbt_antlr_runtime::impl_lexer_recog! { ANTLRv4LexerActions, "ANTLRv4Lexer.g4"; action { 6 => BEGIN_ARGUMENT_action,
+54 => END_ARGUMENT_action, }; extend { 
+    fn before_emit(lexer: &mut BaseLexerType<'input, 'arena, Input, TF>) {
+        let token_type = lexer.token_type;
+        if matches!(token_type, OPTIONS | TOKENS | CHANNELS)
+            && lexer.current_rule_type == TOKEN_INVALID_TYPE
+        {
+            lexer.current_rule_type = PREQUEL_CONSTRUCT;
+        } else if token_type == OPTIONS && matches!(lexer.current_rule_type, RULE_REF | TOKEN_REF) {
+            lexer.enclosing_rule_type = Some(lexer.current_rule_type);
+            lexer.current_rule_type = OPTIONS_CONSTRUCT;
+        } else if token_type == RBRACE && lexer.current_rule_type == PREQUEL_CONSTRUCT {
+            lexer.current_rule_type = TOKEN_INVALID_TYPE;
+        } else if token_type == RBRACE && lexer.current_rule_type == OPTIONS_CONSTRUCT {
+            lexer.current_rule_type = lexer.enclosing_rule_type.take().unwrap_or(TOKEN_INVALID_TYPE);
+        } else if token_type == AT && lexer.current_rule_type == TOKEN_INVALID_TYPE {
+            lexer.current_rule_type = AT;
+        } else if token_type == SEMI && lexer.current_rule_type == OPTIONS_CONSTRUCT {
+            // The option terminator does not end the surrounding rule.
+        } else if token_type == ACTION && lexer.current_rule_type == AT {
+            lexer.current_rule_type = TOKEN_INVALID_TYPE;
+        } else if token_type == ID {
+            let first = lexer.get_text().chars().next().expect("ID tokens are non-empty");
+            let classified = if first.is_uppercase() { TOKEN_REF } else { RULE_REF };
+            lexer.set_type(classified);
+            if lexer.current_rule_type == TOKEN_INVALID_TYPE {
+                lexer.current_rule_type = classified;
+            }
+        } else if token_type == SEMI {
+            lexer.current_rule_type = TOKEN_INVALID_TYPE;
         }
     }
-}
-impl<'input, 'arena, Input, TF> LexerRecog<'input, 'arena, TF, BaseLexerType<'input, 'arena, Input, TF>>
-    for ANTLRv4LexerActions
-where
-    'input: 'arena,
-    Input: CharStream<'input>,
-    TF: TokenFactory<'input, 'arena> + 'arena,
-{
-
-	    fn before_emit(lexer: &mut BaseLexerType<'input, 'arena, Input, TF>) {
-	        let token_type = lexer.token_type;
-	        if matches!(token_type, OPTIONS | TOKENS | CHANNELS)
-	            && lexer.current_rule_type == TOKEN_INVALID_TYPE
-	        {
-	            lexer.current_rule_type = PREQUEL_CONSTRUCT;
-	        } else if token_type == OPTIONS && matches!(lexer.current_rule_type, RULE_REF | TOKEN_REF) {
-	            lexer.enclosing_rule_type = Some(lexer.current_rule_type);
-	            lexer.current_rule_type = OPTIONS_CONSTRUCT;
-	        } else if token_type == RBRACE && lexer.current_rule_type == PREQUEL_CONSTRUCT {
-	            lexer.current_rule_type = TOKEN_INVALID_TYPE;
-	        } else if token_type == RBRACE && lexer.current_rule_type == OPTIONS_CONSTRUCT {
-	            lexer.current_rule_type = lexer.enclosing_rule_type.take().unwrap_or(TOKEN_INVALID_TYPE);
-	        } else if token_type == AT && lexer.current_rule_type == TOKEN_INVALID_TYPE {
-	            lexer.current_rule_type = AT;
-	        } else if token_type == SEMI && lexer.current_rule_type == OPTIONS_CONSTRUCT {
-	            // The option terminator does not end the surrounding rule.
-	        } else if token_type == ACTION && lexer.current_rule_type == AT {
-	            lexer.current_rule_type = TOKEN_INVALID_TYPE;
-	        } else if token_type == ID {
-	            let first = lexer.get_text().chars().next().expect("ID tokens are non-empty");
-	            let classified = if first.is_uppercase() { TOKEN_REF } else { RULE_REF };
-	            lexer.set_type(classified);
-	            if lexer.current_rule_type == TOKEN_INVALID_TYPE {
-	                lexer.current_rule_type = classified;
-	            }
-	        } else if token_type == SEMI {
-	            lexer.current_rule_type = TOKEN_INVALID_TYPE;
-	        }
-	    }
-
-    fn get_rule_names(&self) -> &'static [&'static str] { &ruleNames }
-    fn get_literal_names(&self) -> &[Option<&str>] { &_LITERAL_NAMES }
-    fn get_symbolic_names(&self) -> &[Option<&str>] { &_SYMBOLIC_NAMES }
-    fn get_grammar_file_name(&self) -> &'static str { "ANTLRv4Lexer.g4" }
-    fn get_atn_simulator_man(&self) -> &'static ATNSimulatorManager { &ATN_SIMULATOR_MANAGER }
-}
+ } }
 
 static ATN_SIMULATOR_MANAGER: LazyLock<ATNSimulatorManager> = LazyLock::new(|| ATNSimulatorManager::new(&_ATN));
 static _ATN: LazyLock<ATN> =

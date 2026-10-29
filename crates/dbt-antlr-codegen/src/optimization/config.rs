@@ -13,10 +13,11 @@ use crate::grammar::transform::{GrammarTransform, SafetyClass, TransformRegistry
 
 use super::descriptor::{
     COLLAPSE_PRECEDENCE_LADDERS, INLINE_TRIVIAL_RULES, OptimizationStage, PRUNE_UNREACHABLE_RULES,
-    PassDescriptor, STATIC_LEXER_DFA,
+    PassDescriptor, STATIC_LEXER_DFA, STATIC_PARSER_DFA,
 };
 use super::report::{OptimizationReport, pruned_unreachable_rule_messages};
 use super::static_lexer_dfa::StaticLexerDfa;
+use super::static_parser_dfa::{StaticParserDfa, StaticParserDfaSelection};
 
 type MessageRenderer = fn(&OptimizationReport, &SourceSet, &PassDescriptor) -> Vec<String>;
 
@@ -30,18 +31,21 @@ enum ConfiguredPassStage {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StaticDfaPass {
     StaticLexerDfa,
+    StaticParserDfa,
 }
 
 impl StaticDfaPass {
     pub(super) const fn id(self) -> &'static str {
         match self {
             Self::StaticLexerDfa => StaticLexerDfa::NAME,
+            Self::StaticParserDfa => StaticParserDfa::NAME,
         }
     }
 
     pub(super) const fn safety_class(self) -> SafetyClass {
         match self {
             Self::StaticLexerDfa => StaticLexerDfa::SAFETY,
+            Self::StaticParserDfa => StaticParserDfa::SAFETY,
         }
     }
 }
@@ -80,6 +84,9 @@ struct SelectionSettings {
     trivial_inlining: bool,
     precedence_ladders: bool,
     static_lexer_dfa: bool,
+    static_parser_dfa: bool,
+    report_decisions: bool,
+    dump_dfas: Option<String>,
     report_only: bool,
 }
 
@@ -91,7 +98,10 @@ impl SelectionSettings {
             trivial_inlining: options.inline_trivial_rules,
             precedence_ladders: options.optimize_precedence_ladders,
             static_lexer_dfa: options.static_lexer_dfa,
-            report_only: options.report_only,
+            static_parser_dfa: options.static_parser_dfa,
+            report_decisions: options.report_decisions,
+            dump_dfas: options.dump_dfas.clone(),
+            report_only: options.is_report_only(),
         }
     }
 }
@@ -108,6 +118,7 @@ pub(crate) struct OptimizationPlan {
     pub(super) entry_rules: EntryRuleConfig,
     pub(super) transforms: TransformRegistry,
     pub(super) selected: Vec<SelectedPass>,
+    pub(super) static_parser_reports: StaticParserDfaSelection,
     pub(super) report_only: bool,
 }
 
@@ -127,6 +138,10 @@ const PASS_REGISTRY: &[PassRegistration] = &[
     PassRegistration {
         descriptor: &STATIC_LEXER_DFA,
         configure: configure_static_lexer_dfa,
+    },
+    PassRegistration {
+        descriptor: &STATIC_PARSER_DFA,
+        configure: configure_static_parser_dfa,
     },
 ];
 
@@ -159,11 +174,17 @@ impl OptimizationPlan {
             });
         }
         validate_selection(&selected)?;
+        let static_parser_reports = StaticParserDfaSelection {
+            report_decisions: settings.report_decisions,
+            dump_dfas: settings.dump_dfas,
+        };
+        let report_only = settings.report_only;
         Ok(Self {
             entry_rules: settings.entry_rules,
             transforms,
             selected,
-            report_only: settings.report_only,
+            static_parser_reports,
+            report_only,
         })
     }
 
@@ -219,6 +240,16 @@ fn configure_precedence_ladders(settings: &SelectionSettings) -> Option<Configur
 fn configure_static_lexer_dfa(settings: &SelectionSettings) -> Option<ConfiguredPass> {
     settings.static_lexer_dfa.then_some(ConfiguredPass {
         stage: ConfiguredPassStage::StaticDfaBuilds(StaticDfaPass::StaticLexerDfa),
+        emit_manifest: true,
+        messages: None,
+    })
+}
+
+fn configure_static_parser_dfa(settings: &SelectionSettings) -> Option<ConfiguredPass> {
+    let enabled =
+        settings.static_parser_dfa || settings.report_decisions || settings.dump_dfas.is_some();
+    enabled.then_some(ConfiguredPass {
+        stage: ConfiguredPassStage::StaticDfaBuilds(StaticDfaPass::StaticParserDfa),
         emit_manifest: true,
         messages: None,
     })
@@ -341,27 +372,31 @@ fn invalid_registry(message: &str) -> EmitError {
 mod tests {
     use super::*;
 
-    fn settings(
-        prune_unreachable: bool,
-        trivial_inlining: bool,
-        precedence_ladders: bool,
-        static_lexer_dfa: bool,
-        report_only: bool,
-    ) -> SelectionSettings {
+    fn settings() -> SelectionSettings {
         SelectionSettings {
             entry_rules: EntryRuleConfig::default(),
-            prune_unreachable,
-            trivial_inlining,
-            precedence_ladders,
-            static_lexer_dfa,
-            report_only,
+            prune_unreachable: false,
+            trivial_inlining: false,
+            precedence_ladders: false,
+            static_lexer_dfa: false,
+            static_parser_dfa: false,
+            report_decisions: false,
+            dump_dfas: None,
+            report_only: false,
         }
     }
 
     #[test]
     fn effective_passes_follow_canonical_descriptor_order() {
-        let plan = OptimizationPlan::from_settings(settings(true, true, true, true, false))
-            .expect("registered optimization passes should be valid");
+        let plan = OptimizationPlan::from_settings(SelectionSettings {
+            prune_unreachable: true,
+            trivial_inlining: true,
+            precedence_ladders: true,
+            static_lexer_dfa: true,
+            static_parser_dfa: true,
+            ..settings()
+        })
+        .expect("registered optimization passes should be valid");
 
         assert_eq!(
             plan.selected
@@ -373,19 +408,29 @@ mod tests {
                 (InlineTrivialRules::NAME, 150),
                 (CollapsePrecedenceLadders::NAME, 200),
                 (StaticLexerDfa::NAME, 300),
+                (StaticParserDfa::NAME, 310),
             ]
         );
         assert_eq!(
             plan.static_dfa_passes().collect::<Vec<_>>(),
-            [StaticDfaPass::StaticLexerDfa]
+            [
+                StaticDfaPass::StaticLexerDfa,
+                StaticDfaPass::StaticParserDfa
+            ]
         );
         assert!(!plan.report_only());
     }
 
     #[test]
     fn report_only_preserves_selected_passes_including_static_lexer_dfa() {
-        let plan = OptimizationPlan::from_settings(settings(true, false, true, true, true))
-            .expect("registered optimization passes should be valid");
+        let plan = OptimizationPlan::from_settings(SelectionSettings {
+            prune_unreachable: true,
+            precedence_ladders: true,
+            static_lexer_dfa: true,
+            report_only: true,
+            ..settings()
+        })
+        .expect("registered optimization passes should be valid");
 
         assert!(plan.report_only());
         assert_eq!(
@@ -393,5 +438,46 @@ mod tests {
             [StaticDfaPass::StaticLexerDfa]
         );
         assert_eq!(plan.selected.len(), 3);
+    }
+
+    #[test]
+    fn parser_reports_select_the_parser_pass_and_force_report_only() {
+        for selection in [
+            StaticParserDfaSelection {
+                report_decisions: true,
+                dump_dfas: None,
+            },
+            StaticParserDfaSelection {
+                report_decisions: false,
+                dump_dfas: Some("all".to_owned()),
+            },
+        ] {
+            let mut options = OptimizationOptions::new();
+            options.report_decisions(selection.report_decisions);
+            if let Some(spec) = &selection.dump_dfas {
+                options.dump_dfas(spec);
+            }
+            let plan = OptimizationPlan::from_options(&options).expect("plan should be valid");
+
+            assert!(plan.report_only(), "{selection:?} implies report-only");
+            assert_eq!(
+                plan.static_dfa_passes().collect::<Vec<_>>(),
+                [StaticDfaPass::StaticParserDfa]
+            );
+            assert_eq!(plan.static_parser_reports, selection);
+        }
+    }
+
+    #[test]
+    fn static_parser_dfa_alone_keeps_file_emission() {
+        let mut options = OptimizationOptions::new();
+        options.static_parser_dfa(true);
+        let plan = OptimizationPlan::from_options(&options).expect("plan should be valid");
+
+        assert!(!plan.report_only());
+        assert_eq!(
+            plan.static_parser_reports,
+            StaticParserDfaSelection::default()
+        );
     }
 }
