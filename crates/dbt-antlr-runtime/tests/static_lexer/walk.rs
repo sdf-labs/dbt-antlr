@@ -94,9 +94,9 @@ fn compile(kind: GrammarKind, builder: &StaticLexerDfaBuilder) -> Fixture {
         .iter()
         .find_map(|u| u.lexer_atn_words.clone())
         .expect("lexer unit");
-    let atn: &'static ATN = Box::leak(Box::new(
-        ATNDeserializer::new(None).deserialize(&mut words.iter()),
-    ));
+    let atn: &'static ATN = ATNDeserializer::new(None)
+        .deserialize(&mut words.iter())
+        .into_static();
     let build = builder.build(atn);
     let tables = StaticLexerTables::from_words(&build.words).expect("tables decode");
     Fixture {

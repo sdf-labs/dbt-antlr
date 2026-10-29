@@ -166,6 +166,9 @@ pub struct VisitorFileModel {
 }
 
 /// Mirrors `SerializedATN`.
+///
+/// The words are serialized from the compiled runtime ATN at emission time, not
+/// during compilation.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SerializedAtnModel {
@@ -778,7 +781,9 @@ pub struct LexerModel {
     pub modes: Vec<String>,
     pub action_funcs: Vec<RuleActionFunctionModel>,
     pub sempred_funcs: Vec<RuleActionFunctionModel>,
-    pub atn: SerializedAtnModel,
+    /// ATN statics; `None` when `static_tables` omit the ATN entirely, which is
+    /// the case when every mode fully resolves.
+    pub atn: Option<SerializedAtnModel>,
     /// Static lexer DFA tables (`--static-lexer-dfa`); `None` with the flag off.
     pub static_tables: Option<StaticLexerTablesModel>,
 }

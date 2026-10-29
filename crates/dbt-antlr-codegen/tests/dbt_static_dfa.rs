@@ -304,6 +304,10 @@ fn static_lexer_dfa_emits_optimization_manifest_with_stats_accel_and_continuatio
     assert!(csv_manifest.contains("\"name\": \"static-lexer-dfa\""));
     assert!(csv_manifest.contains("\"safetyClass\": \"tree-and-api-preserving\""));
     assert!(csv_manifest.contains("\"omitAtn\": True"));
+    assert!(
+        !csv_manifest.contains("\"atnWords\""),
+        "the static DFA report carries no ATN word counts"
+    );
     assert!(csv_manifest.contains("\"status\": \"compiled\""));
     assert!(csv_manifest.contains("\"kind\": \"exclusion\""));
     assert!(csv_manifest.contains("\"kind\": \"positive\""));

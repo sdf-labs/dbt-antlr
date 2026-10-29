@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::Error;
-use crate::grammar::atn::encode_packed_atn;
+use crate::grammar::atn::{encode_lexer_atn, encode_packed_atn};
 use crate::grammar::compiler;
 use crate::grammar::loader::LoadOptions;
 
@@ -27,6 +27,9 @@ pub struct GrammarAtnData {
     /// with `dbt_antlr_runtime::atn_packed_deserializer::PackedATNDeserializer`.
     pub parser_packed_words: Option<Vec<u32>>,
     /// Java-format serialized lexer ATN words, when this unit has a lexer.
+    ///
+    /// The words are the serialized form of the compiled lexer ATN. Read them
+    /// with `dbt_antlr_runtime::atn_deserializer::ATNDeserializer`.
     pub lexer_atn_words: Option<Vec<i32>>,
 }
 
@@ -55,13 +58,13 @@ pub fn compile_atn_data(
     let mut units = Vec::with_capacity(compilation.parsers.len() + compilation.lexers.len());
     units.extend(compilation.parsers.values().map(|parser| GrammarAtnData {
         name: parser.semantic.unit.name.clone(),
-        parser_packed_words: Some(encode_packed_atn(&parser.atn)),
+        parser_packed_words: Some(encode_packed_atn(parser.atn)),
         lexer_atn_words: None,
     }));
     units.extend(compilation.lexers.values().map(|lexer| GrammarAtnData {
         name: lexer.semantic.unit.name.clone(),
         parser_packed_words: None,
-        lexer_atn_words: Some(lexer.runtime_artifact.atn_words.clone()),
+        lexer_atn_words: Some(encode_lexer_atn(lexer.atn)),
     }));
     Ok(units)
 }

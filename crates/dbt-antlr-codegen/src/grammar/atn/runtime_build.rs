@@ -44,12 +44,9 @@ fn runtime_set(ranges: &[(i32, i32)]) -> &'static IntervalSet {
         debug_assert!(start <= stop, "transition set range is reversed");
         set.add_range(start, stop);
     }
-    // Note: the runtime ATN is built on the assumption of "one global instance
-    // per-process, that's never de-allocated", so it just leaks these
-    // IntervalSet out of convenience. Generally not a problem for the toolside
-    // either, as these ATN instances also live out the rest of the process
-    // lifetime. But if we ever want to make ATN library-friendly in the future,
-    // this would be a simple refactor.
+    // Note: the entire runtime ATN+DFA infra is built on the convention of "one
+    // global ATN per-process, never de-allocated", so leaking these IntervalSets
+    // is by design. The toolside must also follow this convention.
     set.into_static()
 }
 

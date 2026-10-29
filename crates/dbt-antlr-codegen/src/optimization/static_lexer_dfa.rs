@@ -11,7 +11,9 @@
 //!
 //! The build result becomes the `StaticLexerTables` of the lexer output
 //! model. Modes that the builder cannot compile, and edges that escape to the
-//! lazy simulator, produce compiler warnings (`G4S188` and `G4S189`). The
+//! lazy simulator, produce compiler warnings (`G4S188` and `G4S189`). When every
+//! mode compiles and no edge escapes, the generated lexer runs on the tables
+//! alone: its ATN statics are elided and its word stream is never serialized. The
 //! `StaticLexerDfaReport` of each lexer is appended to the
 //! [`OptimizationReport`](super::report::OptimizationReport), which renders the
 //! `static-lexer-dfa` manifest entry.
@@ -44,7 +46,7 @@ impl StaticLexerDfa {
 
     /// Builds the static lexer DFA tables of one compiled lexer unit.
     pub(crate) fn build(compiled: &CompiledLexer) -> StaticLexerDfaArtifact {
-        let build = StaticLexerDfaBuilder::new().build(&compiled.atn);
+        let build = StaticLexerDfaBuilder::new().build(compiled.atn);
 
         let unit = &compiled.semantic.unit;
         let grammar_name = unit.name.as_str();
@@ -116,7 +118,6 @@ pub(crate) struct StaticLexerDfaReport {
     pub(crate) source_span: SourceSpan,
     pub(crate) omit_atn: bool,
     pub(crate) table_words: usize,
-    pub(crate) atn_words: usize,
     pub(crate) modes: Vec<StaticLexerModeReport>,
 }
 
@@ -285,7 +286,6 @@ fn build_lexer_report(
         source_span: unit.span.clone(),
         omit_atn,
         table_words: build.words.len(),
-        atn_words: compiled.runtime_artifact.atn_words.len(),
         modes,
     }
 }
@@ -1163,7 +1163,6 @@ impl StaticLexerDfa {
             .map(|mode| mode.continuations.total)
             .sum();
         let table_words: usize = lexers.iter().map(|lexer| lexer.table_words).sum();
-        let atn_words: usize = lexers.iter().map(|lexer| lexer.atn_words).sum();
 
         let metrics = object(vec![
             ("lexers", Value::from(lexers.len())),
@@ -1180,7 +1179,6 @@ impl StaticLexerDfa {
             ("continuations", Value::from(continuations)),
             ("tableWords", Value::from(table_words)),
             ("tableBytes", Value::from(table_words * 4)),
-            ("atnWords", Value::from(atn_words)),
         ]);
         let rendered_lexers = Value::from_iter(
             lexers
@@ -1222,7 +1220,6 @@ fn static_lexer_report_value(lexer: &StaticLexerDfaReport, sources: &SourceSet) 
         ("omitAtn", Value::from(lexer.omit_atn)),
         ("tableWords", Value::from(lexer.table_words)),
         ("tableBytes", Value::from(lexer.table_words * 4)),
-        ("atnWords", Value::from(lexer.atn_words)),
         ("numModes", Value::from(lexer.modes.len())),
         ("compiledModes", Value::from(compiled_modes)),
         ("failedModes", Value::from(failed_modes)),

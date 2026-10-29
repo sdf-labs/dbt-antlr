@@ -11,7 +11,6 @@ expression: manifest
                 {
                     "acceleratedStates": 2,
                     "acceptStates": 2,
-                    "atnWords": 324,
                     "compiledModes": 1,
                     "continuations": 1,
                     "escapedEdges": 2,
@@ -330,7 +329,6 @@ expression: manifest
             "metrics": {
                 "acceleratedStates": 2,
                 "acceptStates": 2,
-                "atnWords": 324,
                 "compiledModes": 1,
                 "continuations": 1,
                 "edges": 13,

@@ -5,6 +5,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use super::build::{FinalizedAtnGraph, FinalizedTransition, FinalizedTransitionKind};
+use super::encode_lexer_atn;
 use super::interp_test::serialize_interp;
 use super::state_kind::AtnStateKind;
 use crate::grammar::compiler::compile;
@@ -54,7 +55,7 @@ fn assert_general_bug_fixture(
     assert_eq!(
         serialize_interp(
             &compiled.semantic.recognizer,
-            &compiled.runtime_artifact.atn_words,
+            &encode_lexer_atn(compiled.atn),
         ),
         expected_interp,
         "{fixture_name} .interp",

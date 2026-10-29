@@ -43,7 +43,7 @@ fn simplelr_vocabulary() -> Box<dyn Vocabulary> {
     ))
 }
 
-fn simplelr_lexer_atn() -> dbt_antlr_runtime::atn::ATN {
+fn simplelr_lexer_atn() -> &'static dbt_antlr_runtime::atn::ATN {
     let words: Vec<i32> = vec![
         4, 0, 2, 14, 6, -1, 2, 0, 7, 0, 2, 1, 7, 1, 1, 0, 4, 0, 7, 8, 0, 11, 0, 12, 0, 8, 1, 1, 1,
         1, 1, 1, 1, 1, 0, 0, 2, 1, 1, 3, 2, 1, 0, 1, 2, 0, 10, 10, 32, 32, 14, 0, 1, 1, 0, 0, 0, 0,
@@ -51,10 +51,12 @@ fn simplelr_lexer_atn() -> dbt_antlr_runtime::atn::ATN {
         7, 8, 1, 0, 0, 0, 8, 6, 1, 0, 0, 0, 8, 9, 1, 0, 0, 0, 9, 2, 1, 0, 0, 0, 10, 11, 7, 0, 0, 0,
         11, 12, 1, 0, 0, 0, 12, 13, 6, 1, 0, 0, 13, 4, 1, 0, 0, 0, 2, 0, 8, 1, 6, 0, 0,
     ];
-    ATNDeserializer::new(None).deserialize(&mut words.iter())
+    ATNDeserializer::new(None)
+        .deserialize(&mut words.iter())
+        .into_static()
 }
 
-fn simplelr_parser_atn() -> dbt_antlr_runtime::atn::ATN {
+fn simplelr_parser_atn() -> &'static dbt_antlr_runtime::atn::ATN {
     let words: Vec<u32> = vec![
         1346458702, 3, 16909060, 29, 2, 17, 16, 0, 0, 1, 2, 29, 119, 148, 80, 228, 0, 228, 0, 228,
         1, 229, 2, 231, 2, 233, 0, 228, 0, 2, 0, 8, 0, 1, 4294967295, 4294967295, 7, 0, 16, 1, 0,
@@ -72,6 +74,7 @@ fn simplelr_parser_atn() -> dbt_antlr_runtime::atn::ATN {
     PackedATNDeserializer::new()
         .deserialize(&words)
         .expect("packed SimpleLR parser ATN deserializes")
+        .into_static()
 }
 
 // ======= Ambig fixtures (from generated AmbigLexer/AmbigParser) =======
@@ -89,7 +92,7 @@ fn ambig_vocabulary() -> Box<dyn Vocabulary> {
     ))
 }
 
-fn ambig_lexer_atn() -> dbt_antlr_runtime::atn::ATN {
+fn ambig_lexer_atn() -> &'static dbt_antlr_runtime::atn::ATN {
     let words: Vec<i32> = vec![
         4, 0, 3, 21, 6, -1, 2, 0, 7, 0, 2, 1, 7, 1, 2, 2, 7, 2, 1, 0, 1, 0, 1, 1, 4, 1, 11, 8, 1,
         11, 1, 12, 1, 12, 1, 2, 4, 2, 16, 8, 2, 11, 2, 12, 2, 17, 1, 2, 1, 2, 0, 0, 3, 1, 1, 3, 2,
@@ -100,10 +103,12 @@ fn ambig_lexer_atn() -> dbt_antlr_runtime::atn::ATN {
         0, 16, 17, 1, 0, 0, 0, 17, 15, 1, 0, 0, 0, 17, 18, 1, 0, 0, 0, 18, 19, 1, 0, 0, 0, 19, 20,
         6, 2, 0, 0, 20, 6, 1, 0, 0, 0, 3, 0, 12, 17, 1, 6, 0, 0,
     ];
-    ATNDeserializer::new(None).deserialize(&mut words.iter())
+    ATNDeserializer::new(None)
+        .deserialize(&mut words.iter())
+        .into_static()
 }
 
-fn ambig_parser_atn() -> dbt_antlr_runtime::atn::ATN {
+fn ambig_parser_atn() -> &'static dbt_antlr_runtime::atn::ATN {
     let words: Vec<u32> = vec![
         1346458702, 3, 16909060, 29, 3, 16, 16, 0, 0, 2, 2, 29, 112, 141, 80, 221, 0, 221, 0, 221,
         2, 223, 2, 225, 2, 227, 0, 221, 0, 2, 0, 8, 0, 1, 4294967295, 4294967295, 7, 0, 16, 1, 0,
@@ -121,6 +126,7 @@ fn ambig_parser_atn() -> dbt_antlr_runtime::atn::ATN {
     PackedATNDeserializer::new()
         .deserialize(&words)
         .expect("packed Ambig parser ATN deserializes")
+        .into_static()
 }
 
 // ======= Error collection =======
