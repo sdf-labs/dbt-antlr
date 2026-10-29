@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// Copyright (c) 2026 Konstantin Vyatkin
+// Copyright (c) 2026 Bo Lin
 //! Shared construction helpers for the runtime ATNs the compiler builds.
 //!
 //! Both grammar scopes build a [`dbt_antlr_runtime::atn::ATN`] from a
@@ -37,17 +37,19 @@ fn state_refs(atn: &ATN, numbers: &[usize]) -> Vec<ATNStateRef> {
         .collect()
 }
 
-/// Materializes a transition set as a runtime set.
-///
-/// Runtime set transitions borrow their set for the whole ATN lifetime, so the
-/// set is leaked once per set transition. The runtime deserializers leak once
-/// per distinct set in the same way.
+/// Materializes a transition set as a runtime [`IntervalSet`].
 fn runtime_set(ranges: &[(i32, i32)]) -> &'static IntervalSet {
     let mut set = IntervalSetBuf::new();
     for &(start, stop) in ranges {
         debug_assert!(start <= stop, "transition set range is reversed");
         set.add_range(start, stop);
     }
+    // Note: the runtime ATN is built on the assumption of "one global instance
+    // per-process, that's never de-allocated", so it just leaks these
+    // IntervalSet out of convenience. Generally not a problem for the toolside
+    // either, as these ATN instances also live out the rest of the process
+    // lifetime. But if we ever want to make ATN library-friendly in the future,
+    // this would be a simple refactor.
     set.into_static()
 }
 
