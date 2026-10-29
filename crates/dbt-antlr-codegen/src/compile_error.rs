@@ -61,31 +61,34 @@ pub(crate) fn non_fatal_diagnostics(
     compilation
         .diagnostics
         .iter()
-        .map(|diagnostic| {
-            let severity = match diagnostic.severity {
-                grammar::diagnostic::Severity::Warning => Severity::Warning,
-                grammar::diagnostic::Severity::Error => Severity::Error,
-            };
-            let primary = diagnostic.primary_source_span();
-            let path = primary
-                .and_then(|span| compilation.sources.logical_path(span.source))
-                .map_or_else(|| PathBuf::from("<grammar>"), Path::to_path_buf);
-            let position = primary.and_then(|span| {
-                compilation
-                    .sources
-                    .line_column(span.source, span.bytes.start)
-            });
-            let byte_span = primary.map(source_byte_span);
-            Diagnostic::new(
-                diagnostic.code,
-                severity,
-                diagnostic.message.clone(),
-                path,
-                position,
-                byte_span,
-            )
-        })
+        .map(|diagnostic| public_diagnostic(diagnostic, &compilation.sources))
         .collect()
+}
+
+/// Converts one grammar diagnostic into the public [`Diagnostic`] type,
+/// resolving its source span against `sources`.
+pub(crate) fn public_diagnostic(
+    diagnostic: &grammar::diagnostic::Diagnostic,
+    sources: &grammar::source::SourceSet,
+) -> Diagnostic {
+    let severity = match diagnostic.severity {
+        grammar::diagnostic::Severity::Warning => Severity::Warning,
+        grammar::diagnostic::Severity::Error => Severity::Error,
+    };
+    let primary = diagnostic.primary_source_span();
+    let path = primary
+        .and_then(|span| sources.logical_path(span.source))
+        .map_or_else(|| PathBuf::from("<grammar>"), Path::to_path_buf);
+    let position = primary.and_then(|span| sources.line_column(span.source, span.bytes.start));
+    let byte_span = primary.map(source_byte_span);
+    Diagnostic::new(
+        diagnostic.code,
+        severity,
+        diagnostic.message.clone(),
+        path,
+        position,
+        byte_span,
+    )
 }
 
 fn source_byte_span(span: &SourceSpan) -> std::ops::Range<usize> {

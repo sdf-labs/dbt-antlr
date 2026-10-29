@@ -16,6 +16,8 @@ mod options;
 mod report;
 #[cfg(feature = "generator")]
 mod static_lexer_dfa;
+#[cfg(feature = "generator")]
+mod static_parser_dfa;
 
 #[cfg(feature = "generator")]
 pub(crate) use config::{OptimizationPlan, StaticDfaPass};
@@ -26,3 +28,5 @@ pub use options::OptimizationOptions;
 pub(crate) use report::OptimizationReport;
 #[cfg(feature = "generator")]
 pub(crate) use static_lexer_dfa::{StaticLexerDfa, StaticLexerTables};
+#[cfg(feature = "generator")]
+pub(crate) use static_parser_dfa::StaticParserDfa;

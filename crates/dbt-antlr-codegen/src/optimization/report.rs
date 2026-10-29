@@ -2,13 +2,14 @@
 // Copyright (c) 2026 Konstantin Vyatkin
 use std::collections::BTreeSet;
 
-use crate::grammar::source::SourceSet;
-use crate::grammar::transform::TransformReport;
-
-use super::config::OptimizationPlan;
+use super::config::{OptimizationPlan, SelectedPassStage, StaticDfaPass};
 use super::descriptor::PassDescriptor;
 use super::manifest::render_optimization_manifest;
 use super::static_lexer_dfa::StaticLexerDfaReport;
+use super::static_parser_dfa::{StaticParserDfa, StaticParserDfaReport};
+use crate::grammar::diagnostic::Diagnostic;
+use crate::grammar::source::SourceSet;
+use crate::grammar::transform::TransformReport;
 
 /// Everything the optimization pipeline reports about one compilation.
 ///
@@ -18,6 +19,7 @@ use super::static_lexer_dfa::StaticLexerDfaReport;
 pub(crate) struct OptimizationReport {
     pub(crate) transforms: TransformReport,
     pub(crate) static_lexer_dfa: Vec<StaticLexerDfaReport>,
+    pub(crate) static_parser_dfa: Vec<StaticParserDfaReport>,
 }
 
 impl OptimizationReport {
@@ -25,12 +27,25 @@ impl OptimizationReport {
         Self {
             transforms,
             static_lexer_dfa: Vec::new(),
+            static_parser_dfa: Vec::new(),
         }
     }
 
     pub(crate) fn push_static_lexer_dfa(&mut self, report: StaticLexerDfaReport) {
         self.static_lexer_dfa.push(report);
     }
+
+    pub(crate) fn push_static_parser_dfa(&mut self, report: StaticParserDfaReport) {
+        self.static_parser_dfa.push(report);
+    }
+}
+
+/// The stdout reports of the selected passes, with the diagnostics their
+/// selectors raise.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct RenderedReports {
+    pub(crate) reports: Vec<String>,
+    pub(crate) diagnostics: Vec<Diagnostic>,
 }
 
 impl OptimizationPlan {
@@ -68,6 +83,32 @@ impl OptimizationPlan {
             sources,
             self.report_only,
         ))
+    }
+
+    /// Renders the reports the plan prints to stdout (`--report-decisions`
+    /// and `--dump-dfas`), in pass order.
+    pub(crate) fn rendered_reports(&self, report: &OptimizationReport) -> RenderedReports {
+        let mut rendered = RenderedReports::default();
+        let parser_pass = self.selected.iter().any(|pass| {
+            pass.stage == SelectedPassStage::StaticDfaBuilds(StaticDfaPass::StaticParserDfa)
+        });
+        if !parser_pass {
+            return rendered;
+        }
+        if self.static_parser_reports.report_decisions {
+            rendered
+                .reports
+                .push(StaticParserDfa::render_decision_report(
+                    &report.static_parser_dfa,
+                ));
+        }
+        if let Some(spec) = &self.static_parser_reports.dump_dfas {
+            let (text, diagnostics) =
+                StaticParserDfa::render_dfa_dump(&report.static_parser_dfa, spec);
+            rendered.reports.push(text);
+            rendered.diagnostics.extend(diagnostics);
+        }
+        rendered
     }
 }
 

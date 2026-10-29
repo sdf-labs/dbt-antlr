@@ -11,6 +11,9 @@ use std::collections::BTreeSet;
 ///
 /// Static lexer DFA generation ([`Self::static_lexer_dfa`]) precomputes lexer
 /// DFA tables after ATN construction and preserves both tokens and APIs.
+/// Static parser DFA generation ([`Self::static_parser_dfa`]) precomputes
+/// parser prediction tables after ATN construction and preserves both parse
+/// trees and recognizer APIs.
 ///
 /// Selected optimization passes write their reports to an `optimizations.txt`
 /// manifest next to the generated files.
@@ -24,6 +27,9 @@ pub struct OptimizationOptions {
     pub(crate) inline_trivial_rules: bool,
     pub(crate) optimize_precedence_ladders: bool,
     pub(crate) static_lexer_dfa: bool,
+    pub(crate) static_parser_dfa: bool,
+    pub(crate) report_decisions: bool,
+    pub(crate) dump_dfas: Option<String>,
     pub(crate) report_only: bool,
 }
 
@@ -69,6 +75,27 @@ impl OptimizationOptions {
         self
     }
 
+    /// Precomputes static parser DFA tables (`--static-parser-dfa`, parser
+    /// scope only). Default: `false`.
+    pub const fn static_parser_dfa(&mut self, enabled: bool) -> &mut Self {
+        self.static_parser_dfa = enabled;
+        self
+    }
+
+    /// Renders the parser decision report of the `static-parser-dfa` pass
+    /// (`--report-decisions`) and implies [`Self::report_only`].
+    pub const fn report_decisions(&mut self, enabled: bool) -> &mut Self {
+        self.report_decisions = enabled;
+        self
+    }
+
+    /// Renders the static parser DFA tables matching `spec`
+    /// (`--dump-dfas <SPEC>`) and implies [`Self::report_only`].
+    pub fn dump_dfas(&mut self, spec: impl Into<String>) -> &mut Self {
+        self.dump_dfas = Some(spec.into());
+        self
+    }
+
     /// Compiles, analyzes, and optimizes the input grammars without writing
     /// output files (`--report-only`, `--dry-run`, `-n`). Default: `false`.
     pub const fn report_only(&mut self, enabled: bool) -> &mut Self {
@@ -76,8 +103,11 @@ impl OptimizationOptions {
         self
     }
 
+    /// Whether the selection prints instead of writing files: `--report-only`
+    /// or a report mode that implies it (`--report-decisions`,
+    /// `--dump-dfas`).
     pub(crate) const fn is_report_only(&self) -> bool {
-        self.report_only
+        self.report_only || self.report_decisions || self.dump_dfas.is_some()
     }
 
     #[cfg(feature = "download")]
@@ -103,5 +133,17 @@ impl OptimizationOptions {
     #[cfg(feature = "download")]
     pub(crate) const fn static_dfa(&self) -> bool {
         self.static_lexer_dfa
+    }
+
+    #[cfg(feature = "download")]
+    pub(crate) const fn static_parser_dfa_enabled(&self) -> bool {
+        self.static_parser_dfa
+    }
+
+    /// Whether the selection prints parser reports, which only the in-process
+    /// generator can render.
+    #[cfg(feature = "download")]
+    pub(crate) const fn has_parser_reports(&self) -> bool {
+        self.report_decisions || self.dump_dfas.is_some()
     }
 }

@@ -12,6 +12,10 @@
 //!   -Dkey=value       ignored with a warning (compat)
 //!   -n, --dry-run, --report-only  compile, analyze, and optimize without writing output files
 //!   --static-lexer-dfa            precompute static lexer DFA tables (lexer scope only)
+//!   --static-parser-dfa           precompute static parser DFA tables (parser scope only)
+//!   --report-decisions            print the parser decision report (implies report-only)
+//!   --dump-dfas <SPEC>            print the static parser DFA tables matching SPEC
+//!                                 (implies report-only)
 //!   --entry-rule <NAME>           mark NAME as a parser entry rule (repeatable)
 //!   --prune-unreachable-rules     delete parser rules unreachable from the entry rules
 //!   --inline-trivial-rules        inline trivial pure parser rules into their callers
@@ -32,6 +36,10 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   -Dkey=value       ignored with a warning (compat)
   -n, --dry-run, --report-only  compile, analyze, and optimize without writing output files
   --static-lexer-dfa            precompute static lexer DFA tables (lexer scope only)
+  --static-parser-dfa           precompute static parser DFA tables (parser scope only)
+  --report-decisions            print the parser decision report (implies report-only)
+  --dump-dfas <SPEC>            print the static parser DFA tables matching SPEC
+                                (implies report-only)
   --entry-rule <NAME>           mark NAME as a parser entry rule (repeatable)
   --prune-unreachable-rules     delete parser rules unreachable from the entry rules
   --inline-trivial-rules        inline trivial pure parser rules into their callers
@@ -47,6 +55,9 @@ struct CliArgs {
     gen_listener: bool,
     gen_visitor: bool,
     static_lexer_dfa: bool,
+    static_parser_dfa: bool,
+    report_decisions: bool,
+    dump_dfas: Option<String>,
     entry_rules: Vec<String>,
     prune_unreachable: bool,
     inline_trivial: bool,
@@ -61,6 +72,9 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let mut gen_listener = true;
     let mut gen_visitor = false;
     let mut static_lexer_dfa = false;
+    let mut static_parser_dfa = false;
+    let mut report_decisions = false;
+    let mut dump_dfas = None;
     let mut entry_rules = Vec::new();
     let mut prune_unreachable = false;
     let mut inline_trivial = false;
@@ -84,6 +98,18 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
             "-no-listener" => gen_listener = false,
             "-n" | "--dry-run" | "--report-only" => report_only = true,
             "--static-lexer-dfa" => static_lexer_dfa = true,
+            "--static-parser-dfa" => static_parser_dfa = true,
+            "--report-decisions" => report_decisions = true,
+            "--dump-dfas" => {
+                dump_dfas = Some(value_after(arg, args, &mut index)?);
+            }
+            _ if arg.starts_with("--dump-dfas=") => {
+                let spec = arg.strip_prefix("--dump-dfas=").unwrap_or_default();
+                if spec.is_empty() {
+                    miette::bail!("option --dump-dfas expects a value\n{USAGE}");
+                }
+                dump_dfas = Some(spec.to_owned());
+            }
             "--entry-rule" => {
                 entry_rules.push(value_after(arg, args, &mut index)?);
             }
@@ -115,6 +141,9 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         gen_listener,
         gen_visitor,
         static_lexer_dfa,
+        static_parser_dfa,
+        report_decisions,
+        dump_dfas,
         entry_rules,
         prune_unreachable,
         inline_trivial,
@@ -178,10 +207,15 @@ pub fn run(
         .visitor(cli.gen_visitor)
         .cargo_directives(false)
         .static_lexer_dfa(cli.static_lexer_dfa)
+        .static_parser_dfa(cli.static_parser_dfa)
+        .report_decisions(cli.report_decisions)
         .prune_unreachable_rules(cli.prune_unreachable)
         .inline_trivial_rules(cli.inline_trivial)
         .optimize_precedence_ladders(cli.optimize_ladders)
         .report_only(cli.report_only);
+    if let Some(spec) = &cli.dump_dfas {
+        config.dump_dfas(spec);
+    }
     for dir in &cli.lib_dirs {
         config.lib_dir(dir);
     }
@@ -192,11 +226,18 @@ pub fn run(
         .generate_detailed()
         .into_diagnostic()
         .wrap_err_with(|| format!("cannot emit {}", cli.grammar.display()))?;
+    let mut errors = 0;
     for diagnostic in generation.diagnostics() {
+        if diagnostic.severity() == crate::Severity::Error {
+            errors += 1;
+        }
         writeln!(stderr, "{}", render_diagnostic(diagnostic)).into_diagnostic()?;
     }
     for message in generation.optimization_messages() {
         writeln!(stderr, "{message}").into_diagnostic()?;
+    }
+    for report in generation.reports() {
+        write!(stdout, "{report}").into_diagnostic()?;
     }
     for path in generation.written_files() {
         let name = path.file_name().map_or_else(
@@ -204,6 +245,9 @@ pub fn run(
             |name| name.to_string_lossy().into_owned(),
         );
         writeln!(stdout, "{name}").into_diagnostic()?;
+    }
+    if errors > 0 {
+        miette::bail!("failed with {errors} error(s)");
     }
     Ok(())
 }
@@ -234,6 +278,25 @@ mod tests {
         assert!(cli.static_lexer_dfa);
         let cli = parse(&["T.g4"]).expect("minimal command line parses");
         assert!(!cli.static_lexer_dfa);
+    }
+
+    #[test]
+    fn static_parser_dfa_and_report_flags_parse() {
+        let cli = parse(&["--static-parser-dfa", "T.g4"]).expect("flag parses");
+        assert!(cli.static_parser_dfa);
+        assert!(!cli.report_decisions);
+        assert_eq!(cli.dump_dfas, None);
+
+        let cli =
+            parse(&["--report-decisions", "--dump-dfas=all", "T.g4"]).expect("report flags parse");
+        assert!(cli.report_decisions);
+        assert_eq!(cli.dump_dfas.as_deref(), Some("all"));
+
+        let cli = parse(&["--dump-dfas", "paths,row:2", "T.g4"]).expect("spaced value parses");
+        assert_eq!(cli.dump_dfas.as_deref(), Some("paths,row:2"));
+
+        assert!(parse(&["--dump-dfas=", "T.g4"]).is_err());
+        assert!(parse(&["T.g4", "--dump-dfas"]).is_err());
     }
 
     #[test]
