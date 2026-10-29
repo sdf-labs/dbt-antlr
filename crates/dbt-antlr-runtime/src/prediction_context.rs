@@ -512,6 +512,7 @@ impl<'ephemeral> PredictionContextRef<'ephemeral> {
     }
 
     #[inline]
+    #[allow(clippy::should_implement_trait)]
     pub fn as_ref(&self) -> &'ephemeral PredictionContext<'ephemeral> {
         // Hand-rolled niche optimization: we tuck the RefType into the
         // pointer's least-significant bit (and pray to god that we don't

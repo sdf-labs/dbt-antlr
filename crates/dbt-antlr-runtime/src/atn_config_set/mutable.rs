@@ -140,7 +140,13 @@ impl<'ephemeral> MutableATNConfigSet<'ephemeral> {
     }
 
     // for parser
-    pub(crate) fn add_cached(
+    /// Inserts `config`, merging its prediction context with an existing config
+    /// that shares the state, alt, and semantic context.
+    ///
+    /// The compile-time parser DFA analysis (feature `static-dfa-build`) drives
+    /// its closures through this method so build-time config sets have exactly
+    /// the SLL semantics of the lazy simulator.
+    pub fn add_cached(
         &mut self,
         config: ATNConfig<'ephemeral>,
         merge_cache: &mut MergeCache<'ephemeral>,
