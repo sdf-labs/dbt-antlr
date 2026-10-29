@@ -1,0 +1,1338 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Bo Lin
+//! The SLL DFA classifier: subset construction, budgets, and trust rules.
+
+use std::collections::{BTreeSet, HashMap, VecDeque};
+
+use dbt_antlr_runtime::analysis::DFA;
+use dbt_antlr_runtime::analysis::{
+    ATN, ATNConfigSet, ATNStateRef, ATNStateType, Arena, BOUNDARY_TAINT, BitSet, Bump, DFAState,
+    EOF, FOREIGN_CONSUME_TAINT, IATNSimulator, INTERIOR_TAINT, PRECPRED_TAINT, ParserATNSimulator,
+    ParserATNSimulatorManager, PrecedencePredicateTransition, PredictionContext,
+    PredictionContextRef, PredictionMode, ProposedDFAState, RuleStartState, WIDENED_TAINT,
+    all_subsets_conflict, all_subsets_equal, conflicting_alt_subsets, get_alts,
+    has_sll_conflict_terminating_prediction,
+};
+
+use super::closure::{ClosedSet, Closure, ClosureFacts, PrecedenceClass, Taint};
+use super::table::{StaticDfaEdge, StaticDfaState, StaticDfaTable};
+use super::{CONFLICT_ESCAPE, Category, ESCAPE};
+
+/// The state budget of one decision table.
+pub(crate) const MAX_DFA_STATES: usize = 1000;
+/// Depth at which a hybrid table stops expanding and escapes.
+pub(crate) const HYBRID_DEPTH_CAP: usize = 4;
+/// State count at which a hybrid table stops expanding beyond depth 2.
+pub(crate) const HYBRID_STATE_CAP: usize = 64;
+/// Below this share of useful start edges a hybrid table is not emitted.
+pub(crate) const HYBRID_MIN_COVERAGE_PERCENT: u32 = 10;
+
+/// Taint bits that invalidate a trusted verdict when a second path adds them
+/// to an already interned state.
+const TRUST_TAINT: i32 =
+    WIDENED_TAINT | PRECPRED_TAINT | BOUNDARY_TAINT | FOREIGN_CONSUME_TAINT | INTERIOR_TAINT;
+
+const VIRTUAL_ALT_BASE: usize = 65_536;
+const MAX_TRACKED_DEPTH: usize = 30;
+const VARIABLE_DEPTH: usize = 31;
+
+/// The verdict of one DFA state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Verdict {
+    /// The state predicts this alternative.
+    Accept(i32),
+    /// The state escapes to the adaptive simulation, with the table marker it
+    /// carries ([`ESCAPE`] or [`CONFLICT_ESCAPE`]).
+    Escape(i32),
+    /// The state is a decision point: it needs outgoing edges.
+    Decide,
+}
+
+/// What the classifier remembers about one interned DFA state.
+#[derive(Clone, Debug)]
+struct StateFacts {
+    depth: usize,
+    verdict: Verdict,
+    taint: Taint,
+    fallback: i32,
+    conflicts: Vec<i32>,
+    /// The accept was reached by resolving a conflict (exact ambiguity or
+    /// uniform trust), not by finding a single viable alternative. Only this
+    /// kind of accept depends on the taint of the paths that reached the
+    /// state.
+    resolved_conflict: bool,
+    /// The state's successors were computed at least once.
+    expanded: bool,
+}
+
+/// The attempt-level bookkeeping one classification commits.
+///
+/// A classification is computed before the state is interned, because the
+/// runtime DFA needs the accept flag and the prediction up front. Only a
+/// *newly* interned state commits these effects: a lookahead path that reaches
+/// an already known config set must not count its conflicts twice, and must
+/// not abort a build whose state set is already complete.
+#[derive(Debug, Default)]
+struct ClassifyEffects {
+    exact_ambiguity: Option<BitSet>,
+    utrust: bool,
+    approximation: Option<BitSet>,
+    context_sensitive: Option<BitSet>,
+    conflict: Option<Vec<i32>>,
+    abort: bool,
+}
+
+impl StateFacts {
+    fn accept_value(&self) -> i32 {
+        match self.verdict {
+            Verdict::Accept(alt) => alt,
+            Verdict::Escape(marker) => marker,
+            Verdict::Decide => 0,
+        }
+    }
+}
+
+/// The policy of one build attempt.
+#[derive(Clone, Copy, Debug)]
+struct AttemptPolicy {
+    /// Widening bound: `i32::MAX` for the unbounded attempt, `0` for the fully
+    /// widened one.
+    depth_bound: i32,
+    /// Bound the construction and escape at the frontier instead of failing.
+    hybrid: bool,
+    /// Stop at the first conflict the construction does not trust, keeping the
+    /// work small for decisions that end up adaptive anyway.
+    abort_on_untrusted_conflict: bool,
+    /// Trust an exact-ambiguity conflict without the witness checks.
+    trust_exact_ambiguity: bool,
+}
+
+impl AttemptPolicy {
+    const fn unbounded() -> Self {
+        Self {
+            depth_bound: i32::MAX,
+            hybrid: false,
+            abort_on_untrusted_conflict: false,
+            trust_exact_ambiguity: true,
+        }
+    }
+
+    const fn widened() -> Self {
+        Self {
+            depth_bound: 0,
+            ..Self::unbounded()
+        }
+    }
+
+    const fn hybrid() -> Self {
+        Self {
+            hybrid: true,
+            ..Self::unbounded()
+        }
+    }
+
+    /// The first pass of the report: bail out of an untrusted conflict instead
+    /// of exploring the whole lookahead, so only the decisions that stay
+    /// adaptive pay for the deep pass.
+    const fn report_pass() -> Self {
+        Self {
+            abort_on_untrusted_conflict: true,
+            ..Self::unbounded()
+        }
+    }
+}
+
+/// The result of one build attempt.
+#[derive(Debug, Default)]
+struct Attempt {
+    decision: usize,
+    state_count: usize,
+    table: Option<StaticDfaTable>,
+    overflow: bool,
+    /// Set when the attempt stopped at an untrusted conflict.
+    stopped: bool,
+    facts: ClosureFacts,
+    utrust_resolutions: usize,
+    exact_ambiguities: Vec<BitSet>,
+    context_sensitive: Vec<BitSet>,
+    approximations: Vec<BitSet>,
+    /// Alternative sets of the conflicts the construction did not trust.
+    conflicts: Vec<Vec<i32>>,
+    /// DFA state number of the first conflict, for the report witness.
+    first_conflict_state: Option<i32>,
+    /// The same config set was reached by two paths with different trust
+    /// taint, so no verdict derived from the first path can be trusted.
+    taint_conflict: bool,
+}
+
+/// The precedence classes of one precedence-loop decision.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PrecedenceTables {
+    /// The precedence cut points of the loop, ascending.
+    pub(crate) cutoffs: Vec<i32>,
+    /// One table per class: `p<=cutoffs[0]`, `p=cutoffs[i-1]+1..=cutoffs[i]`,
+    /// and `p>cutoffs[last]`.
+    pub(crate) tables: Vec<Option<StaticDfaTable>>,
+    pub(crate) adaptive_classes: usize,
+    pub(crate) escapes: usize,
+}
+
+/// What the classifier decided about one prediction decision.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct DecisionResult {
+    pub(crate) decision: usize,
+    pub(crate) rule_index: usize,
+    pub(crate) state_number: i32,
+    pub(crate) category: Category,
+    /// Longest lookahead of a finite table, `-1` when unbounded or unknown.
+    pub(crate) k: i32,
+    pub(crate) num_dfa_states: usize,
+    pub(crate) cyclic: bool,
+    pub(crate) used_widening: bool,
+    pub(crate) saw_predicate: bool,
+    pub(crate) first_predicate: Option<(i32, i32)>,
+    pub(crate) saw_precedence_predicate: bool,
+    pub(crate) utrust_resolutions: usize,
+    pub(crate) conflict_witness: Option<Vec<i32>>,
+    pub(crate) budget_witness: Option<Vec<i32>>,
+    pub(crate) conflicts: Vec<Vec<i32>>,
+    pub(crate) approximations: Vec<Vec<i32>>,
+    pub(crate) escapes: usize,
+    /// Share of the start alphabet that reaches an accept state, in percent.
+    pub(crate) coverage_percent: u32,
+    pub(crate) table: Option<StaticDfaTable>,
+    pub(crate) precedence: Option<PrecedenceTables>,
+}
+
+impl DecisionResult {
+    fn new(decision: usize, state: ATNStateRef) -> Self {
+        Self {
+            decision,
+            rule_index: usize::try_from(state.get_rule_index()).unwrap_or(0),
+            state_number: state.get_state_number(),
+            category: Category::LLK,
+            k: -1,
+            num_dfa_states: 0,
+            cyclic: false,
+            used_widening: false,
+            saw_predicate: false,
+            first_predicate: None,
+            saw_precedence_predicate: false,
+            utrust_resolutions: 0,
+            conflict_witness: None,
+            budget_witness: None,
+            conflicts: Vec::new(),
+            approximations: Vec::new(),
+            escapes: 0,
+            coverage_percent: 0,
+            table: None,
+            precedence: None,
+        }
+    }
+
+    /// A short description of how the decision falls back at runtime, for
+    /// `--report-decisions`.
+    pub(crate) fn fallback_text(&self) -> String {
+        if self.category == Category::LR_PRECEDENCE {
+            let Some(precedence) = &self.precedence else {
+                return "all".to_owned();
+            };
+            if self.escapes == 0 && precedence.adaptive_classes == 0 {
+                return "0".to_owned();
+            }
+            let mut text = String::new();
+            if self.escapes > 0 {
+                text.push_str(&format!("{}e", self.escapes));
+            }
+            if precedence.adaptive_classes > 0 {
+                if !text.is_empty() {
+                    text.push('+');
+                }
+                text.push_str(&format!("{}c", precedence.adaptive_classes));
+            }
+            return text;
+        }
+        if self.category == Category::LL1 {
+            return "0".to_owned();
+        }
+        if self.table.is_none() {
+            return "all".to_owned();
+        }
+        if self.escapes > 0 {
+            self.escapes.to_string()
+        } else {
+            "0".to_owned()
+        }
+    }
+
+    /// `true` when the decision never falls back to the adaptive simulation.
+    ///
+    /// `LL(1)` and non-greedy decisions need no table at all, and a table
+    /// without escapes decides on its own; everything else keeps at least one
+    /// adaptive path.
+    pub(crate) fn is_fully_static(&self) -> bool {
+        match self.category {
+            Category::LL1
+            | Category::NON_GREEDY
+            | Category::LLK
+            | Category::LLSTAR
+            | Category::EXACT_AMBIG => true,
+            Category::LR_PRECEDENCE => {
+                self.escapes == 0
+                    && self
+                        .precedence
+                        .as_ref()
+                        .is_some_and(|precedence| precedence.adaptive_classes == 0)
+            }
+            Category::HYBRID => false,
+            Category::CONTEXT_SENSITIVE | Category::PREDICATED | Category::OVERFLOW => false,
+        }
+    }
+}
+
+/// Classifies the decision states of one compiled parser unit.
+pub(crate) struct DecisionClassifier {
+    atn: &'static ATN,
+    ll1_disjoint: Vec<bool>,
+    completion_depths: HashMap<i32, BitSet>,
+    /// Configs one build attempt may visit before it is treated as overflow.
+    visit_budget: u64,
+}
+
+impl DecisionClassifier {
+    pub(crate) fn new(atn: &'static ATN, ll1_disjoint: Vec<bool>) -> Self {
+        Self {
+            atn,
+            ll1_disjoint,
+            completion_depths: HashMap::new(),
+            visit_budget: super::closure::DEFAULT_VISIT_BUDGET,
+        }
+    }
+
+    /// Sets the per-attempt visit budget, for tests that classify a whole
+    /// corpus and only care that no attempt runs away.
+    #[cfg(test)]
+    pub(crate) fn with_visit_budget(mut self, budget: u64) -> Self {
+        self.visit_budget = budget;
+        self
+    }
+
+    /// Classifies every decision.
+    ///
+    /// The first pass keeps the work small by stopping at the first conflict it
+    /// does not trust; decisions that end up adaptive are then classified again
+    /// without that shortcut, because their report wants the real witness.
+    pub(crate) fn classify_all(&mut self) -> Vec<DecisionResult> {
+        let decisions = self.atn.decision_to_state.len();
+        let mut results: Vec<DecisionResult> = (0..decisions)
+            .map(|decision| self.classify(decision, AttemptPolicy::report_pass()))
+            .collect();
+        for (decision, result) in results.iter_mut().enumerate() {
+            let adaptive_fallback = if result.category == Category::LR_PRECEDENCE {
+                result
+                    .precedence
+                    .as_ref()
+                    .is_none_or(|precedence| precedence.adaptive_classes > 0)
+            } else {
+                result.category != Category::LL1 && result.table.is_none()
+            };
+            if adaptive_fallback {
+                *result = self.classify(decision, AttemptPolicy::unbounded());
+            }
+        }
+        results
+    }
+
+    /// Classifies one decision under `base` policy.
+    fn classify(&mut self, decision: usize, base: AttemptPolicy) -> DecisionResult {
+        let state = self.atn.decision_to_state[decision];
+        let mut result = DecisionResult::new(decision, state);
+
+        if state.is_nongreedy_decision() == Some(true) {
+            result.category = Category::NON_GREEDY;
+            return result;
+        }
+        if self.is_precedence_loop_decision(state) {
+            return self.classify_precedence(result, base);
+        }
+        if self.ll1_disjoint.get(decision).copied() == Some(true) {
+            result.category = Category::LL1;
+            result.k = 1;
+            return result;
+        }
+        if state.get_transitions().len() >= VIRTUAL_ALT_BASE {
+            result.category = Category::OVERFLOW;
+            return result;
+        }
+
+        let mut outcome = self.attempt(decision, base, None);
+        if outcome.overflow {
+            // The retry keeps the abort policy: it belongs to the pass, not to
+            // one depth bound, so the cheap first pass stays cheap.
+            let mut widened = AttemptPolicy::widened();
+            widened.abort_on_untrusted_conflict = base.abort_on_untrusted_conflict;
+            outcome = self.attempt(decision, widened, None);
+        }
+        let mut result = self.finalize(outcome);
+        if result.table.is_none()
+            && matches!(
+                result.category,
+                Category::OVERFLOW | Category::CONTEXT_SENSITIVE
+            )
+        {
+            let hybrid_attempt = self.attempt(decision, AttemptPolicy::hybrid(), None);
+            let hybrid = self.finalize(hybrid_attempt);
+            if hybrid.table.is_some() {
+                result = hybrid;
+            }
+        }
+        result
+    }
+
+    /// Turns what one attempt observed into a decision result: the category,
+    /// and the table when the attempt earns one.
+    fn finalize(&mut self, outcome: Attempt) -> DecisionResult {
+        let decision = outcome.decision;
+        let mut result = DecisionResult::new(decision, self.atn.decision_to_state[decision]);
+        apply_facts(&mut result, &outcome);
+
+        if outcome.overflow {
+            result.category = Category::OVERFLOW;
+            result.num_dfa_states = outcome.state_count;
+            return result;
+        }
+
+        let Some(table) = outcome.table else {
+            result.category = if !outcome.conflicts.is_empty() {
+                Category::CONTEXT_SENSITIVE
+            } else {
+                Category::OVERFLOW
+            };
+            return result;
+        };
+
+        result.num_dfa_states = table.states.len();
+        result.cyclic = table.cyclic;
+        result.k = table.max_k;
+        result.escapes = table.escapes();
+        result.coverage_percent = (table.start_coverage() * 100.0) as u32;
+        result.conflict_witness = table
+            .first_escape(CONFLICT_ESCAPE)
+            .or_else(|| {
+                outcome.first_conflict_state.and_then(|state| {
+                    usize::try_from(state)
+                        .ok()
+                        .filter(|state| *state < table.states.len())
+                })
+            })
+            .and_then(|state| table.witness(state));
+        if let Some(state) = table.first_escape(ESCAPE) {
+            result.budget_witness = table.witness(state);
+        }
+
+        if outcome.facts.saw_predicate {
+            // User predicates gate viability in ways a table cannot represent,
+            // so a decision that crosses one is never table-eligible.
+            result.category = Category::PREDICATED;
+            return result;
+        }
+        if outcome.taint_conflict {
+            // Two paths disagreed on the taint of one config set, so no accept
+            // derived from it is trustworthy.
+            result.category = Category::CONTEXT_SENSITIVE;
+            return result;
+        }
+        if result.escapes > 0 {
+            result.category = Category::HYBRID;
+            // A table whose start state escapes answers nothing at all.
+            let start_decides = table.states.first().is_some_and(|state| !state.is_escape());
+            if start_decides && result.coverage_percent >= HYBRID_MIN_COVERAGE_PERCENT {
+                result.table = Some(table);
+            }
+            return result;
+        }
+
+        result.category =
+            if !outcome.context_sensitive.is_empty() || !outcome.approximations.is_empty() {
+                Category::CONTEXT_SENSITIVE
+            } else if !outcome.exact_ambiguities.is_empty() {
+                Category::EXACT_AMBIG
+            } else if table.cyclic {
+                Category::LLSTAR
+            } else {
+                Category::LLK
+            };
+        // Only a table that decides every reachable lookahead is worth
+        // emitting: a conflict-resolving state would have to escape anyway.
+        if matches!(
+            result.category,
+            Category::LLK | Category::LLSTAR | Category::EXACT_AMBIG
+        ) {
+            result.table = Some(table);
+        }
+        result
+    }
+
+    fn is_precedence_loop_decision(&self, state: ATNStateRef) -> bool {
+        if state.state_type() != ATNStateType::StarLoopEntry {
+            return false;
+        }
+        let rule_start = self.atn.rule_to_start_state[state.get_rule_index() as usize];
+        let is_left_recursive = rule_start
+            .try_as::<RuleStartState>()
+            .is_some_and(|start| start.is_left_recursive);
+        if !is_left_recursive {
+            return false;
+        }
+        let transitions = state.get_transitions();
+        let Some(last) = transitions.last() else {
+            return false;
+        };
+        let loop_end = last.get_target();
+        if loop_end.state_type() != ATNStateType::LoopEnd {
+            return false;
+        }
+        loop_end.has_epsilon_only_transitions()
+            && loop_end
+                .get_transitions()
+                .first()
+                .is_some_and(|transition| {
+                    transition.get_target().state_type() == ATNStateType::RuleStop
+                })
+    }
+
+    fn classify_precedence(
+        &mut self,
+        mut result: DecisionResult,
+        base: AttemptPolicy,
+    ) -> DecisionResult {
+        result.category = Category::LR_PRECEDENCE;
+        let state = self.atn.decision_to_state[result.decision];
+        let target_rule = state.get_rule_index();
+        let mut cutoffs = BTreeSet::new();
+        for atn_state in self.atn.iter_states() {
+            if atn_state.get_rule_index() != target_rule {
+                continue;
+            }
+            for transition in atn_state.get_transitions() {
+                if let Some(predicate) = transition.try_as::<PrecedencePredicateTransition>() {
+                    cutoffs.insert(predicate.precedence());
+                }
+            }
+        }
+        if cutoffs.is_empty() {
+            return result;
+        }
+
+        let cutoffs: Vec<i32> = cutoffs.into_iter().collect();
+        let mut representatives = Vec::with_capacity(cutoffs.len() + 1);
+        representatives.push(0);
+        for cutoff in &cutoffs {
+            representatives.push(cutoff.saturating_add(1));
+        }
+
+        let mut tables: Vec<Option<StaticDfaTable>> = vec![None; representatives.len()];
+        let mut any_table = false;
+        let mut max_k = 0_i32;
+        let mut total_states = 0_usize;
+        let mut adaptive_classes = 0_usize;
+        let mut escapes = 0_usize;
+
+        for class_index in 0..representatives.len() {
+            let class = PrecedenceClass {
+                rule_index: target_rule,
+                eval_value: representatives[class_index],
+                lo: representatives[class_index],
+                hi: cutoffs.get(class_index).copied().unwrap_or(i32::MAX),
+            };
+            let mut policy = AttemptPolicy::unbounded();
+            policy.trust_exact_ambiguity = false;
+            policy.abort_on_untrusted_conflict = base.abort_on_untrusted_conflict;
+            let attempt = self.attempt(result.decision, policy, Some(class));
+            let mut outcome = self.finalize(attempt);
+            if outcome.category == Category::OVERFLOW {
+                let mut widened = AttemptPolicy::widened();
+                widened.trust_exact_ambiguity = false;
+                widened.abort_on_untrusted_conflict = base.abort_on_untrusted_conflict;
+                let attempt = self.attempt(result.decision, widened, Some(class));
+                outcome = self.finalize(attempt);
+            }
+            if outcome.table.is_none() && outcome.category != Category::PREDICATED {
+                let mut hybrid = AttemptPolicy::hybrid();
+                hybrid.trust_exact_ambiguity = false;
+                let attempt = self.attempt(result.decision, hybrid, Some(class));
+                let candidate = self.finalize(attempt);
+                if candidate.table.is_some() {
+                    outcome = candidate;
+                }
+            }
+
+            result.used_widening |= outcome.used_widening;
+            result.saw_predicate |= outcome.saw_predicate;
+            if result.first_predicate.is_none() {
+                result.first_predicate = outcome.first_predicate;
+            }
+            result.saw_precedence_predicate |= outcome.saw_precedence_predicate;
+            result.utrust_resolutions += outcome.utrust_resolutions;
+            if result.conflict_witness.is_none() {
+                result.conflict_witness = outcome.conflict_witness.clone();
+            }
+            if result.budget_witness.is_none() {
+                result.budget_witness = outcome.budget_witness.clone();
+            }
+
+            match outcome.table {
+                Some(table) => {
+                    any_table = true;
+                    max_k = max_k.max(table.max_k);
+                    total_states += table.states.len();
+                    escapes += table.escapes();
+                    tables[class_index] = Some(table);
+                }
+                None => {
+                    adaptive_classes += 1;
+                }
+            }
+        }
+
+        result.precedence = Some(PrecedenceTables {
+            cutoffs,
+            tables,
+            adaptive_classes,
+            escapes,
+        });
+        if any_table {
+            result.k = max_k;
+            result.num_dfa_states = total_states;
+        }
+        result.escapes = escapes;
+        result
+    }
+
+    /// One build attempt: fresh simulator, fresh arena, fresh scratch arena.
+    ///
+    /// A fresh manager per attempt is deliberate. The manager owns the vector
+    /// of DFAs, and a DFA keeps the states interned so far; the next attempt
+    /// (a different widening bound, or a hybrid bound) must start with an
+    /// empty state set, or it would reuse verdicts computed under the previous
+    /// policy.
+    fn attempt(
+        &mut self,
+        decision: usize,
+        policy: AttemptPolicy,
+        precedence: Option<PrecedenceClass>,
+    ) -> Attempt {
+        let atn = self.atn;
+        let mut completion_depths = std::mem::take(&mut self.completion_depths);
+        let attempt = Arena::with(|arena| {
+            let manager = ParserATNSimulatorManager::new(atn);
+            let simulator = ParserATNSimulator::new(manager.get_simulator(arena));
+            let scratch = Bump::new();
+            let mut build = DecisionBuild {
+                atn,
+                simulator: &simulator,
+                dfa: simulator
+                    .decision_to_dfa(decision)
+                    .expect("every decision has a DFA"),
+                scratch: &scratch,
+                closure: Closure::new(
+                    atn,
+                    &scratch,
+                    policy.depth_bound,
+                    precedence,
+                    self.visit_budget,
+                ),
+                policy,
+                decision_state: atn.decision_to_state[decision],
+                decision,
+                info: HashMap::new(),
+                states: Vec::new(),
+                queue: VecDeque::new(),
+                completion_depths: &mut completion_depths,
+                attempt: Attempt {
+                    decision,
+                    ..Attempt::default()
+                },
+            };
+            build.run()
+        });
+        self.completion_depths = completion_depths;
+        attempt
+    }
+}
+
+/// Merges the facts of one attempt into the decision result.
+fn apply_facts(result: &mut DecisionResult, attempt: &Attempt) {
+    result.used_widening |= attempt.facts.used_widening;
+    result.saw_predicate |= attempt.facts.saw_predicate;
+    result.saw_precedence_predicate |= attempt.facts.saw_precedence_predicate;
+    if result.first_predicate.is_none() {
+        result.first_predicate = attempt.facts.first_predicate;
+    }
+    result.utrust_resolutions += attempt.utrust_resolutions;
+    for conflict in &attempt.conflicts {
+        if !result.conflicts.contains(conflict) {
+            result.conflicts.push(conflict.clone());
+        }
+    }
+    for conflict in &attempt.approximations {
+        let alts = conflict.iter().map(|alt| alt as i32).collect::<Vec<_>>();
+        if !result.approximations.contains(&alts) {
+            result.approximations.push(alts);
+        }
+    }
+}
+
+/// One decision build, alive for one attempt.
+struct DecisionBuild<'b, 'sim, 'a> {
+    atn: &'static ATN,
+    simulator: &'b ParserATNSimulator<'sim>,
+    dfa: &'sim DFA<'sim, ATNConfigSet<'sim>>,
+    scratch: &'a Bump,
+    closure: Closure<'static, 'a>,
+    policy: AttemptPolicy,
+    decision: usize,
+    decision_state: ATNStateRef,
+    info: HashMap<i32, StateFacts>,
+    /// DFA states in creation order; the index is the state number.
+    states: Vec<&'sim DFAState<'sim, ATNConfigSet<'sim>>>,
+    queue: VecDeque<i32>,
+    completion_depths: &'a mut HashMap<i32, BitSet>,
+    attempt: Attempt,
+}
+
+impl<'b, 'sim, 'a> DecisionBuild<'b, 'sim, 'a>
+where
+    'sim: 'a,
+{
+    fn run(&mut self) -> Attempt {
+        let start = self.closure.start(self.decision_state);
+        if self.closure.exhausted {
+            self.attempt.overflow = true;
+            return std::mem::take(&mut self.attempt);
+        }
+        let Some(start_state) = self.intern(start, 0) else {
+            self.attempt.overflow = true;
+            return std::mem::take(&mut self.attempt);
+        };
+        self.dfa.set_s0(start_state);
+        if self.attempt.overflow || self.closure.exhausted {
+            self.attempt.decision = self.decision;
+            self.attempt.state_count = self.states.len();
+            self.attempt.facts = std::mem::take(&mut self.closure.facts);
+            return std::mem::take(&mut self.attempt);
+        }
+
+        while let Some(number) = self.queue.pop_front() {
+            let Some(facts) = self.info.get(&number).cloned() else {
+                continue;
+            };
+            if facts.verdict != Verdict::Decide {
+                continue;
+            }
+            // The hybrid frontier is a *creation* budget: a state that was
+            // already expanded keeps its successors, even though re-expanding
+            // it after a taint increase may now run past the cap.
+            if !facts.expanded
+                && self.policy.hybrid
+                && (facts.depth >= HYBRID_DEPTH_CAP
+                    || (self.states.len() >= HYBRID_STATE_CAP && facts.depth >= 2))
+            {
+                self.set_escape(number, ESCAPE);
+                continue;
+            }
+            if let Some(facts) = self.info.get_mut(&number) {
+                facts.expanded = true;
+            }
+
+            let state = self.states[number as usize];
+            let closed = ClosedSet {
+                configs: state.configs().get_items().cloned().collect(),
+                taint: facts.taint.clone(),
+            };
+            let successors = self.closure.successors(&closed);
+            if self.closure.exhausted {
+                self.attempt.overflow = true;
+                break;
+            }
+            for (label, successor) in successors {
+                let Some(target) = self.intern(successor, facts.depth + 1) else {
+                    self.attempt.overflow = true;
+                    break;
+                };
+                for interval in label.as_interval_set().as_slice() {
+                    for token in interval.a..=interval.b {
+                        if token < EOF || token > self.atn.max_token_type {
+                            continue;
+                        }
+                        self.dfa.set_edge(state, (token + 1) as usize, target);
+                    }
+                }
+            }
+            if self.attempt.overflow {
+                break;
+            }
+        }
+
+        if !self.attempt.overflow {
+            self.attempt.table = Some(self.snapshot());
+        }
+        self.attempt.decision = self.decision;
+        self.attempt.state_count = self.states.len();
+        self.attempt.facts = std::mem::take(&mut self.closure.facts);
+        std::mem::take(&mut self.attempt)
+    }
+
+    /// Classifies a closed set and interns it as a DFA state.
+    fn intern(
+        &mut self,
+        closed: ClosedSet<'a>,
+        depth: usize,
+    ) -> Option<&'sim DFAState<'sim, ATNConfigSet<'sim>>> {
+        let closed = self.closure.canonical_set(closed);
+        let (facts, effects) = self.classify(&closed, depth);
+        let interned = self.closure.merged_config_set(&closed);
+        let mut proposed = ProposedDFAState::new(interned);
+        proposed.is_accept_state = matches!(facts.verdict, Verdict::Accept(_));
+        proposed.prediction = facts.accept_value();
+        let state = self.dfa.add_state(proposed, self.simulator);
+        let number = state.state_number();
+        let newly_interned = !self.info.contains_key(&number);
+        if number as usize >= self.states.len() {
+            self.states.push(state);
+        }
+        if !newly_interned {
+            // The same config set is reachable through paths whose taint
+            // differs, and a DFA state's verdict is decided once. Widening,
+            // precedence-guard or boundary taint on *any* path invalidates a
+            // verdict that trusted the config set, so the attempt gives up
+            // rather than emit a table the runtime could disagree with.
+            let state_configs = self.states[number as usize].configs();
+            let mut new_trust_taint = false;
+            let mut verdict = Verdict::Decide;
+            let mut resolved_conflict = false;
+            if let Some(existing) = self.info.get_mut(&number) {
+                verdict = existing.verdict;
+                resolved_conflict = existing.resolved_conflict;
+                for (key, taint) in &facts.taint {
+                    let entry = existing.taint.entry(*key).or_insert(0);
+                    if *taint & !*entry & TRUST_TAINT != 0 {
+                        new_trust_taint = true;
+                    }
+                    *entry |= *taint;
+                }
+                // The fallback is a property of the whole set's taint, so a
+                // later boundary path can add one.
+                existing.fallback = fallback_of(state_configs, &existing.taint);
+            }
+            if new_trust_taint {
+                self.on_taint_increase(number, verdict, resolved_conflict);
+            }
+            return Some(state);
+        }
+        if number as usize >= MAX_DFA_STATES {
+            self.attempt.overflow = true;
+            return None;
+        }
+        if effects.conflict.is_some() {
+            self.attempt.first_conflict_state.get_or_insert(number);
+        }
+        self.commit(effects);
+        let decide = facts.verdict == Verdict::Decide;
+        self.info.insert(number, facts);
+        if decide && !self.attempt.overflow {
+            self.queue.push_back(number);
+        }
+        Some(state)
+    }
+
+    /// Reacts to a second path adding trust taint to an already interned
+    /// state.
+    ///
+    /// The state's verdict was decided once, from the first path's taint, and a
+    /// state cannot be both trusted and untrusted: a table cannot carry a
+    /// verdict that any path contradicts. A trusted accept therefore becomes an
+    /// escape (hybrid) or invalidates the whole attempt (a non-hybrid table has
+    /// no escapes), while a decision state is queued again so its successors
+    /// see the union of both paths' taint.
+    fn on_taint_increase(&mut self, number: i32, verdict: Verdict, resolved_conflict: bool) {
+        match verdict {
+            // A single-viable-alternative accept does not depend on taint: no
+            // other alternative survives the lookahead, so there is nothing a
+            // different path could add. A *conflict-resolved* accept does: the
+            // min-alt argument only holds while every path that reaches the
+            // state is taint-free.
+            Verdict::Accept(_) if resolved_conflict => {
+                self.attempt.first_conflict_state.get_or_insert(number);
+                if self.policy.hybrid {
+                    if let Some(facts) = self.info.get_mut(&number) {
+                        facts.verdict = Verdict::Escape(CONFLICT_ESCAPE);
+                    }
+                } else {
+                    self.attempt.taint_conflict = true;
+                }
+            }
+            Verdict::Accept(_) | Verdict::Escape(_) => {}
+            Verdict::Decide => self.queue.push_back(number),
+        }
+    }
+
+    /// Records the attempt-level bookkeeping of a newly interned state.
+    fn commit(&mut self, effects: ClassifyEffects) {
+        if effects.utrust {
+            self.attempt.utrust_resolutions += 1;
+        }
+        if let Some(alts) = effects.exact_ambiguity {
+            self.attempt.exact_ambiguities.push(alts);
+        }
+        if let Some(alts) = effects.approximation {
+            self.attempt.approximations.push(alts);
+        }
+        if let Some(alts) = effects.context_sensitive {
+            self.attempt.context_sensitive.push(alts);
+        }
+        if let Some(alts) = effects.conflict {
+            self.attempt.conflicts.push(alts);
+        }
+        if effects.abort {
+            self.attempt.stopped = true;
+            self.attempt.overflow = true;
+        }
+    }
+
+    /// Decides what a closed config set means: an accept, an escape, or a
+    /// point that needs successors.
+    fn classify(&mut self, closed: &ClosedSet<'a>, depth: usize) -> (StateFacts, ClassifyEffects) {
+        let mut effects = ClassifyEffects::default();
+        let mut fallback = 0;
+        let mut alts = BitSet::new();
+        for config in &closed.configs {
+            alts.insert(config.get_alt() as usize);
+            if closed.taint_of(config) & BOUNDARY_TAINT != 0
+                && (fallback == 0 || config.get_alt() < fallback)
+            {
+                fallback = config.get_alt();
+            }
+        }
+        let mut facts = StateFacts {
+            depth,
+            verdict: Verdict::Decide,
+            taint: closed.taint.clone(),
+            fallback,
+            conflicts: Vec::new(),
+            resolved_conflict: false,
+            expanded: false,
+        };
+        if alts.len() <= 1 {
+            facts.verdict = Verdict::Accept(alts.iter().next().map_or(0, |alt| alt as i32));
+            return (facts, effects);
+        }
+        let all_stops = !closed.configs.is_empty()
+            && closed
+                .configs
+                .iter()
+                .all(|config| config.get_state().state_type() == ATNStateType::RuleStop);
+        let merged = self.closure.merged_config_set(closed);
+        // A state where every config sits at a rule stop is a conflict for the
+        // runtime (`compute_target_state` checks it before the SLL predicate):
+        // all alternatives already left the decision and only full-context
+        // prediction can tell which one the caller frame allows.
+        if !all_stops
+            && !has_sll_conflict_terminating_prediction(self.scratch, PredictionMode::SLL, &merged)
+        {
+            return (facts, effects);
+        }
+
+        let subsets = conflicting_alt_subsets(self.scratch, &merged);
+        let exact = all_subsets_conflict(subsets.iter()) && all_subsets_equal(subsets.iter());
+        let mut widened_tainted = false;
+        let mut precedence_tainted = false;
+        let mut any_boundary = false;
+        let mut all_boundary = true;
+        for config in &closed.configs {
+            let taint = closed.taint_of(config);
+            if taint & WIDENED_TAINT != 0 {
+                widened_tainted = true;
+            }
+            if taint & PRECPRED_TAINT != 0 {
+                precedence_tainted = true;
+            }
+            if taint & BOUNDARY_TAINT != 0 {
+                any_boundary = true;
+            }
+            // "All configs crossed the boundary" only holds when no path
+            // reached this set from inside the decision.
+            if taint & BOUNDARY_TAINT == 0 || taint & INTERIOR_TAINT != 0 {
+                all_boundary = false;
+            }
+        }
+        let conflicting = get_alts(subsets.into_iter());
+        facts.conflicts = conflicting.iter().map(|alt| alt as i32).collect();
+
+        let untrusted = precedence_tainted
+            || widened_tainted
+            || (any_boundary && !all_boundary)
+            || !self.uniform_pop_depths(&conflicting, any_boundary, all_boundary)
+            || !self.policy.trust_exact_ambiguity;
+
+        if !untrusted && exact {
+            facts.resolved_conflict = true;
+            effects.exact_ambiguity = Some(conflicting.clone());
+            facts.verdict = Verdict::Accept(conflicting.iter().next().map_or(0, |alt| alt as i32));
+            return (facts, effects);
+        }
+
+        if depth > 0 {
+            let min_alt = self.utrust_min_alt(closed, &conflicting, any_boundary, all_boundary);
+            if min_alt > 0 {
+                facts.resolved_conflict = true;
+                effects.utrust = true;
+                effects.exact_ambiguity = Some(conflicting);
+                facts.verdict = Verdict::Accept(min_alt);
+                return (facts, effects);
+            }
+        }
+        if untrusted {
+            effects.approximation = Some(conflicting.clone());
+        } else {
+            effects.context_sensitive = Some(conflicting.clone());
+        }
+        effects.conflict = Some(facts.conflicts.clone());
+
+        if self.policy.hybrid {
+            facts.verdict = Verdict::Escape(CONFLICT_ESCAPE);
+        } else if self.policy.abort_on_untrusted_conflict {
+            effects.abort = true;
+        }
+        (facts, effects)
+    }
+
+    fn set_escape(&mut self, number: i32, marker: i32) {
+        if let Some(facts) = self.info.get_mut(&number) {
+            if matches!(facts.verdict, Verdict::Escape(_)) {
+                return;
+            }
+            facts.verdict = Verdict::Escape(marker);
+        }
+    }
+
+    fn snapshot(&self) -> StaticDfaTable {
+        let mut states: Vec<StaticDfaState> = self
+            .states
+            .iter()
+            .map(|state| {
+                let number = state.state_number();
+                let facts = self.info.get(&number);
+                StaticDfaState {
+                    accept: facts.map_or(0, StateFacts::accept_value),
+                    fallback: facts.map_or(0, |facts| facts.fallback),
+                    depth: facts.map_or(0, |facts| facts.depth),
+                    conflicts: facts
+                        .map(|facts| facts.conflicts.clone())
+                        .unwrap_or_default(),
+                    edges: Vec::new(),
+                }
+            })
+            .collect();
+
+        let mut per_state: Vec<Vec<(i32, usize)>> = vec![Vec::new(); states.len()];
+        for (from, symbol, to) in self.dfa.enumerate_edges() {
+            let from = from.state_number() as usize;
+            let to = to.state_number() as usize;
+            if from < per_state.len() && to < states.len() {
+                per_state[from].push((symbol as i32 - 1, to));
+            }
+        }
+        for (index, mut edges) in per_state.into_iter().enumerate() {
+            edges.sort_unstable();
+            let mut merged: Vec<StaticDfaEdge> = Vec::new();
+            for (token, target) in edges {
+                match merged.last_mut() {
+                    Some(edge) if edge.target == target && edge.hi + 1 == token => edge.hi = token,
+                    _ => merged.push(StaticDfaEdge {
+                        lo: token,
+                        hi: token,
+                        target,
+                    }),
+                }
+            }
+            states[index].edges = merged;
+        }
+
+        StaticDfaTable::finish(self.decision, states)
+    }
+
+    /// `true` when the conflicting alternatives leave the decision after the
+    /// same number of tokens: the ambiguity is then faithful to the runtime.
+    fn uniform_pop_depths(
+        &mut self,
+        conflicting: &BitSet,
+        any_boundary: bool,
+        all_boundary: bool,
+    ) -> bool {
+        if !any_boundary {
+            return true;
+        }
+        if !all_boundary {
+            return false;
+        }
+        if self.policy.depth_bound == 0 {
+            return false;
+        }
+        let alt_starts: Vec<ATNStateRef> = self
+            .decision_state
+            .get_transitions()
+            .iter()
+            .map(|transition| transition.get_target())
+            .collect();
+        let mut reference: Option<usize> = None;
+        for alt in conflicting {
+            if alt == 0 || alt > alt_starts.len() {
+                return false;
+            }
+            let depths = self.completion_depths(alt_starts[alt - 1]);
+            if depths.len() != 1 || depths.contains(VARIABLE_DEPTH) {
+                return false;
+            }
+            let depth = depths.iter().next().unwrap();
+            match reference {
+                None => reference = Some(depth),
+                Some(known) if known != depth => return false,
+                Some(_) => {}
+            }
+        }
+        true
+    }
+
+    fn completion_depths(&mut self, alt_start: ATNStateRef) -> BitSet {
+        let state_number = alt_start.get_state_number();
+        if let Some(cached) = self.completion_depths.get(&state_number) {
+            return cached.clone();
+        }
+        let mut visiting = BTreeSet::new();
+        let mut budget = 100_000_i32;
+        let depths = token_counts_to_stop(alt_start, &mut visiting, &mut budget);
+        self.completion_depths.insert(state_number, depths.clone());
+        depths
+    }
+
+    /// The "untrusted-but-uniform" resolution: when every conflicting state is
+    /// attested by a faithful config of the lowest alternative, predict it.
+    fn utrust_min_alt(
+        &mut self,
+        closed: &ClosedSet<'a>,
+        conflicting: &BitSet,
+        any_boundary: bool,
+        all_boundary: bool,
+    ) -> i32 {
+        if any_boundary && !all_boundary {
+            return 0;
+        }
+        let Some(min_alt) = conflicting.iter().next() else {
+            return 0;
+        };
+        let min_alt = min_alt as i32;
+
+        let mut clean_by_state: HashMap<i32, Vec<dbt_antlr_runtime::analysis::ATNConfig<'a>>> =
+            HashMap::new();
+        for config in &closed.configs {
+            if config.get_alt() != min_alt {
+                continue;
+            }
+            // Only a config whose every path stayed inside the decision and
+            // never had its context widened or its precedence guard assumed can
+            // attest for the lowest alternative.
+            if closed.taint_of(config) & (BOUNDARY_TAINT | WIDENED_TAINT | PRECPRED_TAINT) != 0 {
+                continue;
+            }
+            clean_by_state
+                .entry(config.get_state().get_state_number())
+                .or_default()
+                .push(config.clone());
+        }
+        if clean_by_state.is_empty() {
+            return 0;
+        }
+
+        let mut by_state_contexts: HashMap<i32, Vec<PredictionContextRef<'a>>> = HashMap::new();
+        for config in &closed.configs {
+            let state_number = config.get_state().get_state_number();
+            let context = config.get_context().expect("config has a context");
+            let entries = by_state_contexts.entry(state_number).or_default();
+            if !entries.contains(&context) {
+                entries.push(context);
+            }
+        }
+
+        for (state_number, contexts) in by_state_contexts {
+            let Some(attestations) = clean_by_state.get(&state_number) else {
+                return 0;
+            };
+            for context in contexts {
+                let assured = attestations.iter().any(|config| {
+                    top_prefix_wildcard_match(
+                        config.get_context().expect("config has a context"),
+                        context,
+                        self.scratch,
+                    )
+                });
+                if !assured {
+                    return 0;
+                }
+            }
+        }
+        min_alt
+    }
+}
+
+/// The lowest alternative that already left the decision, over the union of
+/// every path's taint.
+fn fallback_of(configs: &ATNConfigSet<'_>, taint: &Taint) -> i32 {
+    let mut fallback = 0;
+    for config in configs.get_items() {
+        let key = (config.get_state().get_state_number(), config.get_alt());
+        if taint.get(&key).copied().unwrap_or(0) & BOUNDARY_TAINT != 0
+            && (fallback == 0 || config.get_alt() < fallback)
+        {
+            fallback = config.get_alt();
+        }
+    }
+    fallback
+}
+
+fn token_counts_to_stop(
+    state: ATNStateRef,
+    visiting: &mut BTreeSet<i32>,
+    budget: &mut i32,
+) -> BitSet {
+    let mut out = BitSet::with_capacity(VARIABLE_DEPTH + 1);
+    if state.state_type() == ATNStateType::RuleStop {
+        out.insert(0);
+        return out;
+    }
+    let previous_budget = *budget;
+    *budget -= 1;
+    if previous_budget <= 0 || !visiting.insert(state.get_state_number()) {
+        out.insert(VARIABLE_DEPTH);
+        return out;
+    }
+    for transition in state.get_transitions() {
+        let sub = if let Some(rule) =
+            transition.try_as::<dbt_antlr_runtime::analysis::RuleTransition>()
+        {
+            let inner = token_counts_to_stop(rule.get_target(), visiting, budget);
+            let rest = token_counts_to_stop(rule.follow_state, visiting, budget);
+            sum_depths(&inner, &rest)
+        } else if transition.is_epsilon() {
+            token_counts_to_stop(transition.get_target(), visiting, budget)
+        } else {
+            shift_depths(&token_counts_to_stop(
+                transition.get_target(),
+                visiting,
+                budget,
+            ))
+        };
+        out.union_with(&sub);
+    }
+    visiting.remove(&state.get_state_number());
+    out
+}
+
+fn shift_depths(input: &BitSet) -> BitSet {
+    let mut out = BitSet::with_capacity(VARIABLE_DEPTH + 1);
+    if input.contains(VARIABLE_DEPTH) {
+        out.insert(VARIABLE_DEPTH);
+        return out;
+    }
+    for depth in input {
+        if depth + 1 > MAX_TRACKED_DEPTH {
+            out.insert(VARIABLE_DEPTH);
+            return out;
+        }
+        out.insert(depth + 1);
+    }
+    out
+}
+
+fn sum_depths(left: &BitSet, right: &BitSet) -> BitSet {
+    let mut out = BitSet::with_capacity(VARIABLE_DEPTH + 1);
+    if left.contains(VARIABLE_DEPTH) || right.contains(VARIABLE_DEPTH) {
+        out.insert(VARIABLE_DEPTH);
+        return out;
+    }
+    for a in left {
+        for b in right {
+            if a + b > MAX_TRACKED_DEPTH {
+                out.insert(VARIABLE_DEPTH);
+                return out;
+            }
+            out.insert(a + b);
+        }
+    }
+    out
+}
+
+/// `true` when every branch of `shadow` reaches `exact`, treating a widened
+/// joint (`$` under a return state) as matching anything.
+fn top_prefix_wildcard_match<'a>(
+    shadow: PredictionContextRef<'a>,
+    exact: PredictionContextRef<'a>,
+    scratch: &'a Bump,
+) -> bool {
+    if exact.length() > 1 {
+        for i in 0..exact.length() {
+            if !top_prefix_wildcard_match(shadow, branch(exact, i, scratch), scratch) {
+                return false;
+            }
+        }
+        return true;
+    }
+    if shadow.is_empty() {
+        return true;
+    }
+    if shadow.length() > 1 {
+        for i in 0..shadow.length() {
+            if top_prefix_wildcard_match(branch(shadow, i, scratch), exact, scratch) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if exact.is_empty() {
+        return false;
+    }
+    let return_state = shadow.get_return_state(0);
+    if return_state == ATNStateRef::invalid() {
+        return true;
+    }
+    if exact.get_return_state(0) == ATNStateRef::invalid() {
+        return false;
+    }
+    return_state == exact.get_return_state(0)
+        && top_prefix_wildcard_match(
+            shadow
+                .get_parent(0)
+                .unwrap_or_else(PredictionContextRef::new_empty),
+            exact
+                .get_parent(0)
+                .unwrap_or_else(PredictionContextRef::new_empty),
+            scratch,
+        )
+}
+
+fn branch<'a>(
+    context: PredictionContextRef<'a>,
+    index: usize,
+    scratch: &'a Bump,
+) -> PredictionContextRef<'a> {
+    let parent = context
+        .get_parent(index)
+        .unwrap_or_else(PredictionContextRef::new_empty);
+    let return_state = context.get_return_state(index);
+    if return_state == ATNStateRef::invalid() && parent.is_empty() {
+        return PredictionContextRef::new_empty();
+    }
+    PredictionContextRef::from(
+        scratch.alloc(PredictionContext::new_singleton(Some(parent), return_state)),
+    )
+}

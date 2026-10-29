@@ -12,6 +12,30 @@ pub trait ATNConfigType<'ephemeral>: PartialEq + Eq + Hash + Debug + Clone {}
 
 const SUPPRESS_PRECEDENCE_FILTER: i32 = 0x40000000;
 
+/// Taint bits of the compile-time parser DFA analysis (feature
+/// `static-dfa-build`, see [`crate::analysis`]).
+///
+/// The analysis keeps them in its own per-config side maps instead of on
+/// [`ATNConfig::reaches_into_outer_context`]: a config set's taint must not
+/// become part of the DFA state identity, or the same set reached by two paths
+/// would intern as two states.
+pub const BOUNDARY_TAINT: i32 = 1;
+pub const PRECPRED_TAINT: i32 = 2;
+pub const WIDENED_TAINT: i32 = 4;
+/// Reserved for the guarded-take and guarded-iterate analyses: a config that
+/// consumed input outside the loop or postfix discipline it belongs to.
+pub const FOREIGN_CONSUME_TAINT: i32 = 8;
+/// Reserved for the guarded-take and guarded-iterate analyses: a position an
+/// exit lineage had to pass through.
+pub const ROOTED_TAINT: i32 = 16;
+pub const PRED_TAINT: i32 = 32;
+/// The config was reached at least once *without* popping the decision
+/// boundary. The boundary analysis has to keep both facts: a config that is
+/// reached both inside the decision and through a boundary pop is "mixed
+/// usage", and mixed usage is never trusted, no matter which path is found
+/// first.
+pub const INTERIOR_TAINT: i32 = 64;
+
 #[derive(Clone)]
 pub struct ATNConfig<'ephemeral> {
     state: ATNStateRef,

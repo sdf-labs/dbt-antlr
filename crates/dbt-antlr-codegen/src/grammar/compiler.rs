@@ -373,10 +373,11 @@ fn build_static_parser_dfas(compilation: &mut Compilation) {
         let Some(compiled) = compilation.parsers.get(&parser_id) else {
             continue;
         };
-        let report = StaticParserDfa::report(compiled);
+        let build = StaticParserDfa::build(compiled);
+        compilation.diagnostics.extend(build.diagnostics);
         compilation
             .optimization_report
-            .push_static_parser_dfa(report);
+            .push_static_parser_dfa(build.report);
     }
 }
 

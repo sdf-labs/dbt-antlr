@@ -359,7 +359,9 @@ fn static_parser_dfa_writes_the_manifest_entry() {
     assert!(manifest.contains("\"name\": \"static-parser-dfa\""));
     assert!(manifest.contains("\"safetyClass\": \"tree-and-api-preserving\""));
     assert!(manifest.contains("\"decisions\": 4"));
-    assert!(manifest.contains("\"staticDecisions\": 0"));
+    assert!(manifest.contains("\"staticDecisions\": 4"), "{manifest}");
+    assert!(manifest.contains("\"adaptiveDecisions\": 0"), "{manifest}");
+    assert!(manifest.contains("\"escapeStates\": 0"), "{manifest}");
     assert!(manifest.contains("\"grammar\": \"CSVParser\""));
     assert!(
         output.reports.is_empty(),
@@ -389,11 +391,12 @@ fn report_decisions_prints_the_decision_inventory() {
         Some("=== parser decision report: CSVParser (4 decisions) ==="),
         "{report}"
     );
+    assert!(report.contains("summary: LL1=4"), "{report}");
     for row in [
-        "  0  csvFile  12",
-        "  1  row      21",
-        "  2  row      25",
-        "  3  field    32",
+        "  0  csvFile     12  LL1       1          0         0",
+        "  1  row         21  LL1       1          0         0",
+        "  2  row         25  LL1       1          0         0",
+        "  3  field       32  LL1       1          0         0",
     ] {
         assert!(report.contains(row), "missing {row:?} in:\n{report}");
     }
@@ -418,9 +421,16 @@ fn dump_dfas_prints_the_selected_decisions() {
         dump.contains("vocabulary: EOF=-1 ','=1 '\\r'=2 '\\n'=3 WS=4 TEXT=5 STRING=6"),
         "{dump}"
     );
-    assert!(dump.contains("--- decision 1: rule 'row' ---"), "{dump}");
+    assert!(
+        dump.contains("--- decision 1: rule 'row' (LL1) ---"),
+        "{dump}"
+    );
     assert!(!dump.contains("--- decision 0:"), "{dump}");
     assert!(!dump.contains("--- decision 2:"), "{dump}");
+    assert!(
+        dump.contains("no table needed: the alternatives have disjoint first tokens"),
+        "{dump}"
+    );
     assert!(dump.contains("(1 of 4 decisions dumped)"), "{dump}");
 }
 
@@ -529,5 +539,117 @@ fn dump_dfas_deduplicates_repeated_selectors() {
             "--dump-dfas: no parser decision of grammar CSVParser matches 'zzz'",
             "--dump-dfas: no parser decision of grammar CSVParser matches 'row:99'",
         ]
+    );
+}
+
+fn emit_grammar(
+    grammar_file: &str,
+    configure: impl FnOnce(&mut OptimizationOptions),
+) -> EmittedOutput {
+    let mut optimization = OptimizationOptions::new();
+    configure(&mut optimization);
+    emit_files_with_options(
+        &grammars_dir().join(grammar_file),
+        &[grammars_dir()],
+        true,
+        false,
+        &optimization,
+    )
+    .expect("emission succeeds")
+}
+
+#[test]
+fn dump_dfas_renders_the_built_table() {
+    let output = emit_grammar("ReferenceToATN.g4", |options| {
+        options.dump_dfas("all,paths");
+    });
+    let [dump] = output.reports.as_slice() else {
+        panic!("one dump per parser unit: {:?}", output.reports);
+    };
+    assert!(
+        dump.contains("--- decision 0: rule 'a' (HYBRID, k=2, 5 states) ---"),
+        "{dump}"
+    );
+    assert!(
+        dump.contains("  table: states=5 cyclic=false maxK=2"),
+        "{dump}"
+    );
+    assert!(
+        dump.contains("    s0: (non-accept); error-recovery fallback alt=2"),
+        "{dump}"
+    );
+    assert!(dump.contains("      s0 EOF(-1) -> s1"), "{dump}");
+    assert!(dump.contains("      s0 ID(1) -> s2"), "{dump}");
+    assert!(dump.contains("      s3 ID..ATN(1..2) -> s2"), "{dump}");
+    assert!(dump.contains("    s2: accept alt=1"), "{dump}");
+    assert!(dump.contains("    s4: ESCAPE"), "{dump}");
+    assert!(dump.contains("; path: ATN EOF"), "{dump}");
+}
+
+#[test]
+fn not_fully_static_decisions_emit_g4s190_warnings() {
+    let output = emit_grammar("ReferenceToATN.g4", |options| {
+        options.static_parser_dfa(true);
+    });
+    let warnings = output
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == "G4S190")
+        .map(|diagnostic| {
+            assert_eq!(diagnostic.severity(), Severity::Warning);
+            assert_eq!(
+                (diagnostic.line(), diagnostic.column()),
+                (Some(3), Some(4)),
+                "the warning is located on the rule block: {}",
+                diagnostic.message()
+            );
+            diagnostic.message()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        warnings,
+        [
+            "parser decision 0 of rule 'a' is not fully static: 1 of 5 states escape to adaptivePredict; witness: ATN EOF"
+        ]
+    );
+}
+
+#[test]
+fn fully_static_grammars_emit_no_parser_warnings() {
+    let output = emit_grammar("CSV.g4", |options| {
+        options.static_parser_dfa(true);
+    });
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code() != "G4S190"),
+        "{:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn precedence_dumps_list_every_class() {
+    let output = emit_grammar("SimpleLR.g4", |options| {
+        options.dump_dfas("all");
+    });
+    let [dump] = output.reports.as_slice() else {
+        panic!("one dump per parser unit: {:?}", output.reports);
+    };
+    assert!(
+        dump.contains("--- decision 0: rule 'a' (LR_PRECEDENCE, k=1, 4 states) ---"),
+        "{dump}"
+    );
+    assert!(dump.contains("precedence classes: [2]"), "{dump}");
+    assert!(dump.contains("class 0:"), "{dump}");
+    assert!(dump.contains("class 1:"), "{dump}");
+    assert!(
+        dump.contains("  table: states=3 cyclic=false maxK=1"),
+        "{dump}"
+    );
+    assert!(
+        dump.contains("  table: states=1 cyclic=false maxK=0"),
+        "{dump}"
     );
 }

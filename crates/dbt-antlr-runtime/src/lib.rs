@@ -119,6 +119,8 @@ mod utils;
 #[doc(hidden)]
 pub mod atn_type;
 // mod context_factory;
+#[cfg(feature = "static-dfa-build")]
+pub mod analysis;
 pub mod prelude;
 pub mod rule_context;
 pub mod vocabulary;

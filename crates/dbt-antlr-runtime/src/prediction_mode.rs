@@ -83,7 +83,7 @@ impl PredictionMode {
 
 //
 //
-pub(crate) fn has_sll_conflict_terminating_prediction<'ephemeral>(
+pub fn has_sll_conflict_terminating_prediction<'ephemeral>(
     ephemerals: &'ephemeral bumpalo::Bump,
     mode: PredictionMode,
     configs: &MutableATNConfigSet<'ephemeral>,
@@ -122,11 +122,11 @@ pub(crate) fn resolves_to_just_one_viable_alt<'a>(
     get_single_viable_alt(altsets)
 }
 
-pub(crate) fn all_subsets_conflict<'a>(altsets: impl Iterator<Item = &'a BitSet>) -> bool {
+pub fn all_subsets_conflict<'a>(altsets: impl Iterator<Item = &'a BitSet>) -> bool {
     !has_non_conflicting_alt_set(altsets)
 }
 
-pub(crate) fn all_subsets_equal<'a>(mut altsets: impl Iterator<Item = &'a BitSet>) -> bool {
+pub fn all_subsets_equal<'a>(mut altsets: impl Iterator<Item = &'a BitSet>) -> bool {
     let first = altsets.next();
     altsets.all(|it| it == first.unwrap())
 }
@@ -146,7 +146,7 @@ fn has_conflicting_alt_set<'a>(altsets: impl Iterator<Item = &'a BitSet>) -> boo
 
 //fn get_unique_alt(altsets: &[BitSet]) -> int { unimplemented!() }
 //
-pub(crate) fn get_alts(altsets: impl Iterator<Item = BitSet>) -> BitSet {
+pub fn get_alts(altsets: impl Iterator<Item = BitSet>) -> BitSet {
     altsets.fold(BitSet::new(), |mut acc, it| {
         acc.extend(&it);
         acc

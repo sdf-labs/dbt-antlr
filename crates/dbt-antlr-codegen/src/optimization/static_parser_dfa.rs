@@ -2,27 +2,37 @@
 // Copyright (c) 2026 Bo Lin
 //! `--static-parser-dfa` optimization pass (parser scope).
 //!
-//! The pass classifies the decisions of every root parser unit and, once the
-//! SLL classifier lands, precomputes the static prediction tables that ride in
-//! the trailing `SDFA` section of the packed parser ATN. It reads the runtime
-//! ATN of the compiled unit directly, so the analysis never serializes or
-//! deserializes words.
+//! The pass classifies the prediction decisions of every root parser unit and,
+//! once the table emission lands, precomputes the static prediction tables that
+//! ride in the trailing `SDFA` section of the packed parser ATN. It reads the
+//! runtime ATN of the compiled unit directly, so the analysis never serializes
+//! or deserializes words.
 //!
 //! `--report-decisions` renders the decision inventory of the pass to stdout
 //! and `--dump-dfas` renders the tables of the selected decisions. Both flags
 //! imply `--report-only`.
 
+use std::collections::BTreeMap;
+
 use minijinja::Value;
 
 use super::descriptor::PassDescriptor;
 use super::manifest::{object, source_value};
+use super::parser_dfa::{Category, DecisionClassifier, DecisionResult, StaticDfaTable};
 use crate::grammar::atn::CompiledParser;
 use crate::grammar::diagnostic::Diagnostic;
 use crate::grammar::frontend::SourceSpan;
-use crate::grammar::model::RecognizerModel;
+use crate::grammar::model::{
+    Alternative, Block, Element, ElementKind, ModelNodeId, Quantifier, RecognizerModel, Rule,
+};
+use crate::grammar::provenance::Origin;
 use crate::grammar::source::SourceSet;
 use crate::grammar::transform::SafetyClass;
-use dbt_antlr_runtime::atn_state::ATNState;
+
+/// The diagnostic code of the "decision is not fully static" warnings.
+const NOT_FULLY_STATIC: &str = "G4S190";
+/// The diagnostic code of an unmatched `--dump-dfas` selector.
+const DUMP_SELECTOR_NO_MATCH: &str = "G4S191";
 
 pub(crate) struct StaticParserDfa;
 
@@ -30,29 +40,38 @@ impl StaticParserDfa {
     pub(crate) const NAME: &'static str = "static-parser-dfa";
     pub(crate) const SAFETY: SafetyClass = SafetyClass::TreeAndApiPreserving;
 
-    /// Inventories the decisions of one compiled parser unit.
-    pub(crate) fn report(compiled: &CompiledParser) -> StaticParserDfaReport {
+    /// Classifies the decisions of one compiled parser unit and records the
+    /// diagnostics of the decisions that stay partly adaptive.
+    pub(crate) fn build(compiled: &CompiledParser) -> StaticParserDfaArtifact {
         let atn = compiled.atn;
         let recognizer = &compiled.semantic.recognizer;
-        let decisions = atn
-            .decision_to_state
+        let ll1_disjoint = ll1_disjointness(compiled);
+        let results = DecisionClassifier::new(atn, ll1_disjoint).classify_all();
+        let decisions = results
             .iter()
-            .enumerate()
-            .map(|(decision, state)| StaticParserDecisionReport {
-                decision,
-                state: usize::try_from(state.get_state_number())
-                    .expect("decision state has a state number"),
-                rule: rule_name(state, recognizer),
+            .map(|result| StaticParserDecisionReport {
+                decision: result.decision,
+                state: usize::try_from(result.state_number).unwrap_or(0),
+                rule: recognizer
+                    .rule_names
+                    .get(result.rule_index)
+                    .cloned()
+                    .unwrap_or_default(),
+                result: result.clone(),
             })
-            .collect();
+            .collect::<Vec<_>>();
         let vocabulary = (1..=atn.max_token_type)
             .map(|token_type| token_display_name(recognizer, token_type))
             .collect();
-        StaticParserDfaReport {
+        let report = StaticParserDfaReport {
             grammar: compiled.semantic.unit.name.clone(),
             source_span: compiled.semantic.unit.span.clone(),
             vocabulary,
             decisions,
+        };
+        StaticParserDfaArtifact {
+            diagnostics: not_fully_static_diagnostics(compiled, &report),
+            report,
         }
     }
 
@@ -63,14 +82,17 @@ impl StaticParserDfa {
         parsers: &[StaticParserDfaReport],
         sources: &SourceSet,
     ) -> Value {
-        let decisions: usize = parsers.iter().map(|parser| parser.decisions.len()).sum();
-        // No decision has a static table until the SLL classifier lands.
-        let static_decisions = 0_usize;
+        let mut totals = ReportMetrics::default();
+        for parser in parsers {
+            totals.add(parser);
+        }
         let metrics = object(vec![
             ("parsers", Value::from(parsers.len())),
-            ("decisions", Value::from(decisions)),
-            ("staticDecisions", Value::from(static_decisions)),
-            ("adaptiveDecisions", Value::from(decisions)),
+            ("decisions", Value::from(totals.decisions)),
+            ("staticDecisions", Value::from(totals.static_decisions)),
+            ("hybridDecisions", Value::from(totals.hybrid_decisions)),
+            ("adaptiveDecisions", Value::from(totals.adaptive_decisions)),
+            ("escapeStates", Value::from(totals.escape_states)),
         ]);
         let rendered = Value::from_iter(
             parsers
@@ -80,7 +102,7 @@ impl StaticParserDfa {
         super::manifest::pass_value(
             id,
             descriptor,
-            static_decisions > 0,
+            totals.static_decisions > 0,
             metrics,
             vec![("parsers", rendered)],
         )
@@ -108,6 +130,12 @@ impl StaticParserDfa {
     }
 }
 
+/// What the pass hands back to the compiler.
+pub(crate) struct StaticParserDfaArtifact {
+    pub(crate) diagnostics: Vec<Diagnostic>,
+    pub(crate) report: StaticParserDfaReport,
+}
+
 /// The report modes `--report-decisions` and `--dump-dfas` select.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct StaticParserDfaSelection {
@@ -126,6 +154,58 @@ pub(crate) struct StaticParserDfaReport {
     pub(crate) decisions: Vec<StaticParserDecisionReport>,
 }
 
+impl StaticParserDfaReport {
+    /// The number of decisions that run without any adaptive prediction.
+    fn static_decisions(&self) -> usize {
+        self.decisions
+            .iter()
+            .filter(|decision| decision.result.is_fully_static())
+            .count()
+    }
+
+    /// The number of decisions with a partial table.
+    fn hybrid_decisions(&self) -> usize {
+        self.decisions
+            .iter()
+            .filter(|decision| decision.result.category == Category::HYBRID)
+            .count()
+    }
+
+    /// The number of decisions that keep at least one adaptive path.
+    fn adaptive_decisions(&self) -> usize {
+        self.decisions
+            .iter()
+            .filter(|decision| !decision.result.is_fully_static())
+            .count()
+    }
+
+    fn escape_states(&self) -> usize {
+        self.decisions
+            .iter()
+            .map(|decision| decision.result.escapes)
+            .sum()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ReportMetrics {
+    decisions: usize,
+    static_decisions: usize,
+    hybrid_decisions: usize,
+    adaptive_decisions: usize,
+    escape_states: usize,
+}
+
+impl ReportMetrics {
+    fn add(&mut self, parser: &StaticParserDfaReport) {
+        self.decisions += parser.decisions.len();
+        self.static_decisions += parser.static_decisions();
+        self.hybrid_decisions += parser.hybrid_decisions();
+        self.adaptive_decisions += parser.adaptive_decisions();
+        self.escape_states += parser.escape_states();
+    }
+}
+
 /// One prediction decision of a parser unit.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StaticParserDecisionReport {
@@ -133,6 +213,7 @@ pub(crate) struct StaticParserDecisionReport {
     /// ATN state number of the decision state.
     pub(crate) state: usize,
     pub(crate) rule: String,
+    pub(crate) result: DecisionResult,
 }
 
 fn parser_report_value(parser: &StaticParserDfaReport, sources: &SourceSet) -> Value {
@@ -140,17 +221,39 @@ fn parser_report_value(parser: &StaticParserDfaReport, sources: &SourceSet) -> V
         ("grammar", Value::from(parser.grammar.as_str())),
         ("source", source_value(&parser.source_span, sources)),
         ("decisions", Value::from(parser.decisions.len())),
-        ("staticDecisions", Value::from(0usize)),
-        ("adaptiveDecisions", Value::from(parser.decisions.len())),
+        ("staticDecisions", Value::from(parser.static_decisions())),
+        ("hybridDecisions", Value::from(parser.hybrid_decisions())),
+        (
+            "adaptiveDecisions",
+            Value::from(parser.adaptive_decisions()),
+        ),
+        ("escapeStates", Value::from(parser.escape_states())),
     ])
 }
 
-fn rule_name(state: &ATNState, recognizer: &RecognizerModel) -> String {
-    usize::try_from(state.get_rule_index())
-        .ok()
-        .and_then(|rule| recognizer.rule_names.get(rule))
-        .cloned()
-        .unwrap_or_default()
+/// Per-decision `LL(1)` disjointness, indexed by decision number.
+///
+/// `grammar::atn::analysis` already computes the Java `AnalysisPipeline.disjoint`
+/// fast path from the grammar graph; the ATN decision numbers are the graph
+/// state numbers, so the vector is a direct lookup.
+pub(super) fn ll1_disjointness(compiled: &CompiledParser) -> Vec<bool> {
+    let by_state = compiled
+        .analysis
+        .decision_lookahead
+        .iter()
+        .map(|lookahead| (lookahead.state, lookahead.disjoint))
+        .collect::<BTreeMap<_, _>>();
+    compiled
+        .atn
+        .decision_to_state
+        .iter()
+        .map(|state| {
+            by_state
+                .get(&usize::try_from(state.get_state_number()).unwrap_or(usize::MAX))
+                .copied()
+                .unwrap_or(false)
+        })
+        .collect()
 }
 
 /// The display name of one token type, as the Java tool prints it: the string
@@ -173,30 +276,107 @@ fn decision_report_text(report: &StaticParserDfaReport) -> String {
         report.grammar,
         report.decisions.len()
     )];
+    lines.push(summary_line(&report.decisions));
     lines.extend(decision_rows(&report.decisions));
+    lines.extend(k_summary(&report.decisions));
     finish_block(lines)
 }
 
-/// The `#`, rule, and ATN-state columns of the decision inventory.
+/// The category histogram of a grammar, as one line.
+fn summary_line(decisions: &[StaticParserDecisionReport]) -> String {
+    let mut counts: BTreeMap<Category, usize> = BTreeMap::new();
+    for decision in decisions {
+        *counts.entry(decision.result.category).or_default() += 1;
+    }
+    let mut text = String::from("summary:");
+    for category in Category::ALL {
+        let count = counts.get(&category).copied().unwrap_or(0);
+        if count > 0 {
+            text.push_str(&format!(" {category}={count}"));
+        }
+    }
+    text
+}
+
+/// The lookahead-depth summary: the LL(k) histogram and the deepest lookahead
+/// of any decision the construction could bound.
+fn k_summary(decisions: &[StaticParserDecisionReport]) -> Vec<String> {
+    let mut llk_histogram: BTreeMap<i32, usize> = BTreeMap::new();
+    let mut max_llk = 0_i32;
+    let mut max_bounded = 0_i32;
+    for decision in decisions {
+        let result = &decision.result;
+        if result.k >= 0 {
+            max_bounded = max_bounded.max(result.k);
+        }
+        if result.category == Category::LLK {
+            max_llk = max_llk.max(result.k);
+            *llk_histogram.entry(result.k).or_default() += 1;
+        }
+    }
+    let histogram = llk_histogram
+        .iter()
+        .map(|(k, count)| format!("{k}={count}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    vec![
+        format!("LLK k histogram: {{{histogram}}}"),
+        format!("max k: LLK={max_llk}, any bounded non-LL(1)={max_bounded}"),
+    ]
+}
+
+/// The `#`, rule, ATN-state, category, and cost columns of the inventory.
 fn decision_rows(decisions: &[StaticParserDecisionReport]) -> Vec<String> {
-    let decision_width = column_width(decisions, |decision| decision.decision.to_string());
-    let rule_width = column_width(decisions, |decision| decision.rule.clone());
-    let state_width = column_width(decisions, |decision| decision.state.to_string());
+    let decision_width = column_width("#", decisions, |decision| decision.decision.to_string());
+    let rule_width = column_width("rule", decisions, |decision| decision.rule.clone());
+    let state_width = column_width("state", decisions, |decision| decision.state.to_string());
+    let category_width = column_width("category", decisions, |decision| {
+        decision.result.category.as_str().to_owned()
+    });
+    let k_width = column_width("k", decisions, |decision| k_text(&decision.result));
+    let states_width = column_width("dfaStates", decisions, |decision| {
+        decision.result.num_dfa_states.to_string()
+    });
+    let fallback_width = column_width("fallback", decisions, |decision| {
+        decision.result.fallback_text()
+    });
+
     let mut lines = vec![format!(
-        "  {:>decision_width$}  {:<rule_width$}  {:>state_width$}",
-        "#", "rule", "state",
+        "  {:>decision_width$}  {:<rule_width$}  {:>state_width$}  {:<category_width$}  {:>k_width$}  {:>states_width$}  {:>fallback_width$}",
+        "#", "rule", "state", "category", "k", "dfaStates", "fallback",
     )];
     lines.extend(decisions.iter().map(|decision| {
+        let result = &decision.result;
         format!(
-            "  {:>decision_width$}  {:<rule_width$}  {:>state_width$}",
-            decision.decision, decision.rule, decision.state,
+            "  {:>decision_width$}  {:<rule_width$}  {:>state_width$}  {:<category_width$}  {:>k_width$}  {:>states_width$}  {:>fallback_width$}",
+            decision.decision,
+            decision.rule,
+            decision.state,
+            result.category.as_str(),
+            k_text(result),
+            result.num_dfa_states,
+            result.fallback_text(),
         )
     }));
     lines
 }
 
-fn column_width<T>(rows: &[T], cell: impl Fn(&T) -> String) -> usize {
-    rows.iter().map(|row| cell(row).len()).max().unwrap_or(0)
+fn k_text(result: &DecisionResult) -> String {
+    if result.k < 0 {
+        "-".to_owned()
+    } else {
+        result.k.to_string()
+    }
+}
+
+/// The width of one report column: the widest cell, but never narrower than
+/// its header.
+fn column_width<T>(header: &str, rows: &[T], cell: impl Fn(&T) -> String) -> usize {
+    rows.iter()
+        .map(|row| cell(row).len())
+        .max()
+        .unwrap_or(0)
+        .max(header.len())
 }
 
 fn dfa_dump_text(report: &StaticParserDfaReport, spec: &str) -> (String, Vec<Diagnostic>) {
@@ -221,7 +401,7 @@ fn dfa_dump_text(report: &StaticParserDfaReport, spec: &str) -> (String, Vec<Dia
             continue;
         }
         shown += 1;
-        lines.extend(decision_dump_lines(decision));
+        lines.extend(decision_dump_lines(report, decision, selection.paths));
     }
     lines.push(String::new());
     lines.push(format!(
@@ -249,15 +429,184 @@ fn dfa_dump_text(report: &StaticParserDfaReport, spec: &str) -> (String, Vec<Dia
     (finish_block(lines), diagnostics)
 }
 
-fn decision_dump_lines(decision: &StaticParserDecisionReport) -> Vec<String> {
-    vec![
-        String::new(),
+fn decision_dump_lines(
+    report: &StaticParserDfaReport,
+    decision: &StaticParserDecisionReport,
+    with_paths: bool,
+) -> Vec<String> {
+    let result = &decision.result;
+    let headline = if result.table.is_none() && result.precedence.is_none() {
         format!(
-            "--- decision {}: rule '{}' ---",
-            decision.decision, decision.rule
+            "--- decision {}: rule '{}' ({}) ---",
+            decision.decision, decision.rule, result.category
+        )
+    } else {
+        format!(
+            "--- decision {}: rule '{}' ({}, k={}, {} states) ---",
+            decision.decision,
+            decision.rule,
+            result.category,
+            k_text(result),
+            result.num_dfa_states
+        )
+    };
+    let mut lines = vec![String::new(), headline];
+    match (&result.table, &result.precedence) {
+        (_, Some(precedence)) => {
+            lines.push(format!("precedence classes: {:?}", precedence.cutoffs));
+            for (index, table) in precedence.tables.iter().enumerate() {
+                match table {
+                    Some(table) => {
+                        lines.push(format!("class {index}:"));
+                        lines.extend(table_dump_lines(report, table, with_paths));
+                    }
+                    None => lines.push(format!(
+                        "class {index}: no static table: this precedence class runs on adaptivePredict"
+                    )),
+                }
+            }
+        }
+        (Some(table), None) => lines.extend(table_dump_lines(report, table, with_paths)),
+        (None, None) if matches!(result.category, Category::LL1 | Category::NON_GREEDY) => {
+            lines.push(format!("  no table needed: {}", adaptive_reason(result)));
+        }
+        (None, None) => lines.push(format!("  no static table: {}", adaptive_reason(result))),
+    }
+    lines
+}
+
+fn table_dump_lines(
+    report: &StaticParserDfaReport,
+    table: &StaticDfaTable,
+    with_paths: bool,
+) -> Vec<String> {
+    let mut lines = vec![format!(
+        "  table: states={} cyclic={}{}",
+        table.states.len(),
+        table.cyclic,
+        if table.cyclic {
+            String::new()
+        } else {
+            format!(" maxK={}", table.max_k)
+        }
+    )];
+    for (index, state) in table.states.iter().enumerate() {
+        let mut line = format!("    s{index}: ");
+        if state.accept > 0 {
+            line.push_str(&format!("accept alt={}", state.accept));
+        } else if state.is_escape() {
+            line.push_str("ESCAPE");
+        } else {
+            line.push_str("(non-accept)");
+        }
+        if state.fallback > 0 {
+            line.push_str(&format!("; error-recovery fallback alt={}", state.fallback));
+        }
+        if with_paths && let Some(path) = table.witness(index).filter(|path| !path.is_empty()) {
+            line.push_str(&format!("; path: {}", path_text(&report.vocabulary, &path)));
+        }
+        lines.push(line);
+        for edge in &state.edges {
+            lines.push(format!(
+                "      s{index} {}({}) -> s{}",
+                interval_text(&report.vocabulary, edge.lo, edge.hi),
+                token_range_text(edge.lo, edge.hi),
+                edge.target
+            ));
+        }
+    }
+    lines
+}
+
+/// The display name of one token type of the unit's vocabulary.
+fn token_name(vocabulary: &[String], token: i32) -> String {
+    if token < 0 {
+        return "EOF".to_owned();
+    }
+    usize::try_from(token)
+        .ok()
+        .and_then(|token| token.checked_sub(1))
+        .and_then(|index| vocabulary.get(index))
+        .cloned()
+        .unwrap_or_else(|| token.to_string())
+}
+
+fn interval_text(vocabulary: &[String], lo: i32, hi: i32) -> String {
+    if lo == hi {
+        token_name(vocabulary, lo)
+    } else {
+        format!(
+            "{}..{}",
+            token_name(vocabulary, lo),
+            token_name(vocabulary, hi)
+        )
+    }
+}
+
+fn token_range_text(lo: i32, hi: i32) -> String {
+    if lo == hi {
+        lo.to_string()
+    } else {
+        format!("{lo}..{hi}")
+    }
+}
+
+fn path_text(vocabulary: &[String], path: &[i32]) -> String {
+    path.iter()
+        .map(|token| token_name(vocabulary, *token))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn adaptive_reason(result: &DecisionResult) -> String {
+    match result.category {
+        Category::LL1 => {
+            "the alternatives have disjoint first tokens, so plain LL(1) prediction decides"
+                .to_owned()
+        }
+        Category::NON_GREEDY => {
+            "the decision is a non-greedy loop: it always takes the lowest alternative".to_owned()
+        }
+        Category::PREDICATED => match result.first_predicate {
+            Some((rule, index)) => format!(
+                "the decision depends on predicate {rule}:{index}, so the prediction is not input-only"
+            ),
+            None => "the decision depends on a predicate, so the prediction is not input-only"
+                .to_owned(),
+        },
+        Category::CONTEXT_SENSITIVE => {
+            "SLL cannot separate the alternatives; only full-context prediction can".to_owned()
+        }
+        Category::LR_PRECEDENCE => {
+            let precedence = result.precedence.as_ref();
+            let adaptive = precedence.map_or(0, |precedence| precedence.adaptive_classes);
+            if adaptive > 0 {
+                let classes = precedence.map_or(0, |precedence| precedence.cutoffs.len() + 1);
+                format!("{adaptive} of {classes} precedence classes have no static table")
+            } else {
+                // Every class has a table, but some frontier states still have
+                // to escape to the adaptive simulation.
+                format!(
+                    "{} of {} precedence-class states escape to adaptivePredict",
+                    result.escapes, result.num_dfa_states
+                )
+            }
+        }
+        Category::OVERFLOW => format!(
+            "the SLL DFA exceeded the analysis budget ({} states or {} visited configs)",
+            super::parser_dfa::MAX_DFA_STATES,
+            super::parser_dfa::DEFAULT_VISIT_BUDGET
         ),
-        "  no static table: this decision runs on adaptivePredict".to_owned(),
-    ]
+        Category::HYBRID => format!(
+            "{} of {} states escape to adaptivePredict",
+            result.escapes, result.num_dfa_states
+        ),
+        _ => "no static table".to_owned(),
+    }
+}
+
+fn witness_text(vocabulary: &[String], witness: Option<&[i32]>) -> Option<String> {
+    witness.map(|witness| path_text(vocabulary, witness))
 }
 
 fn vocabulary_line(vocabulary: &[String]) -> String {
@@ -286,7 +635,7 @@ fn finish_block(lines: Vec<String>) -> String {
 
 fn no_matching_decision_error(report: &StaticParserDfaReport, selector: &str) -> Diagnostic {
     Diagnostic::error(
-        "G4S191",
+        DUMP_SELECTOR_NO_MATCH,
         report.source_span.clone(),
         format!(
             "--dump-dfas: no parser decision of grammar {} matches '{selector}'",
@@ -299,6 +648,7 @@ fn no_matching_decision_error(report: &StaticParserDfaReport, selector: &str) ->
 #[derive(Debug, Default)]
 struct DfaDumpSelection {
     all: bool,
+    paths: bool,
     selectors: Vec<DfaDumpSelector>,
     malformed: Vec<String>,
 }
@@ -316,7 +666,7 @@ impl DfaDumpSelection {
             } else if item.eq_ignore_ascii_case("paths") {
                 // A modifier of the state dump: it annotates each state with a
                 // shortest lookahead path and selects no decision on its own.
-                continue;
+                selection.paths = true;
             } else if let Some(selector) = DfaDumpSelector::parse(item) {
                 if !selection.selectors.contains(&selector) {
                     selection.selectors.push(selector);
@@ -382,4 +732,138 @@ fn decision_number(text: &str) -> Option<usize> {
         return None;
     }
     text.parse().ok()
+}
+
+/// The `G4S190` warnings: one per decision that keeps at least one adaptive
+/// path, with the reason and, when the construction has one, the witness.
+fn not_fully_static_diagnostics(
+    compiled: &CompiledParser,
+    report: &StaticParserDfaReport,
+) -> Vec<Diagnostic> {
+    report
+        .decisions
+        .iter()
+        .filter_map(|decision| {
+            let result = &decision.result;
+            if result.is_fully_static() {
+                return None;
+            }
+            let mut message = format!(
+                "parser decision {} of rule '{}' is not fully static: {}",
+                decision.decision,
+                decision.rule,
+                adaptive_reason(result)
+            );
+            if let Some(witness) = witness_text(
+                &report.vocabulary,
+                result
+                    .conflict_witness
+                    .as_deref()
+                    .or(result.budget_witness.as_deref()),
+            ) {
+                message.push_str(&format!("; witness: {witness}"));
+            }
+            let span =
+                decision_span(compiled, result).unwrap_or_else(|| report.source_span.clone());
+            Some(Diagnostic::warning(NOT_FULLY_STATIC, span, message))
+        })
+        .collect()
+}
+
+/// The source span of one decision, resolved through the ATN state's
+/// provenance: the owning rule or element when the state was synthesized for
+/// one, the authored span when the state came straight from the grammar, and
+/// the whole rule as the fallback.
+fn decision_span(compiled: &CompiledParser, result: &DecisionResult) -> Option<SourceSpan> {
+    if result.category != Category::LR_PRECEDENCE
+        && let Ok(state_number) = usize::try_from(result.state_number)
+        && let Some(state) = compiled.graph.states.get(state_number)
+    {
+        let origins = compiled.provenance.state_origins(state.original);
+        for owner in origins.iter().filter_map(|origin| match origin {
+            Origin::Synthetic { owner, .. } => Some(*owner),
+            _ => None,
+        }) {
+            if let Some(span) = model_node_span(compiled, owner) {
+                return Some(span);
+            }
+        }
+        if let Some(span) = origins.iter().find_map(|origin| match origin {
+            Origin::Authored { span, .. } => Some(span),
+            _ => None,
+        }) {
+            return Some(span.clone());
+        }
+    }
+    let rule = compiled.semantic.unit.rules.get(result.rule_index)?;
+    Some(rule.span.clone())
+}
+
+/// The span of a model node that has grammar syntax behind it.
+fn model_node_span(compiled: &CompiledParser, node: ModelNodeId) -> Option<SourceSpan> {
+    match node {
+        ModelNodeId::Rule(rule_id) => compiled
+            .semantic
+            .unit
+            .rules
+            .iter()
+            .find(|rule| rule.id == rule_id)
+            .map(rule_location),
+        ModelNodeId::Element(element_id) => {
+            find_element(&compiled.semantic.unit.rules, element_id).map(element_location)
+        }
+        _ => None,
+    }
+}
+
+/// The location of a decision that belongs to a whole rule: its block.
+fn rule_location(rule: &Rule) -> SourceSpan {
+    rule.block.span.clone()
+}
+
+/// The location of a decision owned by one element: the element itself, or its
+/// whole syntax node (label and quantifier included) when the decision *is*
+/// the loop or the optional.
+fn element_location(element: &Element) -> SourceSpan {
+    let is_quantifier_decision = matches!(
+        element.quantifier,
+        Quantifier::Optional { .. } | Quantifier::ZeroOrMore { .. } | Quantifier::OneOrMore { .. }
+    );
+    if is_quantifier_decision {
+        return element.enclosing_span.clone();
+    }
+    element.span.clone()
+}
+
+fn find_element(rules: &[Rule], target: crate::grammar::model::ElementId) -> Option<&Element> {
+    rules
+        .iter()
+        .find_map(|rule| find_element_in_block(&rule.block, target))
+}
+
+fn find_element_in_block(
+    block: &Block,
+    target: crate::grammar::model::ElementId,
+) -> Option<&Element> {
+    block
+        .alternatives
+        .iter()
+        .find_map(|alternative| find_element_in_alt(alternative, target))
+}
+
+fn find_element_in_alt(
+    alternative: &Alternative,
+    target: crate::grammar::model::ElementId,
+) -> Option<&Element> {
+    for element in &alternative.elements {
+        if element.id == target {
+            return Some(element);
+        }
+        if let ElementKind::Block(inner) = &element.kind
+            && let Some(found) = find_element_in_block(inner, target)
+        {
+            return Some(found);
+        }
+    }
+    None
 }

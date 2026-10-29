@@ -1581,7 +1581,13 @@ impl<'sim> IATNSimulator<'sim, ATNConfigSet<'sim>> for ParserATNSimulator<'sim> 
     }
 }
 
-pub(crate) struct MergeCache<'scratch> {
+/// Interning cache for prediction context merges, backed by a scratch bump
+/// arena.
+///
+/// The compile-time parser DFA analysis (feature `static-dfa-build`) shares it
+/// with the lazy simulator's closure, so build-time config sets merge contexts
+/// exactly the way the runtime does.
+pub struct MergeCache<'scratch> {
     map: HashMap<
         MergeKey<'scratch>,
         PredictionContextRef<'scratch>,
@@ -1590,6 +1596,14 @@ pub(crate) struct MergeCache<'scratch> {
     >,
 
     scratch: &'scratch bumpalo::Bump,
+}
+
+impl std::fmt::Debug for MergeCache<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MergeCache")
+            .field("entries", &self.map.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'scratch> MergeCache<'scratch> {
