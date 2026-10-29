@@ -32,6 +32,7 @@ use crate::emission::model::{
 use crate::error::EmitError;
 use crate::grammar::atn::{
     AtnStateKind, CompiledParser, DecisionLookahead, FinalizedAtnGraph, FinalizedTransitionKind,
+    encode_packed_atn,
 };
 use crate::grammar::model::{
     Alternative, AlternativeId, Element, ElementKind, GrammarUnit, Label, LabelKind, ModelNodeId,
@@ -103,7 +104,7 @@ pub(crate) fn build_parser_file_context(
         funcs,
         sempred_funcs,
         atn: PackedAtnModel {
-            serialized: compiled.packed.packed_words().to_vec(),
+            serialized: encode_packed_atn(&compiled.atn),
         },
     };
 

@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::Error;
+use crate::grammar::atn::encode_packed_atn;
 use crate::grammar::compiler;
 use crate::grammar::loader::LoadOptions;
 
@@ -22,8 +23,8 @@ pub struct GrammarAtnData {
     pub name: String,
     /// Packed parser ATN word stream, when this unit has a parser.
     ///
-    /// The words come from `ParserAtn::packed_words`. Use
-    /// `ParserAtn::from_owned` or `ParserAtn::from_static` to read them.
+    /// The words are the packed form of the compiled parser ATN. Read them
+    /// with `dbt_antlr_runtime::atn_packed_deserializer::PackedATNDeserializer`.
     pub parser_packed_words: Option<Vec<u32>>,
     /// Java-format serialized lexer ATN words, when this unit has a lexer.
     pub lexer_atn_words: Option<Vec<i32>>,
@@ -54,7 +55,7 @@ pub fn compile_atn_data(
     let mut units = Vec::with_capacity(compilation.parsers.len() + compilation.lexers.len());
     units.extend(compilation.parsers.values().map(|parser| GrammarAtnData {
         name: parser.semantic.unit.name.clone(),
-        parser_packed_words: Some(parser.packed.packed_words().to_vec()),
+        parser_packed_words: Some(encode_packed_atn(&parser.atn)),
         lexer_atn_words: None,
     }));
     units.extend(compilation.lexers.values().map(|lexer| GrammarAtnData {
@@ -68,8 +69,8 @@ pub fn compile_atn_data(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grammar::atn::ParserAtn;
     use crate::grammar::atn::SERIALIZED_VERSION;
+    use dbt_antlr_runtime::atn_packed_deserializer::PackedATNDeserializer;
 
     const PARSER_ATN_MAGIC: u32 = 0x5041_544e;
     const PARSER_ATN_FORMAT_VERSION: u32 = 3;
@@ -90,7 +91,9 @@ mod tests {
         assert!(packed.len() > 2);
         assert_eq!(packed[0], PARSER_ATN_MAGIC);
         assert_eq!(packed[1], PARSER_ATN_FORMAT_VERSION);
-        ParserAtn::from_owned(packed.clone()).expect("packed words should validate");
+        PackedATNDeserializer::new()
+            .deserialize(packed)
+            .expect("packed words should deserialize");
     }
 
     #[test]
@@ -113,7 +116,9 @@ mod tests {
             .expect("parser unit has packed words");
         assert_eq!(packed[0], PARSER_ATN_MAGIC);
         assert_eq!(packed[1], PARSER_ATN_FORMAT_VERSION);
-        ParserAtn::from_owned(packed.clone()).expect("packed words should validate");
+        PackedATNDeserializer::new()
+            .deserialize(packed)
+            .expect("packed words should deserialize");
         let words = lexer
             .lexer_atn_words
             .as_ref()

@@ -6,6 +6,7 @@ use std::fmt::Write;
 use super::super::model::{GrammarKind, RecognizerModel};
 use super::SERIALIZED_VERSION;
 use super::build::{FinalizedAtnGraph, FinalizedTransition, FinalizedTransitionKind};
+use super::runtime_build::{state_type, usize_to_i32};
 use super::state_kind::AtnStateKind;
 
 const PARSER_ATN_TYPE: i32 = 1;
@@ -324,28 +325,6 @@ fn set_index(sets: &[Vec<(i32, i32)>], ranges: &[(i32, i32)]) -> i32 {
     )
 }
 
-const fn state_type(kind: AtnStateKind) -> i32 {
-    match kind {
-        AtnStateKind::Invalid => 0,
-        AtnStateKind::Basic => 1,
-        AtnStateKind::RuleStart => 2,
-        AtnStateKind::BlockStart => 3,
-        AtnStateKind::PlusBlockStart => 4,
-        AtnStateKind::StarBlockStart => 5,
-        AtnStateKind::TokenStart => 6,
-        AtnStateKind::RuleStop => 7,
-        AtnStateKind::BlockEnd => 8,
-        AtnStateKind::StarLoopBack => 9,
-        AtnStateKind::StarLoopEntry => 10,
-        AtnStateKind::PlusLoopBack => 11,
-        AtnStateKind::LoopEnd => 12,
-    }
-}
-
-fn usize_to_i32(value: usize) -> i32 {
-    i32::try_from(value).expect("test ATN value exceeds i32")
-}
-
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -368,7 +347,7 @@ mod tests {
     use dbt_antlr_runtime::{Arena, Parser as _, TokenSource};
 
     use super::*;
-    use crate::grammar::atn::ParserAtn;
+    use crate::grammar::atn::encode_packed_atn;
     use crate::grammar::compiler::{Compilation, compile};
     use crate::grammar::integration::integrate_loaded;
     use crate::grammar::loader::{LoadOptions, load};
@@ -383,7 +362,7 @@ mod tests {
     // (`ATNDeserializer`).
     fn dbt_parser_atn(compiled: &super::super::parser::CompiledParser) -> ATN {
         PackedATNDeserializer::new()
-            .deserialize(compiled.packed.packed_words())
+            .deserialize(&encode_packed_atn(&compiled.atn))
             .expect("codegen packed words should deserialize in dbt-antlr-runtime")
     }
 
@@ -1378,6 +1357,14 @@ mod tests {
             direct_dump, java_dump,
             "direct packed ATN differs from Java fixture"
         );
+        // The word stream does not carry rule return edges, which the reader
+        // synthesizes again, so compare the compiled ATN with its own packed
+        // form as well.
+        assert_eq!(
+            dbt_antlr_runtime::atn_dump::dump_atn(&compiled.atn),
+            direct_dump,
+            "compiled parser ATN differs from its packed word stream",
+        );
         assert_complete_interp(
             &serialize_interp(&compiled.semantic.recognizer, &actual),
             expected_path,
@@ -2114,7 +2101,7 @@ mod tests {
                     let compiled = parser_named(&compilation, parser);
                     let rule = rule_index(compiled, start_rule);
                     let decision =
-                        entry_decision(&compiled.packed, rule).expect("start rule has a decision");
+                        entry_decision(&compiled.atn, rule).expect("start rule has a decision");
                     assert_eq!(decision, 0, "{fixture_name}");
                     Arena::with(|arena| {
                         let mut parser = dbt_parser(arena, lexer, compiled, input);
@@ -2455,7 +2442,7 @@ mod tests {
             let lexer = lexer_named(&compilation, "L");
             let compiled = parser_named(&compilation, "T");
             let rule = rule_index(compiled, "a");
-            let decision = entry_decision(&compiled.packed, rule);
+            let decision = entry_decision(&compiled.atn, rule);
 
             for check in checks {
                 Arena::with(|arena| {
@@ -2701,12 +2688,12 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing parser rule {name}"))
         }
 
-        fn entry_decision(atn: &ParserAtn, rule: usize) -> Option<usize> {
-            let start = atn.rule_to_start_state().get(rule)?;
-            let target = atn.state(start)?.transitions().first()?.data().target();
-            atn.decision_to_state()
+        fn entry_decision(atn: &ATN, rule: usize) -> Option<usize> {
+            let start = atn.rule_to_start_state.get(rule)?;
+            let target = start.get_transitions().first()?.get_target();
+            atn.decision_to_state
                 .iter()
-                .position(|decision_state| decision_state == target)
+                .position(|decision_state| *decision_state == target)
         }
 
         /// Java's `RuleContext.getSourceInterval`: token index of the start

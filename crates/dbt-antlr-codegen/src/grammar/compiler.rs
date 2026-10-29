@@ -473,7 +473,7 @@ mod tests {
             panic!("the parser pass records one report");
         };
         assert_eq!(report.grammar, "ParserShapes");
-        assert_eq!(report.decisions.len(), parser.packed.decision_count());
+        assert_eq!(report.decisions.len(), parser.atn.decision_to_state.len());
         assert!(
             report
                 .decisions

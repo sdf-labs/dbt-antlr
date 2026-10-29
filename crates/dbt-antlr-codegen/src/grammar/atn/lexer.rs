@@ -24,22 +24,18 @@ use super::build::{
     FinalizedTransitionKind,
 };
 use super::optimize::{collapse_lexer_sets, remove_tail_epsilons};
+use super::runtime_build::{self, add_rule_return_edges, usize_to_i32};
 use super::state_kind::AtnStateKind;
 use dbt_antlr_runtime::atn::ATN;
-use dbt_antlr_runtime::atn_state::{
-    ATNState, ATNStateRef, ATNStateType, BaseATNState, BasicBlockStartState, BasicState,
-    BlockEndState, LoopEndState, PlusBlockStartState, PlusLoopBackState, RuleStartState,
-    RuleStopState, StarBlockStartState, StarLoopEntryState, StarLoopbackState, TokenStartState,
-};
+use dbt_antlr_runtime::atn_state::{ATNState, ATNStateType, LoopEndState, RuleStartState};
 use dbt_antlr_runtime::atn_type::ATNType;
-use dbt_antlr_runtime::interval_set::{IntervalSet, IntervalSetBuf};
+use dbt_antlr_runtime::interval_set::IntervalSet;
 use dbt_antlr_runtime::lexer_action::LexerAction;
 use dbt_antlr_runtime::transition::{
-    ActionTransition, AtomTransition, EpsilonTransition, NotSetTransition,
-    PrecedencePredicateTransition, PredicateTransition, RangeTransition, RuleTransition,
-    SetTransition, TRANSITION_ACTION, TRANSITION_ATOM, TRANSITION_EPSILON, TRANSITION_NOTSET,
-    TRANSITION_PRECEDENCE, TRANSITION_PREDICATE, TRANSITION_RANGE, TRANSITION_RULE, TRANSITION_SET,
-    TRANSITION_WILDCARD, Transition, TransitionType, WildcardTransition,
+    ActionTransition, AtomTransition, PrecedencePredicateTransition, PredicateTransition,
+    RangeTransition, RuleTransition, TRANSITION_ACTION, TRANSITION_ATOM, TRANSITION_EPSILON,
+    TRANSITION_NOTSET, TRANSITION_PRECEDENCE, TRANSITION_PREDICATE, TRANSITION_RANGE,
+    TRANSITION_RULE, TRANSITION_SET, TRANSITION_WILDCARD, Transition, TransitionType,
 };
 
 const EOF_CODE_POINT: i32 = -1;
@@ -1132,66 +1128,7 @@ fn build_atn(
     lexer_actions: Vec<LexerAction<'static>>,
 ) -> ATN {
     let mut atn = ATN::new(ATNType::Lexer, graph.max_token_type);
-    atn.alloc_states(graph.states.len());
-    for (state_number, state) in graph.states.iter().enumerate() {
-        let base = BaseATNState::new(
-            usize_to_i32(state_number),
-            state.rule_index.map_or(-1, usize_to_i32),
-            state_type(state.kind),
-        );
-        // Only block starts and loop ends store a state link in the word
-        // format, so the other linked state types keep the placeholder.
-        let runtime = match state.kind {
-            AtnStateKind::Invalid => continue,
-            AtnStateKind::Basic => BasicState::create(base),
-            AtnStateKind::RuleStart => {
-                let stop = state
-                    .rule_index
-                    .and_then(|rule_index| graph.rule_stops.get(rule_index).copied());
-                RuleStartState::create(base, state_ref(&atn, stop), state.left_recursive_rule)
-            }
-            AtnStateKind::BlockStart => BasicBlockStartState::create(
-                base,
-                -1,
-                state.non_greedy,
-                state_ref(&atn, state.end_state),
-            ),
-            AtnStateKind::PlusBlockStart => PlusBlockStartState::create(
-                base,
-                -1,
-                state.non_greedy,
-                state_ref(&atn, state.end_state),
-                ATNStateRef::invalid(),
-            ),
-            AtnStateKind::StarBlockStart => StarBlockStartState::create(
-                base,
-                -1,
-                state.non_greedy,
-                state_ref(&atn, state.end_state),
-            ),
-            AtnStateKind::TokenStart => TokenStartState::create(base, -1, state.non_greedy),
-            AtnStateKind::RuleStop => RuleStopState::create(base),
-            AtnStateKind::BlockEnd => BlockEndState::create(base, ATNStateRef::invalid()),
-            AtnStateKind::StarLoopBack => StarLoopbackState::create(base),
-            AtnStateKind::StarLoopEntry => StarLoopEntryState::create(
-                base,
-                -1,
-                state.non_greedy,
-                ATNStateRef::invalid(),
-                false,
-            ),
-            AtnStateKind::PlusLoopBack => PlusLoopBackState::create(base, -1, state.non_greedy),
-            AtnStateKind::LoopEnd => {
-                LoopEndState::create(base, state_ref(&atn, state.loop_back_state))
-            }
-        };
-        atn.add_state(runtime);
-    }
-
-    let rule_starts = state_refs(&atn, &graph.rule_starts);
-    let rule_stops = state_refs(&atn, &graph.rule_stops);
-    atn.rule_to_start_state = rule_starts;
-    atn.rule_to_stop_state = rule_stops;
+    runtime_build::build_states(&mut atn, graph);
     atn.rule_to_token_type = grammar
         .unit
         .rules
@@ -1210,13 +1147,6 @@ fn build_atn(
         atn.mode_to_start_state
             .push(atn.make_state_ref(usize_to_i32(graph.state_map[mode])));
     }
-    for (decision_number, &decision) in graph.decisions.iter().enumerate() {
-        let reference = atn.make_state_ref(usize_to_i32(decision));
-        atn.decision_to_state.push(reference);
-        if let Some(field) = atn.get_state_mut(usize_to_i32(decision)).get_decision_mut() {
-            *field = usize_to_i32(decision_number);
-        }
-    }
     atn.lexer_actions = lexer_actions;
 
     let transitions = graph
@@ -1226,127 +1156,17 @@ fn build_atn(
         .collect::<BTreeMap<_, _>>();
     for (source, state) in graph.states.iter().enumerate() {
         for transition_id in &state.transitions {
-            let Some(transition) = transitions.get(transition_id).copied() else {
+            let Some(edge) = transitions.get(transition_id).copied() else {
                 continue;
             };
-            let target = atn.make_state_ref(usize_to_i32(transition.target));
-            let runtime = runtime_transition(&atn, transition, target);
+            let target = atn.make_state_ref(usize_to_i32(edge.target));
+            let runtime = runtime_build::transition(&atn, edge, target);
             atn.get_state_mut(usize_to_i32(source))
                 .add_transition(runtime);
         }
     }
     add_rule_return_edges(&mut atn);
     atn
-}
-
-fn runtime_transition(
-    atn: &ATN,
-    transition: &FinalizedTransition,
-    target: ATNStateRef,
-) -> Transition {
-    match &transition.kind {
-        FinalizedTransitionKind::Epsilon => EpsilonTransition::create(target, 0),
-        FinalizedTransitionKind::Atom(label) => AtomTransition::create(target, *label),
-        FinalizedTransitionKind::Range { start, stop } => {
-            RangeTransition::create(target, *start, *stop)
-        }
-        FinalizedTransitionKind::Set(ranges) => SetTransition::create(target, runtime_set(ranges)),
-        FinalizedTransitionKind::NotSet(ranges) => {
-            NotSetTransition::create(target, runtime_set(ranges))
-        }
-        FinalizedTransitionKind::Wildcard => WildcardTransition::create(target),
-        FinalizedTransitionKind::Rule {
-            rule_index,
-            follow,
-            precedence,
-            ..
-        } => RuleTransition::create(
-            target,
-            atn.make_state_ref(usize_to_i32(*follow)),
-            usize_to_i32(*rule_index),
-            *precedence,
-        ),
-        FinalizedTransitionKind::Predicate {
-            rule_index,
-            predicate_index,
-            context_dependent,
-        } => PredicateTransition::create(
-            target,
-            *context_dependent,
-            usize_to_i32(*rule_index),
-            usize_to_i32(*predicate_index),
-        ),
-        FinalizedTransitionKind::Action {
-            rule_index,
-            action_index,
-            context_dependent,
-        } => ActionTransition::create(
-            target,
-            *context_dependent,
-            usize_to_i32(*rule_index),
-            action_index.map_or(-1, usize_to_i32),
-            0,
-        ),
-        FinalizedTransitionKind::Precedence(precedence) => {
-            PrecedencePredicateTransition::create(target, *precedence)
-        }
-    }
-}
-
-/// Materializes a transition set as a runtime set.
-///
-/// Runtime set transitions borrow their set for the whole ATN lifetime, so the
-/// set is leaked once per set transition. The runtime deserializers leak once
-/// per distinct set in the same way.
-fn runtime_set(ranges: &[(i32, i32)]) -> &'static IntervalSet {
-    let mut set = IntervalSetBuf::new();
-    for &(start, stop) in ranges {
-        set.add_range(start, stop);
-    }
-    set.into_static()
-}
-
-fn add_rule_return_edges(atn: &mut ATN) {
-    let mut return_edges = Vec::new();
-    for state in atn.iter_states() {
-        for transition in state.get_transitions() {
-            let Some(rule) = transition.try_as::<RuleTransition>() else {
-                continue;
-            };
-            let rule_index = rule.get_target().get_rule_index();
-            let index = usize::try_from(rule_index).expect("rule index is not negative");
-            let left_recursive = atn.rule_to_start_state[index]
-                .try_as::<RuleStartState>()
-                .is_some_and(|start| start.is_left_recursive);
-            let precedence_return = if left_recursive && rule.precedence() == 0 {
-                rule_index
-            } else {
-                -1
-            };
-            return_edges.push((
-                atn.rule_to_stop_state[index],
-                rule.follow_state,
-                precedence_return,
-            ));
-        }
-    }
-    for (stop, follow, precedence_return) in return_edges {
-        atn.get_state_mut(stop.get_state_number())
-            .add_transition(EpsilonTransition::create(follow, precedence_return));
-    }
-}
-
-fn state_ref(atn: &ATN, number: Option<usize>) -> ATNStateRef {
-    number.map_or(ATNStateRef::invalid(), |number| {
-        atn.make_state_ref(usize_to_i32(number))
-    })
-}
-
-fn state_refs(atn: &ATN, numbers: &[usize]) -> Vec<ATNStateRef> {
-    numbers
-        .iter()
-        .map(|&number| atn.make_state_ref(usize_to_i32(number)))
-        .collect()
 }
 
 fn analyze_lexer(
@@ -1973,28 +1793,6 @@ fn serialize_lexer_actions(data: &mut Vec<i32>, actions: &[LexerAction<'static>]
     for action in actions {
         data.extend(<[i32; 3]>::from(action.to_serialized()));
     }
-}
-
-const fn state_type(kind: AtnStateKind) -> i32 {
-    match kind {
-        AtnStateKind::Invalid => 0,
-        AtnStateKind::Basic => 1,
-        AtnStateKind::RuleStart => 2,
-        AtnStateKind::BlockStart => 3,
-        AtnStateKind::PlusBlockStart => 4,
-        AtnStateKind::StarBlockStart => 5,
-        AtnStateKind::TokenStart => 6,
-        AtnStateKind::RuleStop => 7,
-        AtnStateKind::BlockEnd => 8,
-        AtnStateKind::StarLoopBack => 9,
-        AtnStateKind::StarLoopEntry => 10,
-        AtnStateKind::PlusLoopBack => 11,
-        AtnStateKind::LoopEnd => 12,
-    }
-}
-
-fn usize_to_i32(value: usize) -> i32 {
-    i32::try_from(value).expect("ATN value exceeds i32")
 }
 
 fn state_number(state: &ATNState) -> i32 {

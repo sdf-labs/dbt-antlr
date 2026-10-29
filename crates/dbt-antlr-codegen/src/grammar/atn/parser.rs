@@ -2,22 +2,20 @@
 // Copyright (c) 2026 Konstantin Vyatkin
 use std::collections::BTreeMap;
 
-use super::super::diagnostic::{CompilationError, Diagnostic};
+use super::super::diagnostic::CompilationError;
 use super::super::model::{
     Alternative, Block, Element, ElementKind, ModelNodeId, Quantifier, Rule, RuleId,
     SemanticGrammar, SetElement, Terminal,
 };
 use super::super::provenance::{ProvenanceIndex, SyntheticReason};
 use super::analysis::{ParserAnalysis, ParserCheckSites, analyze_parser};
-use super::build::{
-    BuildGraph, BuildTransitionKind, BuildTransitionSpec, FinalizedAtnGraph,
-    FinalizedTransitionKind,
-};
+use super::build::{BuildGraph, BuildTransitionKind, BuildTransitionSpec, FinalizedAtnGraph};
 use super::optimize::remove_tail_epsilons;
-use super::packed::{
-    ParserAtn, ParserAtnBuilder, ParserAtnError, ParserIntervalSetId, ParserTransitionSpec,
-};
+use super::runtime_build::{self, add_rule_return_edges, usize_to_i32};
 use super::state_kind::AtnStateKind;
+use dbt_antlr_runtime::atn::ATN;
+use dbt_antlr_runtime::atn_state::{ATNStateType, RuleStartState, StarLoopEntryState};
+use dbt_antlr_runtime::atn_type::ATNType;
 
 const EOF_TOKEN_TYPE: i32 = -1;
 
@@ -25,7 +23,7 @@ const EOF_TOKEN_TYPE: i32 = -1;
 pub(crate) struct CompiledParser {
     pub(crate) semantic: SemanticGrammar,
     pub(crate) graph: FinalizedAtnGraph,
-    pub(crate) packed: ParserAtn,
+    pub(crate) atn: ATN,
     pub(crate) analysis: ParserAnalysis,
     pub(crate) provenance: ProvenanceIndex,
 }
@@ -41,17 +39,11 @@ pub(crate) fn compile_parser(
     let graph = factory.graph.finalize();
     let check_sites = ParserCheckSites::compact(&graph, epsilon_closures, epsilon_optionals);
     let analysis = analyze_parser(&grammar, &graph, &check_sites)?;
-    let packed = lower(&graph).map_err(|error| {
-        CompilationError::new(vec![Diagnostic::error(
-            "G4A901",
-            grammar.unit.span.clone(),
-            format!("cannot pack parser ATN: {error}"),
-        )])
-    })?;
+    let atn = build_atn(&graph);
     Ok(CompiledParser {
         semantic: grammar,
         graph,
-        packed,
+        atn,
         analysis,
         provenance,
     })
@@ -454,7 +446,6 @@ impl<'a> ParserFactory<'a> {
         self.graph.state_mut(loop_state).non_greedy = !greedy;
         self.graph.add_decision(loop_state);
         let end = self.synthetic_state(AtnStateKind::LoopEnd, SyntheticReason::LoopBoundary, owner);
-        self.graph.state_mut(pair.left).loop_back_state = Some(loop_state);
         self.graph.state_mut(end).loop_back_state = Some(loop_state);
         self.synthetic_epsilon(
             pair.right,
@@ -752,137 +743,88 @@ fn terminal_type(terminal: &Terminal, grammar: &SemanticGrammar) -> Option<i32> 
     }
 }
 
-fn lower(graph: &FinalizedAtnGraph) -> Result<ParserAtn, ParserAtnError> {
-    let mut builder = ParserAtnBuilder::new(graph.max_token_type);
-    for state in &graph.states {
-        let id = builder.add_state(state.kind, state.rule_index)?;
-        debug_assert_eq!(id.index(), graph.state_map[&state.original]);
-    }
-    for (state_number, state) in graph.states.iter().enumerate() {
-        if matches!(
-            state.kind,
-            AtnStateKind::BlockStart | AtnStateKind::PlusBlockStart | AtnStateKind::StarBlockStart
-        ) && let Some(end) = state.end_state
-        {
-            builder.set_end_state(state_number, end)?;
-        }
-        if state.kind == AtnStateKind::LoopEnd
-            && let Some(loop_back) = state.loop_back_state
-        {
-            builder.set_loop_back_state(state_number, loop_back)?;
-        }
-        if state.non_greedy {
-            builder.set_non_greedy(state_number)?;
-        }
-        if state.left_recursive_rule {
-            builder.set_left_recursive_rule(state_number)?;
-        }
-    }
-    builder.set_rule_to_start_state(graph.rule_starts.clone())?;
-    builder.set_rule_to_stop_state(graph.rule_stops.clone())?;
-    for decision in &graph.decisions {
-        builder.add_decision_state(*decision)?;
-    }
+/// Builds the runtime parser [`ATN`] of the finalized graph.
+///
+/// The result is the single ATN representation of a compiled parser:
+/// [`super::packed::encode_packed_atn`] serializes it into the packed word
+/// stream that generated parsers embed, and the `--static-parser-dfa` pass
+/// reads it directly. Construction follows the packed deserializer, so both
+/// forms describe the same graph.
+fn build_atn(graph: &FinalizedAtnGraph) -> ATN {
+    let mut atn = ATN::new(ATNType::Parser, graph.max_token_type);
+    runtime_build::build_states(&mut atn, graph);
 
     let transitions = graph
         .transitions
         .iter()
         .map(|transition| (transition.original, transition))
         .collect::<BTreeMap<_, _>>();
-    let mut sets = BTreeMap::<Vec<(i32, i32)>, ParserIntervalSetId>::new();
-    for state in &graph.states {
+    for (source, state) in graph.states.iter().enumerate() {
+        // Return edges leave a rule stop state towards the follow state of a
+        // call site, and only the call site knows the call precedence, so the
+        // edges are synthesized from the rule calls instead.
+        if state.kind == AtnStateKind::RuleStop {
+            continue;
+        }
         for transition_id in &state.transitions {
-            let Some(transition) = transitions.get(transition_id).copied() else {
+            let Some(edge) = transitions.get(transition_id).copied() else {
                 continue;
             };
-            if state.kind == AtnStateKind::RuleStop
-                && !matches!(transition.kind, FinalizedTransitionKind::Epsilon)
-            {
-                continue;
-            }
-            let spec = match &transition.kind {
-                FinalizedTransitionKind::Epsilon => ParserTransitionSpec::Epsilon {
-                    target: transition.target,
-                },
-                FinalizedTransitionKind::Atom(label) => ParserTransitionSpec::Atom {
-                    target: transition.target,
-                    label: *label,
-                },
-                FinalizedTransitionKind::Range { start, stop } => ParserTransitionSpec::Range {
-                    target: transition.target,
-                    start: *start,
-                    stop: *stop,
-                },
-                FinalizedTransitionKind::Set(ranges) => {
-                    let set = set_id(&mut builder, &mut sets, ranges)?;
-                    ParserTransitionSpec::Set {
-                        target: transition.target,
-                        set,
-                    }
-                }
-                FinalizedTransitionKind::NotSet(ranges) => {
-                    let set = set_id(&mut builder, &mut sets, ranges)?;
-                    ParserTransitionSpec::NotSet {
-                        target: transition.target,
-                        set,
-                    }
-                }
-                FinalizedTransitionKind::Wildcard => ParserTransitionSpec::Wildcard {
-                    target: transition.target,
-                },
-                FinalizedTransitionKind::Rule {
-                    rule_index,
-                    follow,
-                    precedence,
-                    ..
-                } => ParserTransitionSpec::Rule {
-                    target: transition.target,
-                    rule_index: *rule_index,
-                    follow_state: *follow,
-                    precedence: *precedence,
-                },
-                FinalizedTransitionKind::Predicate {
-                    rule_index,
-                    predicate_index,
-                    context_dependent,
-                } => ParserTransitionSpec::Predicate {
-                    target: transition.target,
-                    rule_index: *rule_index,
-                    pred_index: *predicate_index,
-                    context_dependent: *context_dependent,
-                },
-                FinalizedTransitionKind::Action {
-                    rule_index,
-                    action_index,
-                    context_dependent,
-                } => ParserTransitionSpec::Action {
-                    target: transition.target,
-                    rule_index: *rule_index,
-                    action_index: *action_index,
-                    context_dependent: *context_dependent,
-                },
-                FinalizedTransitionKind::Precedence(precedence) => {
-                    ParserTransitionSpec::Precedence {
-                        target: transition.target,
-                        precedence: *precedence,
-                    }
-                }
-            };
-            builder.add_transition(transition.source, spec)?;
+            let target = atn.make_state_ref(usize_to_i32(edge.target));
+            let runtime = runtime_build::transition(&atn, edge, target);
+            atn.get_state_mut(usize_to_i32(source))
+                .add_transition(runtime);
         }
     }
-    builder.finish()
+    add_rule_return_edges(&mut atn);
+    mark_precedence_decisions(&mut atn);
+    atn
 }
 
-fn set_id(
-    builder: &mut ParserAtnBuilder,
-    sets: &mut BTreeMap<Vec<(i32, i32)>, ParserIntervalSetId>,
-    ranges: &[(i32, i32)],
-) -> Result<ParserIntervalSetId, ParserAtnError> {
-    if let Some(set) = sets.get(ranges) {
-        return Ok(*set);
+/// Marks the star-loop entries that select a precedence rule alternative.
+///
+/// The mark follows the runtime deserializer's precedence rule. For each
+/// star-loop entry of a left recursive rule, the entry is a precedence
+/// decision when its loop end is an epsilon-only loop end that leads straight
+/// to the rule stop state.
+fn mark_precedence_decisions(atn: &mut ATN) {
+    let candidates = atn
+        .iter_states()
+        .filter(|state| state.state_type() == ATNStateType::StarLoopEntry)
+        .map(|state| state.get_state_number())
+        .collect::<Vec<_>>();
+    for state in candidates {
+        let Ok(rule_index) = usize::try_from(atn.get_state(state).get_rule_index()) else {
+            continue;
+        };
+        let left_recursive = atn
+            .rule_to_start_state
+            .get(rule_index)
+            .and_then(|start| start.try_as::<RuleStartState>())
+            .is_some_and(|start| start.is_left_recursive);
+        if !left_recursive {
+            continue;
+        }
+        let Some(loop_end) = atn
+            .get_state(state)
+            .get_transitions()
+            .last()
+            .map(|transition| transition.get_target())
+        else {
+            continue;
+        };
+        let leads_to_rule_stop = loop_end.state_type() == ATNStateType::LoopEnd
+            && loop_end.has_epsilon_only_transitions()
+            && loop_end
+                .get_transitions()
+                .first()
+                .is_some_and(|transition| {
+                    transition.get_target().state_type() == ATNStateType::RuleStop
+                });
+        if leads_to_rule_stop
+            && let Some(entry) = atn.get_state_mut(state).try_as_mut::<StarLoopEntryState>()
+        {
+            entry.is_precedence = true;
+        }
     }
-    let set = builder.add_interval_set(ranges.iter().copied())?;
-    sets.insert(ranges.to_vec(), set);
-    Ok(set)
 }
