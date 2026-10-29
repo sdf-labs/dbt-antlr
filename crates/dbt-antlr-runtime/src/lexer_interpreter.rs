@@ -25,11 +25,10 @@ pub type LexerInterpreterBase<'input, 'arena, Input, TF> =
 /// Recognizer data of a [LexerInterpreter].
 ///
 /// Unlike generated lexers, which compile this data into statics, the
-/// interpreter receives it at construction time. The ATN and the ATN
-/// simulator manager must live for `'static` because of the runtime's
-/// simulator manager design, so they are leaked on construction; each
-/// interpreter instance gets its own (not shared) decision DFAs, matching the
-/// Java runtime.
+/// interpreter receives it at construction time. The ATN is passed in as a
+/// `&'static ATN` (see [`ATN::into_static`]) and the ATN simulator manager is
+/// leaked on construction; each interpreter instance gets its own (not shared)
+/// decision DFAs, matching the Java runtime.
 pub struct LexerInterpreterExt {
     grammar_file_name: &'static str,
     rule_names: &'static [&'static str],
@@ -137,11 +136,13 @@ where
 {
     /// Creates a new lexer interpreter.
     ///
-    /// `atn` is a ready (already deserialized) lexer ATN; it is moved onto
-    /// the heap and leaked because the runtime's ATN simulator machinery
-    /// requires `&'static ATN`. Metadata (`grammar_file_name`, `rule_names`,
-    /// `channel_names`, `mode_names`) must be `&'static` for the same reason;
-    /// leak dynamically built strings with [Box::leak] if needed.
+    /// `atn` is a ready (already deserialized) lexer ATN. The runtime's ATN
+    /// simulator machinery requires a `&'static ATN`, because DFAs hold
+    /// `ATNStateRef` pointers into it; leak a dynamically built ATN once with
+    /// [`ATN::into_static`]. Metadata (`grammar_file_name`, `rule_names`,
+    /// `channel_names`, `mode_names`) is `&'static` to match the recognizer
+    /// table interface that generated lexers compile into statics; leak
+    /// dynamically built strings with [Box::leak] if needed.
     ///
     /// Returns an error if `atn` is not a lexer ATN, matching the
     /// `IllegalArgumentException` thrown by the Java constructor.
@@ -153,7 +154,7 @@ where
         rule_names: &'static [&'static str],
         channel_names: &'static [&'static str],
         mode_names: &'static [&'static str],
-        atn: ATN,
+        atn: &'static ATN,
         input: Input,
     ) -> Result<Self, ANTLRError> {
         if atn.grammar_type != ATNType::Lexer {
@@ -161,7 +162,6 @@ where
                 "The ATN must be a lexer ATN.".to_owned(),
             ));
         }
-        let atn: &'static ATN = Box::leak(Box::new(atn));
         let atn_manager: &'static LexerATNSimulatorManager =
             Box::leak(Box::new(LexerATNSimulatorManager::new(atn)));
         Ok(Self {

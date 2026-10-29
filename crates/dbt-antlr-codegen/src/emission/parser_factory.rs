@@ -104,7 +104,7 @@ pub(crate) fn build_parser_file_context(
         funcs,
         sempred_funcs,
         atn: PackedAtnModel {
-            serialized: encode_packed_atn(&compiled.atn),
+            serialized: encode_packed_atn(compiled.atn),
         },
     };
 

@@ -347,28 +347,13 @@ mod tests {
     use dbt_antlr_runtime::{Arena, Parser as _, TokenSource};
 
     use super::*;
-    use crate::grammar::atn::encode_packed_atn;
+    use crate::grammar::atn::{encode_lexer_atn, encode_packed_atn};
     use crate::grammar::compiler::{Compilation, compile};
     use crate::grammar::integration::integrate_loaded;
     use crate::grammar::loader::{LoadOptions, load};
     use crate::grammar::model::LeftRecursiveAlternativeKind;
     use crate::grammar::provenance::Origin;
     use crate::grammar::semantics::analyze;
-
-    // Runtime cases simulate the codegen-produced ATNs with the shipped
-    // dbt-antlr-runtime interpreters (`ParserInterpreter`/`LexerInterpreter`), fed
-    // from codegen's own emitted words: parser ATNs as packed words
-    // (`PackedATNDeserializer`), lexer ATNs as Java-format words
-    // (`ATNDeserializer`).
-    fn dbt_parser_atn(compiled: &super::super::parser::CompiledParser) -> ATN {
-        PackedATNDeserializer::new()
-            .deserialize(&encode_packed_atn(&compiled.atn))
-            .expect("codegen packed words should deserialize in dbt-antlr-runtime")
-    }
-
-    fn dbt_lexer_atn(compiled: &super::super::lexer::CompiledLexer) -> ATN {
-        ATNDeserializer::new(None).deserialize(&mut compiled.runtime_artifact.atn_words.iter())
-    }
 
     fn leaked_strings(names: &[String]) -> &'static [&'static str] {
         let leaked = names
@@ -419,7 +404,7 @@ mod tests {
             leaked_strings(&recognizer.rule_names),
             leaked_strings(&channel_names),
             leaked_strings(&recognizer.mode_names),
-            dbt_lexer_atn(compiled),
+            compiled.atn,
             InputStream::new(input),
         )
         .expect("codegen lexer ATN should be accepted by the dbt lexer interpreter")
@@ -445,7 +430,7 @@ mod tests {
             &*Box::leak(recognizer.name.clone().into_boxed_str()),
             dbt_vocabulary(recognizer),
             leaked_strings(&recognizer.rule_names),
-            dbt_parser_atn(compiled),
+            compiled.atn,
             dbt_token_stream(arena, lexer, input),
         )
     }
@@ -1222,7 +1207,7 @@ mod tests {
 
     fn assert_lexer_interp(compiled: &super::super::lexer::CompiledLexer, expected_path: &Path) {
         let expected = read_atn(expected_path);
-        let actual = &compiled.runtime_artifact.atn_words;
+        let actual = &encode_lexer_atn(compiled.atn);
         if *actual != expected {
             let differences = actual
                 .iter()
@@ -1252,14 +1237,11 @@ mod tests {
         let fixture_atn = ATNDeserializer::new(None).deserialize(&mut expected.iter());
         assert_eq!(
             dbt_antlr_runtime::atn_dump::dump_atn(&fixture_atn),
-            dbt_antlr_runtime::atn_dump::dump_atn(&compiled.atn),
+            dbt_antlr_runtime::atn_dump::dump_atn(compiled.atn),
             "compiled lexer ATN differs from the Java fixture ATN",
         );
         assert_complete_interp(
-            &serialize_interp(
-                &compiled.semantic.recognizer,
-                &compiled.runtime_artifact.atn_words,
-            ),
+            &serialize_interp(&compiled.semantic.recognizer, actual),
             expected_path,
         );
     }
@@ -1343,26 +1325,26 @@ mod tests {
         let actual = serialize_parser(&compiled.graph);
 
         assert_eq!(actual, expected);
-        // The packed words use a different encoding than the Java-format
-        // fixture words, so compare the two deserializations structurally
-        // through dbt-antlr-runtime ATN dumps (the same check dbt-antlr-runtime's own
+        // The compiled ATN is built directly, while the fixture comes from the
+        // Java word stream, so compare them structurally through
+        // dbt-antlr-runtime ATN dumps (the same check dbt-antlr-runtime's own
         // packed-equivalence tests use).
+        let compiled_dump = dbt_antlr_runtime::atn_dump::dump_atn(compiled.atn);
         let java_atn = ATNDeserializer::new(None).deserialize(&mut expected.iter());
-        let direct_atn = dbt_parser_atn(compiled);
-        let (java_dump, direct_dump) = (
-            dbt_antlr_runtime::atn_dump::dump_atn(&java_atn),
-            dbt_antlr_runtime::atn_dump::dump_atn(&direct_atn),
-        );
         assert_eq!(
-            direct_dump, java_dump,
-            "direct packed ATN differs from Java fixture"
+            compiled_dump,
+            dbt_antlr_runtime::atn_dump::dump_atn(&java_atn),
+            "compiled parser ATN differs from the Java fixture ATN",
         );
         // The word stream does not carry rule return edges, which the reader
         // synthesizes again, so compare the compiled ATN with its own packed
         // form as well.
+        let packed_atn = PackedATNDeserializer::new()
+            .deserialize(&encode_packed_atn(compiled.atn))
+            .expect("compiled parser ATN should survive its packed word stream");
         assert_eq!(
-            dbt_antlr_runtime::atn_dump::dump_atn(&compiled.atn),
-            direct_dump,
+            compiled_dump,
+            dbt_antlr_runtime::atn_dump::dump_atn(&packed_atn),
             "compiled parser ATN differs from its packed word stream",
         );
         assert_complete_interp(
@@ -2101,7 +2083,7 @@ mod tests {
                     let compiled = parser_named(&compilation, parser);
                     let rule = rule_index(compiled, start_rule);
                     let decision =
-                        entry_decision(&compiled.atn, rule).expect("start rule has a decision");
+                        entry_decision(compiled.atn, rule).expect("start rule has a decision");
                     assert_eq!(decision, 0, "{fixture_name}");
                     Arena::with(|arena| {
                         let mut parser = dbt_parser(arena, lexer, compiled, input);
@@ -2313,9 +2295,8 @@ mod tests {
         ) -> ActionLexerResult {
             Arena::with(|arena| {
                 let recognizer = &compiled.semantic.recognizer;
-                let atn: &'static ATN = Box::leak(Box::new(dbt_lexer_atn(compiled)));
                 let atn_manager: &'static LexerATNSimulatorManager =
-                    Box::leak(Box::new(LexerATNSimulatorManager::new(atn)));
+                    Box::leak(Box::new(LexerATNSimulatorManager::new(compiled.atn)));
                 let hooks = Rc::new(RefCell::new(LexerHooks::default()));
                 let channel_names = recognizer
                     .channel_names
@@ -2442,7 +2423,7 @@ mod tests {
             let lexer = lexer_named(&compilation, "L");
             let compiled = parser_named(&compilation, "T");
             let rule = rule_index(compiled, "a");
-            let decision = entry_decision(&compiled.atn, rule);
+            let decision = entry_decision(compiled.atn, rule);
 
             for check in checks {
                 Arena::with(|arena| {

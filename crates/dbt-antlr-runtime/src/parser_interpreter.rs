@@ -47,11 +47,10 @@ pub type ParserInterpreterBase<'input, 'arena, Input, TF> =
 /// Recognizer data of a [ParserInterpreter].
 ///
 /// Unlike generated parsers, which compile this data into statics, the
-/// interpreter receives it at construction time. The ATN and the ATN
-/// simulator manager must live for `'static` because of the runtime's
-/// simulator manager design, so they are leaked on construction; each
-/// interpreter instance gets its own (not shared) decision DFAs, matching the
-/// Java runtime.
+/// interpreter receives it at construction time. The ATN is passed in as a
+/// `&'static ATN` (see [`ATN::into_static`]) and the ATN simulator manager is
+/// leaked on construction; each interpreter instance gets its own (not shared)
+/// decision DFAs, matching the Java runtime.
 pub struct ParserInterpreterExt {
     grammar_file_name: &'static str,
     rule_names: &'static [&'static str],
@@ -221,24 +220,25 @@ where
 {
     /// Creates a new parser interpreter with the given error strategy.
     ///
-    /// `atn` is a ready (already deserialized) parser ATN; it is moved onto
-    /// the heap and leaked because the runtime's ATN simulator machinery
-    /// requires `&'static ATN`. Metadata (`grammar_file_name`, `rule_names`)
-    /// must be `&'static` for the same reason; leak dynamically built strings
-    /// with [Box::leak] if needed.
+    /// `atn` is a ready (already deserialized) parser ATN. The runtime's ATN
+    /// simulator machinery requires a `&'static ATN`, because DFAs hold
+    /// `ATNStateRef` pointers into it; leak a dynamically built ATN once with
+    /// [`ATN::into_static`]. Metadata (`grammar_file_name`, `rule_names`) is
+    /// `&'static` to match the recognizer table interface that generated
+    /// parsers compile into statics; leak dynamically built strings with
+    /// [Box::leak] if needed.
     pub fn with_strategy(
         arena: &'arena Arena,
         grammar_file_name: &'static str,
         vocabulary: Box<dyn Vocabulary>,
         rule_names: &'static [&'static str],
-        atn: ATN,
+        atn: &'static ATN,
         input: Input,
         strategy: Box<
             dyn ErrorStrategy<'input, 'arena, TF, ParserInterpreterBase<'input, 'arena, Input, TF>>
                 + 'arena,
         >,
     ) -> Self {
-        let atn: &'static ATN = Box::leak(Box::new(atn));
         let atn_manager: &'static ParserATNSimulatorManager =
             Box::leak(Box::new(ParserATNSimulatorManager::new(atn)));
         Self {
@@ -274,7 +274,7 @@ where
         grammar_file_name: &'static str,
         vocabulary: Box<dyn Vocabulary>,
         rule_names: &'static [&'static str],
-        atn: ATN,
+        atn: &'static ATN,
         input: Input,
     ) -> Self {
         Self::with_strategy(

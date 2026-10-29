@@ -11,7 +11,9 @@
 //!
 //! The build result becomes the `StaticLexerTables` of the lexer output
 //! model. Modes that the builder cannot compile, and edges that escape to the
-//! lazy simulator, produce compiler warnings (`G4S188` and `G4S189`). The
+//! lazy simulator, produce compiler warnings (`G4S188` and `G4S189`). When every
+//! mode compiles and no edge escapes, the generated lexer runs on the tables
+//! alone: its ATN statics are elided and its word stream is never serialized. The
 //! `StaticLexerDfaReport` of each lexer is appended to the
 //! [`OptimizationReport`](super::report::OptimizationReport), which renders the
 //! `static-lexer-dfa` manifest entry.
@@ -26,7 +28,7 @@ use minijinja::Value;
 
 use super::descriptor::PassDescriptor;
 use super::manifest::{object, option, source_value};
-use crate::grammar::atn::{CompiledLexer, FinalizedTransitionKind};
+use crate::grammar::atn::{CompiledLexer, FinalizedTransitionKind, encode_lexer_atn};
 use crate::grammar::diagnostic::Diagnostic;
 use crate::grammar::frontend::SourceSpan;
 use crate::grammar::model::{
@@ -44,7 +46,7 @@ impl StaticLexerDfa {
 
     /// Builds the static lexer DFA tables of one compiled lexer unit.
     pub(crate) fn build(compiled: &CompiledLexer) -> StaticLexerDfaArtifact {
-        let build = StaticLexerDfaBuilder::new().build(&compiled.atn);
+        let build = StaticLexerDfaBuilder::new().build(compiled.atn);
 
         let unit = &compiled.semantic.unit;
         let grammar_name = unit.name.as_str();
@@ -116,6 +118,8 @@ pub(crate) struct StaticLexerDfaReport {
     pub(crate) source_span: SourceSpan,
     pub(crate) omit_atn: bool,
     pub(crate) table_words: usize,
+    /// Words of the ATN stream the generated lexer embeds, which is zero when
+    /// `omit_atn` elides the ATN.
     pub(crate) atn_words: usize,
     pub(crate) modes: Vec<StaticLexerModeReport>,
 }
@@ -285,7 +289,14 @@ fn build_lexer_report(
         source_span: unit.span.clone(),
         omit_atn,
         table_words: build.words.len(),
-        atn_words: compiled.runtime_artifact.atn_words.len(),
+        // The report counts the words the generated lexer embeds, so it
+        // serializes exactly what emission serializes, and reports zero when
+        // the ATN statics are elided.
+        atn_words: if omit_atn {
+            0
+        } else {
+            encode_lexer_atn(compiled.atn).len()
+        },
         modes,
     }
 }

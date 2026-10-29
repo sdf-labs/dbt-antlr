@@ -20,9 +20,16 @@ pub const INVALID_ALT: i32 = 0;
 
 /// Augmented Transition Network
 ///
-/// Basically NFA(graph) of states and possible(maybe multiple) transitions on a given particular symbol.
+/// Basically NFA(graph) of states and possible(maybe multiple) transitions on a
+/// given particular symbol.
 ///
-/// Public mostly because of implementations reasons. From user side is only useful for advanced error handling
+/// Public mostly because of implementations reasons. From user side is only
+/// useful for advanced error handling.
+///
+/// An [`ATN`] is never deallocated: the simulators and DFAs hold
+/// [`ATNStateRef`] pointers into it and share them dynamically, so they only
+/// accept a `&'static ATN`. Build or deserialize an ATN once, then leak it with
+/// [`ATN::into_static`].
 pub struct ATN {
     pub decision_to_state: Vec<ATNStateRef>,
 
@@ -76,6 +83,19 @@ impl ATN {
             rule_to_token_type: Vec::new(),
             states: Vec::new(),
         }
+    }
+
+    /// Leaks this ATN for the rest of the process and returns a `'static`
+    /// handle to it.
+    ///
+    /// The ATN layer is built on the convention of one ATN per recognizer that
+    /// is never deallocated: DFAs and simulators store [`ATNStateRef`] pointers
+    /// into the ATN, and they share those pointers dynamically, so no shorter
+    /// lifetime can be expressed. Every consumer that builds an ATN at run
+    /// time calls this once, before handing the ATN to a simulator.
+    #[must_use]
+    pub fn into_static(self) -> &'static ATN {
+        Box::leak(Box::new(self))
     }
 
     ///Compute the set of valid tokens that can occur starting in `s` and

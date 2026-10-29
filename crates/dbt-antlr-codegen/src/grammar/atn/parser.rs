@@ -23,7 +23,13 @@ const EOF_TOKEN_TYPE: i32 = -1;
 pub(crate) struct CompiledParser {
     pub(crate) semantic: SemanticGrammar,
     pub(crate) graph: FinalizedAtnGraph,
-    pub(crate) atn: ATN,
+    /// Runtime ATN of the graph, leaked for the process lifetime.
+    ///
+    /// The runtime ATN/DFA layer holds `ATNStateRef`s into the ATN, so it only
+    /// accepts a `&'static ATN` (see [`ATN::into_static`]). The
+    /// `--static-parser-dfa` pass reads this ATN directly, and the emitted word
+    /// stream is its serialized form ([`encode_packed_atn`](super::encode_packed_atn)).
+    pub(crate) atn: &'static ATN,
     pub(crate) analysis: ParserAnalysis,
     pub(crate) provenance: ProvenanceIndex,
 }
@@ -43,7 +49,7 @@ pub(crate) fn compile_parser(
     Ok(CompiledParser {
         semantic: grammar,
         graph,
-        atn,
+        atn: atn.into_static(),
         analysis,
         provenance,
     })

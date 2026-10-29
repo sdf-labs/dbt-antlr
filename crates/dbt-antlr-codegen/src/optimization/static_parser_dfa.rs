@@ -32,7 +32,7 @@ impl StaticParserDfa {
 
     /// Inventories the decisions of one compiled parser unit.
     pub(crate) fn report(compiled: &CompiledParser) -> StaticParserDfaReport {
-        let atn = &compiled.atn;
+        let atn = compiled.atn;
         let recognizer = &compiled.semantic.recognizer;
         let decisions = atn
             .decision_to_state

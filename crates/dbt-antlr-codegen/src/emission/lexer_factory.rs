@@ -13,7 +13,7 @@ use crate::emission::model::{
     NamedActionsModel, OutputFileModel, RuleActionFunctionModel, SerializedAtnModel,
     StaticLexerTablesModel, TokenConstantModel,
 };
-use crate::grammar::atn::CompiledLexer;
+use crate::grammar::atn::{CompiledLexer, encode_lexer_atn};
 use crate::grammar::model::{Block, ElementKind, GrammarUnit, RecognizerModel, Rule};
 use std::fmt::Write as _;
 
@@ -74,7 +74,11 @@ pub(crate) fn rule_context_struct_name(rule_name: &str) -> String {
 ///
 /// `grammar_file_name` is the name that lands in the `fileHeader` comment.
 /// `static_tables` carries the precomputed static DFA tables (enabled by
-/// `--static-lexer-dfa` cli flag)
+/// `--static-lexer-dfa` cli flag).
+///
+/// The ATN word stream is serialized here, on demand, and only when the
+/// generated file needs it: a lexer whose static tables cover the whole grammar
+/// (`omit_atn`) runs on the tables alone, so its ATN is never serialized.
 pub(crate) fn build_lexer_file_context(
     compiled: &CompiledLexer,
     grammar_file_name: &str,
@@ -94,6 +98,12 @@ pub(crate) fn build_lexer_file_context(
         collect_rule_functions(recognizer, rule, &mut action_funcs, &mut sempred_funcs);
     }
 
+    let atn = (!static_tables.as_ref().is_some_and(|tables| tables.omit_atn)).then(|| {
+        SerializedAtnModel {
+            serialized: encode_lexer_atn(compiled.atn),
+        }
+    });
+
     let lexer = LexerModel {
         name: unit.name.clone(),
         grammar_name: unit.name.clone(),
@@ -110,9 +120,7 @@ pub(crate) fn build_lexer_file_context(
         modes: recognizer.mode_names.clone(),
         action_funcs,
         sempred_funcs,
-        atn: SerializedAtnModel {
-            serialized: compiled.runtime_artifact.atn_words.clone(),
-        },
+        atn,
         static_tables,
     };
 
@@ -370,5 +378,61 @@ fn append_unicode_escaped_code_point(out: &mut String, code_point: u32, escape: 
         }
     } else {
         let _ = write!(out, "\\u{code_point:04X}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::*;
+    use crate::grammar::compiler::compile;
+    use crate::grammar::loader::LoadOptions;
+
+    fn compiled_lexer(fixture_name: &str, grammar: &str) -> crate::grammar::compiler::Compilation {
+        let path = fixture(fixture_name).join(grammar);
+        compile(LoadOptions {
+            roots: vec![path],
+            library_directories: Vec::new(),
+        })
+        .expect("lexer fixture should compile")
+    }
+
+    fn fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/codegen-direct/fixtures")
+            .join(name)
+    }
+
+    fn static_tables(omit_atn: bool) -> StaticLexerTablesModel {
+        StaticLexerTablesModel {
+            words: Vec::new(),
+            omit_atn,
+        }
+    }
+
+    #[test]
+    fn omitted_atn_statics_skip_serialization() {
+        let compilation = compiled_lexer("lexer-shapes", "LexerShapes.g4");
+        let lexer = compilation
+            .lexer_named("LexerShapes")
+            .expect("fixture has a lexer unit");
+
+        let omitted = build_lexer_file_context(lexer, "LexerShapes.g4", Some(static_tables(true)));
+        assert!(
+            omitted.lexer.atn.is_none(),
+            "a fully static lexer serializes no ATN words"
+        );
+
+        for context in [
+            build_lexer_file_context(lexer, "LexerShapes.g4", Some(static_tables(false))),
+            build_lexer_file_context(lexer, "LexerShapes.g4", None),
+        ] {
+            let atn = context
+                .lexer
+                .atn
+                .expect("a lexer that keeps its ATN serializes the words");
+            assert_eq!(atn.serialized, encode_lexer_atn(lexer.atn));
+        }
     }
 }

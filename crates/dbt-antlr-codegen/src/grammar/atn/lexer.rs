@@ -41,11 +41,6 @@ use dbt_antlr_runtime::transition::{
 const EOF_CODE_POINT: i32 = -1;
 const MAX_CODE_POINT: i32 = 0x10_FFFF;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct LexerRuntimeArtifact {
-    pub(crate) atn_words: Vec<i32>,
-}
-
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct LexerAnalysis {
     pub(crate) nullable_rules: BTreeSet<RuleId>,
@@ -57,8 +52,13 @@ pub(crate) struct LexerAnalysis {
 pub(crate) struct CompiledLexer {
     pub(crate) semantic: SemanticGrammar,
     pub(crate) graph: FinalizedAtnGraph,
-    pub(crate) atn: ATN,
-    pub(crate) runtime_artifact: LexerRuntimeArtifact,
+    /// Runtime ATN of the graph, leaked for the process lifetime.
+    ///
+    /// The runtime ATN/DFA layer holds `ATNStateRef`s into the ATN, so it only
+    /// accepts a `&'static ATN` (see [`ATN::into_static`]). The
+    /// `--static-lexer-dfa` pass reads this ATN directly, and the emitted word
+    /// stream is its serialized form ([`encode_lexer_atn`]).
+    pub(crate) atn: &'static ATN,
     pub(crate) analysis: LexerAnalysis,
     pub(crate) provenance: ProvenanceIndex,
 }
@@ -84,16 +84,12 @@ pub(crate) fn compile_lexer(
     let lexer_actions = std::mem::take(&mut factory.lexer_actions);
     let graph = factory.graph.finalize();
     let analysis = analyze_lexer(&grammar, &graph, closure_sites, &mut diagnostics)?;
-    let atn = build_atn(&grammar, &graph, &mode_starts, lexer_actions);
-    let runtime_artifact = LexerRuntimeArtifact {
-        atn_words: encode_lexer_atn(&atn),
-    };
+    let atn = build_atn(&grammar, &graph, &mode_starts, lexer_actions).into_static();
 
     Ok(CompiledLexer {
         semantic: grammar,
         graph,
         atn,
-        runtime_artifact,
         analysis,
         provenance,
     })
@@ -1544,7 +1540,13 @@ const fn ranges_overlap(
     left_start <= right_stop && right_start <= left_stop
 }
 
-fn encode_lexer_atn(atn: &ATN) -> Vec<i32> {
+/// Serializes a runtime lexer [`ATN`] into the Java-format word stream that
+/// generated lexers embed.
+///
+/// The words are produced on demand, at emission or export time, never during
+/// compilation. A lexer whose static DFA tables cover the whole grammar needs
+/// no ATN at runtime, so its build never calls this.
+pub(crate) fn encode_lexer_atn(atn: &ATN) -> Vec<i32> {
     let sets = collect_runtime_sets(atn);
     let mut data = vec![
         SERIALIZED_VERSION,
