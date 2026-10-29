@@ -4,7 +4,7 @@ use std::fmt;
 
 use dbt_antlr_runtime::interval_set::IntervalSetBuf;
 
-/// Ordered set of integer intervals used by set and negated-set transitions.
+/// Ordered set of integer intervals used to build character sets.
 ///
 /// Construction goes through the shared runtime builder, which stores ranges
 /// sorted and merges overlapping and adjacent intervals on insertion.

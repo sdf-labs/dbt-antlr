@@ -9,7 +9,7 @@ use crate::atn_type::ATNType;
 use crate::int_stream::EOF;
 use crate::interval_set::IntervalSet;
 use crate::interval_set::IntervalSetBuf;
-use crate::lexer_action::*;
+use crate::lexer_action::LexerAction;
 use crate::transition::Transition;
 use crate::transition::*;
 
@@ -91,7 +91,7 @@ impl ATNDeserializer {
     }
 
     fn read_atn(&self, data: &mut Iter<i32>) -> ATN {
-        ATN::new_atn(
+        ATN::new(
             match data.next() {
                 Some(0) => ATNType::Lexer,
                 Some(1) => ATNType::Parser,
@@ -349,9 +349,8 @@ impl ATNDeserializer {
             let data1 = *_data.next().unwrap();
             let data2 = *_data.next().unwrap();
 
-            let lexer_action = self.lexer_action_factory(action_type, data1, data2);
-
-            atn.lexer_actions.push(lexer_action);
+            atn.lexer_actions
+                .push(LexerAction::from_serialized(action_type, data1, data2));
         }
     }
 
@@ -468,28 +467,6 @@ impl ATNDeserializer {
             ATNSTATE_PLUS_LOOP_BACK => PlusLoopBackState::create(base, -1, false),
             ATNSTATE_LOOP_END => LoopEndState::create(base, ATNStateRef::invalid()),
             t => panic!("invalid ATN state type {}", t),
-        }
-    }
-
-    fn lexer_action_factory(
-        &self,
-        action_type: i32,
-        data1: i32,
-        data2: i32,
-    ) -> LexerAction<'static> {
-        match action_type {
-            LEXER_ACTION_TYPE_CHANNEL => LexerAction::Channel(data1),
-            LEXER_ACTION_TYPE_CUSTOM => LexerAction::Custom {
-                rule_index: data1,
-                action_index: data2,
-            },
-            LEXER_ACTION_TYPE_MODE => LexerAction::Mode(data1),
-            LEXER_ACTION_TYPE_MORE => LexerAction::More,
-            LEXER_ACTION_TYPE_POP_MODE => LexerAction::PopMode,
-            LEXER_ACTION_TYPE_PUSH_MODE => LexerAction::PushMode(data1),
-            LEXER_ACTION_TYPE_SKIP => LexerAction::Skip,
-            LEXER_ACTION_TYPE_TYPE => LexerAction::Type(data1),
-            _ => panic!("invalid action type {}", action_type),
         }
     }
 }

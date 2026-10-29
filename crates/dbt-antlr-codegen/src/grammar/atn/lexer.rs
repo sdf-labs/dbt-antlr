@@ -23,10 +23,24 @@ use super::build::{
     BuildGraph, BuildTransitionKind, BuildTransitionSpec, FinalizedAtnGraph, FinalizedTransition,
     FinalizedTransitionKind,
 };
-use super::interval_set::IntervalSet;
-use super::lexer_atn::{LexerAction, LexerAtn, LexerAtnState, LexerTransition};
 use super::optimize::{collapse_lexer_sets, remove_tail_epsilons};
 use super::state_kind::AtnStateKind;
+use dbt_antlr_runtime::atn::ATN;
+use dbt_antlr_runtime::atn_state::{
+    ATNState, ATNStateRef, ATNStateType, BaseATNState, BasicBlockStartState, BasicState,
+    BlockEndState, LoopEndState, PlusBlockStartState, PlusLoopBackState, RuleStartState,
+    RuleStopState, StarBlockStartState, StarLoopEntryState, StarLoopbackState, TokenStartState,
+};
+use dbt_antlr_runtime::atn_type::ATNType;
+use dbt_antlr_runtime::interval_set::{IntervalSet, IntervalSetBuf};
+use dbt_antlr_runtime::lexer_action::LexerAction;
+use dbt_antlr_runtime::transition::{
+    ActionTransition, AtomTransition, EpsilonTransition, NotSetTransition,
+    PrecedencePredicateTransition, PredicateTransition, RangeTransition, RuleTransition,
+    SetTransition, TRANSITION_ACTION, TRANSITION_ATOM, TRANSITION_EPSILON, TRANSITION_NOTSET,
+    TRANSITION_PRECEDENCE, TRANSITION_PREDICATE, TRANSITION_RANGE, TRANSITION_RULE, TRANSITION_SET,
+    TRANSITION_WILDCARD, Transition, TransitionType, WildcardTransition,
+};
 
 const EOF_CODE_POINT: i32 = -1;
 const MAX_CODE_POINT: i32 = 0x10_FFFF;
@@ -47,7 +61,7 @@ pub(crate) struct LexerAnalysis {
 pub(crate) struct CompiledLexer {
     pub(crate) semantic: SemanticGrammar,
     pub(crate) graph: FinalizedAtnGraph,
-    pub(crate) atn: LexerAtn,
+    pub(crate) atn: ATN,
     pub(crate) runtime_artifact: LexerRuntimeArtifact,
     pub(crate) analysis: LexerAnalysis,
     pub(crate) provenance: ProvenanceIndex,
@@ -74,7 +88,7 @@ pub(crate) fn compile_lexer(
     let lexer_actions = std::mem::take(&mut factory.lexer_actions);
     let graph = factory.graph.finalize();
     let analysis = analyze_lexer(&grammar, &graph, closure_sites, &mut diagnostics)?;
-    let atn = lower(&grammar, &graph, &mode_starts, lexer_actions);
+    let atn = build_atn(&grammar, &graph, &mode_starts, lexer_actions);
     let runtime_artifact = LexerRuntimeArtifact {
         atn_words: encode_lexer_atn(&atn),
     };
@@ -126,7 +140,7 @@ struct LexerFactory<'a> {
     provenance: &'a mut ProvenanceIndex,
     current_rule: Option<(&'a Rule, usize)>,
     mode_starts: Vec<BuildStateId>,
-    lexer_actions: Vec<LexerAction>,
+    lexer_actions: Vec<LexerAction<'static>>,
     epsilon_closures: Vec<(RuleId, BuildStateId, BuildStateId)>,
     diagnostics: Vec<Diagnostic>,
 }
@@ -775,7 +789,7 @@ impl<'a> LexerFactory<'a> {
         })
     }
 
-    fn lexer_action_index(&mut self, action: LexerAction) -> usize {
+    fn lexer_action_index(&mut self, action: LexerAction<'static>) -> usize {
         if let Some(index) = self
             .lexer_actions
             .iter()
@@ -872,7 +886,6 @@ impl<'a> LexerFactory<'a> {
         self.graph.state_mut(loop_state).non_greedy = !greedy;
         self.graph.add_decision(loop_state);
         let end = self.synthetic_state(AtnStateKind::LoopEnd, SyntheticReason::LoopBoundary, owner);
-        self.graph.state_mut(pair.left).loop_back_state = Some(loop_state);
         self.graph.state_mut(end).loop_back_state = Some(loop_state);
         self.synthetic_epsilon(
             pair.right,
@@ -1079,7 +1092,7 @@ impl<'a> LexerFactory<'a> {
     }
 }
 
-fn command_action(command: ResolvedLexerCommand) -> LexerAction {
+fn command_action(command: ResolvedLexerCommand) -> LexerAction<'static> {
     match command {
         ResolvedLexerCommand::Skip => LexerAction::Skip,
         ResolvedLexerCommand::More => LexerAction::More,
@@ -1106,56 +1119,105 @@ fn collapsed_set_kind(ranges: Vec<(i32, i32)>) -> BuildTransitionKind {
     }
 }
 
-fn lower(
+/// Builds the runtime lexer [`ATN`] of the finalized graph.
+///
+/// The result is the single ATN representation of a compiled lexer: the
+/// `--static-lexer-dfa` pass reads it directly, and [`encode_lexer_atn`]
+/// serializes it into the word stream that generated lexers embed. Construction
+/// follows the word-stream deserializer, so both forms describe the same graph.
+fn build_atn(
     grammar: &SemanticGrammar,
     graph: &FinalizedAtnGraph,
     mode_starts: &[BuildStateId],
-    lexer_actions: Vec<LexerAction>,
-) -> LexerAtn {
-    let mut atn = LexerAtn::new(graph.max_token_type);
+    lexer_actions: Vec<LexerAction<'static>>,
+) -> ATN {
+    let mut atn = ATN::new(ATNType::Lexer, graph.max_token_type);
+    atn.alloc_states(graph.states.len());
     for (state_number, state) in graph.states.iter().enumerate() {
-        let mut runtime = LexerAtnState::new(state_number, state.kind);
-        if let Some(rule_index) = state.rule_index {
-            runtime = runtime.with_rule_index(rule_index);
-        }
-        if matches!(
-            state.kind,
-            AtnStateKind::BlockStart | AtnStateKind::PlusBlockStart | AtnStateKind::StarBlockStart
-        ) {
-            runtime.end_state = state.end_state;
-        }
-        if state.kind == AtnStateKind::LoopEnd {
-            runtime.loop_back_state = state.loop_back_state;
-        }
-        runtime.non_greedy = state.non_greedy;
-        runtime.left_recursive_rule = state.left_recursive_rule;
+        let base = BaseATNState::new(
+            usize_to_i32(state_number),
+            state.rule_index.map_or(-1, usize_to_i32),
+            state_type(state.kind),
+        );
+        // Only block starts and loop ends store a state link in the word
+        // format, so the other linked state types keep the placeholder.
+        let runtime = match state.kind {
+            AtnStateKind::Invalid => continue,
+            AtnStateKind::Basic => BasicState::create(base),
+            AtnStateKind::RuleStart => {
+                let stop = state
+                    .rule_index
+                    .and_then(|rule_index| graph.rule_stops.get(rule_index).copied());
+                RuleStartState::create(base, state_ref(&atn, stop), state.left_recursive_rule)
+            }
+            AtnStateKind::BlockStart => BasicBlockStartState::create(
+                base,
+                -1,
+                state.non_greedy,
+                state_ref(&atn, state.end_state),
+            ),
+            AtnStateKind::PlusBlockStart => PlusBlockStartState::create(
+                base,
+                -1,
+                state.non_greedy,
+                state_ref(&atn, state.end_state),
+                ATNStateRef::invalid(),
+            ),
+            AtnStateKind::StarBlockStart => StarBlockStartState::create(
+                base,
+                -1,
+                state.non_greedy,
+                state_ref(&atn, state.end_state),
+            ),
+            AtnStateKind::TokenStart => TokenStartState::create(base, -1, state.non_greedy),
+            AtnStateKind::RuleStop => RuleStopState::create(base),
+            AtnStateKind::BlockEnd => BlockEndState::create(base, ATNStateRef::invalid()),
+            AtnStateKind::StarLoopBack => StarLoopbackState::create(base),
+            AtnStateKind::StarLoopEntry => StarLoopEntryState::create(
+                base,
+                -1,
+                state.non_greedy,
+                ATNStateRef::invalid(),
+                false,
+            ),
+            AtnStateKind::PlusLoopBack => PlusLoopBackState::create(base, -1, state.non_greedy),
+            AtnStateKind::LoopEnd => {
+                LoopEndState::create(base, state_ref(&atn, state.loop_back_state))
+            }
+        };
         atn.add_state(runtime);
     }
-    atn.set_rule_to_start_state(graph.rule_starts.clone());
-    atn.set_rule_to_stop_state(graph.rule_stops.clone());
-    atn.set_rule_to_token_type(
-        grammar
-            .unit
-            .rules
-            .iter()
-            .map(|rule| {
-                grammar
-                    .recognizer
-                    .vocabulary
-                    .by_name
-                    .get(&rule.name)
-                    .copied()
-                    .unwrap_or(0)
-            })
-            .collect(),
-    );
+
+    let rule_starts = state_refs(&atn, &graph.rule_starts);
+    let rule_stops = state_refs(&atn, &graph.rule_stops);
+    atn.rule_to_start_state = rule_starts;
+    atn.rule_to_stop_state = rule_stops;
+    atn.rule_to_token_type = grammar
+        .unit
+        .rules
+        .iter()
+        .map(|rule| {
+            grammar
+                .recognizer
+                .vocabulary
+                .by_name
+                .get(&rule.name)
+                .copied()
+                .unwrap_or(0)
+        })
+        .collect();
     for mode in mode_starts {
-        atn.add_mode_start_state(graph.state_map[mode]);
+        atn.mode_to_start_state
+            .push(atn.make_state_ref(usize_to_i32(graph.state_map[mode])));
     }
-    for decision in &graph.decisions {
-        atn.add_decision_state(*decision);
+    for (decision_number, &decision) in graph.decisions.iter().enumerate() {
+        let reference = atn.make_state_ref(usize_to_i32(decision));
+        atn.decision_to_state.push(reference);
+        if let Some(field) = atn.get_state_mut(usize_to_i32(decision)).get_decision_mut() {
+            *field = usize_to_i32(decision_number);
+        }
     }
-    atn.set_lexer_actions(lexer_actions);
+    atn.lexer_actions = lexer_actions;
 
     let transitions = graph
         .transitions
@@ -1167,113 +1229,124 @@ fn lower(
             let Some(transition) = transitions.get(transition_id).copied() else {
                 continue;
             };
-            let transition = lower_transition(transition);
-            atn.state_mut(source)
-                .expect("direct state exists")
-                .add_transition(transition);
+            let target = atn.make_state_ref(usize_to_i32(transition.target));
+            let runtime = runtime_transition(&atn, transition, target);
+            atn.get_state_mut(usize_to_i32(source))
+                .add_transition(runtime);
         }
     }
     add_rule_return_edges(&mut atn);
-    atn.identify_tail_calls();
     atn
 }
 
-fn lower_transition(transition: &FinalizedTransition) -> LexerTransition {
+fn runtime_transition(
+    atn: &ATN,
+    transition: &FinalizedTransition,
+    target: ATNStateRef,
+) -> Transition {
     match &transition.kind {
-        FinalizedTransitionKind::Epsilon => LexerTransition::Epsilon {
-            target: transition.target,
-        },
-        FinalizedTransitionKind::Atom(label) => LexerTransition::Atom {
-            target: transition.target,
-            label: *label,
-        },
-        FinalizedTransitionKind::Range { start, stop } => LexerTransition::Range {
-            target: transition.target,
-            start: *start,
-            stop: *stop,
-        },
-        FinalizedTransitionKind::Set(ranges) => LexerTransition::Set {
-            target: transition.target,
-            set: runtime_set(ranges),
-        },
-        FinalizedTransitionKind::NotSet(ranges) => LexerTransition::NotSet {
-            target: transition.target,
-            set: runtime_set(ranges),
-        },
-        FinalizedTransitionKind::Wildcard => LexerTransition::Wildcard {
-            target: transition.target,
-        },
+        FinalizedTransitionKind::Epsilon => EpsilonTransition::create(target, 0),
+        FinalizedTransitionKind::Atom(label) => AtomTransition::create(target, *label),
+        FinalizedTransitionKind::Range { start, stop } => {
+            RangeTransition::create(target, *start, *stop)
+        }
+        FinalizedTransitionKind::Set(ranges) => SetTransition::create(target, runtime_set(ranges)),
+        FinalizedTransitionKind::NotSet(ranges) => {
+            NotSetTransition::create(target, runtime_set(ranges))
+        }
+        FinalizedTransitionKind::Wildcard => WildcardTransition::create(target),
         FinalizedTransitionKind::Rule {
             rule_index,
             follow,
             precedence,
             ..
-        } => LexerTransition::Rule {
-            target: transition.target,
-            rule_index: *rule_index,
-            follow_state: *follow,
-            precedence: *precedence,
-            tail_call: false,
-        },
+        } => RuleTransition::create(
+            target,
+            atn.make_state_ref(usize_to_i32(*follow)),
+            usize_to_i32(*rule_index),
+            *precedence,
+        ),
         FinalizedTransitionKind::Predicate {
             rule_index,
             predicate_index,
             context_dependent,
-        } => LexerTransition::Predicate {
-            target: transition.target,
-            rule_index: *rule_index,
-            pred_index: *predicate_index,
-            context_dependent: *context_dependent,
-        },
+        } => PredicateTransition::create(
+            target,
+            *context_dependent,
+            usize_to_i32(*rule_index),
+            usize_to_i32(*predicate_index),
+        ),
         FinalizedTransitionKind::Action {
             rule_index,
             action_index,
             context_dependent,
-        } => LexerTransition::Action {
-            target: transition.target,
-            rule_index: *rule_index,
-            action_index: *action_index,
-            context_dependent: *context_dependent,
-        },
-        FinalizedTransitionKind::Precedence(precedence) => LexerTransition::Precedence {
-            target: transition.target,
-            precedence: *precedence,
-        },
+        } => ActionTransition::create(
+            target,
+            *context_dependent,
+            usize_to_i32(*rule_index),
+            action_index.map_or(-1, usize_to_i32),
+            0,
+        ),
+        FinalizedTransitionKind::Precedence(precedence) => {
+            PrecedencePredicateTransition::create(target, *precedence)
+        }
     }
 }
 
-fn runtime_set(ranges: &[(i32, i32)]) -> IntervalSet {
-    let mut set = IntervalSet::new();
+/// Materializes a transition set as a runtime set.
+///
+/// Runtime set transitions borrow their set for the whole ATN lifetime, so the
+/// set is leaked once per set transition. The runtime deserializers leak once
+/// per distinct set in the same way.
+fn runtime_set(ranges: &[(i32, i32)]) -> &'static IntervalSet {
+    let mut set = IntervalSetBuf::new();
     for &(start, stop) in ranges {
         set.add_range(start, stop);
     }
-    set
+    set.into_static()
 }
 
-fn add_rule_return_edges(atn: &mut LexerAtn) {
+fn add_rule_return_edges(atn: &mut ATN) {
     let mut return_edges = Vec::new();
-    for state in atn.states() {
-        for transition in &state.transitions {
-            let LexerTransition::Rule {
-                target,
-                follow_state,
-                ..
-            } = transition
-            else {
+    for state in atn.iter_states() {
+        for transition in state.get_transitions() {
+            let Some(rule) = transition.try_as::<RuleTransition>() else {
                 continue;
             };
-            let rule_index = atn
-                .state(*target)
-                .and_then(|state| state.rule_index)
-                .expect("rule transition targets a rule start");
-            return_edges.push((atn.rule_to_stop_state()[rule_index], *follow_state));
+            let rule_index = rule.get_target().get_rule_index();
+            let index = usize::try_from(rule_index).expect("rule index is not negative");
+            let left_recursive = atn.rule_to_start_state[index]
+                .try_as::<RuleStartState>()
+                .is_some_and(|start| start.is_left_recursive);
+            let precedence_return = if left_recursive && rule.precedence() == 0 {
+                rule_index
+            } else {
+                -1
+            };
+            return_edges.push((
+                atn.rule_to_stop_state[index],
+                rule.follow_state,
+                precedence_return,
+            ));
         }
     }
-    for (stop, follow) in return_edges {
-        atn.state_mut(stop)
-            .expect("rule stop state exists")
-            .add_transition(LexerTransition::Epsilon { target: follow });
+    for (stop, follow, precedence_return) in return_edges {
+        atn.get_state_mut(stop.get_state_number())
+            .add_transition(EpsilonTransition::create(follow, precedence_return));
     }
+}
+
+fn state_ref(atn: &ATN, number: Option<usize>) -> ATNStateRef {
+    number.map_or(ATNStateRef::invalid(), |number| {
+        atn.make_state_ref(usize_to_i32(number))
+    })
+}
+
+fn state_refs(atn: &ATN, numbers: &[usize]) -> Vec<ATNStateRef> {
+    numbers
+        .iter()
+        .map(|&number| atn.make_state_ref(usize_to_i32(number)))
+        .collect()
 }
 
 fn analyze_lexer(
@@ -1651,234 +1724,254 @@ const fn ranges_overlap(
     left_start <= right_stop && right_start <= left_stop
 }
 
-fn encode_lexer_atn(atn: &LexerAtn) -> Vec<i32> {
+fn encode_lexer_atn(atn: &ATN) -> Vec<i32> {
     let sets = collect_runtime_sets(atn);
     let mut data = vec![
         SERIALIZED_VERSION,
         0,
-        atn.max_token_type(),
-        usize_to_i32(atn.states().len()),
+        atn.max_token_type,
+        usize_to_i32(atn.states_count()),
     ];
-    for state in atn.states() {
-        data.push(state_type(state.kind));
-        if state.kind == AtnStateKind::Invalid {
+    for state in atn.iter_states() {
+        data.push(state.get_state_type_id());
+        if state.state_type() == ATNStateType::Invalid {
             continue;
         }
-        data.push(state.rule_index.map_or(-1, usize_to_i32));
-        match state.kind {
-            AtnStateKind::LoopEnd => data.push(usize_to_i32(
-                state
-                    .loop_back_state
-                    .expect("loop-end state has loop-back state"),
-            )),
-            AtnStateKind::BlockStart
-            | AtnStateKind::PlusBlockStart
-            | AtnStateKind::StarBlockStart => data.push(usize_to_i32(
-                state.end_state.expect("block-start state has end state"),
-            )),
+        data.push(state.get_rule_index());
+        match state.state_type() {
+            ATNStateType::LoopEnd => {
+                let loop_end = state
+                    .try_as::<LoopEndState>()
+                    .expect("loop-end state has loop-back state");
+                data.push(state_number(&loop_end.loop_back_state));
+            }
+            ATNStateType::BasicBlockStart
+            | ATNStateType::PlusBlockStart
+            | ATNStateType::StarBlockStart => {
+                let end_state = state
+                    .get_decision_end_state()
+                    .expect("block-start state has end state");
+                data.push(state_number(&end_state));
+            }
             _ => {}
         }
     }
     append_state_list(
         &mut data,
-        atn.states()
-            .iter()
-            .filter(|state| state.non_greedy)
-            .map(|state| state.state_number),
+        atn.iter_states()
+            .filter(|state| state.is_nongreedy_decision() == Some(true))
+            .map(state_number),
     );
     append_state_list(
         &mut data,
-        atn.states()
-            .iter()
-            .filter(|state| state.kind == AtnStateKind::RuleStart && state.left_recursive_rule)
-            .map(|state| state.state_number),
+        atn.iter_states()
+            .filter(|state| {
+                state
+                    .try_as::<RuleStartState>()
+                    .is_some_and(|start| start.is_left_recursive)
+            })
+            .map(state_number),
     );
 
-    data.push(usize_to_i32(atn.rule_to_start_state().len()));
-    for (&start, &token_type) in atn
-        .rule_to_start_state()
-        .iter()
-        .zip(atn.rule_to_token_type())
-    {
-        data.push(usize_to_i32(start));
+    data.push(usize_to_i32(atn.rule_to_start_state.len()));
+    for (&start, &token_type) in atn.rule_to_start_state.iter().zip(&atn.rule_to_token_type) {
+        data.push(state_number(&start));
         data.push(token_type);
     }
-    data.push(usize_to_i32(atn.mode_to_start_state().len()));
-    data.extend(atn.mode_to_start_state().iter().copied().map(usize_to_i32));
+    data.push(usize_to_i32(atn.mode_to_start_state.len()));
+    data.extend(
+        atn.mode_to_start_state
+            .iter()
+            .copied()
+            .map(|start| state_number(&start)),
+    );
     serialize_sets(&mut data, &sets);
     serialize_runtime_edges(&mut data, atn, &sets);
-    append_state_list(&mut data, atn.decision_to_state().iter().copied());
-    serialize_lexer_actions(&mut data, atn.lexer_actions());
+    append_state_list(
+        &mut data,
+        atn.decision_to_state
+            .iter()
+            .copied()
+            .map(|decision| state_number(&decision)),
+    );
+    serialize_lexer_actions(&mut data, &atn.lexer_actions);
     data
 }
 
-fn collect_runtime_sets(atn: &LexerAtn) -> Vec<Vec<(i32, i32)>> {
+fn collect_runtime_sets(atn: &ATN) -> Vec<&IntervalSet> {
     let mut sets = Vec::new();
-    for state in atn.states() {
-        if state.kind == AtnStateKind::RuleStop {
+    for state in atn.iter_states() {
+        if state.state_type() == ATNStateType::RuleStop {
             continue;
         }
-        for transition in &state.transitions {
-            let ranges = match transition {
-                LexerTransition::Set { set, .. } | LexerTransition::NotSet { set, .. } => {
-                    set.ranges()
-                }
-                _ => continue,
-            };
-            if !sets.contains(&ranges) {
-                sets.push(ranges);
+        for transition in state.get_transitions() {
+            if !matches!(
+                transition.transition_type(),
+                TransitionType::Set | TransitionType::NotSet
+            ) {
+                continue;
+            }
+            let set = transition.get_label().expect("set transition has a label");
+            if !sets.contains(&set) {
+                sets.push(set);
             }
         }
     }
     sets
 }
 
-fn append_state_list(data: &mut Vec<i32>, values: impl IntoIterator<Item = usize>) {
+fn append_state_list(data: &mut Vec<i32>, values: impl IntoIterator<Item = i32>) {
     let values = values.into_iter().collect::<Vec<_>>();
     data.push(usize_to_i32(values.len()));
-    data.extend(values.into_iter().map(usize_to_i32));
+    data.extend(values);
 }
 
-fn serialize_sets(data: &mut Vec<i32>, sets: &[Vec<(i32, i32)>]) {
+fn serialize_sets(data: &mut Vec<i32>, sets: &[&IntervalSet]) {
     data.push(usize_to_i32(sets.len()));
     for set in sets {
-        let eof = set
+        let intervals = set.as_slice();
+        let eof = intervals
             .iter()
-            .any(|(start, stop)| *start <= EOF_CODE_POINT && EOF_CODE_POINT <= *stop);
-        let eof_singleton = set
+            .any(|interval| interval.a <= EOF_CODE_POINT && EOF_CODE_POINT <= interval.b);
+        let eof_singleton = intervals
             .first()
-            .is_some_and(|range| *range == (EOF_CODE_POINT, EOF_CODE_POINT));
-        data.push(usize_to_i32(set.len() - usize::from(eof_singleton)));
+            .is_some_and(|interval| (interval.a, interval.b) == (EOF_CODE_POINT, EOF_CODE_POINT));
+        data.push(usize_to_i32(intervals.len() - usize::from(eof_singleton)));
         data.push(i32::from(eof));
-        for &(start, stop) in set {
-            if (start, stop) == (EOF_CODE_POINT, EOF_CODE_POINT) {
+        for interval in intervals {
+            if (interval.a, interval.b) == (EOF_CODE_POINT, EOF_CODE_POINT) {
                 continue;
             }
-            data.push(if start == EOF_CODE_POINT { 0 } else { start });
-            data.push(stop);
+            data.push(if interval.a == EOF_CODE_POINT {
+                0
+            } else {
+                interval.a
+            });
+            data.push(interval.b);
         }
     }
 }
 
-fn serialize_runtime_edges(data: &mut Vec<i32>, atn: &LexerAtn, sets: &[Vec<(i32, i32)>]) {
+fn serialize_runtime_edges(data: &mut Vec<i32>, atn: &ATN, sets: &[&IntervalSet]) {
     let count = atn
-        .states()
-        .iter()
-        .filter(|state| state.kind != AtnStateKind::RuleStop)
-        .map(|state| state.transitions.len())
+        .iter_states()
+        .filter(|state| state.state_type() != ATNStateType::RuleStop)
+        .map(|state| state.get_transitions().len())
         .sum();
     data.push(usize_to_i32(count));
-    for state in atn.states() {
-        if state.kind == AtnStateKind::RuleStop {
+    for state in atn.iter_states() {
+        if state.state_type() == ATNStateType::RuleStop {
             continue;
         }
-        for transition in &state.transitions {
-            let (target, kind, arg1, arg2, arg3) = runtime_edge(transition, sets);
-            data.extend([
-                usize_to_i32(state.state_number),
-                usize_to_i32(target),
-                kind,
-                arg1,
-                arg2,
-                arg3,
-            ]);
+        for transition in state.get_transitions() {
+            let (target, kind, arg1, arg2, arg3) = serialized_edge(transition, sets);
+            data.extend([state_number(state), target, kind, arg1, arg2, arg3]);
         }
     }
 }
 
-fn runtime_edge(
-    transition: &LexerTransition,
-    sets: &[Vec<(i32, i32)>],
-) -> (usize, i32, i32, i32, i32) {
-    match transition {
-        LexerTransition::Epsilon { target } => (*target, 1, 0, 0, 0),
-        LexerTransition::Range {
+fn serialized_edge(transition: &Transition, sets: &[&IntervalSet]) -> (i32, i32, i32, i32, i32) {
+    let target = state_number(&transition.get_target());
+    match transition.transition_type() {
+        TransitionType::Epsilon => (target, TRANSITION_EPSILON, 0, 0, 0),
+        TransitionType::Range => {
+            let range = transition
+                .try_as::<RangeTransition>()
+                .expect("range transition payload");
+            let (start, stop) = (range.start(), range.stop());
+            (
+                target,
+                TRANSITION_RANGE,
+                if start == EOF_CODE_POINT { 0 } else { start },
+                stop,
+                i32::from(start == EOF_CODE_POINT),
+            )
+        }
+        TransitionType::Rule => {
+            let rule = transition
+                .try_as::<RuleTransition>()
+                .expect("rule transition payload");
+            (
+                state_number(&rule.follow_state),
+                TRANSITION_RULE,
+                target,
+                rule.rule_index(),
+                rule.precedence(),
+            )
+        }
+        TransitionType::Predicate => {
+            let predicate = transition
+                .try_as::<PredicateTransition>()
+                .expect("predicate transition payload");
+            (
+                target,
+                TRANSITION_PREDICATE,
+                predicate.rule_index(),
+                predicate.pred_index(),
+                i32::from(predicate.is_ctx_dependent()),
+            )
+        }
+        TransitionType::Atom => {
+            let atom = transition
+                .try_as::<AtomTransition>()
+                .expect("atom transition payload");
+            let label = atom.label();
+            (
+                target,
+                TRANSITION_ATOM,
+                if label == EOF_CODE_POINT { 0 } else { label },
+                0,
+                i32::from(label == EOF_CODE_POINT),
+            )
+        }
+        TransitionType::Action => {
+            let action = transition
+                .try_as::<ActionTransition>()
+                .expect("action transition payload");
+            (
+                target,
+                TRANSITION_ACTION,
+                action.rule_index(),
+                action.action_index(),
+                i32::from(action.is_ctx_dependent),
+            )
+        }
+        TransitionType::Set => (
             target,
-            start,
-            stop,
-        } => (
-            *target,
-            2,
-            if *start == EOF_CODE_POINT { 0 } else { *start },
-            *stop,
-            i32::from(*start == EOF_CODE_POINT),
-        ),
-        LexerTransition::Rule {
-            target,
-            rule_index,
-            follow_state,
-            precedence,
-            ..
-        } => (
-            *follow_state,
-            3,
-            usize_to_i32(*target),
-            usize_to_i32(*rule_index),
-            *precedence,
-        ),
-        LexerTransition::Predicate {
-            target,
-            rule_index,
-            pred_index,
-            context_dependent,
-        } => (
-            *target,
-            4,
-            usize_to_i32(*rule_index),
-            usize_to_i32(*pred_index),
-            i32::from(*context_dependent),
-        ),
-        LexerTransition::Atom { target, label } => (
-            *target,
-            5,
-            if *label == EOF_CODE_POINT { 0 } else { *label },
+            TRANSITION_SET,
+            runtime_set_index(sets, transition.get_label().expect("set label")),
             0,
-            i32::from(*label == EOF_CODE_POINT),
+            0,
         ),
-        LexerTransition::Action {
+        TransitionType::NotSet => (
             target,
-            rule_index,
-            action_index,
-            context_dependent,
-        } => (
-            *target,
-            6,
-            usize_to_i32(*rule_index),
-            action_index.map_or(-1, usize_to_i32),
-            i32::from(*context_dependent),
+            TRANSITION_NOTSET,
+            runtime_set_index(sets, transition.get_label().expect("set label")),
+            0,
+            0,
         ),
-        LexerTransition::Set { target, set } => (*target, 7, runtime_set_index(sets, set), 0, 0),
-        LexerTransition::NotSet { target, set } => (*target, 8, runtime_set_index(sets, set), 0, 0),
-        LexerTransition::Wildcard { target } => (*target, 9, 0, 0, 0),
-        LexerTransition::Precedence { target, precedence } => (*target, 10, *precedence, 0, 0),
+        TransitionType::Wildcard => (target, TRANSITION_WILDCARD, 0, 0, 0),
+        TransitionType::PrecedencePredicate => {
+            let predicate = transition
+                .try_as::<PrecedencePredicateTransition>()
+                .expect("precedence predicate transition payload");
+            (target, TRANSITION_PRECEDENCE, predicate.precedence(), 0, 0)
+        }
     }
 }
 
-fn runtime_set_index(sets: &[Vec<(i32, i32)>], set: &IntervalSet) -> i32 {
+fn runtime_set_index(sets: &[&IntervalSet], set: &IntervalSet) -> i32 {
     usize_to_i32(
         sets.iter()
-            .position(|candidate| *candidate == set.ranges())
+            .position(|candidate| **candidate == *set)
             .expect("transition set was collected"),
     )
 }
 
-fn serialize_lexer_actions(data: &mut Vec<i32>, actions: &[LexerAction]) {
+fn serialize_lexer_actions(data: &mut Vec<i32>, actions: &[LexerAction<'static>]) {
     data.push(usize_to_i32(actions.len()));
     for action in actions {
-        let (kind, first, second) = match action {
-            LexerAction::Channel(channel) => (0, *channel, 0),
-            LexerAction::Custom {
-                rule_index,
-                action_index,
-            } => (1, *rule_index, *action_index),
-            LexerAction::Mode(mode) => (2, *mode, 0),
-            LexerAction::More => (3, 0, 0),
-            LexerAction::PopMode => (4, 0, 0),
-            LexerAction::PushMode(mode) => (5, *mode, 0),
-            LexerAction::Skip => (6, 0, 0),
-            LexerAction::Type(token_type) => (7, *token_type, 0),
-        };
-        data.extend(<[i32; 3]>::from((kind, first, second)));
+        data.extend(<[i32; 3]>::from(action.to_serialized()));
     }
 }
 
@@ -1902,4 +1995,10 @@ const fn state_type(kind: AtnStateKind) -> i32 {
 
 fn usize_to_i32(value: usize) -> i32 {
     i32::try_from(value).expect("ATN value exceeds i32")
+}
+
+fn state_number(state: &ATNState) -> i32 {
+    let number = state.get_state_number();
+    debug_assert!(number >= 0, "state has no state number");
+    number
 }
