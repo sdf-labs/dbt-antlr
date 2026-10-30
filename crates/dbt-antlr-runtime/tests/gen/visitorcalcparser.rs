@@ -4,7 +4,7 @@ use dbt_antlr_runtime::atn_simulator::ParserATNSimulatorManager as ATNSimulatorM
 use super::visitorcalclistener::*;
 use super::visitorcalcvisitor::*;
 
-dbt_antlr_runtime::check_version!("0","5");
+dbt_antlr_runtime::check_version!("0","6");
 pub const VisitorCalc_INT:i32=1; 
 pub const VisitorCalc_MUL:i32=2; 
 pub const VisitorCalc_DIV:i32=3; 

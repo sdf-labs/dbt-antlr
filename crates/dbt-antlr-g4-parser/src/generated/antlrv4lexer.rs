@@ -5,7 +5,7 @@ use dbt_antlr_runtime::token::TOKEN_INVALID_TYPE;
 use dbt_antlr_runtime::prelude::*;
 use dbt_antlr_runtime::atn_simulator::LexerATNSimulatorManager as ATNSimulatorManager;
 
-dbt_antlr_runtime::check_version!("0","5");
+dbt_antlr_runtime::check_version!("0","6");
 pub const TOKEN_REF:i32=1; 
 pub const RULE_REF:i32=2; 
 pub const LEXER_CHAR_SET:i32=3; 

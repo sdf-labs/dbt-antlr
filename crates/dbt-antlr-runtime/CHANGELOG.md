@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-runtime-v0.5.0...dbt-antlr-runtime-v0.6.0) - 2026-10-30
+
+### Added
+
+- *(codegen)* parser static DFA coverage enrichments (Phase 5.1 + 5.2) ([#39](https://github.com/sdf-labs/dbt-antlr/pull/39))
+- *(runtime,codegen)* parser static DFA tables end-to-end ([#38](https://github.com/sdf-labs/dbt-antlr/pull/38)) ([#38](https://github.com/sdf-labs/dbt-antlr/pull/38))
+- *(codegen)* classify parser decisions for the static DFA pass ([#37](https://github.com/sdf-labs/dbt-antlr/pull/37))
+- *(codegen)* parser static DFA pass scaffolding and generated-code slim-down ([#25](https://github.com/sdf-labs/dbt-antlr/pull/25))
+
+### Other
+
+- bake the 'static ATN convention into the compiled units ([#36](https://github.com/sdf-labs/dbt-antlr/pull/36))
+- *(codegen)* drop the tool-side lexer ATN copy ([#34](https://github.com/sdf-labs/dbt-antlr/pull/34))
+
 ## [0.5.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-runtime-v0.4.0...dbt-antlr-runtime-v0.5.0) - 2026-10-28
 
 ### Added
