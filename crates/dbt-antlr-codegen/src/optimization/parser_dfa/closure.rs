@@ -33,14 +33,22 @@
 //! same config merge in the set, and OR-ing the side map is what preserves
 //! the union of both paths' taints.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use dbt_antlr_runtime::analysis::{
-    ATN, ATNConfig, ATNStateRef, ATNStateType, BOUNDARY_TAINT, BitSet, Bump, EOF, INTERIOR_TAINT,
-    IntervalSetBuf, MergeCache, MutableATNConfigSet, NotSetTransition, PRECPRED_TAINT, PRED_TAINT,
-    PrecedencePredicateTransition, PredicateTransition, PredictionContext, PredictionContextRef,
-    RuleTransition, TOKEN_MIN_USER_TOKEN_TYPE, TransitionType, WIDENED_TAINT,
+    ATN, ATNConfig, ATNStateRef, ATNStateType, BOUNDARY_TAINT, BitSet, Bump, EOF,
+    FOREIGN_CONSUME_TAINT, INTERIOR_TAINT, IntervalSetBuf, MergeCache, MutableATNConfigSet,
+    NotSetTransition, PRECPRED_TAINT, PRED_TAINT, PrecedencePredicateTransition,
+    PredicateTransition, PredictionContext, PredictionContextRef, ROOTED_TAINT, RuleTransition,
+    TOKEN_MIN_USER_TOKEN_TYPE, TransitionType, WIDENED_TAINT,
 };
+
+use super::loop_block::LoopBlock;
+use super::postfix::{PostfixShape, bottom_frame_is, collect_guard_roots};
+
+/// The alternative of an optional-postfix decision that skips the postfix
+/// element.
+const POSTFIX_SKIP_ALT: i32 = 2;
 
 /// Union of the taints of every path that reached a closed config, keyed by
 /// `(ATN state number, alternative)`.
@@ -62,11 +70,16 @@ pub(super) struct ClosedSet<'a> {
 impl ClosedSet<'_> {
     /// The taint recorded for one config of the set.
     pub(super) fn taint_of(&self, config: &ATNConfig<'_>) -> i32 {
-        self.taint
-            .get(&(config.get_state().get_state_number(), config.get_alt()))
-            .copied()
-            .unwrap_or(0)
+        taint_of(&self.taint, config)
     }
+}
+
+/// The taint recorded for one config of a set closed under `taint`.
+pub(super) fn taint_of(taint: &Taint, config: &ATNConfig<'_>) -> i32 {
+    taint
+        .get(&(config.get_state().get_state_number(), config.get_alt()))
+        .copied()
+        .unwrap_or(0)
 }
 
 /// The precedence class a precedence-loop decision is being built for.
@@ -162,12 +175,24 @@ pub(super) struct Closure<'atn, 'a> {
     precedence: Option<PrecedenceClass>,
     depth_cache: HashMap<usize, i32>,
     call_by_follow_state: Option<HashMap<i32, CallInfo>>,
+    /// Call site of every rule invocation, keyed by its follow state, for the
+    /// guard-root analysis of optional-postfix decisions.
+    site_by_follow_state: Option<HashMap<i32, i32>>,
     /// Widening bound of the current attempt: `i32::MAX` for the unbounded
     /// attempt, `0` for the fully widened one.
     depth_bound: i32,
     /// `true` while the start closure of a precedence class runs: precedence
     /// predicates there are evaluated against the class, not the context.
     precedence_start: bool,
+    /// The operator-loop block of a precedence-class build: consumption by a
+    /// boundary-popped configuration outside it is foreign to the loop (see
+    /// [`LoopBlock`]).
+    loop_block: Option<LoopBlock>,
+    /// The optional-postfix shape of the decision, when it has one: skip
+    /// consumption outside its discipline records guard roots.
+    postfix: Option<PostfixShape>,
+    /// Rule index of the decision state, when the decision has a postfix shape.
+    decision_rule_index: i32,
     /// Configs visited by this closure, across all roots of the attempt.
     visits: u64,
     visit_budget: u64,
@@ -182,6 +207,8 @@ impl<'atn, 'a> Closure<'atn, 'a> {
         scratch: &'a Bump,
         depth_bound: i32,
         precedence: Option<PrecedenceClass>,
+        loop_block: Option<LoopBlock>,
+        postfix: Option<PostfixShape>,
         visit_budget: u64,
     ) -> Self {
         Self {
@@ -192,18 +219,29 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             precedence,
             depth_cache: HashMap::new(),
             call_by_follow_state: None,
+            site_by_follow_state: None,
             depth_bound,
             precedence_start: false,
+            loop_block,
+            postfix,
+            decision_rule_index: -1,
             visits: 0,
             visit_budget,
             exhausted: false,
         }
     }
 
+    /// The operator-loop analysis of this precedence-class build, when the
+    /// decision is a precedence loop.
+    pub(super) fn loop_block(&self) -> Option<&LoopBlock> {
+        self.loop_block.as_ref()
+    }
+
     /// Closes the start configurations of `decision_state`: one config per
     /// alternative, each starting from the empty prediction context.
     pub(super) fn start(&mut self, decision_state: ATNStateRef) -> ClosedSet<'a> {
         let mut out = SetBuilder::new();
+        self.decision_rule_index = decision_state.get_rule_index();
         self.precedence_start = self.precedence.is_some();
         for (index, transition) in decision_state.get_transitions().iter().enumerate() {
             let config = ATNConfig::new(
@@ -230,7 +268,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
     pub(super) fn successors(
         &mut self,
         closed: &ClosedSet<'a>,
-    ) -> Vec<(IntervalSetBuf, ClosedSet<'a>)> {
+    ) -> Vec<(IntervalSetBuf, ClosedSet<'a>, BTreeSet<i32>)> {
         let all_tokens = self.all_tokens();
         let mut labels: Vec<IntervalSetBuf> = Vec::new();
         let mut sources: Vec<ATNConfig<'a>> = Vec::new();
@@ -317,22 +355,60 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             }
         }
 
+        let sites = self.postfix.map(|_| self.build_site_map());
         let mut successors = Vec::with_capacity(classes.len());
         for (class, label) in classes {
             if self.exhausted {
                 break;
             }
             let mut out = SetBuilder::new();
+            let mut roots: BTreeSet<i32> = BTreeSet::new();
             for index in class.iter() {
                 let source = &sources[index];
                 if is_stop[index] {
                     out.insert(source.clone(), taints[index]);
                 } else {
+                    // A boundary-popped configuration consumes on behalf of
+                    // "some caller". Inside the operator loop that caller is an
+                    // enclosing invocation of this loop, so the consumption is
+                    // the loop's own and the enter/exit substitution still
+                    // applies; anywhere else the phantom consumer is foreign,
+                    // and the substitution must not fire.
+                    let mut taint = taints[index];
+                    if taint & BOUNDARY_TAINT != 0
+                        && self.loop_block.as_ref().is_some_and(|block| {
+                            !block.is_loop_consumption(source.get_state(), source.get_context())
+                        })
+                    {
+                        taint |= FOREIGN_CONSUME_TAINT;
+                    }
+                    // A skip-lineage configuration that consumed outside the
+                    // dangling-else discipline is realizable at run time only
+                    // on stacks whose epsilon-pop chase from the block end
+                    // reaches the positions this consumption passed through.
+                    // Record them as guard roots.
+                    if let (Some(postfix), Some(sites)) = (self.postfix, sites.as_ref())
+                        && source.get_alt() == POSTFIX_SKIP_ALT
+                        && taint & ROOTED_TAINT == 0
+                        && source.get_state().get_rule_index() != self.decision_rule_index
+                        && !source.get_context().is_none_or(|context| {
+                            bottom_frame_is(context, postfix.block_end_state, &mut HashSet::new())
+                        })
+                    {
+                        taint |= ROOTED_TAINT;
+                        collect_guard_roots(
+                            source.get_state(),
+                            source.get_context(),
+                            postfix.block_end_state,
+                            sites,
+                            &mut roots,
+                        );
+                    }
                     let advanced = source.clone().with_state(targets[index]);
-                    self.closure(advanced, taints[index], 0, &mut out);
+                    self.closure(advanced, taint, 0, &mut out);
                 }
             }
-            successors.push((label, out.into_closed_set()));
+            successors.push((label, out.into_closed_set(), roots));
         }
         successors
     }
@@ -587,6 +663,26 @@ impl<'atn, 'a> Closure<'atn, 'a> {
         };
         self.call_info(target.get_state_number())
             .is_some_and(|call| call.precedence == 0 && call.target_rule_index == class.rule_index)
+    }
+
+    /// The call site of every rule invocation, keyed by its follow state.
+    fn build_site_map(&mut self) -> HashMap<i32, i32> {
+        if let Some(cached) = self.site_by_follow_state.as_ref() {
+            return cached.clone();
+        }
+        let mut map = HashMap::new();
+        for state in self.atn.iter_states() {
+            for transition in state.get_transitions() {
+                if let Some(rule_transition) = transition.try_as::<RuleTransition>() {
+                    map.insert(
+                        rule_transition.follow_state.get_state_number(),
+                        state.get_state_number(),
+                    );
+                }
+            }
+        }
+        self.site_by_follow_state = Some(map.clone());
+        map
     }
 
     fn ensure_call_by_follow_state(&mut self) {

@@ -71,6 +71,7 @@ fn runtime_table(decision: i32, table: &StaticDfaTable) -> StaticParserTable {
     let mut accepts = Vec::with_capacity(table.states.len());
     let mut fallbacks = Vec::with_capacity(table.states.len());
     let mut conflict_min_alts = Vec::with_capacity(table.states.len());
+    let mut guarded_alts = Vec::with_capacity(table.states.len());
     let mut continuations: Vec<ParserContinuation> = Vec::new();
     let mut edges = Vec::with_capacity(table.states.len());
     for (state, entry) in table.states.iter().enumerate() {
@@ -82,6 +83,7 @@ fn runtime_table(decision: i32, table: &StaticDfaTable) -> StaticParserTable {
             entry.accept
         };
         accepts.push(accept);
+        guarded_alts.push(entry.guarded_alt);
         fallbacks.push(entry.fallback);
         conflict_min_alts.push(if accept == CONFLICT_ESCAPE {
             entry.conflict_min_alt
@@ -109,5 +111,10 @@ fn runtime_table(decision: i32, table: &StaticDfaTable) -> StaticParserTable {
         conflict_min_alts,
         continuations,
         &edges,
+    )
+    .with_guards(
+        guarded_alts,
+        table.guard_danger.clone(),
+        table.guard_pass.clone(),
     )
 }

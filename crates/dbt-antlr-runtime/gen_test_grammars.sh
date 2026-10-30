@@ -92,3 +92,12 @@ echo "Generating: parser/FuzzExpr"
 echo "Generating: fuzzexprparser_static"
 "$GEN_BIN" -no-listener --static-parser-dfa -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/FuzzExpr.g4"
 mv "$STATIC_TMP/fuzzexprparser.rs" "$SCRIPT_DIR/tests/gen/fuzzexprparser_static.rs"
+
+# The guarded-take witness is generated both ways: its static table carries
+# stack-guarded takes, so the differential test parses the same corpus with the
+# adaptive twin.
+echo "Generating: parser/GuardExpr"
+"$GEN_BIN" -no-listener -o "$SCRIPT_DIR/tests/gen" "$SCRIPT_DIR/grammars/parser/GuardExpr.g4"
+echo "Generating: guardexprparser_static"
+"$GEN_BIN" -no-listener --static-parser-dfa -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/GuardExpr.g4"
+mv "$STATIC_TMP/guardexprparser.rs" "$SCRIPT_DIR/tests/gen/guardexprparser_static.rs"

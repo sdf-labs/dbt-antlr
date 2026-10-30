@@ -11,6 +11,9 @@ mod gen {
     pub mod fuzzexprlexer;
     pub mod fuzzexprparser;
     pub mod fuzzexprparser_static;
+    pub mod guardexprlexer;
+    pub mod guardexprparser;
+    pub mod guardexprparser_static;
     pub mod lrdfalexer;
     pub mod lrdfaparser;
     pub mod staticdfalexer;
@@ -634,4 +637,78 @@ fn continuation_state_is_reused_across_parses() {
             "every escape of the same state must reuse one continuation state, got {numbers:?}"
         );
     });
+}
+
+fn parse_guard_static(input: &str) -> String {
+    Arena::with(|arena| {
+        let lexer = gen::guardexprlexer::GuardExprLexer::<_, CommonTokenFactory>::new(
+            arena,
+            InputStream::new(input),
+        );
+        let tokens = CommonTokenStream::new(lexer);
+        let mut parser = gen::guardexprparser_static::GuardExprParser::new(arena, tokens);
+        match parser.prog() {
+            Ok(ctx) => string_tree(ctx, parser.get_rule_names()),
+            Err(error) => format!("ERR {error}"),
+        }
+    })
+}
+
+fn parse_guard_adaptive(input: &str) -> String {
+    Arena::with(|arena| {
+        let lexer = gen::guardexprlexer::GuardExprLexer::<_, CommonTokenFactory>::new(
+            arena,
+            InputStream::new(input),
+        );
+        let tokens = CommonTokenStream::new(lexer);
+        let mut parser = gen::guardexprparser::GuardExprParser::new(arena, tokens);
+        match parser.prog() {
+            Ok(ctx) => string_tree(ctx, parser.get_rule_names()),
+            Err(error) => format!("ERR {error}"),
+        }
+    })
+}
+
+/// The guarded-take differential: a take/skip conflict that only the parse
+/// stack can settle. Inside an assignment target (`set a = b ;`) skip wins,
+/// everywhere else take does, and the static table's stack guard defers to the
+/// adaptive engine in exactly the first case.
+#[test]
+fn guarded_takes_match_the_adaptive_engine() {
+    let corpus = [
+        // Skip genuinely wins: the assignment's own '=' must come through.
+        "set a = b ;",
+        "set x = ( a = b ) ;",
+        "set a = NOT b = c ;",
+        "set a = b = c ;",
+        // Take genuinely wins.
+        "a = b ;",
+        "a = b AND c = d ;",
+        "a IN ( b ) ;",
+        "( a = b ) ;",
+        "NOT a = b ;",
+        "a < b OR c > d ;",
+        "set = a ;",
+        "set a ;",
+        "a ;",
+    ];
+    for input in corpus {
+        assert_eq!(
+            parse_guard_static(input),
+            parse_guard_adaptive(input),
+            "tree divergence on {input:?}"
+        );
+    }
+    // The deferring case proves the guard is load-bearing: the assignment's own
+    // `=` reaches the statement only when the `pred?` decision skips.
+    let hint = parse_guard_static("set a = b ;");
+    assert!(
+        hint.contains("set (expr (value a)) = (expr (value b)) ;"),
+        "the guarded skip must let the assignment through: {hint}"
+    );
+    let inline = parse_guard_static("a = b ;");
+    assert!(
+        inline.contains("(pred = (value b))"),
+        "outside an assignment target the take must win: {inline}"
+    );
 }

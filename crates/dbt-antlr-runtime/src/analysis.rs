@@ -30,12 +30,15 @@ pub use crate::arena::Arena;
 pub use crate::atn::{ATN, INVALID_ALT};
 pub use crate::atn_config::{
     ATNConfig, BOUNDARY_TAINT, FOREIGN_CONSUME_TAINT, INTERIOR_TAINT, PRECPRED_TAINT, PRED_TAINT,
-    WIDENED_TAINT,
+    ROOTED_TAINT, WIDENED_TAINT,
 };
 pub use crate::atn_config_set::{ATNConfigSet, MutableATNConfigSet};
 pub use crate::atn_simulator::IATNSimulator;
 pub use crate::atn_simulator::ParserATNSimulatorManager;
-pub use crate::atn_state::{ATNStateRef, ATNStateType, RuleStartState, StarLoopEntryState};
+pub use crate::atn_state::{
+    ATNStateRef, ATNStateType, BasicBlockStartState, PlusBlockStartState, RuleStartState,
+    StarBlockStartState, StarLoopEntryState,
+};
 pub use crate::dfa::{DFAState, ProposedDFAState, DFA};
 pub use crate::int_stream::EOF;
 pub use crate::interval_set::{IntervalSet, IntervalSetBuf};

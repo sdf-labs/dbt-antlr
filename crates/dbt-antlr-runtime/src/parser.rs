@@ -532,7 +532,7 @@ where
     ///
     /// [`INVALID_ALT`]: crate::atn::INVALID_ALT
     pub fn dfa_predict(&mut self, decision: i32) -> Result<i32, ANTLRError> {
-        use crate::dfa::static_parser_dfa::{CONFLICT_ESCAPE, ESCAPE};
+        use crate::dfa::static_parser_dfa::{CONFLICT_ESCAPE, ESCAPE, GUARDED};
 
         let tables = self.get_interpreter().atn().static_dfas();
         if tables.is_empty() {
@@ -557,6 +557,35 @@ where
                         .get_interpreter()
                         .adaptive_predict_conflict(decision, min_alt, self),
                     None => Ok(crate::atn::INVALID_ALT),
+                };
+            }
+            if accept == GUARDED {
+                // Guarded take of an optional-postfix decision: resolve to the
+                // guarded alternative unless the real parse stack's epsilon-pop
+                // chase from the decision's block end can reach a guard root.
+                // The walk stops at the first invoking state whose follow
+                // region cannot reach its own rule's stop.
+                let mut defers = false;
+                let mut context = self.ctx();
+                while let Some(node) = context {
+                    let invoking_state = node.get_invoking_state();
+                    if invoking_state < 0 {
+                        break;
+                    }
+                    match table.guard_step(invoking_state) {
+                        Some(true) => {
+                            defers = true;
+                            break;
+                        }
+                        Some(false) => break,
+                        None => context = node.get_parent(),
+                    }
+                }
+                self.input.seek(start_index);
+                break if defers {
+                    Ok(crate::atn::INVALID_ALT)
+                } else {
+                    Ok(table.guarded_alt(state).unwrap_or(crate::atn::INVALID_ALT))
                 };
             }
             if accept == ESCAPE {
