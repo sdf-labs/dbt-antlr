@@ -880,7 +880,7 @@ fn static_only_resolves_conflict_escapes_to_the_minimum_alternative() {
 }
 
 #[test]
-fn static_only_turns_undecided_states_into_syntax_errors() {
+fn static_only_turns_predicated_states_into_syntax_errors() {
     let results = resolve_static_only(&fixture("parser-shapes").join("ParserShapes.g4"));
     let plus = &results[1];
     let resolved = plus.static_only.as_ref().expect("the loop is resolved");
@@ -897,6 +897,7 @@ fn static_only_turns_undecided_states_into_syntax_errors() {
         .collect();
     assert_eq!(dead_ends.len(), resolved.syntax_error);
     for state in dead_ends {
+        assert!(state.predicated, "only a predicate stops the guess");
         assert_eq!(state.accept, 0);
         assert_eq!(
             state.fallback, 0,
@@ -938,6 +939,54 @@ fn static_only_resolves_guarded_takes_to_the_take() {
         resolved.min_alt >= 8,
         "the 8 guarded takes predict the take: {resolved:?}"
     );
+    assert_no_runtime_escapes(&results);
+}
+
+/// Under `--static-dfa-only`, a hybrid table looks further than with the
+/// adaptive fallback. Where the larger budget still stops, a state predicts its
+/// minimum viable alternative.
+#[test]
+fn static_only_looks_further_and_guesses_the_minimum_viable_alternative() {
+    let path = grammars_dir().join("parser").join("GuardExpr.g4");
+    let adaptive = &classify(&path)[2];
+    assert_eq!(adaptive.category, Category::HYBRID);
+    let default_table = adaptive.table.as_ref().expect("the hybrid table");
+    assert!(default_table.escapes() > 0);
+
+    let results = resolve_static_only(&path);
+    let decision = &results[2];
+    let table = decision.table.as_ref().expect("the hybrid table is kept");
+    assert!(
+        table.states.len() > 4 * default_table.states.len(),
+        "{} states with the larger budget, {} without",
+        table.states.len(),
+        default_table.states.len()
+    );
+    let resolved = decision.static_only.as_ref().expect("resolved");
+    assert!(resolved.min_viable_alt > 0, "{resolved:?}");
+    assert_eq!(resolved.syntax_error, 0);
+    assert!(resolved.min_viable_alt_witness.is_some());
+    assert!(
+        decision
+            .fallback_text()
+            .ends_with(&format!("+{}v", resolved.min_viable_alt)),
+        "{}",
+        decision.fallback_text()
+    );
+
+    let guesses: Vec<_> = table
+        .states
+        .iter()
+        .filter(|state| state.resolution == Some(super::EscapeResolution::MinViableAlt))
+        .collect();
+    assert_eq!(guesses.len(), resolved.min_viable_alt);
+    for state in guesses {
+        assert!(!state.predicated);
+        assert!(state.conflicts.is_empty(), "a guess is not a conflict");
+        assert!(state.viable_alts.len() >= 2, "{:?}", state.viable_alts);
+        assert_eq!(state.accept, state.viable_alts[0]);
+        assert!(state.continuation.is_none());
+    }
     assert_no_runtime_escapes(&results);
 }
 

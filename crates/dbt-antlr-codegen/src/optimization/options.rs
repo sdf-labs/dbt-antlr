@@ -98,9 +98,11 @@ impl OptimizationOptions {
     /// - If a lexer mode does not compile to a complete static table, the
     ///   generation fails.
     /// - If a parser decision has no static table, the generation fails.
+    /// - A partial parser table looks further than in the default mode.
     /// - In a partial parser table, a state with an SLL conflict predicts the
-    ///   minimum conflicting alternative. Every other undecided state reports a
-    ///   syntax error.
+    ///   minimum conflicting alternative. A state where the lookahead budget
+    ///   stops predicts its minimum viable alternative. A predicated state
+    ///   reports a syntax error.
     ///
     /// In report-only mode, these failures are error diagnostics and the
     /// reports are still rendered.

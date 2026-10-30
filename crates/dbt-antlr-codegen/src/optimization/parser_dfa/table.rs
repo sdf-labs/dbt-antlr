@@ -34,6 +34,12 @@ pub(crate) struct StaticDfaState {
     /// The closed config set of a frontier escape state, when SLL can resume
     /// from it instead of restarting at the decision start.
     pub(crate) continuation: Option<ParserContinuation>,
+    /// The sorted alternatives that are still viable in an escape state. The
+    /// list is empty for the other states.
+    pub(crate) viable_alts: Vec<i32>,
+    /// `true` for an escape state that a predicate in its config set made
+    /// undecidable.
+    pub(crate) predicated: bool,
     /// How `--static-dfa-only` replaced the escape verdict of this state, when
     /// it did.
     pub(crate) resolution: Option<EscapeResolution>,

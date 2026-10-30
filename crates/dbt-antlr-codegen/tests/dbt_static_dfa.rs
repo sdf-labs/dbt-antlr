@@ -365,6 +365,7 @@ fn static_parser_dfa_writes_the_manifest_entry() {
     assert!(manifest.contains("\"adaptiveDecisions\": 0"), "{manifest}");
     assert!(manifest.contains("\"escapeStates\": 0"), "{manifest}");
     assert!(manifest.contains("\"minAltStates\": 0"), "{manifest}");
+    assert!(manifest.contains("\"minViableAltStates\": 0"), "{manifest}");
     assert!(manifest.contains("\"syntaxErrorStates\": 0"), "{manifest}");
     assert!(manifest.contains("\"staticDfaOnly\": False"), "{manifest}");
     assert!(manifest.contains("\"grammar\": \"CSVParser\""));
@@ -803,6 +804,7 @@ fn static_dfa_only_resolves_hybrid_tables_without_adaptive_predict() {
     let manifest = output.optimization_manifest.expect("manifest written");
     assert!(manifest.contains("\"escapeStates\": 0"), "{manifest}");
     assert!(manifest.contains("\"minAltStates\": 1"), "{manifest}");
+    assert!(manifest.contains("\"minViableAltStates\": 0"), "{manifest}");
     assert!(manifest.contains("\"syntaxErrorStates\": 0"), "{manifest}");
     assert!(manifest.contains("\"adaptiveDecisions\": 0"), "{manifest}");
     assert!(
@@ -857,9 +859,61 @@ fn static_dfa_only_dumps_annotate_the_resolved_states() {
         "{dump}"
     );
     assert_eq!(
-        dump.matches("SYNTAX ERROR (static-dfa-only: undecided lookahead)")
+        dump.matches("SYNTAX ERROR (static-dfa-only: predicated lookahead)")
             .count(),
         10,
+        "{dump}"
+    );
+}
+
+#[test]
+fn static_dfa_only_guesses_the_minimum_viable_alternative_at_the_frontier() {
+    let output = emit_static_only(&grammars_dir().join("parser/GuardExpr.g4"), false)
+        .expect("every decision resolves");
+    let warnings = output
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == "G4S192")
+        .map(|diagnostic| diagnostic.message())
+        .collect::<Vec<_>>();
+    let [warning] = warnings.as_slice() else {
+        panic!("one resolved decision: {warnings:?}");
+    };
+    assert!(
+        warning.starts_with("parser decision 2 of rule 'expr' resolves its escape states"),
+        "{warning}"
+    );
+    let clause = " undecided states predict the minimum viable alternative (witness: '='";
+    let guesses: usize = warning
+        .split_once(clause)
+        .and_then(|(before, _)| before.rsplit(' ').next())
+        .and_then(|count| count.parse().ok())
+        .unwrap_or_else(|| panic!("no guess clause: {warning}"));
+    assert!(guesses > 0);
+    let manifest = output.optimization_manifest.expect("manifest written");
+    assert!(
+        manifest.contains(&format!("\"minViableAltStates\": {guesses}")),
+        "{manifest}"
+    );
+    assert!(manifest.contains("\"syntaxErrorStates\": 0"), "{manifest}");
+
+    let mut optimization = OptimizationOptions::new();
+    optimization.static_dfa_only(true).dump_dfas("expr");
+    let output = emit_files_with_options(
+        &grammars_dir().join("parser/GuardExpr.g4"),
+        &[grammars_dir()],
+        true,
+        false,
+        &optimization,
+    )
+    .expect("the dump renders");
+    let [dump] = output.reports.as_slice() else {
+        panic!("one dump per parser unit: {:?}", output.reports);
+    };
+    assert_eq!(
+        dump.matches("(static-dfa-only: minimum viable alternative)")
+            .count(),
+        guesses,
         "{dump}"
     );
 }
@@ -910,7 +964,7 @@ fn static_dfa_only_fails_on_a_parser_decision_without_a_table() {
             .any(|diagnostic| diagnostic.code() == "G4S192"
                 && diagnostic
                     .message()
-                    .contains("undecided states report a syntax error")),
+                    .contains("predicated states report a syntax error")),
         "the predicated loop still reports its resolution: {diagnostics:?}"
     );
 }

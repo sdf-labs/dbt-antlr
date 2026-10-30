@@ -188,6 +188,10 @@ impl StaticParserDfa {
             ("adaptiveDecisions", Value::from(totals.adaptive_decisions)),
             ("escapeStates", Value::from(totals.escape_states)),
             ("minAltStates", Value::from(totals.min_alt_states)),
+            (
+                "minViableAltStates",
+                Value::from(totals.min_viable_alt_states),
+            ),
             ("syntaxErrorStates", Value::from(totals.syntax_error_states)),
         ]);
         let rendered = Value::from_iter(
@@ -308,6 +312,7 @@ impl StaticParserDfaReport {
             .filter_map(|decision| decision.result.static_only.as_ref())
         {
             total.min_alt += resolved.min_alt;
+            total.min_viable_alt += resolved.min_viable_alt;
             total.syntax_error += resolved.syntax_error;
         }
         total
@@ -322,6 +327,7 @@ struct ReportMetrics {
     adaptive_decisions: usize,
     escape_states: usize,
     min_alt_states: usize,
+    min_viable_alt_states: usize,
     syntax_error_states: usize,
 }
 
@@ -334,6 +340,7 @@ impl ReportMetrics {
         self.escape_states += parser.escape_states();
         let resolved = parser.resolved_states();
         self.min_alt_states += resolved.min_alt;
+        self.min_viable_alt_states += resolved.min_viable_alt;
         self.syntax_error_states += resolved.syntax_error;
     }
 }
@@ -362,6 +369,7 @@ fn parser_report_value(parser: &StaticParserDfaReport, sources: &SourceSet) -> V
         ),
         ("escapeStates", Value::from(parser.escape_states())),
         ("minAltStates", Value::from(resolved.min_alt)),
+        ("minViableAltStates", Value::from(resolved.min_viable_alt)),
         ("syntaxErrorStates", Value::from(resolved.syntax_error)),
     ])
 }
@@ -662,8 +670,14 @@ fn table_dump_lines(
         let mut line = format!("    s{index}: ");
         if state.accept > 0 {
             line.push_str(&format!("accept alt={}", state.accept));
-            if state.resolution == Some(EscapeResolution::MinAlt) {
-                line.push_str(" (static-dfa-only: minimum conflicting alternative)");
+            match state.resolution {
+                Some(EscapeResolution::MinAlt) => {
+                    line.push_str(" (static-dfa-only: minimum conflicting alternative)");
+                }
+                Some(EscapeResolution::MinViableAlt) => {
+                    line.push_str(" (static-dfa-only: minimum viable alternative)");
+                }
+                _ => {}
             }
         } else if state.is_guarded() {
             line.push_str(&format!(
@@ -673,7 +687,7 @@ fn table_dump_lines(
         } else if state.is_escape() {
             line.push_str("ESCAPE");
         } else if state.resolution == Some(EscapeResolution::SyntaxError) {
-            line.push_str("SYNTAX ERROR (static-dfa-only: undecided lookahead)");
+            line.push_str("SYNTAX ERROR (static-dfa-only: predicated lookahead)");
         } else {
             line.push_str("(non-accept)");
         }
@@ -1003,11 +1017,20 @@ fn static_only_diagnostics(
                     resolved.min_alt_witness.as_deref(),
                 ));
             }
+            if resolved.min_viable_alt > 0 {
+                parts.push(resolution_text(
+                    &report.vocabulary,
+                    resolved.min_viable_alt,
+                    ("undecided state predicts", "undecided states predict"),
+                    "the minimum viable alternative",
+                    resolved.min_viable_alt_witness.as_deref(),
+                ));
+            }
             if resolved.syntax_error > 0 {
                 parts.push(resolution_text(
                     &report.vocabulary,
                     resolved.syntax_error,
-                    ("undecided state reports", "undecided states report"),
+                    ("predicated state reports", "predicated states report"),
                     "a syntax error",
                     resolved.syntax_error_witness.as_deref(),
                 ));
@@ -1029,7 +1052,7 @@ fn static_only_diagnostics(
         .collect()
 }
 
-/// One clause of a `G4S192` warning, for example `2 undecided states report a
+/// One clause of a `G4S192` warning, for example `2 predicated states report a
 /// syntax error (witness: ID EOF)`.
 fn resolution_text(
     vocabulary: &[String],

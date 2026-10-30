@@ -792,16 +792,36 @@ fn static_dfa_only_resolves_the_guarded_take_to_the_take() {
     );
 }
 
-/// A lookahead that reaches the budget frontier of the hybrid table reports a
-/// syntax error instead of a deferral to the adaptive simulation.
+/// The value after `=` follows the 16-token witness of the lookahead budget
+/// of the `pred?` table. At the budget, the static-only table predicts the
+/// minimum viable alternative, the take.
+const FRONTIER_VALUE: &str = "( b AND NOT ( NOT c < ( d AND NOT e IN ( f ) ) ) )";
+
+/// Outside an assignment target, the take is the right guess at the budget,
+/// so the static-only parser matches the adaptive one.
 #[test]
-fn static_dfa_only_reports_a_syntax_error_at_the_frontier() {
-    let input = "a = ( ( NOT b ) ) ;";
-    let [adaptive, static_only] = parse_guard_both(input);
+fn static_dfa_only_guesses_right_at_the_lookahead_budget() {
+    let input = format!("a = {FRONTIER_VALUE} ;");
+    let [adaptive, static_only] = parse_guard_both(&input);
     assert!(adaptive.1.is_empty(), "{adaptive:?}");
+    assert_eq!(static_only, adaptive);
+}
+
+/// In an assignment target, the skip is right. The guess at the budget takes,
+/// so the static-only parser reports a syntax error.
+#[test]
+fn static_dfa_only_reports_a_syntax_error_after_a_wrong_guess() {
+    let input = format!("set a = {FRONTIER_VALUE} ;");
+    let [adaptive, static_only] = parse_guard_both(&input);
+    assert!(adaptive.1.is_empty(), "{adaptive:?}");
+    assert!(
+        static_only
+            .0
+            .starts_with("(prog (stmt set (expr (value a) (pred = (value ("),
+        "the take wins: {static_only:?}"
+    );
     assert_eq!(
         static_only.1,
-        ["line 1:12 no viable alternative at input '=((NOTb'"],
-        "{static_only:?}"
+        ["line 1:59 mismatched input ';' expecting {'=', 'AND', 'OR', '<', '>', 'IN', ')'}"]
     );
 }

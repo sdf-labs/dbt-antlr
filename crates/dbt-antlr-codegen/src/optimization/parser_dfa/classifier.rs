@@ -30,6 +30,13 @@ pub(crate) const MAX_DFA_STATES: usize = 1000;
 pub(crate) const HYBRID_DEPTH_CAP: usize = 4;
 /// State count at which a hybrid table stops expanding beyond depth 2.
 pub(crate) const HYBRID_STATE_CAP: usize = 64;
+/// [`HYBRID_DEPTH_CAP`] under `--static-dfa-only`. Without the adaptive
+/// fallback, a frontier state can only guess, so the table looks further.
+pub(crate) const STATIC_ONLY_HYBRID_DEPTH_CAP: usize = 16;
+/// [`HYBRID_STATE_CAP`] under `--static-dfa-only`. See
+/// [`DecisionBuild::at_hybrid_frontier`] for the room it keeps below
+/// [`MAX_DFA_STATES`].
+pub(crate) const STATIC_ONLY_HYBRID_STATE_CAP: usize = MAX_DFA_STATES;
 /// Below this share of useful start edges a hybrid table is not emitted,
 /// unless `--static-dfa-only` removes the adaptive fallback.
 pub(crate) const HYBRID_MIN_COVERAGE_PERCENT: u32 = 10;
@@ -103,6 +110,8 @@ struct StateFacts {
     guarded_alt: i32,
     /// The closed config set of a frontier escape state.
     continuation: Option<ParserContinuation>,
+    /// A predicate in the config set made the state escape.
+    predicated: bool,
 }
 
 /// The attempt-level bookkeeping one classification commits.
@@ -147,6 +156,11 @@ struct AttemptPolicy {
     depth_bound: i32,
     /// Bound the construction and escape at the frontier instead of failing.
     hybrid: bool,
+    /// Depth at which a hybrid construction stops expanding.
+    hybrid_depth_cap: usize,
+    /// State count at which a hybrid construction stops expanding beyond
+    /// depth 2.
+    hybrid_state_cap: usize,
     /// Stop at the first conflict the construction does not trust, keeping the
     /// work small for decisions that end up adaptive anyway.
     abort_on_untrusted_conflict: bool,
@@ -159,6 +173,8 @@ impl AttemptPolicy {
         Self {
             depth_bound: i32::MAX,
             hybrid: false,
+            hybrid_depth_cap: HYBRID_DEPTH_CAP,
+            hybrid_state_cap: HYBRID_STATE_CAP,
             abort_on_untrusted_conflict: false,
             trust_exact_ambiguity: true,
         }
@@ -175,6 +191,14 @@ impl AttemptPolicy {
         Self {
             hybrid: true,
             ..Self::unbounded()
+        }
+    }
+
+    const fn static_only_hybrid() -> Self {
+        Self {
+            hybrid_depth_cap: STATIC_ONLY_HYBRID_DEPTH_CAP,
+            hybrid_state_cap: STATIC_ONLY_HYBRID_STATE_CAP,
+            ..Self::hybrid()
         }
     }
 
@@ -308,13 +332,17 @@ impl DecisionResult {
     /// `--report-decisions`.
     ///
     /// Under `--static-dfa-only`, the text counts the resolved escape states
-    /// instead: `m` states predict the minimum conflicting alternative and `x`
-    /// states report a syntax error.
+    /// instead: `m` states predict the minimum conflicting alternative, `v`
+    /// states predict the minimum viable alternative, and `x` states report a
+    /// syntax error.
     pub(crate) fn fallback_text(&self) -> String {
         if let Some(resolved) = &self.static_only {
             let mut parts = Vec::new();
             if resolved.min_alt > 0 {
                 parts.push(format!("{}m", resolved.min_alt));
+            }
+            if resolved.min_viable_alt > 0 {
+                parts.push(format!("{}v", resolved.min_viable_alt));
             }
             if resolved.syntax_error > 0 {
                 parts.push(format!("{}x", resolved.syntax_error));
@@ -524,10 +552,13 @@ impl DecisionClassifier {
                 Category::OVERFLOW | Category::CONTEXT_SENSITIVE | Category::PREDICATED
             )
         {
-            let hybrid_attempt = self.attempt(decision, AttemptPolicy::hybrid(), None);
-            let hybrid = self.finalize(hybrid_attempt);
-            if hybrid.table.is_some() {
-                result = hybrid;
+            for &policy in self.hybrid_policies() {
+                let hybrid_attempt = self.attempt(decision, policy, None);
+                let hybrid = self.finalize(hybrid_attempt);
+                if hybrid.table.is_some() {
+                    result = hybrid;
+                    break;
+                }
             }
         }
         result
@@ -627,6 +658,21 @@ impl DecisionClassifier {
         result
     }
 
+    /// The hybrid attempt policies, in the order to try them.
+    ///
+    /// Without the adaptive fallback, every frontier state of a hybrid table
+    /// is a guess, so a larger budget comes first. The default budget stays as
+    /// the second choice, for a decision whose larger construction overflows.
+    fn hybrid_policies(&self) -> &'static [AttemptPolicy] {
+        const ALLOWED: &[AttemptPolicy] = &[AttemptPolicy::hybrid()];
+        const FORBIDDEN: &[AttemptPolicy] =
+            &[AttemptPolicy::static_only_hybrid(), AttemptPolicy::hybrid()];
+        match self.atn_fallback {
+            AtnFallback::Allowed => ALLOWED,
+            AtnFallback::Forbidden => FORBIDDEN,
+        }
+    }
+
     fn is_precedence_loop_decision(&self, state: ATNStateRef) -> bool {
         if state.state_type() != ATNStateType::StarLoopEntry {
             return false;
@@ -712,12 +758,15 @@ impl DecisionClassifier {
                 outcome = self.finalize(attempt);
             }
             if outcome.table.is_none() {
-                let mut hybrid = AttemptPolicy::hybrid();
-                hybrid.trust_exact_ambiguity = false;
-                let attempt = self.attempt(result.decision, hybrid, Some(class));
-                let candidate = self.finalize(attempt);
-                if candidate.table.is_some() {
-                    outcome = candidate;
+                for &policy in self.hybrid_policies() {
+                    let mut hybrid = policy;
+                    hybrid.trust_exact_ambiguity = false;
+                    let attempt = self.attempt(result.decision, hybrid, Some(class));
+                    let candidate = self.finalize(attempt);
+                    if candidate.table.is_some() {
+                        outcome = candidate;
+                        break;
+                    }
                 }
             }
 
@@ -918,11 +967,7 @@ where
             // The hybrid frontier is a *creation* budget: a state that was
             // already expanded keeps its successors, even though re-expanding
             // it after a taint increase may now run past the cap.
-            if !facts.expanded
-                && self.policy.hybrid
-                && (facts.depth >= HYBRID_DEPTH_CAP
-                    || (self.states.len() >= HYBRID_STATE_CAP && facts.depth >= 2))
-            {
+            if !facts.expanded && self.policy.hybrid && self.at_hybrid_frontier(facts.depth) {
                 // A budget frontier that sits on the iterate/exit pair of a
                 // precedence loop stays decidable by substitution. No conflict
                 // materialized before the cutoff. The attestations are still a
@@ -985,6 +1030,23 @@ where
             self.attempt.table = Some(self.snapshot());
         }
         self.take_attempt()
+    }
+
+    /// Whether a hybrid construction stops expanding a state at `depth`.
+    ///
+    /// A state cap above [`HYBRID_STATE_CAP`] leaves room for one more
+    /// expansion, which adds at most one state per token type and EOF. The
+    /// cap applies from depth 2, so the expansions at depth 0 and 1 can still
+    /// overflow [`MAX_DFA_STATES`], as can the closure visit budget. In these
+    /// cases, the classifier retries with the default budget.
+    fn at_hybrid_frontier(&self, depth: usize) -> bool {
+        let alphabet = usize::try_from(self.atn.max_token_type).unwrap_or(0) + 2;
+        let headroom = MAX_DFA_STATES.saturating_sub(alphabet);
+        let state_cap = self
+            .policy
+            .hybrid_state_cap
+            .min(headroom.max(HYBRID_STATE_CAP));
+        depth >= self.policy.hybrid_depth_cap || (self.states.len() >= state_cap && depth >= 2)
     }
 
     /// Moves the attempt out of the build, recording what it observed.
@@ -1235,6 +1297,9 @@ where
                 // The fallback is a property of the whole set's taint, so a
                 // later boundary path can add one.
                 existing.fallback = fallback_of(state_configs, &existing.taint);
+                // A predicate on any path makes a later escape of the state a
+                // syntax error under `--static-dfa-only`, not a guess.
+                existing.predicated |= facts.predicated;
             }
             if new_trust_taint != 0 {
                 self.on_taint_increase(number, verdict, resolved_conflict, new_trust_taint);
@@ -1420,6 +1485,7 @@ where
             conflict_min_alt: 0,
             guarded_alt: 0,
             continuation: None,
+            predicated: false,
         };
         if self.policy.hybrid && predicated {
             // A config behind a predicate is only viable when that predicate
@@ -1431,6 +1497,7 @@ where
                 effects.fail_predicated = true;
             } else {
                 facts.verdict = Verdict::Escape(ESCAPE);
+                facts.predicated = true;
             }
             return (facts, effects);
         }
@@ -1633,6 +1700,18 @@ where
             .map(|state| {
                 let number = state.state_number();
                 let facts = self.info.get(&number);
+                let escape = facts.is_some_and(|facts| matches!(facts.verdict, Verdict::Escape(_)));
+                let viable_alts = if escape {
+                    let alts: BTreeSet<i32> = state
+                        .configs()
+                        .get_items()
+                        .map(|config| config.get_alt())
+                        .filter(|alt| *alt > 0)
+                        .collect();
+                    alts.into_iter().collect()
+                } else {
+                    Vec::new()
+                };
                 StaticDfaState {
                     accept: facts.map_or(0, StateFacts::accept_value),
                     fallback: facts.map_or(0, |facts| facts.fallback),
@@ -1643,6 +1722,8 @@ where
                     conflict_min_alt: facts.map_or(0, |facts| facts.conflict_min_alt),
                     guarded_alt: facts.map_or(0, |facts| facts.guarded_alt),
                     continuation: facts.and_then(|facts| facts.continuation.clone()),
+                    viable_alts,
+                    predicated: facts.is_some_and(|facts| facts.predicated),
                     resolution: None,
                     edges: Vec::new(),
                 }

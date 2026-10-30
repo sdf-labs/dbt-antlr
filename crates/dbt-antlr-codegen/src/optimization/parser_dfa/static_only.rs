@@ -9,9 +9,13 @@
 //! - A state with an SLL conflict (a conflict escape or a guarded take)
 //!   accepts its minimum conflicting alternative. This is the choice of the
 //!   SLL prediction mode.
-//! - Every other escape state (a budget frontier or a predicated branch)
-//!   becomes a dead end without edges or fallback, so the walk reports a
-//!   syntax error.
+//! - A state where the lookahead budget stopped the construction accepts its
+//!   minimum viable alternative. This is a guess: if the input continues in
+//!   a different alternative, the parse reports a syntax error later.
+//!   Grammars usually put the specific alternatives before the general ones,
+//!   so the guess is usually right.
+//! - A predicated state becomes a dead end without edges or fallback, so the
+//!   walk reports a syntax error. The table cannot evaluate the predicate.
 
 use super::{CONFLICT_ESCAPE, Category, DecisionResult, ESCAPE, GUARDED, StaticDfaTable};
 
@@ -20,7 +24,11 @@ use super::{CONFLICT_ESCAPE, Category, DecisionResult, ESCAPE, GUARDED, StaticDf
 pub(crate) enum EscapeResolution {
     /// The state accepts its minimum conflicting alternative.
     MinAlt,
-    /// The state reports a syntax error.
+    /// The lookahead budget stopped the construction at the state. The state
+    /// accepts its minimum viable alternative.
+    MinViableAlt,
+    /// A predicate made the state undecidable. The state reports a syntax
+    /// error.
     SyntaxError,
 }
 
@@ -30,10 +38,15 @@ pub(crate) enum EscapeResolution {
 pub(crate) struct EscapeResolutions {
     /// The number of states that accept their minimum conflicting alternative.
     pub(crate) min_alt: usize,
+    /// The number of states that accept their minimum viable alternative.
+    pub(crate) min_viable_alt: usize,
     /// The number of states that report a syntax error.
     pub(crate) syntax_error: usize,
     /// A shortest lookahead path to a [`EscapeResolution::MinAlt`] state.
     pub(crate) min_alt_witness: Option<Vec<i32>>,
+    /// A shortest lookahead path to a [`EscapeResolution::MinViableAlt`]
+    /// state.
+    pub(crate) min_viable_alt_witness: Option<Vec<i32>>,
     /// A shortest lookahead path to a [`EscapeResolution::SyntaxError`] state.
     pub(crate) syntax_error_witness: Option<Vec<i32>>,
 }
@@ -41,9 +54,13 @@ pub(crate) struct EscapeResolutions {
 impl EscapeResolutions {
     fn merge(&mut self, other: Self) {
         self.min_alt += other.min_alt;
+        self.min_viable_alt += other.min_viable_alt;
         self.syntax_error += other.syntax_error;
         if self.min_alt_witness.is_none() {
             self.min_alt_witness = other.min_alt_witness;
+        }
+        if self.min_viable_alt_witness.is_none() {
+            self.min_viable_alt_witness = other.min_viable_alt_witness;
         }
         if self.syntax_error_witness.is_none() {
             self.syntax_error_witness = other.syntax_error_witness;
@@ -57,23 +74,34 @@ impl StaticDfaTable {
     pub(crate) fn resolve_escapes(&mut self) -> EscapeResolutions {
         let mut resolutions = EscapeResolutions::default();
         let mut first_min_alt = None;
+        let mut first_min_viable_alt = None;
         let mut first_syntax_error = None;
         for (index, state) in self.states.iter_mut().enumerate() {
             if !matches!(state.accept, ESCAPE | CONFLICT_ESCAPE | GUARDED) {
                 continue;
             }
-            let min_alt = if state.accept == GUARDED && state.guarded_alt > 0 {
+            let conflict_alt = if state.accept == GUARDED && state.guarded_alt > 0 {
                 // The guarded alternative is the take of a take/skip pair,
                 // which is the minimum alternative of the pair.
                 Some(state.guarded_alt)
             } else {
                 state.conflicts.iter().copied().filter(|alt| *alt > 0).min()
             };
-            let resolution = if let Some(alt) = min_alt {
+            let viable_alt = if state.predicated {
+                None
+            } else {
+                state.viable_alts.first().copied()
+            };
+            let resolution = if let Some(alt) = conflict_alt {
                 state.accept = alt;
                 resolutions.min_alt += 1;
                 first_min_alt.get_or_insert(index);
                 EscapeResolution::MinAlt
+            } else if let Some(alt) = viable_alt {
+                state.accept = alt;
+                resolutions.min_viable_alt += 1;
+                first_min_viable_alt.get_or_insert(index);
+                EscapeResolution::MinViableAlt
             } else {
                 state.accept = 0;
                 state.fallback = 0;
@@ -90,6 +118,8 @@ impl StaticDfaTable {
         self.guard_danger.clear();
         self.guard_pass.clear();
         resolutions.min_alt_witness = first_min_alt.and_then(|state| self.witness(state));
+        resolutions.min_viable_alt_witness =
+            first_min_viable_alt.and_then(|state| self.witness(state));
         resolutions.syntax_error_witness = first_syntax_error.and_then(|state| self.witness(state));
         resolutions
     }
