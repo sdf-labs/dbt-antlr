@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-g4-parser-v0.5.0...dbt-antlr-g4-parser-v0.6.0) - 2026-10-30
+
+### Added
+
+- *(codegen)* parser static DFA pass scaffolding and generated-code slim-down ([#25](https://github.com/sdf-labs/dbt-antlr/pull/25))
+
+### Other
+
+- *(codegen)* emit ATN and lexer table words as static arrays ([#41](https://github.com/sdf-labs/dbt-antlr/pull/41))
+- *(codegen)* drop the tool-side packed parser ATN ([#35](https://github.com/sdf-labs/dbt-antlr/pull/35))
+
 ## [0.2.1](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-g4-parser-v0.2.0...dbt-antlr-g4-parser-v0.2.1) - 2026-10-12
 
 ### Other
