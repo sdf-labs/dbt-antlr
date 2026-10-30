@@ -760,18 +760,20 @@ fn simple_guarded_alternatives_need_no_escape() {
 }
 
 /// A follow that starts a new invocation of the loop's rule (`expr+`), or that
-/// consumes an operator outside the loop (`expr '||' INT EOF`), is foreign to
-/// the loop. The substitution then resolves none of the iterate/exit states,
-/// neither the conflicts nor the states at the budget frontier.
+/// consumes an operator outside the loop (`'set' expr '||' INT EOF`), puts its
+/// iterate/exit conflicts under a stack guard (20 guarded conflict states),
+/// while the budget-frontier states of `expr+` escape.
 #[test]
-fn foreign_consumption_vetoes_the_substitution_at_the_frontier() {
+fn foreign_consumption_guards_the_iterate_reading() {
     let results = classify(&grammars_dir().join("parser").join("LoopFrontier.g4"));
     let result = results
         .iter()
         .find(|result| result.category == Category::LR_PRECEDENCE)
         .expect("the arithmetic loop decision");
-    assert!(result.escapes > 0);
-    assert!(!result.is_fully_static());
+    assert!(result.escapes > 0, "the `expr+` frontier states escape");
+    assert_eq!(result.guarded_iterates, 20);
+    assert_eq!(result.iterate_accepts, 0);
+    assert!(!result.is_fully_static(), "a guard may defer");
     let classes = result.precedence.as_ref().expect("precedence tables");
     assert_eq!(classes.adaptive_classes, 0);
     let states: Vec<_> = classes
@@ -784,8 +786,20 @@ fn foreign_consumption_vetoes_the_substitution_at_the_frontier() {
         states
             .iter()
             .all(|state| !(state.accept == 1 && state.conflicts == [1, 2])),
-        "no iterate/exit conflict resolves to iterate"
+        "no iterate/exit conflict resolves to iterate outright"
     );
+    let guarded: Vec<_> = states
+        .iter()
+        .copied()
+        .filter(|state| state.is_guarded())
+        .collect();
+    assert_eq!(guarded.len(), 20);
+    for state in guarded {
+        assert_eq!(state.guarded_alt, 1, "a guarded iterate takes alt 1");
+        assert_eq!(state.conflicts, [1, 2]);
+    }
+    let table = classes.tables[0].as_ref().expect("class 0 table");
+    assert!(!table.guard_danger.is_empty(), "the guard can trip");
 }
 
 /// The token types of `names`, each a literal (`'-'`) or a symbolic token name
@@ -864,8 +878,9 @@ fn tokens_that_the_loop_does_not_own_veto_the_substitution() {
             .filter_map(|table| walk(table, &tokens))
             .collect();
         assert!(
-            ends.iter().any(|state| state.is_escape()),
-            "{rule}: the iterate/exit conflict escapes"
+            ends.iter()
+                .any(|state| state.is_escape() || state.is_guarded()),
+            "{rule}: the iterate/exit conflict defers"
         );
         assert!(
             ends.iter().all(|state| state.accept != 1),

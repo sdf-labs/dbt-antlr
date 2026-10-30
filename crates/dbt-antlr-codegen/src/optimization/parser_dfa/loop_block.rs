@@ -73,6 +73,7 @@ use super::closure::{Taint, in_popped_frame, positions_owing_input, rule_positio
 
 /// The alternative of the loop's iterate branch.
 pub(super) const ITERATE_ALT: i32 = 1;
+
 /// The alternative of the loop's exit branch.
 pub(super) const EXIT_ALT: i32 = 2;
 
@@ -209,6 +210,13 @@ impl LoopBlock {
     /// loop decision (see the module documentation).
     pub(super) fn is_midway(&self, state: ATNStateRef) -> bool {
         self.midway_states
+            .contains(state.get_state_number() as usize)
+    }
+
+    /// Whether a return into `state` is realizable through the loop's own
+    /// discipline (the mirror set of the guard-root analysis).
+    pub(super) fn is_loop_state(&self, state: ATNStateRef) -> bool {
+        self.operator_states
             .contains(state.get_state_number() as usize)
     }
 

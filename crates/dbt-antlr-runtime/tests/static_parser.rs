@@ -16,6 +16,9 @@ mod gen {
     pub mod guardexprparser;
     pub mod guardexprparser_static;
     pub mod guardexprparser_static_only;
+    pub mod loopfrontierlexer;
+    pub mod loopfrontierparser;
+    pub mod loopfrontierparser_static;
     pub mod lrdfalexer;
     pub mod lrdfaparser;
     pub mod staticdfalexer;
@@ -823,5 +826,103 @@ fn static_dfa_only_reports_a_syntax_error_after_a_wrong_guess() {
     assert_eq!(
         static_only.1,
         ["line 1:59 mismatched input ';' expecting {'=', 'AND', 'OR', '<', '>', 'IN', ')'}"]
+    );
+}
+
+fn parse_frontier_static(input: &str) -> String {
+    Arena::with(|arena| {
+        let lexer = gen::loopfrontierlexer::LoopFrontierLexer::<_, CommonTokenFactory>::new(
+            arena,
+            InputStream::new(input),
+        );
+        let tokens = CommonTokenStream::new(lexer);
+        let mut parser = gen::loopfrontierparser_static::LoopFrontierParser::new(arena, tokens);
+        match parser.start() {
+            Ok(ctx) => string_tree(ctx, parser.get_rule_names()),
+            Err(error) => format!("ERR {error}"),
+        }
+    })
+}
+
+fn parse_frontier_adaptive(input: &str) -> String {
+    Arena::with(|arena| {
+        let lexer = gen::loopfrontierlexer::LoopFrontierLexer::<_, CommonTokenFactory>::new(
+            arena,
+            InputStream::new(input),
+        );
+        let tokens = CommonTokenStream::new(lexer);
+        let mut parser = gen::loopfrontierparser::LoopFrontierParser::new(arena, tokens);
+        match parser.start() {
+            Ok(ctx) => string_tree(ctx, parser.get_rule_names()),
+            Err(error) => format!("ERR {error}"),
+        }
+    })
+}
+
+/// The guarded-iterate differential: the loop's exit lineage can consume an
+/// operator token in a frame that is not an enclosing invocation of the same
+/// loop, so the iterate/exit conflict needs the parse stack to settle.
+#[test]
+fn guarded_iterates_match_the_adaptive_engine() {
+    // The tables must carry the guards, or the differential below would only
+    // compare the adaptive engine with itself.
+    Arena::with(|arena| {
+        let manager = gen::loopfrontierparser_static::parser_simulator_manager();
+        let simulator = manager.get_simulator(arena);
+        let tables = simulator.atn().static_dfas();
+        let guarded = tables
+            .tables()
+            .iter()
+            .filter(|table| table.has_guards())
+            .count();
+        assert_eq!(
+            guarded, 3,
+            "the three operator precedence classes carry guards"
+        );
+    });
+    let corpus = [
+        "1",
+        "1 + 2",
+        "1 + 2 * 3",
+        "( 1 + 2 ) * 3",
+        "- 1 + 2",
+        "1 || 2",
+        "1 << 2",
+        "1 + 2 || 3 << 4",
+        "1 || 2 + 3",
+        "CAST ( 1 AS int ) + 2",
+        "EXTRACT ( x FROM 1 ) * 2",
+        "CASE WHEN 1 THEN 2 ELSE 3 END + 4",
+        "1 + ( 2 )",
+        "row ( 1 , 2 )",
+        "1 + 2 + 3 + 4",
+        "1 * 2 * 3",
+        "1 << 2 << 3",
+        "1 || 2 || 3",
+        // The foreign caller is on the stack: skip (exit) is the right reading.
+        "set 1 || 2",
+        "set 1 + 2 || 3",
+        "set ( 1 || 2 ) || 3",
+    ];
+    for input in corpus {
+        assert_eq!(
+            parse_frontier_static(input),
+            parse_frontier_adaptive(input),
+            "tree divergence on {input:?}"
+        );
+    }
+    // Both guard directions are load-bearing. Inside the foreign caller the
+    // exit reading wins, so the assignment's `'||' INT` tail must reach `start`
+    // rather than being absorbed by the expression loop.
+    let deferring = parse_frontier_static("set 1 || 2");
+    assert!(
+        deferring.contains("set (expr (operand 1)) || 2"),
+        "the guarded exit must let the `set` tail through: {deferring}"
+    );
+    // Everywhere else the iterate reading wins.
+    let resolving = parse_frontier_static("1 || 2");
+    assert!(
+        resolving.contains("(expr (expr (operand 1)) || (expr (operand 2)))"),
+        "the guarded iterate must absorb the operator: {resolving}"
     );
 }

@@ -157,6 +157,7 @@ impl DecisionResult {
         }
         self.escapes = 0;
         self.guarded_takes = 0;
+        self.guarded_iterates = 0;
         self.static_only = Some(resolutions);
         true
     }

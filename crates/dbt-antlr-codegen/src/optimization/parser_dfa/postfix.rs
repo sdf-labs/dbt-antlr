@@ -344,7 +344,7 @@ pub(super) fn epsilon_closure(start: ATNStateRef) -> BitSet {
 pub(super) fn collect_guard_roots(
     state: ATNStateRef,
     context: Option<PredictionContextRef<'_>>,
-    mirror_return: Option<ATNStateRef>,
+    mirror: &dyn Fn(ATNStateRef) -> bool,
     sites: &HashMap<i32, i32>,
     out: &mut BTreeSet<i32>,
 ) {
@@ -353,13 +353,13 @@ pub(super) fn collect_guard_roots(
         return;
     };
     let mut visited: HashSet<*const ()> = HashSet::new();
-    collect_roots_in(state, &context, mirror_return, sites, out, &mut visited)
+    collect_roots_in(state, &context, mirror, sites, out, &mut visited)
 }
 
 fn collect_roots_in(
     state: ATNStateRef,
     context: &PredictionContextRef<'_>,
-    mirror_return: Option<ATNStateRef>,
+    mirror: &dyn Fn(ATNStateRef) -> bool,
     sites: &HashMap<i32, i32>,
     out: &mut BTreeSet<i32>,
     visited: &mut HashSet<*const ()>,
@@ -375,12 +375,12 @@ fn collect_roots_in(
         let return_state = context.get_return_state(index);
         match context.get_parent(index) {
             Some(parent) if !parent.is_empty() => {
-                collect_roots_in(state, &parent, mirror_return, sites, out, visited);
+                collect_roots_in(state, &parent, mirror, sites, out, visited);
             }
             _ => {
                 if return_state == ATNStateRef::empty_return() {
                     out.insert(state.get_state_number());
-                } else if Some(return_state) != mirror_return {
+                } else if !mirror(return_state) {
                     let number = return_state.get_state_number();
                     out.insert(sites.get(&number).copied().unwrap_or(number));
                 }
