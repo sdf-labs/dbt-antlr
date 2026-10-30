@@ -71,7 +71,7 @@ dbt_antlr_runtime::impl_lexer_recog! { CSVLexerActions, "CSVLexer.g4" }
 static ATN_SIMULATOR_MANAGER: LazyLock<ATNSimulatorManager> = LazyLock::new(|| ATNSimulatorManager::new_static_lexer(&_STATIC_LEXER_TABLES));
 static _STATIC_LEXER_TABLES: LazyLock<StaticLexerTables> =
     LazyLock::new(|| StaticLexerTables::from_words(&_STATIC_LEXER_TABLE_WORDS).expect("invalid static lexer DFA table words; regenerate the lexer"));
-static _STATIC_LEXER_TABLE_WORDS: LazyLock<Vec<u32>> = LazyLock::new(|| vec![
+static _STATIC_LEXER_TABLE_WORDS: [u32; 1118] = [
     1396983361, 1, 1118, 1, 1, 8, 0, 4294967295, 5, 3, 2, 4, 4294967295, 
     1, 6, 4294967295, 4294967295, 4294967295, 4294967295, 0, 4294967295, 
     4294967295, 4294967295, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 
@@ -175,4 +175,4 @@ static _STATIC_LEXER_TABLE_WORDS: LazyLock<Vec<u32>> = LazyLock::new(|| vec![
     4294967295, 4, 1, 0, 1, 0, 0, 5, 2, 1, 34, 0, 0, 4294967295, 0, 4294967295, 
     0, 4294967295, 0, 4294967295, 0, 4294967295, 0, 4294967295, 0, 4294967295, 
     0, 4294967295, 0, 0
-]);
+];

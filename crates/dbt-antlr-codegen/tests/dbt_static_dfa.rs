@@ -172,6 +172,51 @@ fn flag_off_emits_no_tables() {
 }
 
 #[test]
+fn word_streams_are_static_arrays() {
+    // The words must stay constant data: a `LazyLock<Vec<_>>` + `vec![...]`
+    // lowers to one store per word in a single basic block, which makes LLVM's
+    // SLP vectorizer take superlinear time in release builds (about 30 minutes
+    // for the Trino parser), and it copies the words onto the heap on first
+    // use.
+    let plain = emit("CSV.g4", false);
+    let static_lexer = emit("CSV.g4", true);
+    // Spike has escape edges, so it keeps the ATN next to its tables.
+    let escaping_lexer = emit("lexer/Spike.g4", true);
+    let cases = [
+        (
+            lexer_content(&plain, "csvlexer.rs"),
+            "static _serializedATN: [i32; ",
+        ),
+        (
+            lexer_content(&static_lexer, "csvlexer.rs"),
+            "static _STATIC_LEXER_TABLE_WORDS: [u32; ",
+        ),
+        (
+            lexer_content(&static_lexer, "csvparser.rs"),
+            "static _serializedATN: [u32; ",
+        ),
+        (
+            lexer_content(&escaping_lexer, "spike.rs"),
+            "static _serializedATN: [i32; ",
+        ),
+        (
+            lexer_content(&escaping_lexer, "spike.rs"),
+            "static _STATIC_LEXER_TABLE_WORDS: [u32; ",
+        ),
+    ];
+    for (content, declaration) in cases {
+        assert!(
+            content.contains(declaration),
+            "expected the word stream declaration {declaration:?}"
+        );
+        assert!(
+            !content.contains("LazyLock<Vec<"),
+            "word streams must not be heap vectors"
+        );
+    }
+}
+
+#[test]
 fn spike_lexer_warnings_name_the_escape_reasons() {
     let output = emit("lexer/Spike.g4", true);
     let escapes: Vec<_> = output
@@ -694,7 +739,7 @@ fn fully_static_parser_never_defers() {
 #[test]
 fn static_parser_dfa_embeds_the_sdfa_section() {
     // The `SDFA` magic (`0x5344_4641`) as the decimal word the generated
-    // `_serializedATN` vector carries.
+    // `_serializedATN` array carries.
     const SDFA_MAGIC_DECIMAL: &str = "1396983361";
     let with_tables = emit_grammar("ReferenceToATN.g4", |options| {
         options.static_parser_dfa(true);

@@ -4,14 +4,14 @@
 //! Golden-diff test for the dbt parser emission layer.
 //!
 //! Renders the CSV combined grammar and compares the emitted `csvparser.rs`
-//! against the Java tool output in `dbt-antlr-runtime/tests/gen/csvparser.rs`.
+//! against the checked-in golden in
+//! `dbt-antlr-runtime/tests/gen/csvparser.rs`.
 //!
-//! The serialized-ATN section differs BY DESIGN: the golden embeds Java
-//! i32 words consumed by `ATNDeserializer`, while the emitted file embeds
-//! packed u32 words consumed by `PackedATNDeserializer`. The test therefore
+//! Both files embed packed u32 ATN words in a `static [u32; N]`. The test
+//! therefore
 //!
 //! 1. asserts byte equality of everything before the ATN section,
-//! 2. asserts the two ATN encodings build identical graphs (via
+//! 2. asserts the two ATNs build identical graphs (via
 //!    `dbt_antlr_runtime::atn_dump`).
 
 mod common;
@@ -34,8 +34,8 @@ fn csv_parser_matches_golden_modulo_atn() {
     let golden = common::read_golden("csvparser.rs");
 
     // Byte equality of everything before the embedded ATN section (the
-    // deserializer import line is masked as part of the intentional
-    // ATN-encoding difference).
+    // deserializer import line is masked, because it differs for pre-swap
+    // goldens).
     let golden_prefix = mask_parser_atn_diff(&golden);
     let emitted_prefix = mask_parser_atn_diff(&parser.content);
     if golden_prefix != emitted_prefix {

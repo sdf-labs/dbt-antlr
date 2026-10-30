@@ -5,13 +5,13 @@
 //!
 //! Renders the `SimpleLR` combined grammar (direct left recursion in rule `a`,
 //! plus an `@after` named action on rule `s`) and compares the emitted
-//! `simplelrparser.rs` against the Java tool output in
+//! `simplelrparser.rs` against the checked-in golden in
 //! `dbt-antlr-runtime/tests/gen/simplelrparser.rs`.
 //!
 //! The `SimpleLR` goldens were generated without `-visitor`, so the parser is
-//! emitted with `gen_visitor` off. The serialized-ATN section differs BY
-//! DESIGN (packed u32 words + `PackedATNDeserializer` vs Java i32 words +
-//! `ATNDeserializer`), as in `dbt_emit_parser.rs`.
+//! emitted with `gen_visitor` off. The ATN section is compared structurally
+//! rather than byte-wise (packed u32 words on both sides), as in
+//! `dbt_emit_parser.rs`.
 
 mod common;
 
@@ -33,8 +33,8 @@ fn simplelr_parser_matches_golden_modulo_atn() {
     let golden = common::read_golden("simplelrparser.rs");
 
     // Byte equality of everything before the embedded ATN section (the
-    // deserializer import line is masked as part of the intentional
-    // ATN-encoding difference).
+    // deserializer import line is masked, because it differs for pre-swap
+    // goldens).
     let golden_prefix = mask_parser_atn_diff(&golden);
     let emitted_prefix = mask_parser_atn_diff(&parser.content);
     if golden_prefix != emitted_prefix {
