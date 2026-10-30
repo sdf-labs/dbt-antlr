@@ -36,11 +36,14 @@
 use std::collections::{HashMap, HashSet};
 
 use dbt_antlr_runtime::analysis::{
-    ATN, ATNConfig, ATNStateRef, ATNStateType, BOUNDARY_TAINT, BitSet, Bump, EOF, INTERIOR_TAINT,
-    IntervalSetBuf, MergeCache, MutableATNConfigSet, NotSetTransition, PRECPRED_TAINT, PRED_TAINT,
-    PrecedencePredicateTransition, PredicateTransition, PredictionContext, PredictionContextRef,
-    RuleTransition, TOKEN_MIN_USER_TOKEN_TYPE, TransitionType, WIDENED_TAINT,
+    ATN, ATNConfig, ATNStateRef, ATNStateType, BOUNDARY_TAINT, BitSet, Bump, EOF,
+    FOREIGN_CONSUME_TAINT, INTERIOR_TAINT, IntervalSetBuf, MergeCache, MutableATNConfigSet,
+    NotSetTransition, PRECPRED_TAINT, PRED_TAINT, PrecedencePredicateTransition,
+    PredicateTransition, PredictionContext, PredictionContextRef, RuleTransition,
+    TOKEN_MIN_USER_TOKEN_TYPE, TransitionType, WIDENED_TAINT,
 };
+
+use super::loop_block::LoopBlock;
 
 /// Union of the taints of every path that reached a closed config, keyed by
 /// `(ATN state number, alternative)`.
@@ -62,11 +65,16 @@ pub(super) struct ClosedSet<'a> {
 impl ClosedSet<'_> {
     /// The taint recorded for one config of the set.
     pub(super) fn taint_of(&self, config: &ATNConfig<'_>) -> i32 {
-        self.taint
-            .get(&(config.get_state().get_state_number(), config.get_alt()))
-            .copied()
-            .unwrap_or(0)
+        taint_of(&self.taint, config)
     }
+}
+
+/// The taint recorded for one config of a set closed under `taint`.
+pub(super) fn taint_of(taint: &Taint, config: &ATNConfig<'_>) -> i32 {
+    taint
+        .get(&(config.get_state().get_state_number(), config.get_alt()))
+        .copied()
+        .unwrap_or(0)
 }
 
 /// The precedence class a precedence-loop decision is being built for.
@@ -168,6 +176,10 @@ pub(super) struct Closure<'atn, 'a> {
     /// `true` while the start closure of a precedence class runs: precedence
     /// predicates there are evaluated against the class, not the context.
     precedence_start: bool,
+    /// The operator-loop block of a precedence-class build: consumption by a
+    /// boundary-popped configuration outside it is foreign to the loop (see
+    /// [`LoopBlock`]).
+    loop_block: Option<LoopBlock>,
     /// Configs visited by this closure, across all roots of the attempt.
     visits: u64,
     visit_budget: u64,
@@ -182,6 +194,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
         scratch: &'a Bump,
         depth_bound: i32,
         precedence: Option<PrecedenceClass>,
+        loop_block: Option<LoopBlock>,
         visit_budget: u64,
     ) -> Self {
         Self {
@@ -194,10 +207,17 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             call_by_follow_state: None,
             depth_bound,
             precedence_start: false,
+            loop_block,
             visits: 0,
             visit_budget,
             exhausted: false,
         }
+    }
+
+    /// The operator-loop analysis of this precedence-class build, when the
+    /// decision is a precedence loop.
+    pub(super) fn loop_block(&self) -> Option<&LoopBlock> {
+        self.loop_block.as_ref()
     }
 
     /// Closes the start configurations of `decision_state`: one config per
@@ -328,8 +348,22 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                 if is_stop[index] {
                     out.insert(source.clone(), taints[index]);
                 } else {
+                    // A boundary-popped configuration consumes on behalf of
+                    // "some caller". Inside the operator loop that caller is an
+                    // enclosing invocation of this loop, so the consumption is
+                    // the loop's own and the enter/exit substitution still
+                    // applies; anywhere else the phantom consumer is foreign,
+                    // and the substitution must not fire.
+                    let mut taint = taints[index];
+                    if taint & BOUNDARY_TAINT != 0
+                        && self.loop_block.as_ref().is_some_and(|block| {
+                            !block.is_loop_consumption(source.get_state(), source.get_context())
+                        })
+                    {
+                        taint |= FOREIGN_CONSUME_TAINT;
+                    }
                     let advanced = source.clone().with_state(targets[index]);
-                    self.closure(advanced, taints[index], 0, &mut out);
+                    self.closure(advanced, taint, 0, &mut out);
                 }
             }
             successors.push((label, out.into_closed_set()));

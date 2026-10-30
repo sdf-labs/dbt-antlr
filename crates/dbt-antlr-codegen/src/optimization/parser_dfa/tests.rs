@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use crate::grammar::compiler::compile;
 use crate::grammar::loader::LoadOptions;
 
+use super::loop_block::LoopBlock;
 use super::{Category, DecisionClassifier, DecisionResult};
 
 fn grammars_dir() -> PathBuf {
@@ -421,6 +422,47 @@ fn exhausted_visit_budget_yields_overflow_without_a_table() {
     assert!(!decision.is_fully_static());
 }
 
+/// The compiled ATN of one grammar's parser root.
+fn parser_atn(path: &Path) -> &'static dbt_antlr_runtime::analysis::ATN {
+    let compilation = compile(LoadOptions {
+        roots: vec![path.to_path_buf()],
+        library_directories: Vec::new(),
+    })
+    .expect("grammar compiles");
+    let root = compilation.roots.first().expect("one root");
+    compilation
+        .parser(root.parser.expect("parser root"))
+        .expect("parser artifact")
+        .atn
+}
+
+/// The precedence-loop decision of the first left-recursive rule: a
+/// `StarLoopEntry` whose exit branch ends the rule (the transformed operator
+/// loop), not the `( ... )*` loop of a guarded alternative.
+fn precedence_decision(
+    atn: &dbt_antlr_runtime::analysis::ATN,
+) -> dbt_antlr_runtime::analysis::ATNStateRef {
+    use dbt_antlr_runtime::analysis::{ATNStateType, RuleStartState};
+    atn.decision_to_state
+        .iter()
+        .copied()
+        .find(|state| {
+            state.state_type() == ATNStateType::StarLoopEntry
+                && atn.rule_to_start_state[state.get_rule_index() as usize]
+                    .try_as::<RuleStartState>()
+                    .is_some_and(|start| start.is_left_recursive)
+                && state.get_transitions().last().is_some_and(|transition| {
+                    let loop_end = transition.get_target();
+                    loop_end.state_type() == ATNStateType::LoopEnd
+                        && loop_end.has_epsilon_only_transitions()
+                        && loop_end.get_transitions().first().is_some_and(|epsilon| {
+                            epsilon.get_target().state_type() == ATNStateType::RuleStop
+                        })
+                })
+        })
+        .expect("a left-recursive rule has a precedence loop")
+}
+
 fn classify_with_budget(path: &Path, budget: u64) -> Vec<DecisionResult> {
     let compilation = compile(LoadOptions {
         roots: vec![path.to_path_buf()],
@@ -592,5 +634,131 @@ fn packed_atn_tail_decodes_back_into_the_same_tables() {
             plain.static_dfas().is_empty(),
             "{grammar}: no tail, no tables"
         );
+    }
+}
+
+/// The loop block of a left-recursive rule covers the rule's own positions and
+/// nothing else.
+#[test]
+fn loop_block_covers_the_rule_locals_only() {
+    let atn = parser_atn(&grammars_dir().join("parser").join("LoopSubst.g4"));
+    let decision = precedence_decision(atn);
+    let block = LoopBlock::of(atn, decision);
+    let rule_index = decision.get_rule_index();
+
+    assert!(block.guards_are_simple(), "the arithmetic loop is simple");
+    assert!(
+        block.is_loop_consumption(atn.rule_to_start_state[rule_index as usize], None),
+        "the rule start is inside the loop block"
+    );
+    assert!(
+        block.is_loop_consumption(decision, None),
+        "the loop decision is inside the loop block"
+    );
+    // An operand body runs with a loop-block frame in its context, so its own
+    // positions are not loop-block states.
+    let operand_state = atn
+        .iter_states()
+        .find(|state| state.get_rule_index() != rule_index)
+        .expect("the grammar has another rule")
+        .get_state_number();
+    assert!(!block.is_loop_consumption(atn.make_state_ref(operand_state), None));
+    // The decision reaches itself by epsilon, so it owes no token.
+    assert!(!block.is_pending(decision));
+}
+
+/// A guarded alternative that iterates internally and then owes another token
+/// breaks the enter/exit mapping, so the substitution is disabled for the
+/// whole rule.
+#[test]
+fn compound_guarded_alternatives_are_not_substitutable() {
+    let atn = parser_atn(&grammars_dir().join("parser").join("LoopVeto.g4"));
+    let decision = precedence_decision(atn);
+    let block = LoopBlock::of(atn, decision);
+    assert!(
+        !block.guards_are_simple(),
+        "`(',' send)* '>>' send` is not a simple guarded alternative"
+    );
+
+    let results = classify(&grammars_dir().join("parser").join("LoopVeto.g4"));
+    let result = results
+        .iter()
+        .find(|result| result.category == Category::LR_PRECEDENCE)
+        .expect("the loop decision");
+    assert_eq!(result.escapes, 2, "the vetoed conflict escapes");
+    assert!(!result.is_fully_static());
+    let table = &result
+        .precedence
+        .as_ref()
+        .expect("precedence tables")
+        .tables[0]
+        .as_ref()
+        .expect("the first class has a table");
+    assert!(
+        table
+            .states
+            .iter()
+            .any(|state| state.is_escape() && state.conflicts == [1, 2]),
+        "the escape is the iterate/exit conflict"
+    );
+}
+
+/// The same shape without the compound alternative stays fully static: the
+/// iterate/exit conflicts of every class resolve by substitution.
+///
+/// `k == 5` pins that the construction went past the hybrid depth cap, and
+/// `escapes == 0` pins that the substitution decided those states: without it
+/// this decision escapes 33 times.
+#[test]
+fn simple_guarded_alternatives_need_no_escape() {
+    let results = classify(&grammars_dir().join("parser").join("LoopSubst.g4"));
+    let result = results
+        .iter()
+        .find(|result| result.category == Category::LR_PRECEDENCE)
+        .expect("the arithmetic loop decision");
+    assert_eq!(result.k, 5);
+    assert_eq!(result.num_dfa_states, 171);
+    assert_eq!(result.escapes, 0);
+    assert!(result.is_fully_static());
+    assert_eq!(result.fallback_text(), "0");
+    let classes = result.precedence.as_ref().expect("precedence tables");
+    assert_eq!(classes.adaptive_classes, 0);
+    assert!(classes.tables.iter().all(Option::is_some));
+    for table in classes.tables.iter().flatten() {
+        assert!(
+            table
+                .states
+                .iter()
+                .all(|state| !(state.is_escape() && state.conflicts == [1, 2])),
+            "no iterate/exit state escapes"
+        );
+    }
+}
+
+/// A follow that re-enters the loop keeps the frontier states decidable but
+/// vetoes the foreign one: 20 escapes without the substitution, 2 with it.
+#[test]
+fn foreign_consumption_vetoes_the_substitution_at_the_frontier() {
+    let results = classify(&grammars_dir().join("parser").join("LoopFrontier.g4"));
+    let result = results
+        .iter()
+        .find(|result| result.category == Category::LR_PRECEDENCE)
+        .expect("the arithmetic loop decision");
+    assert_eq!(result.k, 5);
+    assert_eq!(result.num_dfa_states, 229);
+    assert_eq!(result.escapes, 2, "only the foreign-vetoed pair escapes");
+    assert!(!result.is_fully_static());
+    let classes = result.precedence.as_ref().expect("precedence tables");
+    assert_eq!(classes.adaptive_classes, 0);
+    let escaping: Vec<_> = classes
+        .tables
+        .iter()
+        .flatten()
+        .flat_map(|table| table.states.iter())
+        .filter(|state| state.is_escape())
+        .collect();
+    assert_eq!(escaping.len(), 2);
+    for state in escaping {
+        assert_eq!(state.conflicts, [1, 2], "both escapes are iterate/exit");
     }
 }

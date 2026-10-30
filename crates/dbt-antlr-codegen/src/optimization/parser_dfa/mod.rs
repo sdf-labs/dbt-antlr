@@ -48,6 +48,7 @@ mod tests;
 mod category;
 mod classifier;
 mod closure;
+mod loop_block;
 mod table;
 mod tables;
 

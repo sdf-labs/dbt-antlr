@@ -18,6 +18,7 @@ use dbt_antlr_runtime::dfa::static_parser_dfa::{
 };
 
 use super::closure::{ClosedSet, Closure, ClosureFacts, PrecedenceClass, Taint};
+use super::loop_block::{ITERATE_ALT, ITERATE_REAL, LoopBlock, is_iterate_exit_pair};
 use super::table::{StaticDfaEdge, StaticDfaState, StaticDfaTable};
 use super::{CONFLICT_ESCAPE, Category, ESCAPE};
 
@@ -327,6 +328,9 @@ pub(crate) struct DecisionClassifier {
     completion_depths: HashMap<i32, BitSet>,
     /// Configs one build attempt may visit before it is treated as overflow.
     visit_budget: u64,
+    /// The operator-loop analysis of each precedence-loop decision, built at
+    /// most once and shared by every class attempt.
+    loop_blocks: HashMap<i32, LoopBlock>,
 }
 
 impl DecisionClassifier {
@@ -336,7 +340,20 @@ impl DecisionClassifier {
             ll1_disjoint,
             completion_depths: HashMap::new(),
             visit_budget: super::closure::DEFAULT_VISIT_BUDGET,
+            loop_blocks: HashMap::new(),
         }
+    }
+
+    /// The loop-block analysis of one precedence-loop decision, built on first
+    /// use and shared by every class attempt of that decision.
+    fn loop_block(&mut self, decision_state: ATNStateRef) -> LoopBlock {
+        if let Some(cached) = self.loop_blocks.get(&decision_state.get_state_number()) {
+            return cached.clone();
+        }
+        let block = LoopBlock::of(self.atn, decision_state);
+        self.loop_blocks
+            .insert(decision_state.get_state_number(), block.clone());
+        block
     }
 
     /// Sets the per-attempt visit budget, for tests that classify a whole
@@ -660,6 +677,8 @@ impl DecisionClassifier {
         precedence: Option<PrecedenceClass>,
     ) -> Attempt {
         let atn = self.atn;
+        let decision_state = atn.decision_to_state[decision];
+        let loop_block = precedence.map(|_| self.loop_block(decision_state));
         let mut completion_depths = std::mem::take(&mut self.completion_depths);
         let attempt = Arena::with(|arena| {
             let manager = ParserATNSimulatorManager::new(atn);
@@ -677,12 +696,13 @@ impl DecisionClassifier {
                     &scratch,
                     policy.depth_bound,
                     precedence,
+                    loop_block,
                     self.visit_budget,
                 ),
                 policy,
                 allow_continuations: policy.hybrid && precedence.is_none(),
                 precedence_class: precedence.is_some(),
-                decision_state: atn.decision_to_state[decision],
+                decision_state,
                 decision,
                 info: HashMap::new(),
                 states: Vec::new(),
@@ -782,7 +802,15 @@ where
                 && (facts.depth >= HYBRID_DEPTH_CAP
                     || (self.states.len() >= HYBRID_STATE_CAP && facts.depth >= 2))
             {
-                self.set_escape(number, ESCAPE);
+                // A budget frontier that sits on the iterate/exit pair of a
+                // precedence loop stays decidable by substitution. No conflict
+                // materialized before the cutoff. The attestations are still a
+                // lineage property, independent of any collision. So the
+                // argument below applies, and iterate is the answer the
+                // runtime would reach.
+                if !(self.precedence_class && self.resolve_frontier_iterate(number, &facts)) {
+                    self.set_escape(number, ESCAPE);
+                }
                 continue;
             }
             if let Some(facts) = self.info.get_mut(&number) {
@@ -928,6 +956,42 @@ where
         Some(state)
     }
 
+    /// Resolves a budget-frontier state of a precedence class to iterate when
+    /// the iterate/exit substitution attestations permit it.
+    ///
+    /// Returns `false` when the state is not the loop's iterate/exit pair, when
+    /// the loop's guarded alternatives are not simple, or when the attestation
+    /// is anything but a clean iterate reading - the caller then escapes the
+    /// state as usual.
+    fn resolve_frontier_iterate(&mut self, number: i32, facts: &StateFacts) -> bool {
+        let configs: Vec<dbt_antlr_runtime::analysis::ATNConfig<'_>> = self.states[number as usize]
+            .configs()
+            .get_items()
+            .cloned()
+            .collect();
+        let mut alts = BitSet::new();
+        for config in &configs {
+            alts.insert(config.get_alt() as usize);
+        }
+        if !is_iterate_exit_pair(&alts) {
+            return false;
+        }
+        let Some(block) = self.closure.loop_block() else {
+            return false;
+        };
+        if !block.guards_are_simple()
+            || block.iterate_exit_attestation(&configs, &facts.taint) != ITERATE_REAL
+        {
+            return false;
+        }
+        if let Some(facts) = self.info.get_mut(&number) {
+            facts.verdict = Verdict::Accept(ITERATE_ALT);
+            facts.resolved_conflict = true;
+        }
+        self.attempt.exact_ambiguities.push(alts.iter().collect());
+        true
+    }
+
     /// Reacts to a second path adding trust taint to an already interned
     /// state.
     ///
@@ -951,12 +1015,30 @@ where
             // min-alt argument only holds while every path that reaches the
             // state is taint-free.
             Verdict::Accept(_) if resolved_conflict => {
-                self.attempt.first_conflict_state.get_or_insert(number);
+                // A frontier state resolved by substitution carries no
+                // conflict, so it degrades to a plain escape: the runtime
+                // restarts the adaptive simulation, and the report keeps the
+                // budget witness.
+                let conflicted = self
+                    .info
+                    .get(&number)
+                    .is_some_and(|facts| !facts.conflicts.is_empty());
+                if conflicted {
+                    self.attempt.first_conflict_state.get_or_insert(number);
+                }
                 if self.policy.hybrid {
                     let approximated = added & (WIDENED_TAINT | PRECPRED_TAINT) != 0;
                     if let Some(facts) = self.info.get_mut(&number) {
-                        facts.verdict = Verdict::Escape(CONFLICT_ESCAPE);
-                        if !approximated {
+                        facts.verdict = if conflicted {
+                            Verdict::Escape(CONFLICT_ESCAPE)
+                        } else {
+                            Verdict::Escape(ESCAPE)
+                        };
+                        // A precedence class table never takes the conflict
+                        // short cut: the runtime's full-context restart would
+                        // have to reapply the precedence filter, which the
+                        // table cannot carry.
+                        if !approximated && !self.precedence_class {
                             facts.conflict_min_alt =
                                 facts.conflicts.iter().min().copied().unwrap_or(0);
                         }
@@ -1082,6 +1164,38 @@ where
         }
         let conflicting = get_alts(subsets.into_iter());
         facts.conflicts = conflicting.iter().map(|alt| alt as i32).collect();
+
+        // Enter/exit ambiguity of a precedence loop, resolved to iterate by
+        // substitution. When the exit lineage consumed every scanned token
+        // inside the operator loop, no foreign consumption remains. Then every
+        // exit derivation maps onto an iterate derivation of the same
+        // sentence.
+        //
+        // The mapping is precedence-safe. The outer reading consumes the
+        // operator through the same loop alternative, with the same guard and
+        // the same operand precedence. The iterate lineage can always take the
+        // free loop exit and rejoin the continuation the exit lineage heads
+        // for. So exit never becomes uniquely viable, and the runtime answers
+        // iterate whenever it terminates.
+        //
+        // Exactness is not required. Inexact subsets are the common case:
+        // they diverge because exit carries caller continuations that iterate
+        // only rejoins after its free exit.
+        //
+        // Three vetoes decide the state: foreign consumption outside the loop
+        // block, pending token obligations the iterate reading does not owe,
+        // and a missing iterate attestation. A compound guarded alternative
+        // breaks the mapping altogether (see `LoopBlock`).
+        if let Some(block) = self.closure.loop_block()
+            && block.guards_are_simple()
+            && is_iterate_exit_pair(&conflicting)
+            && block.iterate_exit_attestation(&closed.configs, &closed.taint) == ITERATE_REAL
+        {
+            facts.resolved_conflict = true;
+            effects.exact_ambiguity = Some(conflicting.clone());
+            facts.verdict = Verdict::Accept(ITERATE_ALT);
+            return (facts, effects);
+        }
 
         let untrusted = precedence_tainted
             || widened_tainted
