@@ -751,7 +751,7 @@ static _ATN: LazyLock<ATN> = LazyLock::new(|| {
         .deserialize(&_serializedATN)
         .expect("invalid packed parser ATN")
 });
-static _serializedATN: LazyLock<Vec<u32>> = LazyLock::new(|| vec![
+static _serializedATN: [u32; 2145] = [
     1346458702, 3, 16909060, 29, 16, 89, 96, 3, 5, 10, 6, 29, 623, 652, 
     480, 1132, 15, 1147, 10, 1169, 10, 1179, 6, 1185, 6, 2145, 6, 1157, 
     12, 2, 0, 8, 0, 1, 4294967295, 4294967295, 7, 0, 16, 1, 0, 4294967295, 
@@ -879,4 +879,4 @@ static _serializedATN: LazyLock<Vec<u32>> = LazyLock::new(|| vec![
     3, 15, 15, 4, 4294967295, 4294967295, 5, 1, 1, 6, 2, 2, 7, 3, 3, 8, 
     4, 4, 9, 5, 5, 10, 6, 6, 11, 7, 11, 12, 12, 12, 13, 13, 13, 14, 0, 0, 
     0, 0, 0, 1, 6, 4, 2, 3, 4, 6, 3, 4, 5, 6, 7
-]);
+];

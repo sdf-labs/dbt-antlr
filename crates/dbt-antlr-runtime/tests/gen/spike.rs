@@ -84,7 +84,7 @@ dbt_antlr_runtime::impl_lexer_recog! { SpikeActions, "Spike.g4"; sempred { 1 => 
 static ATN_SIMULATOR_MANAGER: LazyLock<ATNSimulatorManager> = LazyLock::new(|| ATNSimulatorManager::new(&_ATN));
 static _ATN: LazyLock<ATN> =
     LazyLock::new(|| ATNDeserializer::new(None).deserialize(&mut _serializedATN.iter()));
-static _serializedATN: LazyLock<Vec<i32>> = LazyLock::new(|| vec![
+static _serializedATN: [i32; 499] = [
     4, 0, 6, 52, 6, -1, 2, 0, 7, 0, 2, 1, 7, 1, 2, 2, 7, 2, 2, 3, 7, 3, 
     2, 4, 7, 4, 2, 5, 7, 5, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 5, 0, 19, 8, 0, 
     10, 0, 12, 0, 22, 9, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
@@ -109,4 +109,4 @@ static _serializedATN: LazyLock<Vec<i32>> = LazyLock::new(|| vec![
     0, 45, 46, 1, 0, 0, 0, 46, 47, 1, 0, 0, 0, 47, 48, 6, 4, 0, 0, 48, 10, 
     1, 0, 0, 0, 49, 50, 5, 47, 0, 0, 50, 51, 5, 42, 0, 0, 51, 12, 1, 0, 
     0, 0, 6, 0, 18, 20, 35, 40, 45, 1, 0, 1, 0
-]);
+];

@@ -71,7 +71,7 @@ dbt_antlr_runtime::impl_lexer_recog! { CSVLexerActions, "CSVLexer.g4" }
 static ATN_SIMULATOR_MANAGER: LazyLock<ATNSimulatorManager> = LazyLock::new(|| ATNSimulatorManager::new(&_ATN));
 static _ATN: LazyLock<ATN> =
     LazyLock::new(|| ATNDeserializer::new(None).deserialize(&mut _serializedATN.iter()));
-static _serializedATN: LazyLock<Vec<i32>> = LazyLock::new(|| vec![
+static _serializedATN: [i32; 413] = [
     4, 0, 6, 42, 6, -1, 2, 0, 7, 0, 2, 1, 7, 1, 2, 2, 7, 2, 2, 3, 7, 3, 
     2, 4, 7, 4, 2, 5, 7, 5, 1, 0, 1, 0, 1, 1, 1, 1, 1, 2, 1, 2, 1, 3, 4, 
     3, 21, 8, 3, 11, 3, 12, 3, 22, 1, 3, 1, 3, 1, 4, 4, 4, 28, 8, 4, 11, 
@@ -92,4 +92,4 @@ static _serializedATN: LazyLock<Vec<i32>> = LazyLock::new(|| vec![
     36, 39, 1, 0, 0, 0, 37, 35, 1, 0, 0, 0, 37, 38, 1, 0, 0, 0, 38, 40, 
     1, 0, 0, 0, 39, 37, 1, 0, 0, 0, 40, 41, 5, 34, 0, 0, 41, 12, 1, 0, 0, 
     0, 5, 0, 22, 29, 35, 37, 1, 0, 1, 0
-]);
+];

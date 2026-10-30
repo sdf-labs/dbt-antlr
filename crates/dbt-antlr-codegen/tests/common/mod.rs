@@ -61,11 +61,16 @@ pub(crate) fn report_first_diff(expected: &str, actual: &str) {
 
 /// Extracts the bracketed integer word list following `marker`.
 pub(crate) fn extract_words(content: &str, marker: &str) -> Vec<i64> {
-    let start = content.find(marker).expect("marker exists");
-    let rest = &content[start..];
-    let open = rest.find('[').expect("word list opens");
-    let close = rest.find("])").expect("word list closes");
-    rest[open + 1..close]
+    let declaration = format!("static {marker}");
+    let start = content
+        .find(&declaration)
+        .expect("marker declaration exists");
+    let init = &content[start..];
+    let assign = init.find('=').expect("word list is initialized");
+    let body = &init[assign + 1..];
+    let open = body.find('[').expect("word list opens");
+    let close = body[open..].find(']').expect("word list closes");
+    body[open + 1..open + close]
         .split(',')
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -73,9 +78,9 @@ pub(crate) fn extract_words(content: &str, marker: &str) -> Vec<i64> {
         .collect()
 }
 
-/// Masks the intentional ATN-encoding difference between the golden and the
-/// emitted parser: everything from the embedded-ATN section on, plus the
-/// deserializer import line.
+/// Masks the embedded-ATN section of the golden and the emitted parser (the
+/// two ATNs are compared structurally instead), plus the deserializer import
+/// line, which differs for pre-swap goldens.
 pub(crate) fn mask_parser_atn_diff(content: &str) -> String {
     mask_deserializer_import(&content[..atn_section_start(content)])
 }
@@ -153,7 +158,7 @@ pub(crate) fn assert_atn_graphs_equivalent(golden: &str, actual: &str, context: 
         )
     };
 
-    let golden_dump = if golden.contains("LazyLock<Vec<i32>>") {
+    let golden_dump = if golden.contains("ATNDeserializer::new(None).deserialize") {
         let words: Vec<i32> = extract_words(golden, "_serializedATN")
             .into_iter()
             .map(|word| word as i32)
