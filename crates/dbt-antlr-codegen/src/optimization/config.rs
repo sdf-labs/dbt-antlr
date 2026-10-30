@@ -27,6 +27,17 @@ enum ConfiguredPassStage {
     StaticDfaBuilds(StaticDfaPass),
 }
 
+/// Whether a static DFA pass can leave input to the adaptive ATN simulation.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum AtnFallback {
+    /// The generated recognizer keeps the ATN simulation for the input that
+    /// the static tables do not decide.
+    #[default]
+    Allowed,
+    /// `--static-dfa-only`: the generated recognizer never simulates the ATN.
+    /// A pass resolves what it can statically and reports the rest as errors.
+    Forbidden,
+}
 /// One static DFA build selected by the plan.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StaticDfaPass {
@@ -85,6 +96,7 @@ struct SelectionSettings {
     precedence_ladders: bool,
     static_lexer_dfa: bool,
     static_parser_dfa: bool,
+    static_dfa_only: bool,
     report_decisions: bool,
     dump_dfas: Option<String>,
     report_only: bool,
@@ -99,6 +111,7 @@ impl SelectionSettings {
             precedence_ladders: options.optimize_precedence_ladders,
             static_lexer_dfa: options.static_lexer_dfa,
             static_parser_dfa: options.static_parser_dfa,
+            static_dfa_only: options.static_dfa_only,
             report_decisions: options.report_decisions,
             dump_dfas: options.dump_dfas.clone(),
             report_only: options.is_report_only(),
@@ -120,6 +133,7 @@ pub(crate) struct OptimizationPlan {
     pub(super) selected: Vec<SelectedPass>,
     pub(super) static_parser_reports: StaticParserDfaSelection,
     pub(super) report_only: bool,
+    pub(super) static_dfa_only: bool,
 }
 
 const PASS_REGISTRY: &[PassRegistration] = &[
@@ -179,12 +193,14 @@ impl OptimizationPlan {
             dump_dfas: settings.dump_dfas,
         };
         let report_only = settings.report_only;
+        let static_dfa_only = settings.static_dfa_only;
         Ok(Self {
             entry_rules: settings.entry_rules,
             transforms,
             selected,
             static_parser_reports,
             report_only,
+            static_dfa_only,
         })
     }
 
@@ -206,6 +222,16 @@ impl OptimizationPlan {
 
     pub(crate) const fn report_only(&self) -> bool {
         self.report_only
+    }
+
+    /// Whether the static DFA passes can leave input to the adaptive ATN
+    /// simulation (`--static-dfa-only` forbids it).
+    pub(crate) const fn atn_fallback(&self) -> AtnFallback {
+        if self.static_dfa_only {
+            AtnFallback::Forbidden
+        } else {
+            AtnFallback::Allowed
+        }
     }
 }
 
@@ -238,7 +264,8 @@ fn configure_precedence_ladders(settings: &SelectionSettings) -> Option<Configur
 }
 
 fn configure_static_lexer_dfa(settings: &SelectionSettings) -> Option<ConfiguredPass> {
-    settings.static_lexer_dfa.then_some(ConfiguredPass {
+    let enabled = settings.static_lexer_dfa || settings.static_dfa_only;
+    enabled.then_some(ConfiguredPass {
         stage: ConfiguredPassStage::StaticDfaBuilds(StaticDfaPass::StaticLexerDfa),
         emit_manifest: true,
         messages: None,
@@ -246,8 +273,10 @@ fn configure_static_lexer_dfa(settings: &SelectionSettings) -> Option<Configured
 }
 
 fn configure_static_parser_dfa(settings: &SelectionSettings) -> Option<ConfiguredPass> {
-    let enabled =
-        settings.static_parser_dfa || settings.report_decisions || settings.dump_dfas.is_some();
+    let enabled = settings.static_parser_dfa
+        || settings.static_dfa_only
+        || settings.report_decisions
+        || settings.dump_dfas.is_some();
     enabled.then_some(ConfiguredPass {
         stage: ConfiguredPassStage::StaticDfaBuilds(StaticDfaPass::StaticParserDfa),
         emit_manifest: true,
@@ -380,6 +409,7 @@ mod tests {
             precedence_ladders: false,
             static_lexer_dfa: false,
             static_parser_dfa: false,
+            static_dfa_only: false,
             report_decisions: false,
             dump_dfas: None,
             report_only: false,
@@ -479,5 +509,27 @@ mod tests {
             plan.static_parser_reports,
             StaticParserDfaSelection::default()
         );
+    }
+
+    #[test]
+    fn static_dfa_only_selects_both_static_dfa_passes() {
+        let mut options = OptimizationOptions::new();
+        options.static_dfa_only(true);
+        let plan = OptimizationPlan::from_options(&options).expect("plan should be valid");
+
+        assert_eq!(plan.atn_fallback(), AtnFallback::Forbidden);
+        assert!(!plan.report_only());
+        assert_eq!(
+            plan.static_dfa_passes().collect::<Vec<_>>(),
+            [
+                StaticDfaPass::StaticLexerDfa,
+                StaticDfaPass::StaticParserDfa
+            ]
+        );
+
+        let plan = OptimizationPlan::from_options(&OptimizationOptions::new())
+            .expect("plan should be valid");
+        assert_eq!(plan.atn_fallback(), AtnFallback::Allowed);
+        assert_eq!(plan.static_dfa_passes().count(), 0);
     }
 }

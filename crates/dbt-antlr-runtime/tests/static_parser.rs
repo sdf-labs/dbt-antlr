@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Bo Lin
 //! Integration tests for `--static-parser-dfa`: the `StaticDFA.g4` static
 //! tables, `LrDfa.g4` precedence dispatch, the `FuzzExpr.g4` static-vs-adaptive
-//! differential, the `SDFA` word codec, and the D5 escape handoff.
+//! differential, the `SDFA` word codec, the D5 escape handoff, and the
+//! `--static-dfa-only` resolution of the `GuardExpr.g4` escape states.
 
 #[rustfmt::skip]
 mod gen {
@@ -14,6 +15,7 @@ mod gen {
     pub mod guardexprlexer;
     pub mod guardexprparser;
     pub mod guardexprparser_static;
+    pub mod guardexprparser_static_only;
     pub mod lrdfalexer;
     pub mod lrdfaparser;
     pub mod staticdfalexer;
@@ -710,5 +712,96 @@ fn guarded_takes_match_the_adaptive_engine() {
     assert!(
         inline.contains("(pred = (value b))"),
         "outside an assignment target the take must win: {inline}"
+    );
+}
+
+/// Parses `input` with one generated `GuardExpr` parser module, and returns the
+/// tree and the syntax errors.
+macro_rules! parse_guard_with {
+    ($parser:ident, $input:expr) => {
+        Arena::with(|arena| {
+            let lexer = gen::guardexprlexer::GuardExprLexer::<_, CommonTokenFactory>::new(
+                arena,
+                InputStream::new($input),
+            );
+            let tokens = CommonTokenStream::new(lexer);
+            let mut parser = gen::$parser::GuardExprParser::new(arena, tokens);
+            let listener = CollectingErrorListener::default();
+            let messages = listener.messages.clone();
+            parser.remove_error_listeners();
+            parser.add_error_listener(Box::new(listener));
+            let tree = match parser.prog() {
+                Ok(ctx) => string_tree(ctx, parser.get_rule_names()),
+                Err(error) => format!("ERR {error}"),
+            };
+            let messages = messages.borrow().clone();
+            (tree, messages)
+        })
+    };
+}
+
+/// Parses `input` with the adaptive and the `--static-dfa-only` `GuardExpr`
+/// parsers, and returns the tree and the syntax errors of each.
+fn parse_guard_both(input: &str) -> [(String, Vec<String>); 2] {
+    [
+        parse_guard_with!(guardexprparser, input),
+        parse_guard_with!(guardexprparser_static_only, input),
+    ]
+}
+
+#[test]
+fn static_dfa_only_parser_never_calls_adaptive_predict() {
+    let src = include_str!("gen/guardexprparser_static_only.rs");
+    assert!(src.contains("dfa_predict("), "expected table prediction");
+    assert_eq!(src.matches("adaptive_predict(").count(), 0);
+}
+
+/// Outside an assignment target, the take of `pred?` is the right reading, so
+/// the static-only parser matches the adaptive one.
+#[test]
+fn static_dfa_only_matches_the_adaptive_engine_where_take_wins() {
+    for input in [
+        "a = b ;",
+        "a = b AND c = d ;",
+        "a IN ( b ) ;",
+        "( a = b ) ;",
+        "NOT a = b ;",
+        "a < b OR c > d ;",
+        "a ;",
+    ] {
+        let [adaptive, static_only] = parse_guard_both(input);
+        assert!(adaptive.1.is_empty(), "{input:?}: {adaptive:?}");
+        assert_eq!(static_only, adaptive, "{input:?}");
+    }
+}
+
+/// The guarded take predicts the take without the stack guard, so an
+/// assignment target reads `a = b` as a comparison and the assignment misses
+/// its own `=`.
+#[test]
+fn static_dfa_only_resolves_the_guarded_take_to_the_take() {
+    let [adaptive, static_only] = parse_guard_both("set a = b ;");
+    assert!(adaptive.1.is_empty(), "{adaptive:?}");
+    assert!(
+        static_only.0.contains("(pred = (value b))"),
+        "the take wins: {static_only:?}"
+    );
+    assert_eq!(
+        static_only.1,
+        ["line 1:10 mismatched input ';' expecting {'=', 'AND', 'OR'}"]
+    );
+}
+
+/// A lookahead that reaches the budget frontier of the hybrid table reports a
+/// syntax error instead of a deferral to the adaptive simulation.
+#[test]
+fn static_dfa_only_reports_a_syntax_error_at_the_frontier() {
+    let input = "a = ( ( NOT b ) ) ;";
+    let [adaptive, static_only] = parse_guard_both(input);
+    assert!(adaptive.1.is_empty(), "{adaptive:?}");
+    assert_eq!(
+        static_only.1,
+        ["line 1:12 no viable alternative at input '=((NOTb'"],
+        "{static_only:?}"
     );
 }

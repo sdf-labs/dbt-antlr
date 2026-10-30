@@ -12,16 +12,25 @@
 //! `--report-decisions` renders the decision inventory of the pass to stdout
 //! and `--dump-dfas` renders the tables of the selected decisions. Both flags
 //! imply `--report-only`.
+//!
+//! Under `--static-dfa-only`, the pass resolves the escape states of every
+//! partial table statically (see `parser_dfa::static_only`). A decision that
+//! still needs `adaptivePredict` is an error (`G4S190`), and a decision with
+//! resolved escape states gets a warning (`G4S192`).
 
 use std::collections::BTreeMap;
 
 use minijinja::Value;
 
+use super::config::AtnFallback;
 use super::descriptor::PassDescriptor;
 use super::manifest::{object, source_value};
 use dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables as RuntimeTables;
 
-use super::parser_dfa::{Category, DecisionClassifier, DecisionResult, StaticDfaTable};
+use super::parser_dfa::{
+    Category, DecisionClassifier, DecisionResult, EscapeResolution, EscapeResolutions,
+    StaticDfaTable,
+};
 use crate::grammar::atn::CompiledParser;
 use crate::grammar::diagnostic::Diagnostic;
 use crate::grammar::frontend::SourceSpan;
@@ -32,10 +41,14 @@ use crate::grammar::provenance::Origin;
 use crate::grammar::source::SourceSet;
 use crate::grammar::transform::SafetyClass;
 
-/// The diagnostic code of the "decision is not fully static" warnings.
+/// The diagnostic code of the "decision is not fully static" warnings, and of
+/// the errors that replace them under `--static-dfa-only`.
 const NOT_FULLY_STATIC: &str = "G4S190";
 /// The diagnostic code of an unmatched `--dump-dfas` selector.
 const DUMP_SELECTOR_NO_MATCH: &str = "G4S191";
+/// The diagnostic code of a decision whose escape states `--static-dfa-only`
+/// resolved statically.
+const STATIC_ONLY_RESOLVED: &str = "G4S192";
 
 /// The static tables of one parser unit, as the emitter and the packed ATN
 /// need them.
@@ -48,10 +61,11 @@ pub(crate) struct StaticParserTables {
     /// has to defer to `adaptivePredict` when prediction returns no
     /// alternative.
     defers: Vec<bool>,
+    atn_fallback: AtnFallback,
 }
 
 impl StaticParserTables {
-    fn new(results: &[DecisionResult]) -> Self {
+    fn new(results: &[DecisionResult], atn_fallback: AtnFallback) -> Self {
         let mut has_table = Vec::with_capacity(results.len());
         let mut defers = Vec::with_capacity(results.len());
         for result in results {
@@ -68,6 +82,7 @@ impl StaticParserTables {
             tables: super::parser_dfa::build_tables(results),
             has_table,
             defers,
+            atn_fallback,
         }
     }
 
@@ -79,6 +94,11 @@ impl StaticParserTables {
     /// `true` when the decision still reaches the adaptive simulation.
     pub(crate) fn defers(&self, decision: usize) -> bool {
         self.defers.get(decision).copied().unwrap_or(false)
+    }
+
+    /// Whether the generated parser can call `adaptivePredict` at all.
+    pub(crate) const fn atn_fallback(&self) -> AtnFallback {
+        self.atn_fallback
     }
 
     /// The `SDFA` word stream, empty when the unit has no table.
@@ -96,12 +116,26 @@ impl StaticParserDfa {
     /// Classifies the decisions of one compiled parser unit, builds the tables
     /// the generated parser will decode, and records the diagnostics of the
     /// decisions that stay partly adaptive.
-    pub(crate) fn build(compiled: &CompiledParser) -> StaticParserDfaArtifact {
+    ///
+    /// With [`AtnFallback::Forbidden`], the escape states of every partial
+    /// table are resolved statically, and every decision that still needs
+    /// `adaptivePredict` is an error.
+    pub(crate) fn build(
+        compiled: &CompiledParser,
+        atn_fallback: AtnFallback,
+    ) -> StaticParserDfaArtifact {
         let atn = compiled.atn;
         let recognizer = &compiled.semantic.recognizer;
         let ll1_disjoint = ll1_disjointness(compiled);
-        let results = DecisionClassifier::new(atn, ll1_disjoint).classify_all();
-        let tables = StaticParserTables::new(&results);
+        let mut results = DecisionClassifier::new(atn, ll1_disjoint)
+            .with_atn_fallback(atn_fallback)
+            .classify_all();
+        if atn_fallback == AtnFallback::Forbidden {
+            for result in &mut results {
+                result.resolve_static_only();
+            }
+        }
+        let tables = StaticParserTables::new(&results, atn_fallback);
         let decisions = results
             .iter()
             .map(|result| StaticParserDecisionReport {
@@ -123,9 +157,13 @@ impl StaticParserDfa {
             source_span: compiled.semantic.unit.span.clone(),
             vocabulary,
             decisions,
+            atn_fallback,
         };
         StaticParserDfaArtifact {
-            diagnostics: not_fully_static_diagnostics(compiled, &report),
+            diagnostics: match atn_fallback {
+                AtnFallback::Allowed => not_fully_static_diagnostics(compiled, &report),
+                AtnFallback::Forbidden => static_only_diagnostics(compiled, &report),
+            },
             report,
             tables,
         }
@@ -149,6 +187,8 @@ impl StaticParserDfa {
             ("hybridDecisions", Value::from(totals.hybrid_decisions)),
             ("adaptiveDecisions", Value::from(totals.adaptive_decisions)),
             ("escapeStates", Value::from(totals.escape_states)),
+            ("minAltStates", Value::from(totals.min_alt_states)),
+            ("syntaxErrorStates", Value::from(totals.syntax_error_states)),
         ]);
         let rendered = Value::from_iter(
             parsers
@@ -160,7 +200,17 @@ impl StaticParserDfa {
             descriptor,
             totals.static_decisions > 0,
             metrics,
-            vec![("parsers", rendered)],
+            vec![
+                (
+                    "staticDfaOnly",
+                    Value::from(
+                        parsers
+                            .iter()
+                            .any(|parser| parser.atn_fallback == AtnFallback::Forbidden),
+                    ),
+                ),
+                ("parsers", rendered),
+            ],
         )
     }
 
@@ -210,6 +260,8 @@ pub(crate) struct StaticParserDfaReport {
     /// `token_type - 1`.
     pub(crate) vocabulary: Vec<String>,
     pub(crate) decisions: Vec<StaticParserDecisionReport>,
+    /// Whether the generated parser can defer to the adaptive simulation.
+    pub(crate) atn_fallback: AtnFallback,
 }
 
 impl StaticParserDfaReport {
@@ -221,7 +273,9 @@ impl StaticParserDfaReport {
             .count()
     }
 
-    /// The number of decisions with a partial table.
+    /// The number of decisions that the classifier gave a partial table. Under
+    /// `--static-dfa-only`, these decisions are also static decisions, because
+    /// their escape states are resolved.
     fn hybrid_decisions(&self) -> usize {
         self.decisions
             .iter()
@@ -243,6 +297,21 @@ impl StaticParserDfaReport {
             .map(|decision| decision.result.escapes)
             .sum()
     }
+
+    /// The escape states that `--static-dfa-only` resolved, summed over the
+    /// decisions.
+    fn resolved_states(&self) -> EscapeResolutions {
+        let mut total = EscapeResolutions::default();
+        for resolved in self
+            .decisions
+            .iter()
+            .filter_map(|decision| decision.result.static_only.as_ref())
+        {
+            total.min_alt += resolved.min_alt;
+            total.syntax_error += resolved.syntax_error;
+        }
+        total
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -252,6 +321,8 @@ struct ReportMetrics {
     hybrid_decisions: usize,
     adaptive_decisions: usize,
     escape_states: usize,
+    min_alt_states: usize,
+    syntax_error_states: usize,
 }
 
 impl ReportMetrics {
@@ -261,6 +332,9 @@ impl ReportMetrics {
         self.hybrid_decisions += parser.hybrid_decisions();
         self.adaptive_decisions += parser.adaptive_decisions();
         self.escape_states += parser.escape_states();
+        let resolved = parser.resolved_states();
+        self.min_alt_states += resolved.min_alt;
+        self.syntax_error_states += resolved.syntax_error;
     }
 }
 
@@ -275,6 +349,7 @@ pub(crate) struct StaticParserDecisionReport {
 }
 
 fn parser_report_value(parser: &StaticParserDfaReport, sources: &SourceSet) -> Value {
+    let resolved = parser.resolved_states();
     object(vec![
         ("grammar", Value::from(parser.grammar.as_str())),
         ("source", source_value(&parser.source_span, sources)),
@@ -286,6 +361,8 @@ fn parser_report_value(parser: &StaticParserDfaReport, sources: &SourceSet) -> V
             Value::from(parser.adaptive_decisions()),
         ),
         ("escapeStates", Value::from(parser.escape_states())),
+        ("minAltStates", Value::from(resolved.min_alt)),
+        ("syntaxErrorStates", Value::from(resolved.syntax_error)),
     ])
 }
 
@@ -585,6 +662,9 @@ fn table_dump_lines(
         let mut line = format!("    s{index}: ");
         if state.accept > 0 {
             line.push_str(&format!("accept alt={}", state.accept));
+            if state.resolution == Some(EscapeResolution::MinAlt) {
+                line.push_str(" (static-dfa-only: minimum conflicting alternative)");
+            }
         } else if state.is_guarded() {
             line.push_str(&format!(
                 "GUARDED alt={} unless the parse stack reaches a guard root (danger={:?})",
@@ -592,6 +672,8 @@ fn table_dump_lines(
             ));
         } else if state.is_escape() {
             line.push_str("ESCAPE");
+        } else if state.resolution == Some(EscapeResolution::SyntaxError) {
+            line.push_str("SYNTAX ERROR (static-dfa-only: undecided lookahead)");
         } else {
             line.push_str("(non-accept)");
         }
@@ -709,8 +791,12 @@ fn adaptive_reason(result: &DecisionResult) -> String {
     }
 }
 
+/// The text of a witness path, `None` when there is no witness or the path is
+/// empty.
 fn witness_text(vocabulary: &[String], witness: Option<&[i32]>) -> Option<String> {
-    witness.map(|witness| path_text(vocabulary, witness))
+    witness
+        .filter(|witness| !witness.is_empty())
+        .map(|witness| path_text(vocabulary, witness))
 }
 
 fn vocabulary_line(vocabulary: &[String]) -> String {
@@ -872,6 +958,105 @@ fn not_fully_static_diagnostics(
             Some(Diagnostic::warning(NOT_FULLY_STATIC, span, message))
         })
         .collect()
+}
+
+/// The `--static-dfa-only` diagnostics: a `G4S190` error for each decision that
+/// still needs `adaptivePredict`, and a `G4S192` warning for each decision with
+/// resolved escape states.
+fn static_only_diagnostics(
+    compiled: &CompiledParser,
+    report: &StaticParserDfaReport,
+) -> Vec<Diagnostic> {
+    report
+        .decisions
+        .iter()
+        .filter_map(|decision| {
+            let result = &decision.result;
+            let span =
+                decision_span(compiled, result).unwrap_or_else(|| report.source_span.clone());
+            let Some(resolved) = &result.static_only else {
+                let mut message = format!(
+                    "parser decision {} of rule '{}' is not fully static: {}; \
+                     --static-dfa-only requires a static table for every decision",
+                    decision.decision,
+                    decision.rule,
+                    static_only_failure_reason(result)
+                );
+                if let Some(witness) = witness_text(
+                    &report.vocabulary,
+                    result
+                        .conflict_witness
+                        .as_deref()
+                        .or(result.budget_witness.as_deref()),
+                ) {
+                    message.push_str(&format!("; witness: {witness}"));
+                }
+                return Some(Diagnostic::error(NOT_FULLY_STATIC, span, message));
+            };
+            let mut parts = Vec::new();
+            if resolved.min_alt > 0 {
+                parts.push(resolution_text(
+                    &report.vocabulary,
+                    resolved.min_alt,
+                    ("conflict state predicts", "conflict states predict"),
+                    "the minimum alternative",
+                    resolved.min_alt_witness.as_deref(),
+                ));
+            }
+            if resolved.syntax_error > 0 {
+                parts.push(resolution_text(
+                    &report.vocabulary,
+                    resolved.syntax_error,
+                    ("undecided state reports", "undecided states report"),
+                    "a syntax error",
+                    resolved.syntax_error_witness.as_deref(),
+                ));
+            }
+            (!parts.is_empty()).then(|| {
+                Diagnostic::warning(
+                    STATIC_ONLY_RESOLVED,
+                    span,
+                    format!(
+                        "parser decision {} of rule '{}' resolves its escape states without \
+                         adaptivePredict: {}",
+                        decision.decision,
+                        decision.rule,
+                        parts.join(", ")
+                    ),
+                )
+            })
+        })
+        .collect()
+}
+
+/// One clause of a `G4S192` warning, for example `2 undecided states report a
+/// syntax error (witness: ID EOF)`.
+fn resolution_text(
+    vocabulary: &[String],
+    count: usize,
+    (singular, plural): (&str, &str),
+    verdict: &str,
+    witness: Option<&[i32]>,
+) -> String {
+    let subject = if count == 1 { singular } else { plural };
+    let mut text = format!("{count} {subject} {verdict}");
+    if let Some(witness) = witness_text(vocabulary, witness) {
+        text.push_str(&format!(" (witness: {witness})"));
+    }
+    text
+}
+
+/// Why `--static-dfa-only` cannot give the decision a static prediction.
+fn static_only_failure_reason(result: &DecisionResult) -> String {
+    match result.category {
+        Category::NON_GREEDY => "the decision is a non-greedy subrule, and the generated parser \
+             predicts non-greedy subrules only with adaptivePredict"
+            .to_owned(),
+        Category::LR_PRECEDENCE if result.precedence.is_none() => {
+            "the precedence loop has no precedence predicates to build class tables from".to_owned()
+        }
+        _ => adaptive_reason(result),
+    }
 }
 
 /// The source span of one decision, resolved through the ATN state's

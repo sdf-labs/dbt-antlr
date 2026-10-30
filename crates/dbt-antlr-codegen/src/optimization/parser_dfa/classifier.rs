@@ -21,7 +21,8 @@ use super::closure::{ClosedSet, Closure, ClosureFacts, PrecedenceClass, Taint, t
 use super::loop_block::{ITERATE_ALT, ITERATE_REAL, LoopBlock, is_iterate_exit_pair};
 use super::postfix::{PostfixShape, bottom_frame_is, compute_guard_data, reach_eps};
 use super::table::{StaticDfaEdge, StaticDfaState, StaticDfaTable};
-use super::{CONFLICT_ESCAPE, Category, ESCAPE, GUARDED};
+use super::{CONFLICT_ESCAPE, Category, ESCAPE, EscapeResolutions, GUARDED};
+use crate::optimization::AtnFallback;
 
 /// The state budget of one decision table.
 pub(crate) const MAX_DFA_STATES: usize = 1000;
@@ -29,7 +30,8 @@ pub(crate) const MAX_DFA_STATES: usize = 1000;
 pub(crate) const HYBRID_DEPTH_CAP: usize = 4;
 /// State count at which a hybrid table stops expanding beyond depth 2.
 pub(crate) const HYBRID_STATE_CAP: usize = 64;
-/// Below this share of useful start edges a hybrid table is not emitted.
+/// Below this share of useful start edges a hybrid table is not emitted,
+/// unless `--static-dfa-only` removes the adaptive fallback.
 pub(crate) const HYBRID_MIN_COVERAGE_PERCENT: u32 = 10;
 /// Largest continuation a hybrid table emits, counted in wire words.
 ///
@@ -266,6 +268,9 @@ pub(crate) struct DecisionResult {
     pub(crate) coverage_percent: u32,
     pub(crate) table: Option<StaticDfaTable>,
     pub(crate) precedence: Option<PrecedenceTables>,
+    /// The escape states that `--static-dfa-only` resolved, set once every
+    /// table of the decision predicts without `adaptivePredict`.
+    pub(crate) static_only: Option<EscapeResolutions>,
 }
 
 impl DecisionResult {
@@ -295,12 +300,30 @@ impl DecisionResult {
             coverage_percent: 0,
             table: None,
             precedence: None,
+            static_only: None,
         }
     }
 
     /// A short description of how the decision falls back at runtime, for
     /// `--report-decisions`.
+    ///
+    /// Under `--static-dfa-only`, the text counts the resolved escape states
+    /// instead: `m` states predict the minimum conflicting alternative and `x`
+    /// states report a syntax error.
     pub(crate) fn fallback_text(&self) -> String {
+        if let Some(resolved) = &self.static_only {
+            let mut parts = Vec::new();
+            if resolved.min_alt > 0 {
+                parts.push(format!("{}m", resolved.min_alt));
+            }
+            if resolved.syntax_error > 0 {
+                parts.push(format!("{}x", resolved.syntax_error));
+            }
+            if parts.is_empty() {
+                return "0".to_owned();
+            }
+            return parts.join("+");
+        }
         if self.category == Category::LR_PRECEDENCE {
             let Some(precedence) = &self.precedence else {
                 return "all".to_owned();
@@ -339,8 +362,12 @@ impl DecisionResult {
     ///
     /// `LL(1)` and non-greedy decisions need no table at all, and a table
     /// without escapes decides on its own; everything else keeps at least one
-    /// adaptive path.
+    /// adaptive path. A decision that `--static-dfa-only` resolved never falls
+    /// back.
     pub(crate) fn is_fully_static(&self) -> bool {
+        if self.static_only.is_some() {
+            return true;
+        }
         if self.guarded_takes > 0 {
             // A guarded take defers to the adaptive simulation when the parse
             // stack reaches a guard root.
@@ -377,6 +404,10 @@ pub(crate) struct DecisionClassifier {
     loop_blocks: HashMap<i32, LoopBlock>,
     /// The optional-postfix shape of each decision, built at most once.
     postfix_shapes: HashMap<i32, Option<PostfixShape>>,
+    /// Whether the generated parser can defer to the adaptive simulation. When
+    /// it cannot (`--static-dfa-only`), a partial table is kept regardless of
+    /// its coverage, because the alternative is no table at all.
+    atn_fallback: AtnFallback,
 }
 
 impl DecisionClassifier {
@@ -388,6 +419,7 @@ impl DecisionClassifier {
             visit_budget: super::closure::DEFAULT_VISIT_BUDGET,
             loop_blocks: HashMap::new(),
             postfix_shapes: HashMap::new(),
+            atn_fallback: AtnFallback::Allowed,
         }
     }
 
@@ -419,6 +451,12 @@ impl DecisionClassifier {
     #[cfg(test)]
     pub(crate) fn with_visit_budget(mut self, budget: u64) -> Self {
         self.visit_budget = budget;
+        self
+    }
+
+    /// Sets whether the generated parser can defer to the adaptive simulation.
+    pub(crate) const fn with_atn_fallback(mut self, atn_fallback: AtnFallback) -> Self {
+        self.atn_fallback = atn_fallback;
         self
     }
 
@@ -556,9 +594,13 @@ impl DecisionClassifier {
         }
         if result.escapes > 0 || table.guarded() > 0 {
             result.category = Category::HYBRID;
-            // A table whose start state escapes answers nothing at all.
+            // A table whose start state escapes answers nothing at all. Below
+            // the coverage threshold, the adaptive simulation decides almost
+            // every lookahead anyway, unless there is no adaptive simulation.
             let start_decides = table.states.first().is_some_and(|state| !state.is_escape());
-            if start_decides && result.coverage_percent >= HYBRID_MIN_COVERAGE_PERCENT {
+            let covers = result.coverage_percent >= HYBRID_MIN_COVERAGE_PERCENT
+                || self.atn_fallback == AtnFallback::Forbidden;
+            if start_decides && covers {
                 result.table = Some(table);
             }
             return result;
@@ -1601,6 +1643,7 @@ where
                     conflict_min_alt: facts.map_or(0, |facts| facts.conflict_min_alt),
                     guarded_alt: facts.map_or(0, |facts| facts.guarded_alt),
                     continuation: facts.and_then(|facts| facts.continuation.clone()),
+                    resolution: None,
                     edges: Vec::new(),
                 }
             })

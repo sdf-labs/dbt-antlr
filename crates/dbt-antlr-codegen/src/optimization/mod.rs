@@ -22,7 +22,7 @@ mod static_lexer_dfa;
 mod static_parser_dfa;
 
 #[cfg(feature = "generator")]
-pub(crate) use config::{OptimizationPlan, StaticDfaPass};
+pub(crate) use config::{AtnFallback, OptimizationPlan, StaticDfaPass};
 #[cfg(feature = "generator")]
 pub(crate) use metrics::{StructuralMetrics, integrated_grammar_metrics};
 pub use options::OptimizationOptions;

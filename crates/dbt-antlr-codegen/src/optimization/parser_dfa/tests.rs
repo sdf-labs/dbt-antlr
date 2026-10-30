@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 use crate::grammar::compiler::compile;
 use crate::grammar::loader::LoadOptions;
+use crate::optimization::AtnFallback;
 
 use super::loop_block::LoopBlock;
 use super::{Category, DecisionClassifier, DecisionResult};
@@ -42,6 +43,11 @@ fn fixture(name: &str) -> PathBuf {
 
 /// Classifies every decision of every root parser of one grammar file.
 fn classify(path: &Path) -> Vec<DecisionResult> {
+    classify_with(path, AtnFallback::Allowed)
+}
+
+/// [`classify`] with an explicit adaptive fallback policy.
+fn classify_with(path: &Path, atn_fallback: AtnFallback) -> Vec<DecisionResult> {
     let compilation = compile(LoadOptions {
         roots: vec![path.to_path_buf()],
         library_directories: Vec::new(),
@@ -54,7 +60,11 @@ fn classify(path: &Path) -> Vec<DecisionResult> {
         };
         let parser = compilation.parser(parser_id).expect("parser artifact");
         let ll1 = crate::optimization::static_parser_dfa::ll1_disjointness(parser);
-        results.extend(DecisionClassifier::new(parser.atn, ll1).classify_all());
+        results.extend(
+            DecisionClassifier::new(parser.atn, ll1)
+                .with_atn_fallback(atn_fallback)
+                .classify_all(),
+        );
     }
     results
 }
@@ -491,6 +501,7 @@ fn build_tables(path: &Path) -> (Vec<DecisionResult>, super::super::StaticParser
         compilation
             .parser(compilation.roots[0].parser.expect("parser root"))
             .expect("parser artifact"),
+        AtnFallback::Allowed,
     );
     let results = classify(path);
     (results, build.tables)
@@ -610,7 +621,7 @@ fn packed_atn_tail_decodes_back_into_the_same_tables() {
         let parser = compilation
             .parser(compilation.roots[0].parser.expect("parser root"))
             .expect("parser artifact");
-        let build = crate::optimization::StaticParserDfa::build(parser);
+        let build = crate::optimization::StaticParserDfa::build(parser, AtnFallback::Allowed);
         let packed = crate::grammar::atn::encode_packed_atn(parser.atn);
         let with_tables = append_sdfa_section(&packed, &build.tables.words());
         assert!(
@@ -793,4 +804,206 @@ fn optional_postfix_shapes_are_guarded() {
     // `X Y?` block must stay silent.
     let plain = classify(&grammars_dir().join("CSV.g4"));
     assert!(plain.iter().all(|result| !result.has_postfix_shape));
+}
+
+/// Classifies every decision of one grammar and resolves it for
+/// `--static-dfa-only`.
+fn resolve_static_only(path: &Path) -> Vec<DecisionResult> {
+    let mut results = classify_with(path, AtnFallback::Forbidden);
+    for result in &mut results {
+        result.resolve_static_only();
+    }
+    results
+}
+
+/// The runtime decoding of the tables of `results`.
+fn decoded_tables(
+    results: &[DecisionResult],
+) -> dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables {
+    let words = super::build_tables(results).to_words();
+    dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables::from_words(&words)
+        .expect("the emitted words decode")
+}
+
+/// Every state of every runtime table either accepts an alternative or
+/// continues the walk: no state defers to the adaptive simulation.
+fn assert_no_runtime_escapes(results: &[DecisionResult]) {
+    use dbt_antlr_runtime::dfa::static_parser_dfa::{CONFLICT_ESCAPE, ESCAPE, GUARDED};
+
+    let decoded = decoded_tables(results);
+    for result in results {
+        let precedences = result.precedence.as_ref().map_or_else(
+            || vec![0],
+            |precedence| {
+                std::iter::once(0)
+                    .chain(precedence.cutoffs.iter().map(|cutoff| cutoff + 1))
+                    .collect()
+            },
+        );
+        for precedence in precedences {
+            let Some(table) = decoded.table(result.decision as i32, precedence) else {
+                continue;
+            };
+            for state in 0..table.num_states() as i32 {
+                let accept = table.accept(state);
+                assert!(
+                    ![ESCAPE, CONFLICT_ESCAPE, GUARDED].contains(&accept),
+                    "decision {} state {state} still escapes ({accept})",
+                    result.decision
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn static_only_resolves_conflict_escapes_to_the_minimum_alternative() {
+    let results = resolve_static_only(&grammars_dir().join("ReferenceToATN.g4"));
+    let decision = &results[0];
+    assert_eq!(decision.category, Category::HYBRID);
+    assert_eq!(decision.escapes, 0);
+    assert!(decision.is_fully_static());
+    assert_eq!(decision.fallback_text(), "1m");
+    let resolved = decision.static_only.as_ref().expect("resolved");
+    assert_eq!((resolved.min_alt, resolved.syntax_error), (1, 0));
+    assert_eq!(resolved.min_alt_witness.as_deref(), Some(&[2, -1][..]));
+
+    let table = decision.table.as_ref().expect("the table is kept");
+    let state = &table.states[4];
+    assert_eq!(
+        state.accept, 1,
+        "the ATN/ID conflict predicts alternative 1"
+    );
+    assert_eq!(state.resolution, Some(super::EscapeResolution::MinAlt));
+    assert_eq!(table.escapes(), 0);
+    assert_no_runtime_escapes(&results);
+}
+
+#[test]
+fn static_only_turns_undecided_states_into_syntax_errors() {
+    let results = resolve_static_only(&fixture("parser-shapes").join("ParserShapes.g4"));
+    let plus = &results[1];
+    let resolved = plus.static_only.as_ref().expect("the loop is resolved");
+    assert_eq!(resolved.min_alt, 0);
+    assert!(resolved.syntax_error > 0, "the predicated branches stop");
+    assert!(resolved.syntax_error_witness.is_some());
+    assert_eq!(plus.fallback_text(), format!("{}x", resolved.syntax_error));
+
+    let table = plus.table.as_ref().expect("the hybrid table is kept");
+    let dead_ends: Vec<_> = table
+        .states
+        .iter()
+        .filter(|state| state.resolution == Some(super::EscapeResolution::SyntaxError))
+        .collect();
+    assert_eq!(dead_ends.len(), resolved.syntax_error);
+    for state in dead_ends {
+        assert_eq!(state.accept, 0);
+        assert_eq!(
+            state.fallback, 0,
+            "no error-recovery alternative hides the error"
+        );
+        assert!(state.edges.is_empty());
+        assert!(state.continuation.is_none());
+    }
+
+    let decoded = decoded_tables(&results);
+    let runtime = decoded.table(1, 0).expect("decision 1 has a table");
+    let dead_end = table
+        .states
+        .iter()
+        .position(|state| state.resolution.is_some())
+        .expect("a resolved state") as i32;
+    assert_eq!(runtime.accept(dead_end), 0);
+    assert_eq!(runtime.fallback(dead_end), None);
+    for token in -1..=5 {
+        assert_eq!(runtime.edge(dead_end, token), None, "token {token}");
+    }
+}
+
+#[test]
+fn static_only_resolves_guarded_takes_to_the_take() {
+    let results = resolve_static_only(&grammars_dir().join("parser").join("GuardExpr.g4"));
+    let shaped = results
+        .iter()
+        .find(|result| result.has_postfix_shape)
+        .expect("the `pred?` decision");
+    assert_eq!(shaped.guarded_takes, 0);
+    assert!(shaped.is_fully_static());
+    let table = shaped.table.as_ref().expect("the hybrid table is kept");
+    assert_eq!(table.guarded(), 0);
+    assert!(table.guard_danger.is_empty());
+    assert!(table.guard_pass.is_empty());
+    let resolved = shaped.static_only.as_ref().expect("resolved");
+    assert!(
+        resolved.min_alt >= 8,
+        "the 8 guarded takes predict the take: {resolved:?}"
+    );
+    assert_no_runtime_escapes(&results);
+}
+
+#[test]
+fn static_only_keeps_precedence_classes_static() {
+    let results = resolve_static_only(&grammars_dir().join("parser").join("LrDfa.g4"));
+    assert!(results.iter().any(|result| result.precedence.is_some()));
+    for result in &results {
+        assert!(
+            result.static_only.is_some(),
+            "decision {} ({}) resolves",
+            result.decision,
+            result.category
+        );
+        if let Some(precedence) = &result.precedence {
+            assert_eq!(precedence.escapes, 0);
+            assert!(
+                precedence
+                    .tables
+                    .iter()
+                    .flatten()
+                    .all(|table| table.escapes() == 0)
+            );
+        }
+    }
+    assert_no_runtime_escapes(&results);
+}
+
+#[test]
+fn static_only_rejects_decisions_without_a_static_prediction() {
+    let mut results = classify_with(
+        &fixture("parser-shapes").join("ParserShapes.g4"),
+        AtnFallback::Forbidden,
+    );
+    let nongreedy = &mut results[3];
+    assert_eq!(nongreedy.category, Category::NON_GREEDY);
+    assert!(!nongreedy.resolve_static_only());
+    assert!(nongreedy.static_only.is_none());
+
+    let optional = &mut results[0];
+    assert_eq!(optional.category, Category::LL1);
+    assert!(optional.resolve_static_only(), "LL(1) needs no table");
+    assert_eq!(optional.fallback_text(), "0");
+}
+
+/// Without the adaptive fallback, a partial table below the coverage threshold
+/// is still better than no table: the classifier keeps it, and the resolution
+/// turns its escapes into syntax errors.
+#[test]
+fn static_only_keeps_partial_tables_below_the_coverage_threshold() {
+    let path = grammars_dir().join("parser").join("LowCoverage.g4");
+    let adaptive = &classify(&path)[0];
+    assert_eq!(adaptive.category, Category::PREDICATED);
+    assert!(adaptive.table.is_none());
+
+    let results = resolve_static_only(&path);
+    let decision = &results[0];
+    assert_eq!(decision.category, Category::HYBRID);
+    assert!(
+        decision.coverage_percent < super::classifier::HYBRID_MIN_COVERAGE_PERCENT,
+        "coverage {}%",
+        decision.coverage_percent
+    );
+    assert!(decision.table.is_some());
+    let resolved = decision.static_only.as_ref().expect("resolved");
+    assert_eq!((resolved.min_alt, resolved.syntax_error), (0, 10));
+    assert_eq!(decision.fallback_text(), "10x");
+    assert_no_runtime_escapes(&results);
 }

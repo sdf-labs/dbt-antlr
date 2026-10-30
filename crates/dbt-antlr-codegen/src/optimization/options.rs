@@ -15,6 +15,11 @@ use std::collections::BTreeSet;
 /// parser prediction tables after ATN construction and preserves both parse
 /// trees and recognizer APIs.
 ///
+/// Static-only DFA generation ([`Self::static_dfa_only`]) selects both static
+/// DFA passes and removes every `adaptivePredict` fallback. As a result, the
+/// generated parser can reject input that the grammar accepts. A part of the
+/// grammar that the static tables cannot decide stops the generation.
+///
 /// Selected optimization passes write their reports to an `optimizations.txt`
 /// manifest next to the generated files.
 ///
@@ -28,6 +33,7 @@ pub struct OptimizationOptions {
     pub(crate) optimize_precedence_ladders: bool,
     pub(crate) static_lexer_dfa: bool,
     pub(crate) static_parser_dfa: bool,
+    pub(crate) static_dfa_only: bool,
     pub(crate) report_decisions: bool,
     pub(crate) dump_dfas: Option<String>,
     pub(crate) report_only: bool,
@@ -79,6 +85,27 @@ impl OptimizationOptions {
     /// scope only). Default: `false`.
     pub const fn static_parser_dfa(&mut self, enabled: bool) -> &mut Self {
         self.static_parser_dfa = enabled;
+        self
+    }
+
+    /// Generates only fully static lexers and parsers (`--static-dfa-only`).
+    /// Default: `false`.
+    ///
+    /// This option selects [`Self::static_lexer_dfa`] and
+    /// [`Self::static_parser_dfa`]. The generated recognizers never fall back
+    /// to the adaptive ATN simulation:
+    ///
+    /// - If a lexer mode does not compile to a complete static table, the
+    ///   generation fails.
+    /// - If a parser decision has no static table, the generation fails.
+    /// - In a partial parser table, a state with an SLL conflict predicts the
+    ///   minimum conflicting alternative. Every other undecided state reports a
+    ///   syntax error.
+    ///
+    /// In report-only mode, these failures are error diagnostics and the
+    /// reports are still rendered.
+    pub const fn static_dfa_only(&mut self, enabled: bool) -> &mut Self {
+        self.static_dfa_only = enabled;
         self
     }
 
@@ -138,6 +165,11 @@ impl OptimizationOptions {
     #[cfg(feature = "download")]
     pub(crate) const fn static_parser_dfa_enabled(&self) -> bool {
         self.static_parser_dfa
+    }
+
+    #[cfg(feature = "download")]
+    pub(crate) const fn static_dfa_only_enabled(&self) -> bool {
+        self.static_dfa_only
     }
 
     /// Whether the selection prints parser reports, which only the in-process

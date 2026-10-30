@@ -42,7 +42,7 @@ use crate::grammar::model::{
 };
 use crate::grammar::provenance::Origin;
 use crate::grammar::source::SourceSet;
-use crate::optimization::StaticParserTables;
+use crate::optimization::{AtnFallback, StaticParserTables};
 
 /// `Token.EOF`.
 const TOKEN_EOF: i32 = -1;
@@ -243,9 +243,37 @@ impl<'a> WalkContext<'a> {
     }
 
     /// `true` when the decision can still reach the adaptive simulation.
-    fn static_table_defers(&self, decision: usize) -> bool {
-        self.static_tables
-            .is_some_and(|tables| tables.defers(decision))
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::adaptive_prediction`].
+    fn static_table_defers(&self, decision: usize) -> Result<bool, EmitError> {
+        let defers = self
+            .static_tables
+            .is_some_and(|tables| tables.defers(decision));
+        if defers {
+            self.adaptive_prediction(decision)?;
+        }
+        Ok(defers)
+    }
+
+    /// Permits the decision to predict with `adaptivePredict`.
+    ///
+    /// # Errors
+    ///
+    /// Fails under `--static-dfa-only`. The static parser DFA pass already
+    /// reports each such decision, so this error marks an inconsistency
+    /// between the pass and the emitter.
+    fn adaptive_prediction(&self, decision: usize) -> Result<(), EmitError> {
+        let forbidden = self
+            .static_tables
+            .is_some_and(|tables| tables.atn_fallback() == AtnFallback::Forbidden);
+        if forbidden {
+            return Err(unsupported(format!(
+                "parser decision {decision} needs adaptivePredict, which --static-dfa-only forbids"
+            )));
+        }
+        Ok(())
     }
 
     /// The state of `kind` created for `owner`, e.g. the `StarLoopEntry`
@@ -962,13 +990,14 @@ impl RuleWalk<'_, '_> {
             })
         } else if self.walk.has_static_table(decision) {
             let mut choice = choice_model(state, decision);
-            choice.table_can_defer = self.walk.static_table_defers(decision);
+            choice.table_can_defer = self.walk.static_table_defers(decision)?;
             Ok(SrcOpModel::DFAAltBlock {
                 choice,
                 preamble: Vec::new(),
                 alts,
             })
         } else {
+            self.walk.adaptive_prediction(decision)?;
             Ok(SrcOpModel::AltBlock {
                 choice: choice_model(state, decision),
                 preamble: Vec::new(),
@@ -1027,9 +1056,10 @@ impl RuleWalk<'_, '_> {
                     }
                 } else if greedy && self.walk.has_static_table(decision) {
                     let mut choice = choice_model(state, decision);
-                    choice.table_can_defer = self.walk.static_table_defers(decision);
+                    choice.table_can_defer = self.walk.static_table_defers(decision)?;
                     Ok(SrcOpModel::DFAOptionalBlock { choice, alts })
                 } else {
+                    self.walk.adaptive_prediction(decision)?;
                     let mut choice = choice_model(state, decision);
                     choice.greedy = greedy;
                     Ok(SrcOpModel::OptionalBlock { choice, alts })
@@ -1061,13 +1091,14 @@ impl RuleWalk<'_, '_> {
                         iteration: vec![capture_next_token_type()],
                     })
                 } else if greedy && self.walk.has_static_table(decision) {
-                    choice.table_can_defer = self.walk.static_table_defers(decision);
+                    choice.table_can_defer = self.walk.static_table_defers(decision)?;
                     Ok(SrcOpModel::DFAStarBlock {
                         choice,
                         alts,
                         iteration: Vec::new(),
                     })
                 } else {
+                    self.walk.adaptive_prediction(decision)?;
                     Ok(SrcOpModel::StarBlock {
                         choice,
                         alts,
@@ -1104,13 +1135,14 @@ impl RuleWalk<'_, '_> {
                         iteration: vec![capture_next_token_type()],
                     })
                 } else if greedy && self.walk.has_static_table(decision) {
-                    choice.table_can_defer = self.walk.static_table_defers(decision);
+                    choice.table_can_defer = self.walk.static_table_defers(decision)?;
                     Ok(SrcOpModel::DFAPlusBlock {
                         choice,
                         alts,
                         error: Box::new(SrcOpModel::ThrowNoViableAlt),
                     })
                 } else {
+                    self.walk.adaptive_prediction(decision)?;
                     Ok(SrcOpModel::PlusBlock {
                         choice,
                         alts,

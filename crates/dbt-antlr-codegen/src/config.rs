@@ -135,6 +135,14 @@ impl Config {
         self
     }
 
+    /// Generates only fully static lexers and parsers (`--static-dfa-only`),
+    /// which never fall back to the adaptive ATN simulation. Default: `false`.
+    /// See [`OptimizationOptions::static_dfa_only`].
+    pub const fn static_dfa_only(&mut self, enabled: bool) -> &mut Self {
+        self.optimization.static_dfa_only(enabled);
+        self
+    }
+
     /// Renders the parser decision report of the static parser DFA pass into
     /// [`Generation::reports`] (`--report-decisions`, printed to stdout by the
     /// CLI). Implies report-only mode.

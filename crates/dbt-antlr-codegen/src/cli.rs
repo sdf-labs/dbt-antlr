@@ -13,6 +13,8 @@
 //!   -n, --dry-run, --report-only  compile, analyze, and optimize without writing output files
 //!   --static-lexer-dfa            precompute static lexer DFA tables (lexer scope only)
 //!   --static-parser-dfa           precompute static parser DFA tables (parser scope only)
+//!   --static-dfa-only             generate only fully static lexer and parser DFA tables
+//!                                 (implies --static-lexer-dfa and --static-parser-dfa)
 //!   --report-decisions            print the parser decision report (implies report-only)
 //!   --dump-dfas <SPEC>            print the static parser DFA tables matching SPEC
 //!                                 (implies report-only)
@@ -37,6 +39,8 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   -n, --dry-run, --report-only  compile, analyze, and optimize without writing output files
   --static-lexer-dfa            precompute static lexer DFA tables (lexer scope only)
   --static-parser-dfa           precompute static parser DFA tables (parser scope only)
+  --static-dfa-only             generate only fully static lexer and parser DFA tables
+                                (implies --static-lexer-dfa and --static-parser-dfa)
   --report-decisions            print the parser decision report (implies report-only)
   --dump-dfas <SPEC>            print the static parser DFA tables matching SPEC
                                 (implies report-only)
@@ -56,6 +60,7 @@ struct CliArgs {
     gen_visitor: bool,
     static_lexer_dfa: bool,
     static_parser_dfa: bool,
+    static_dfa_only: bool,
     report_decisions: bool,
     dump_dfas: Option<String>,
     entry_rules: Vec<String>,
@@ -73,6 +78,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let mut gen_visitor = false;
     let mut static_lexer_dfa = false;
     let mut static_parser_dfa = false;
+    let mut static_dfa_only = false;
     let mut report_decisions = false;
     let mut dump_dfas = None;
     let mut entry_rules = Vec::new();
@@ -99,6 +105,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
             "-n" | "--dry-run" | "--report-only" => report_only = true,
             "--static-lexer-dfa" => static_lexer_dfa = true,
             "--static-parser-dfa" => static_parser_dfa = true,
+            "--static-dfa-only" => static_dfa_only = true,
             "--report-decisions" => report_decisions = true,
             "--dump-dfas" => {
                 dump_dfas = Some(value_after(arg, args, &mut index)?);
@@ -142,6 +149,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         gen_visitor,
         static_lexer_dfa,
         static_parser_dfa,
+        static_dfa_only,
         report_decisions,
         dump_dfas,
         entry_rules,
@@ -208,6 +216,7 @@ pub fn run(
         .cargo_directives(false)
         .static_lexer_dfa(cli.static_lexer_dfa)
         .static_parser_dfa(cli.static_parser_dfa)
+        .static_dfa_only(cli.static_dfa_only)
         .report_decisions(cli.report_decisions)
         .prune_unreachable_rules(cli.prune_unreachable)
         .inline_trivial_rules(cli.inline_trivial)
@@ -297,6 +306,14 @@ mod tests {
 
         assert!(parse(&["--dump-dfas=", "T.g4"]).is_err());
         assert!(parse(&["T.g4", "--dump-dfas"]).is_err());
+    }
+
+    #[test]
+    fn static_dfa_only_flag_parses() {
+        let cli = parse(&["--static-dfa-only", "T.g4"]).expect("flag parses");
+        assert!(cli.static_dfa_only);
+        let cli = parse(&["T.g4"]).expect("minimal command line parses");
+        assert!(!cli.static_dfa_only);
     }
 
     #[test]

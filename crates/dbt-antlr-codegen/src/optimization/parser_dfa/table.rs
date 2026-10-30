@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 
 use dbt_antlr_runtime::dfa::static_parser_dfa::ParserContinuation;
 
-use super::{CONFLICT_ESCAPE, ESCAPE, GUARDED};
+use super::{CONFLICT_ESCAPE, ESCAPE, EscapeResolution, GUARDED};
 
 /// One DFA state of a decision table.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -34,6 +34,9 @@ pub(crate) struct StaticDfaState {
     /// The closed config set of a frontier escape state, when SLL can resume
     /// from it instead of restarting at the decision start.
     pub(crate) continuation: Option<ParserContinuation>,
+    /// How `--static-dfa-only` replaced the escape verdict of this state, when
+    /// it did.
+    pub(crate) resolution: Option<EscapeResolution>,
     pub(crate) edges: Vec<StaticDfaEdge>,
 }
 
