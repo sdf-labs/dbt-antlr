@@ -122,7 +122,7 @@ fn golden_corpus_categories_match_the_reference_classifier() {
         categories(&shapes),
         [
             Category::LL1,
-            Category::PREDICATED,
+            Category::HYBRID,
             Category::LL1,
             Category::NON_GREEDY,
         ]
@@ -174,13 +174,17 @@ fn precedence_decisions_are_classified_per_class() {
 }
 
 #[test]
-fn predicated_decisions_keep_no_table() {
+fn predicated_branches_escape_while_the_loop_stays_static() {
     let shapes = fixture("parser-shapes").join("ParserShapes.g4");
     let results = classify(&shapes);
     let plus = &results[1];
-    assert_eq!(plus.category, Category::PREDICATED);
+    // The `(B | C)+` loop decision itself is static; only the configs the
+    // FOLLOW chase reached through `{ready()}?` depend on the parse state, so
+    // they escape and the table stays (Tier 3, per-config predicate taint).
+    assert_eq!(plus.category, Category::HYBRID);
     assert!(plus.saw_predicate || plus.first_predicate.is_some());
-    assert!(plus.table.is_none());
+    let table = plus.table.as_ref().expect("the loop keeps a hybrid table");
+    assert!(table.escapes() > 0, "the predicated branch escapes");
     assert!(!plus.is_fully_static());
 }
 
@@ -431,4 +435,162 @@ fn classify_with_budget(path: &Path, budget: u64) -> Vec<DecisionResult> {
     DecisionClassifier::new(parser.atn, ll1)
         .with_visit_budget(budget)
         .classify_all()
+}
+
+/// Builds the runtime tables of one grammar through the pass, exactly as the
+/// compiler stage does.
+fn build_tables(path: &Path) -> (Vec<DecisionResult>, super::super::StaticParserTables) {
+    let compilation = compile(LoadOptions {
+        roots: vec![path.to_path_buf()],
+        library_directories: Vec::new(),
+    })
+    .expect("grammar compiles");
+    let build = crate::optimization::StaticParserDfa::build(
+        compilation
+            .parser(compilation.roots[0].parser.expect("parser root"))
+            .expect("parser artifact"),
+    );
+    let results = classify(path);
+    (results, build.tables)
+}
+
+#[test]
+fn table_words_round_trip_through_the_runtime_decoder() {
+    let (results, tables) = build_tables(&grammars_dir().join("ReferenceToATN.g4"));
+    assert!(tables.has_table(0), "decision 0 has a hybrid table");
+    assert!(tables.defers(0), "the hybrid table keeps an adaptive path");
+
+    let words = tables.words();
+    let decoded = dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables::from_words(&words)
+        .expect("the emitted words decode");
+    assert_eq!(decoded.to_words(), words, "the codec is stable");
+    assert_eq!(
+        decoded.table(0, 0).expect("decoded table").num_states(),
+        results[0].num_dfa_states
+    );
+}
+
+#[test]
+fn fully_static_decisions_never_defer() {
+    let (results, tables) = build_tables(&grammars_dir().join("parser/StaticDFA.g4"));
+    assert!(!results.is_empty());
+    for result in &results {
+        assert!(
+            result.is_fully_static(),
+            "decision {} of rule index {} should be fully static, got {:?}",
+            result.decision,
+            result.rule_index,
+            result.category
+        );
+        if matches!(result.category, Category::LL1 | Category::NON_GREEDY) {
+            // These categories need no table at all.
+            continue;
+        }
+        assert!(tables.has_table(result.decision));
+        assert!(!tables.defers(result.decision));
+    }
+}
+
+#[test]
+fn hybrid_frontier_escapes_carry_continuations() {
+    let (results, tables) = build_tables(&grammars_dir().join("parser/FuzzExpr.g4"));
+    let hybrid = results
+        .iter()
+        .find(|result| result.category == Category::HYBRID && result.escapes > 0)
+        .expect("FuzzExpr has a hybrid decision");
+    let words = tables.words();
+    let decoded = dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables::from_words(&words)
+        .expect("the emitted words decode");
+    assert_eq!(decoded.to_words(), words, "the codec is stable");
+
+    let table = decoded
+        .table(hybrid.decision as i32, 0)
+        .expect("the hybrid decision has a table");
+    let continuations = (0..table.num_states() as i32)
+        .filter_map(|state| table.continuation(state))
+        .count();
+    assert!(
+        continuations > 0,
+        "decision {} has {} escapes, so its frontier must carry continuations",
+        hybrid.decision,
+        hybrid.escapes
+    );
+}
+
+#[test]
+fn precedence_class_tables_are_deduplicated() {
+    let (results, tables) = build_tables(&grammars_dir().join("parser/LrDfa.g4"));
+    let precedence = results
+        .iter()
+        .find(|result| result.precedence.is_some())
+        .expect("LrDfa has a precedence decision");
+    let classes = precedence.precedence.as_ref().unwrap();
+    assert!(classes.tables.iter().flatten().count() > 0);
+
+    let words = tables.words();
+    let decoded = dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables::from_words(&words)
+        .expect("the emitted words decode");
+    assert!(
+        decoded.is_precedence_dispatched(precedence.decision as i32),
+        "the precedence decision dispatches on its precedence"
+    );
+    let first = decoded.table(
+        precedence.decision as i32,
+        classes.cutoffs.last().copied().unwrap_or(0) + 1,
+    );
+    assert!(first.is_some(), "the highest class resolves to a table");
+}
+
+#[test]
+fn table_build_is_deterministic() {
+    let path = grammars_dir().join("parser/FuzzExpr.g4");
+    let (_, first) = build_tables(&path);
+    let (_, second) = build_tables(&path);
+    assert_eq!(first.words(), second.words());
+}
+
+#[test]
+fn packed_atn_tail_decodes_back_into_the_same_tables() {
+    use dbt_antlr_runtime::atn_packed_deserializer::PackedATNDeserializer;
+    use dbt_antlr_runtime::dfa::static_parser_dfa::append_sdfa_section;
+
+    for grammar in [
+        "ReferenceToATN.g4",
+        "parser/StaticDFA.g4",
+        "parser/LrDfa.g4",
+    ] {
+        let path = grammars_dir().join(grammar);
+        let compilation = compile(LoadOptions {
+            roots: vec![path.clone()],
+            library_directories: Vec::new(),
+        })
+        .expect("grammar compiles");
+        let parser = compilation
+            .parser(compilation.roots[0].parser.expect("parser root"))
+            .expect("parser artifact");
+        let build = crate::optimization::StaticParserDfa::build(parser);
+        let packed = crate::grammar::atn::encode_packed_atn(parser.atn);
+        let with_tables = append_sdfa_section(&packed, &build.tables.words());
+        assert!(
+            with_tables.len() > packed.len(),
+            "{grammar}: tables appended"
+        );
+
+        let atn = PackedATNDeserializer::new()
+            .deserialize(&with_tables)
+            .expect("the extended stream deserializes");
+        assert_eq!(
+            atn.static_dfas().to_words(),
+            build.tables.words(),
+            "{grammar}: the decoded tables round-trip"
+        );
+
+        let plain = PackedATNDeserializer::new()
+            .deserialize(&packed)
+            .expect("a stream without tables deserializes");
+        assert!(
+            plain.static_dfas().is_empty(),
+            "{grammar}: no tail, no tables"
+        );
+    }
 }

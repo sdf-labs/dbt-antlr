@@ -35,6 +35,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.static_lexer_dfa {
         println!("mode: static-lexer-dfa (generating every case with --static-lexer-dfa)");
     }
+    if args.static_parser_dfa {
+        println!("mode: static-parser-dfa (generating every case with --static-parser-dfa)");
+    }
 
     if args.work_dir.exists() && !args.keep {
         fs::remove_dir_all(&args.work_dir)?;
@@ -46,7 +49,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // there.
     let mut runnable = Vec::new();
     for descriptor in descriptors {
-        if let Some(reason) = skip_reason(&descriptor, args.static_lexer_dfa) {
+        if let Some(reason) =
+            skip_reason(&descriptor, args.static_lexer_dfa, args.static_parser_dfa)
+        {
             summary.skipped += 1;
             println!("skip {}: {reason}", descriptor.id());
             continue;
@@ -360,13 +365,13 @@ fn prebuild_generator(args: &Args) -> io::Result<PathBuf> {
 /// JSON artifact messages (mirrors `RustRunner.initRuntime`), honoring any
 /// `CARGO_TARGET_DIR` redirection.
 ///
-/// Both sweep modes use this same build: the static lexer DFA walker
-/// (`static_lexer_dfa`, `LexerATNSimulator::set_static_tables`,
-/// `LexerATNSimulatorManager::new_static_lexer`) is not feature-gated, so
-/// generated `--static-lexer-dfa` code compiles against the plain runtime rlib
-/// (verified: `grep -rn "cfg(feature" src/lexer_atn_simulator.rs
-/// src/atn_simulator.rs src/static_lexer_dfa.rs` is empty). The
-/// generation-time builder behind `static-dfa-build` lives inside the
+/// Both sweep modes use this same build: neither static walker is
+/// feature-gated, so generated `--static-lexer-dfa`/`--static-parser-dfa` code
+/// compiles against the plain runtime rlib (the lexer side:
+/// `static_lexer_dfa`, `LexerATNSimulator::set_static_tables`,
+/// `LexerATNSimulatorManager::new_static_lexer`; the parser side:
+/// `dfa::static_parser_dfa` and `BaseParser::dfa_predict`). The
+/// generation-time builders behind `static-dfa-build` live inside the
 /// generator binary, not in the rlib the cases link.
 fn prebuild_runtime(args: &Args) -> io::Result<PathBuf> {
     let output = run_output(
@@ -492,6 +497,9 @@ struct Args {
     jobs: usize,
     /// Generate every case with `--static-lexer-dfa` (static lexer DFA tables).
     static_lexer_dfa: bool,
+    /// Generate every case with `--static-parser-dfa` (static parser SLL DFA
+    /// tables).
+    static_parser_dfa: bool,
     /// Template group used to render descriptor grammars (real
     /// `StringTemplate` via the ANTLR jar) before generation.
     stg: PathBuf,
@@ -514,6 +522,7 @@ impl Args {
         let mut jobs = None;
         let mut stg = None;
         let mut static_lexer_dfa = false;
+        let mut static_parser_dfa = false;
 
         let mut iter = env::args().skip(1);
         while let Some(arg) = iter.next() {
@@ -561,6 +570,7 @@ impl Args {
                 }
                 "--stg" => stg = Some(PathBuf::from(next_arg(&mut iter, "--stg")?)),
                 "--static-lexer-dfa" => static_lexer_dfa = true,
+                "--static-parser-dfa" => static_parser_dfa = true,
                 "--help" | "-h" => return Err(usage()),
                 other => return Err(format!("unknown argument {other}\n\n{}", usage())),
             }
@@ -588,10 +598,11 @@ impl Args {
         let work_dir = absolutize(
             &current_dir,
             work_dir.unwrap_or_else(|| {
-                env::temp_dir().join(if static_lexer_dfa {
-                    "dbt-antlr-runtime-testsuite-static-lexer-dfa"
-                } else {
-                    "dbt-antlr-runtime-testsuite"
+                env::temp_dir().join(match (static_lexer_dfa, static_parser_dfa) {
+                    (true, true) => "dbt-antlr-runtime-testsuite-static-both-dfa",
+                    (true, false) => "dbt-antlr-runtime-testsuite-static-lexer-dfa",
+                    (false, true) => "dbt-antlr-runtime-testsuite-static-parser-dfa",
+                    (false, false) => "dbt-antlr-runtime-testsuite",
                 })
             }),
         );
@@ -622,6 +633,7 @@ impl Args {
             keep,
             jobs,
             static_lexer_dfa,
+            static_parser_dfa,
             stg,
         })
     }
@@ -667,7 +679,7 @@ fn absolutize(base: &Path, path: PathBuf) -> PathBuf {
 
 fn usage() -> String {
     format!(
-        "usage: runtime-testsuite [--workspace-root PATH] [--antlr-jar ANTLR.jar] [--descriptors PATH] [--case Group/Name] [--group Group] [--limit N] [--jobs N] [--keep] [--stg PATH] [--work-dir PATH] [--static-lexer-dfa]\n\nDefaults: workspace root inferred from the testsuite package; work dir $TMPDIR/dbt-antlr-runtime-testsuite (mirrors upstream, which stages every test under java.io.tmpdir), keyed -static-lexer-dfa in --static-lexer-dfa mode; tool jar and descriptors fetched from the pinned dbt-antlr4 2.0.0 GitHub release (checksum-verified, cached under <workspace>/target/dbt-antlr-runtime-testsuite-cache); ANTLR4_JAR and ANTLR4_RUNTIME_TESTSUITE override; --stg <descriptors>/{TEMPLATE_PATH}; --jobs min(cores, 8)\n\n--static-lexer-dfa generates every case with --static-lexer-dfa (static lexer DFA tables) and runs the same expected outputs, so the whole corpus doubles as a static-vs-adaptive lexer differential. Descriptors flagged showDFA are skipped in this mode: they print the lazily interned lexer DFA cache, which the static walker does not populate — they introspect the adaptive engine, not lexer behavior (the lexer analogue of upstream's parser static-DFA skips)."
+        "usage: runtime-testsuite [--workspace-root PATH] [--antlr-jar ANTLR.jar] [--descriptors PATH] [--case Group/Name] [--group Group] [--limit N] [--jobs N] [--keep] [--stg PATH] [--work-dir PATH] [--static-lexer-dfa] [--static-parser-dfa]\n\nDefaults: workspace root inferred from the testsuite package; work dir $TMPDIR/dbt-antlr-runtime-testsuite (mirrors upstream, which stages every test under java.io.tmpdir), keyed -static-lexer-dfa in --static-lexer-dfa mode; tool jar and descriptors fetched from the pinned dbt-antlr4 2.0.0 GitHub release (checksum-verified, cached under <workspace>/target/dbt-antlr-runtime-testsuite-cache); ANTLR4_JAR and ANTLR4_RUNTIME_TESTSUITE override; --stg <descriptors>/{TEMPLATE_PATH}; --jobs min(cores, 8)\n\n--static-lexer-dfa generates every case with --static-lexer-dfa (static lexer DFA tables) and runs the same expected outputs, so the whole corpus doubles as a static-vs-adaptive lexer differential. Descriptors flagged showDFA are skipped in this mode: they print the lazily interned lexer DFA cache, which the static walker does not populate — they introspect the adaptive engine, not lexer behavior (the lexer analogue of upstream's parser static-DFA skips). --static-parser-dfa generates every case with --static-parser-dfa (static parser SLL DFA tables and the D5 escape handoff) and runs the same expected outputs, so the corpus doubles as a parser differential; showDiagnosticErrors/traceATN descriptors are skipped because they print the adaptive ATN simulation the tables bypass."
     )
 }
 
@@ -718,6 +730,10 @@ impl Descriptor {
 
     fn show_diagnostic_errors(&self) -> bool {
         self.flag_lines().any(|flag| flag == "showDiagnosticErrors")
+    }
+
+    fn trace_atn(&self) -> bool {
+        self.flag_lines().any(|flag| flag == "traceATN")
     }
 
     /// Upstream defaults to building parse trees unless the descriptor opts
@@ -993,7 +1009,11 @@ fn grammar_name(grammar: &str) -> io::Result<String> {
 /// inspects adaptive-engine internals, so the descriptor has no
 /// static-mode meaning; token output of those grammars still gets
 /// differential coverage from their non-`showDFA` siblings.
-fn skip_reason(descriptor: &Descriptor, static_lexer_dfa: bool) -> Option<String> {
+fn skip_reason(
+    descriptor: &Descriptor,
+    static_lexer_dfa: bool,
+    static_parser_dfa: bool,
+) -> Option<String> {
     if descriptor
         .skip_targets
         .iter()
@@ -1012,6 +1032,12 @@ fn skip_reason(descriptor: &Descriptor, static_lexer_dfa: bool) -> Option<String
     if static_lexer_dfa && descriptor.show_dfa() {
         return Some(
             "showDFA prints the adaptive lexer DFA cache, which the static walker does not populate"
+                .to_owned(),
+        );
+    }
+    if static_parser_dfa && (descriptor.show_diagnostic_errors() || descriptor.trace_atn()) {
+        return Some(
+            "showDiagnosticErrors/traceATN print the adaptive ATN simulation, which the static parser tables bypass"
                 .to_owned(),
         );
     }
@@ -1146,6 +1172,9 @@ fn generate_rust(
     }
     if context.args.static_lexer_dfa {
         command.arg("--static-lexer-dfa");
+    }
+    if context.args.static_parser_dfa {
+        command.arg("--static-parser-dfa");
     }
     let output = command
         .output()
@@ -1499,8 +1528,9 @@ mod tests {
             "[type]\nLexer\n\n[grammar]\nlexer grammar L;\nA:'a';\n\n[input]\na\n\n[output]\nx\n\n[skip]\nGo\nRust\n",
         );
         assert_eq!(descriptor.skip_targets, ["Go", "Rust"]);
-        assert!(skip_reason(&descriptor, false).is_some());
-        assert!(skip_reason(&descriptor, true).is_some());
+        assert!(skip_reason(&descriptor, false, false).is_some());
+        assert!(skip_reason(&descriptor, true, false).is_some());
+        assert!(skip_reason(&descriptor, false, true).is_some());
     }
 
     #[test]
@@ -1509,8 +1539,9 @@ mod tests {
             "[type]\nLexer\n\n[grammar]\nlexer grammar L;\nA:'a';\n\n[input]\na\n\n[output]\nx\n",
         );
         assert_eq!(descriptor.skip_targets, Vec::<String>::new());
-        assert!(skip_reason(&descriptor, false).is_none());
-        assert!(skip_reason(&descriptor, true).is_none());
+        assert!(skip_reason(&descriptor, false, false).is_none());
+        assert!(skip_reason(&descriptor, true, false).is_none());
+        assert!(skip_reason(&descriptor, false, true).is_none());
     }
 
     #[test]
@@ -1518,9 +1549,22 @@ mod tests {
         let descriptor = parse(
             "[type]\nLexer\n\n[grammar]\nlexer grammar L;\nA:'a';\n\n[input]\na\n\n[output]\nx\n\n[flags]\nshowDFA\n",
         );
-        assert!(skip_reason(&descriptor, false).is_none());
-        let reason = skip_reason(&descriptor, true).expect("showDFA skips in static mode");
+        assert!(skip_reason(&descriptor, false, false).is_none());
+        assert!(skip_reason(&descriptor, false, true).is_none());
+        let reason = skip_reason(&descriptor, true, false).expect("showDFA skips in static mode");
         assert!(reason.contains("showDFA"));
+    }
+
+    #[test]
+    fn show_diagnostic_errors_skips_only_in_static_parser_dfa_mode() {
+        let descriptor = parse(
+            "[type]\nParser\n\n[grammar]\ngrammar T;\ns:'a';\n\n[input]\na\n\n[output]\nx\n\n[flags]\nshowDiagnosticErrors\n",
+        );
+        assert!(skip_reason(&descriptor, false, false).is_none());
+        assert!(skip_reason(&descriptor, true, false).is_none());
+        let reason = skip_reason(&descriptor, false, true)
+            .expect("showDiagnosticErrors skips in static parser mode");
+        assert!(reason.contains("showDiagnosticErrors"));
     }
 
     #[test]

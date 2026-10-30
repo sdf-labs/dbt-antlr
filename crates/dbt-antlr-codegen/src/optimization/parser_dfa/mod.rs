@@ -49,11 +49,13 @@ mod category;
 mod classifier;
 mod closure;
 mod table;
+mod tables;
 
 pub(crate) use category::Category;
 pub(crate) use classifier::{DecisionClassifier, DecisionResult, MAX_DFA_STATES};
 pub(crate) use closure::DEFAULT_VISIT_BUDGET;
 pub(crate) use table::StaticDfaTable;
+pub(crate) use tables::build_tables;
 
 /// Table marker of a state whose decision must be recomputed by the adaptive
 /// simulation: the static construction stopped here.
