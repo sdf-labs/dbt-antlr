@@ -49,6 +49,7 @@ mod category;
 mod classifier;
 mod closure;
 mod loop_block;
+mod postfix;
 mod table;
 mod tables;
 

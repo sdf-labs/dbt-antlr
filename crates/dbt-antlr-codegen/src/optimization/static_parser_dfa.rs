@@ -335,6 +335,7 @@ fn decision_report_text(report: &StaticParserDfaReport) -> String {
         report.decisions.len()
     )];
     lines.push(summary_line(&report.decisions));
+    lines.extend(take_rule_line(&report.decisions));
     lines.extend(decision_rows(&report.decisions));
     lines.extend(k_summary(&report.decisions));
     finish_block(lines)
@@ -354,6 +355,30 @@ fn summary_line(decisions: &[StaticParserDecisionReport]) -> String {
         }
     }
     text
+}
+
+/// The optional-postfix summary: how many decisions have the shape, how many
+/// take/skip conflicts the take rule resolved, and how many guarded takes the
+/// tables carry.
+fn take_rule_line(decisions: &[StaticParserDecisionReport]) -> Option<String> {
+    let postfix_decisions = decisions
+        .iter()
+        .filter(|decision| decision.result.has_postfix_shape)
+        .count();
+    if postfix_decisions == 0 {
+        return None;
+    }
+    let fires: usize = decisions
+        .iter()
+        .map(|decision| decision.result.take_rule_fires)
+        .sum();
+    let guarded: usize = decisions
+        .iter()
+        .map(|decision| decision.result.guarded_takes)
+        .sum();
+    Some(format!(
+        "take-rule: {postfix_decisions} optional-postfix decisions; fires at {fires} conflict states; guarded takes={guarded}"
+    ))
 }
 
 /// The lookahead-depth summary: the LL(k) histogram and the deepest lookahead

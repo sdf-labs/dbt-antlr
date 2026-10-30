@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Bo Lin
 //! The SLL DFA classifier: subset construction, budgets, and trust rules.
 
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 use dbt_antlr_runtime::analysis::DFA;
 use dbt_antlr_runtime::analysis::{
@@ -19,6 +19,7 @@ use dbt_antlr_runtime::dfa::static_parser_dfa::{
 
 use super::closure::{ClosedSet, Closure, ClosureFacts, PrecedenceClass, Taint};
 use super::loop_block::{ITERATE_ALT, ITERATE_REAL, LoopBlock, is_iterate_exit_pair};
+use super::postfix::{PostfixShape, bottom_frame_is};
 use super::table::{StaticDfaEdge, StaticDfaState, StaticDfaTable};
 use super::{CONFLICT_ESCAPE, Category, ESCAPE};
 
@@ -46,6 +47,12 @@ pub(crate) const MAX_CONTINUATION_WORDS: usize = 64;
 /// to an already interned state.
 const TRUST_TAINT: i32 =
     WIDENED_TAINT | PRECPRED_TAINT | BOUNDARY_TAINT | FOREIGN_CONSUME_TAINT | INTERIOR_TAINT;
+
+/// The alternative of an optional-postfix decision that takes the postfix
+/// element.
+const POSTFIX_TAKE_ALT: i32 = 1;
+/// The alternative of an optional-postfix decision that skips it.
+const POSTFIX_SKIP_ALT: i32 = 2;
 
 const VIRTUAL_ALT_BASE: usize = 65_536;
 const MAX_TRACKED_DEPTH: usize = 30;
@@ -190,6 +197,10 @@ struct Attempt {
     hybrid: bool,
     /// The decision state is behind a predicate: the decision is predicated.
     predicated: bool,
+    /// The decision is an optional-postfix (`X Y?`) shape.
+    has_postfix_shape: bool,
+    /// Conflict states the optional-postfix take rule resolved to take.
+    take_rule_fires: usize,
 }
 
 /// The precedence classes of one precedence-loop decision.
@@ -222,6 +233,12 @@ pub(crate) struct DecisionResult {
     pub(crate) predicated_start: bool,
     pub(crate) first_predicate: Option<(i32, i32)>,
     pub(crate) saw_precedence_predicate: bool,
+    /// The decision is an optional-postfix (`X Y?`) shape.
+    pub(crate) has_postfix_shape: bool,
+    /// Conflict states the optional-postfix take rule resolved to take.
+    pub(crate) take_rule_fires: usize,
+    /// Conflict states a guarded take resolved (Phase 5.2b).
+    pub(crate) guarded_takes: usize,
     pub(crate) utrust_resolutions: usize,
     pub(crate) conflict_witness: Option<Vec<i32>>,
     pub(crate) budget_witness: Option<Vec<i32>>,
@@ -249,6 +266,9 @@ impl DecisionResult {
             predicated_start: false,
             first_predicate: None,
             saw_precedence_predicate: false,
+            has_postfix_shape: false,
+            take_rule_fires: 0,
+            guarded_takes: 0,
             utrust_resolutions: 0,
             conflict_witness: None,
             budget_witness: None,
@@ -331,6 +351,8 @@ pub(crate) struct DecisionClassifier {
     /// The operator-loop analysis of each precedence-loop decision, built at
     /// most once and shared by every class attempt.
     loop_blocks: HashMap<i32, LoopBlock>,
+    /// The optional-postfix shape of each decision, built at most once.
+    postfix_shapes: HashMap<i32, Option<PostfixShape>>,
 }
 
 impl DecisionClassifier {
@@ -341,6 +363,7 @@ impl DecisionClassifier {
             completion_depths: HashMap::new(),
             visit_budget: super::closure::DEFAULT_VISIT_BUDGET,
             loop_blocks: HashMap::new(),
+            postfix_shapes: HashMap::new(),
         }
     }
 
@@ -354,6 +377,17 @@ impl DecisionClassifier {
         self.loop_blocks
             .insert(decision_state.get_state_number(), block.clone());
         block
+    }
+
+    /// The optional-postfix shape of one decision, detected on first use.
+    fn postfix_shape(&mut self, decision_state: ATNStateRef) -> Option<PostfixShape> {
+        if let Some(cached) = self.postfix_shapes.get(&decision_state.get_state_number()) {
+            return *cached;
+        }
+        let shape = PostfixShape::analyze(self.atn, decision_state);
+        self.postfix_shapes
+            .insert(decision_state.get_state_number(), shape);
+        shape
     }
 
     /// Sets the per-attempt visit budget, for tests that classify a whole
@@ -679,6 +713,7 @@ impl DecisionClassifier {
         let atn = self.atn;
         let decision_state = atn.decision_to_state[decision];
         let loop_block = precedence.map(|_| self.loop_block(decision_state));
+        let postfix = self.postfix_shape(decision_state);
         let mut completion_depths = std::mem::take(&mut self.completion_depths);
         let attempt = Arena::with(|arena| {
             let manager = ParserATNSimulatorManager::new(atn);
@@ -702,6 +737,7 @@ impl DecisionClassifier {
                 policy,
                 allow_continuations: policy.hybrid && precedence.is_none(),
                 precedence_class: precedence.is_some(),
+                postfix,
                 decision_state,
                 decision,
                 info: HashMap::new(),
@@ -711,6 +747,7 @@ impl DecisionClassifier {
                 attempt: Attempt {
                     decision,
                     hybrid: policy.hybrid,
+                    has_postfix_shape: postfix.is_some(),
                     ..Attempt::default()
                 },
             };
@@ -730,6 +767,8 @@ fn apply_facts(result: &mut DecisionResult, attempt: &Attempt) {
         result.first_predicate = attempt.facts.first_predicate;
     }
     result.utrust_resolutions += attempt.utrust_resolutions;
+    result.has_postfix_shape |= attempt.has_postfix_shape;
+    result.take_rule_fires += attempt.take_rule_fires;
     for conflict in &attempt.conflicts {
         if !result.conflicts.contains(conflict) {
             result.conflicts.push(conflict.clone());
@@ -758,6 +797,8 @@ struct DecisionBuild<'b, 'sim, 'a> {
     /// `true` when this attempt builds one precedence class of a precedence
     /// loop decision.
     precedence_class: bool,
+    /// The decision's optional-postfix shape, when it has one.
+    postfix: Option<PostfixShape>,
     decision: usize,
     decision_state: ATNStateRef,
     info: HashMap<i32, StateFacts>,
@@ -1195,6 +1236,57 @@ where
             effects.exact_ambiguity = Some(conflicting.clone());
             facts.verdict = Verdict::Accept(ITERATE_ALT);
             return (facts, effects);
+        }
+
+        // Optional-postfix take rule: the take/skip conflict of an `X Y?`
+        // decision is a dangling-else shape. Skip is never uniquely viable
+        // when every token it consumes is mirrored into the take structure.
+        // Three facts attest that:
+        //
+        // - no skip configuration consumed outside the decision rule,
+        // - every descended skip configuration bottoms out at the decision's
+        //   block end (it re-entered through this decision's own take path),
+        // - a clean take configuration attests take viability.
+        //
+        // Take's continuation after the optional is then the same block end as
+        // skip's, and the mirrored re-descents consume the same tokens. So the
+        // runtime answers take whenever it terminates: unique take, or an
+        // ambiguity resolved to the minimum alternative.
+        if let Some(postfix) = self.postfix
+            && is_iterate_exit_pair(&conflicting)
+        {
+            let mut skip_foreign = false;
+            let mut mirror_ok = true;
+            let mut real_take = false;
+            for config in &closed.configs {
+                let taint = closed.taint_of(config);
+                if config.get_alt() == POSTFIX_SKIP_ALT {
+                    if taint & FOREIGN_CONSUME_TAINT != 0 {
+                        skip_foreign = true;
+                    }
+                    if config.get_state().get_rule_index() != self.decision_state.get_rule_index()
+                        && !bottom_frame_is(
+                            config.get_context().expect("config has a context"),
+                            postfix.block_end_state,
+                            &mut HashSet::new(),
+                        )
+                    {
+                        mirror_ok = false;
+                    }
+                }
+                if config.get_alt() == POSTFIX_TAKE_ALT
+                    && taint & (WIDENED_TAINT | FOREIGN_CONSUME_TAINT) == 0
+                {
+                    real_take = true;
+                }
+            }
+            if mirror_ok && !skip_foreign && real_take {
+                self.attempt.take_rule_fires += 1;
+                facts.resolved_conflict = true;
+                effects.exact_ambiguity = Some(conflicting.clone());
+                facts.verdict = Verdict::Accept(POSTFIX_TAKE_ALT);
+                return (facts, effects);
+            }
         }
 
         let untrusted = precedence_tainted

@@ -762,3 +762,24 @@ fn foreign_consumption_vetoes_the_substitution_at_the_frontier() {
         assert_eq!(state.conflicts, [1, 2], "both escapes are iterate/exit");
     }
 }
+
+/// `pred=predicate?` is the canonical optional-postfix shape. The reference
+/// classifier reports exactly one postfix decision for this grammar, and no
+/// take-rule fire.
+#[test]
+fn optional_postfix_shapes_are_detected() {
+    let results = classify(&grammars_dir().join("parser").join("GuardExpr.g4"));
+    let shaped: Vec<&DecisionResult> = results
+        .iter()
+        .filter(|result| result.has_postfix_shape)
+        .collect();
+    assert_eq!(shaped.len(), 1, "one `pred=predicate?` decision");
+    let fires: usize = results.iter().map(|result| result.take_rule_fires).sum();
+    assert_eq!(fires, 0);
+    assert_eq!(shaped[0].rule_index, 1, "the `expr` rule owns the shape");
+
+    // No shape means no report line either: the grammar corpus that has no
+    // `X Y?` block must stay silent.
+    let plain = classify(&grammars_dir().join("CSV.g4"));
+    assert!(plain.iter().all(|result| !result.has_postfix_shape));
+}
