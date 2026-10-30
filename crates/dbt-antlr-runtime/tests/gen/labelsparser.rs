@@ -2,7 +2,7 @@
 use dbt_antlr_runtime::prelude::*;
 use dbt_antlr_runtime::atn_simulator::ParserATNSimulatorManager as ATNSimulatorManager;
 use super::labelslistener::*;
-dbt_antlr_runtime::check_version!("0","5");
+dbt_antlr_runtime::check_version!("0","6");
 pub const Labels_T__0:i32=1; 
 pub const Labels_T__1:i32=2; 
 pub const Labels_T__2:i32=3; 

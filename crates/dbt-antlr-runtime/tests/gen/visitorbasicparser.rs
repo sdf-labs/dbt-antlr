@@ -4,7 +4,7 @@ use dbt_antlr_runtime::atn_simulator::ParserATNSimulatorManager as ATNSimulatorM
 use super::visitorbasiclistener::*;
 use super::visitorbasicvisitor::*;
 
-dbt_antlr_runtime::check_version!("0","5");
+dbt_antlr_runtime::check_version!("0","6");
 pub const VisitorBasic_A:i32=1;
 pub const VisitorBasic_EOF:i32=EOF;
 pub const RULE_s:usize = 0;
