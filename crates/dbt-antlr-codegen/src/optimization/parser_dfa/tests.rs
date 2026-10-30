@@ -763,20 +763,31 @@ fn foreign_consumption_vetoes_the_substitution_at_the_frontier() {
     }
 }
 
-/// `pred=predicate?` is the canonical optional-postfix shape. The reference
-/// classifier reports exactly one postfix decision for this grammar, and no
-/// take-rule fire.
+/// `pred=predicate?` is the canonical optional-postfix shape, and the
+/// `set expr '=' expr` caller is where skip genuinely wins. The reference
+/// classifier reports one postfix decision for this grammar with no take-rule
+/// fire and 8 guarded takes; ours matches.
 #[test]
-fn optional_postfix_shapes_are_detected() {
+fn optional_postfix_shapes_are_guarded() {
     let results = classify(&grammars_dir().join("parser").join("GuardExpr.g4"));
     let shaped: Vec<&DecisionResult> = results
         .iter()
         .filter(|result| result.has_postfix_shape)
         .collect();
     assert_eq!(shaped.len(), 1, "one `pred=predicate?` decision");
+    assert_eq!(shaped[0].rule_index, 2, "the `expr` rule owns the shape");
     let fires: usize = results.iter().map(|result| result.take_rule_fires).sum();
     assert_eq!(fires, 0);
-    assert_eq!(shaped[0].rule_index, 1, "the `expr` rule owns the shape");
+    let guarded: usize = results.iter().map(|result| result.guarded_takes).sum();
+    assert_eq!(guarded, 8, "matching the reference classifier");
+    assert!(!shaped[0].is_fully_static(), "a guard may defer");
+    let table = shaped[0].table.as_ref().expect("the hybrid table is kept");
+    assert!(!table.guard_danger.is_empty(), "the guard can trip");
+    assert!(!table.guard_pass.is_empty(), "the walk can continue");
+    assert!(
+        table.states.iter().any(|state| state.is_guarded()),
+        "the table carries guarded states"
+    );
 
     // No shape means no report line either: the grammar corpus that has no
     // `X Y?` block must stay silent.

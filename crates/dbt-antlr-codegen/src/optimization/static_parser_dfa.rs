@@ -573,10 +573,23 @@ fn table_dump_lines(
             format!(" maxK={}", table.max_k)
         }
     )];
+    if table.guarded() > 0 {
+        lines.push(format!(
+            "  guards: {} guarded states; defers iff the parse stack carries an invoking state of danger={:?} (pass={} states)",
+            table.guarded(),
+            table.guard_danger,
+            table.guard_pass.len()
+        ));
+    }
     for (index, state) in table.states.iter().enumerate() {
         let mut line = format!("    s{index}: ");
         if state.accept > 0 {
             line.push_str(&format!("accept alt={}", state.accept));
+        } else if state.is_guarded() {
+            line.push_str(&format!(
+                "GUARDED alt={} unless the parse stack reaches a guard root (danger={:?})",
+                state.guarded_alt, table.guard_danger
+            ));
         } else if state.is_escape() {
             line.push_str("ESCAPE");
         } else {
@@ -679,6 +692,14 @@ fn adaptive_reason(result: &DecisionResult) -> String {
             "the SLL DFA exceeded the analysis budget ({} states or {} visited configs)",
             super::parser_dfa::MAX_DFA_STATES,
             super::parser_dfa::DEFAULT_VISIT_BUDGET
+        ),
+        Category::HYBRID if result.escapes > 0 && result.guarded_takes > 0 => format!(
+            "{} of {} states escape to adaptivePredict, and {} take/skip conflicts are decided by a runtime stack guard",
+            result.escapes, result.num_dfa_states, result.guarded_takes
+        ),
+        Category::HYBRID if result.guarded_takes > 0 => format!(
+            "{} take/skip conflicts are decided by a runtime stack guard, which defers to adaptivePredict when the parse stack reaches a guard root",
+            result.guarded_takes
         ),
         Category::HYBRID => format!(
             "{} of {} states escape to adaptivePredict",

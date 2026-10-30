@@ -66,3 +66,8 @@ pub(crate) const ESCAPE: i32 = -1;
 /// Table marker of a state where the static construction found an SLL conflict
 /// it does not trust; the runtime can skip the SLL stage entirely.
 pub(crate) const CONFLICT_ESCAPE: i32 = -2;
+
+/// Table marker of a state whose alternative is decided by a runtime stack
+/// guard: the take is resolved unless the real parse stack can reach one of the
+/// decision's guard roots.
+pub(crate) const GUARDED: i32 = -3;

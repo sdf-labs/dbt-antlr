@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 
 use dbt_antlr_runtime::dfa::static_parser_dfa::ParserContinuation;
 
-use super::{CONFLICT_ESCAPE, ESCAPE};
+use super::{CONFLICT_ESCAPE, ESCAPE, GUARDED};
 
 /// One DFA state of a decision table.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -27,6 +27,10 @@ pub(crate) struct StaticDfaState {
     /// The lowest conflicting alternative of a conflict escape state, when the
     /// table can hand the conflict over to full-context prediction directly.
     pub(crate) conflict_min_alt: i32,
+    /// The alternative a guarded state resolves to, `0` when the state is not
+    /// guarded. A guarded state takes its alternative unless the runtime stack
+    /// guard defers.
+    pub(crate) guarded_alt: i32,
     /// The closed config set of a frontier escape state, when SLL can resume
     /// from it instead of restarting at the decision start.
     pub(crate) continuation: Option<ParserContinuation>,
@@ -40,6 +44,10 @@ impl StaticDfaState {
 
     pub(crate) fn is_accept(&self) -> bool {
         self.accept > 0
+    }
+
+    pub(crate) fn is_guarded(&self) -> bool {
+        self.accept == GUARDED
     }
 }
 
@@ -64,6 +72,12 @@ pub(crate) struct StaticDfaTable {
     pub(crate) max_k: i32,
     /// State `0` is the start state.
     pub(crate) states: Vec<StaticDfaState>,
+    /// Sorted invoking states whose follow region reaches a guard root: the
+    /// runtime guard defers when the parse stack carries one.
+    pub(crate) guard_danger: Vec<i32>,
+    /// Sorted invoking states whose follow region can pop out of its rule
+    /// without reaching a guard root: the runtime guard resolves the take.
+    pub(crate) guard_pass: Vec<i32>,
 }
 
 impl StaticDfaTable {
@@ -76,11 +90,21 @@ impl StaticDfaTable {
             cyclic,
             max_k,
             states,
+            guard_danger: Vec::new(),
+            guard_pass: Vec::new(),
         }
     }
 
     pub(crate) fn escapes(&self) -> usize {
         self.states.iter().filter(|state| state.is_escape()).count()
+    }
+
+    /// The number of states a runtime stack guard decides.
+    pub(crate) fn guarded(&self) -> usize {
+        self.states
+            .iter()
+            .filter(|state| state.is_guarded())
+            .count()
     }
 
     /// How much of the start state's alphabet leads to an accepting state.
@@ -102,7 +126,7 @@ impl StaticDfaTable {
         }
         let mut work = VecDeque::new();
         for (index, state) in self.states.iter().enumerate() {
-            if state.is_accept() {
+            if state.is_accept() || state.is_guarded() {
                 reaches_accept[index] = true;
                 work.push_back(index);
             }

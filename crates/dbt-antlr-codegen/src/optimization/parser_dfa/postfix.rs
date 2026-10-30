@@ -27,7 +27,7 @@
 //! input can serve that element instead (`TRIM(x)`, `IN foo`), so skip
 //! genuinely wins and the rule must not apply.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use dbt_antlr_runtime::analysis::{
     ATN, ATNStateRef, ATNStateType, BasicBlockStartState, BitSet, IntervalSetBuf, NotSetTransition,
@@ -278,4 +278,138 @@ fn add_intervals(tokens: &mut BitSet, label: &IntervalSetBuf) {
             }
         }
     }
+}
+
+/// Epsilon-reachable ATN states of `start`, `start` included: rule invocations
+/// descend into the callee, and a rule stop state is a leaf (the grammar-wide
+/// FOLLOW links attached to stop states are the build-time closure's business,
+/// not the runtime chase's).
+pub(super) fn reach_eps(start: ATNStateRef) -> BitSet {
+    let mut out = BitSet::new();
+    let mut work = vec![start];
+    while let Some(state) = work.pop() {
+        let number = state.get_state_number();
+        if number < 0 || !out.insert(number as usize) {
+            continue;
+        }
+        if state.state_type() == ATNStateType::RuleStop {
+            continue;
+        }
+        for transition in state.get_transitions() {
+            if transition.is_epsilon() {
+                work.push(transition.get_target());
+            }
+        }
+    }
+    out
+}
+
+/// The guard roots of one out-of-discipline skip consumption: the consumption's
+/// own ATN position for context branches that bottom out at the empty context,
+/// plus the call site of every non-mirror deepest context frame.
+///
+/// A mirror branch (its deepest frame returns into the decision's block end) is
+/// realizable through the decision's own take path and contributes no root.
+pub(super) fn collect_guard_roots(
+    state: ATNStateRef,
+    context: Option<PredictionContextRef<'_>>,
+    block_end_state: ATNStateRef,
+    sites: &HashMap<i32, i32>,
+    out: &mut BTreeSet<i32>,
+) {
+    let Some(context) = context.filter(|context| !context.is_empty()) else {
+        // The consumption happened in the caller itself, so the chase must
+        // reach this very position.
+        out.insert(state.get_state_number());
+        return;
+    };
+    let mut visited: HashSet<*const ()> = HashSet::new();
+    collect_roots_in(state, &context, block_end_state, sites, out, &mut visited)
+}
+
+fn collect_roots_in(
+    state: ATNStateRef,
+    context: &PredictionContextRef<'_>,
+    block_end_state: ATNStateRef,
+    sites: &HashMap<i32, i32>,
+    out: &mut BTreeSet<i32>,
+    visited: &mut HashSet<*const ()>,
+) {
+    if context.is_empty() {
+        out.insert(state.get_state_number());
+        return;
+    }
+    if !visited.insert(context.as_ref() as *const _ as *const ()) {
+        return;
+    }
+    for index in 0..context.length() {
+        let return_state = context.get_return_state(index);
+        match context.get_parent(index) {
+            Some(parent) if !parent.is_empty() => {
+                collect_roots_in(state, &parent, block_end_state, sites, out, visited);
+            }
+            _ => {
+                if return_state == ATNStateRef::invalid() {
+                    out.insert(state.get_state_number());
+                } else if return_state != block_end_state {
+                    let number = return_state.get_state_number();
+                    out.insert(sites.get(&number).copied().unwrap_or(number));
+                }
+            }
+        }
+    }
+}
+
+/// The danger and pass sets of a guard-root set, as sorted invoking state
+/// numbers.
+///
+/// `danger[state]`: the state invokes a rule whose follow region can reach a
+/// guard root, so the take defers at such a frame. `pass[state]`: the follow
+/// region can reach its own rule's stop without reaching a root, so the take is
+/// resolved there. A state with several rule transitions is danger when any
+/// follow is dangerous, and pass only when every follow can pop (conservative in
+/// both directions).
+pub(super) fn compute_guard_data(atn: &ATN, roots: &BTreeSet<i32>) -> (Vec<i32>, Vec<i32>) {
+    let mut danger = Vec::new();
+    let mut pass = Vec::new();
+    let mut reachable: HashMap<i32, BitSet> = HashMap::new();
+    for state in atn.iter_states() {
+        let rule_index = state.get_rule_index();
+        let rule_stop = if rule_index >= 0 {
+            atn.rule_to_stop_state[rule_index as usize]
+        } else {
+            ATNStateRef::invalid()
+        };
+        let mut any_danger = false;
+        let mut all_pass = true;
+        let mut has_call = false;
+        for transition in state.get_transitions() {
+            let Some(rule) = transition.try_as::<RuleTransition>() else {
+                continue;
+            };
+            has_call = true;
+            let follow = rule.follow_state.get_state_number();
+            let region = reachable
+                .entry(follow)
+                .or_insert_with(|| reach_eps(rule.follow_state));
+            if roots.iter().any(|root| region.contains(*root as usize)) {
+                any_danger = true;
+            }
+            if rule_stop.get_state_number() < 0
+                || !region.contains(rule_stop.get_state_number() as usize)
+            {
+                all_pass = false;
+            }
+        }
+        if !has_call {
+            continue;
+        }
+        if any_danger {
+            danger.push(state.get_state_number());
+        }
+        if all_pass {
+            pass.push(state.get_state_number());
+        }
+    }
+    (danger, pass)
 }

@@ -50,7 +50,10 @@ use std::fmt::{self, Debug, Display, Formatter};
 pub const STATIC_PARSER_DFA_MAGIC: u32 = 0x5344_4641;
 
 /// Version of the `SDFA` wire format.
-pub const FORMAT_VERSION: u32 = 1;
+///
+/// Version 2 added the guarded-take section (guarded alternatives, guard danger
+/// and pass sets).
+pub const FORMAT_VERSION: u32 = 2;
 
 /// Accept marker of a state whose decision must be recomputed by the adaptive
 /// simulation: the static construction stopped here.
@@ -59,6 +62,12 @@ pub const ESCAPE: i32 = -1;
 /// Accept marker of a state where the static construction found an SLL conflict
 /// it trusts. The walker resumes at Stage 2 (full context) instead of Stage 1.
 pub const CONFLICT_ESCAPE: i32 = -2;
+
+/// Accept marker of a state whose alternative is decided by a runtime stack
+/// guard: the tree is resolved to the guarded alternative unless the real parse
+/// stack can reach one of the decision's guard roots, in which case the walker
+/// defers to the adaptive simulation.
+pub const GUARDED: i32 = -3;
 
 /// The empty prediction context in a continuation context DAG.
 pub(crate) const EMPTY_CONTEXT: u32 = u32::MAX;
@@ -114,6 +123,16 @@ pub enum StaticParserDfaError {
         declared: usize,
         /// The actual word count.
         actual: usize,
+    },
+    /// A guarded state record names a state twice.
+    DuplicateGuard {
+        /// The state index found twice.
+        state: usize,
+    },
+    /// A guard set names a negative invoking state.
+    InvalidGuardState {
+        /// The value found.
+        state: i32,
     },
     /// A state row index is out of bounds.
     InvalidRowIndex {
@@ -241,6 +260,12 @@ impl Display for StaticParserDfaError {
                 write!(f, "row index {row} out of bounds for {num_rows} rows")
             }
             Self::InvalidEdgeOffsets => f.write_str("invalid state row edge offsets"),
+            Self::DuplicateGuard { state } => {
+                write!(f, "state {state} carries two guarded alternatives")
+            }
+            Self::InvalidGuardState { state } => {
+                write!(f, "guard set names a negative invoking state {state}")
+            }
             Self::InvalidEdgeBounds {
                 lo,
                 hi,
@@ -386,6 +411,14 @@ pub struct StaticParserTable {
     continuations: Vec<ParserContinuation>,
     /// Continuation index per state, [`EMPTY_CONTEXT`] when the state has none.
     continuation_of: Vec<u32>,
+    /// The alternative a guarded state resolves to, `0` for the other states.
+    guarded_alts: Vec<i32>,
+    /// Sorted invoking states whose follow region reaches a guard root: the
+    /// runtime guard defers when the parse stack carries one.
+    guard_danger: Vec<i32>,
+    /// Sorted invoking states whose follow region can pop out of its rule
+    /// without reaching a guard root: the stack walk continues past them.
+    guard_pass: Vec<i32>,
     /// Number of token columns of a row (`max_token + 2`).
     edge_width: usize,
     /// Row index per state.
@@ -707,10 +740,38 @@ impl StaticParserTable {
             conflict_min_alts,
             continuations,
             continuation_of,
+            guarded_alts: vec![0; num_states],
+            guard_danger: Vec::new(),
+            guard_pass: Vec::new(),
             edge_width,
             row_of,
             rows,
         }
+    }
+
+    /// Attaches the guarded-take section: the alternative of every guarded
+    /// state, plus the decision's guard danger and pass sets (sorted invoking
+    /// state numbers).
+    ///
+    /// The caller sets `accepts[state] = GUARDED` for every state named here.
+    #[must_use]
+    pub fn with_guards(
+        mut self,
+        guarded_alts: Vec<i32>,
+        guard_danger: Vec<i32>,
+        guard_pass: Vec<i32>,
+    ) -> Self {
+        assert_eq!(
+            guarded_alts.len(),
+            self.accepts.len(),
+            "one guarded alternative per state"
+        );
+        self.guarded_alts = guarded_alts;
+        self.guard_danger = guard_danger;
+        self.guard_danger.sort_unstable();
+        self.guard_pass = guard_pass;
+        self.guard_pass.sort_unstable();
+        self
     }
 
     fn continuation_slots(continuations: &[ParserContinuation], num_states: usize) -> Vec<u32> {
@@ -737,6 +798,38 @@ impl StaticParserTable {
     #[inline]
     pub fn accept(&self, state: i32) -> i32 {
         self.accepts[state as usize]
+    }
+
+    /// The alternative a guarded state resolves to, if the state is guarded.
+    #[inline]
+    pub fn guarded_alt(&self, state: i32) -> Option<i32> {
+        let alt = *self.guarded_alts.get(state as usize)?;
+        if alt > 0 {
+            Some(alt)
+        } else {
+            None
+        }
+    }
+
+    /// `true` when the table carries at least one guarded state.
+    pub fn has_guards(&self) -> bool {
+        self.guarded_alts.iter().any(|&alt| alt > 0)
+    }
+
+    /// The guard step of one invoking state. `Some(true)` means the follow
+    /// region of the state reaches a guard root, so the take defers.
+    /// `Some(false)` means a mandatory token seals the frame off, so the take is
+    /// resolved. `None` means the frame can pop out of its rule, so the stack
+    /// walk continues upwards.
+    #[inline]
+    pub fn guard_step(&self, invoking_state: i32) -> Option<bool> {
+        if self.guard_danger.binary_search(&invoking_state).is_ok() {
+            return Some(true);
+        }
+        if self.guard_pass.binary_search(&invoking_state).is_err() {
+            return Some(false);
+        }
+        None
     }
 
     /// The lowest alternative that already left the decision, if any.
@@ -860,6 +953,22 @@ impl StaticParserTable {
                 words.push(config.outer_depth as u32);
             }
         }
+
+        let guarded = self
+            .guarded_alts
+            .iter()
+            .enumerate()
+            .filter(|(_, &alt)| alt > 0)
+            .collect::<Vec<_>>();
+        words.push(guarded.len() as u32);
+        for (state, &alt) in guarded {
+            words.push(state as u32);
+            words.push(alt as u32);
+        }
+        words.push(self.guard_danger.len() as u32);
+        words.extend(self.guard_danger.iter().map(|&state| state as u32));
+        words.push(self.guard_pass.len() as u32);
+        words.extend(self.guard_pass.iter().map(|&state| state as u32));
     }
 
     /// The per-row range lists (`offsets` in ints, not in ranges).
@@ -1068,6 +1177,44 @@ impl StaticParserTable {
             });
         }
 
+        let mut guarded_alts = vec![0_i32; num_states];
+        let num_guarded = checked_count(reader.next()? as usize, 2, reader.remaining())?;
+        for _ in 0..num_guarded {
+            let state = reader.next()? as usize;
+            let alt = reader.next()? as i32;
+            if state >= num_states {
+                return Err(StaticParserDfaError::InvalidStateIndex { state, num_states });
+            }
+            if alt <= 0 {
+                return Err(StaticParserDfaError::InvalidConflictAlt { alt });
+            }
+            if guarded_alts[state] != 0 {
+                return Err(StaticParserDfaError::DuplicateGuard { state });
+            }
+            accepts[state] = GUARDED;
+            guarded_alts[state] = alt;
+        }
+        let num_danger = checked_count(reader.next()? as usize, 1, reader.remaining())?;
+        let mut guard_danger = Vec::with_capacity(num_danger);
+        for _ in 0..num_danger {
+            let state = reader.next()? as i32;
+            if state < 0 {
+                return Err(StaticParserDfaError::InvalidGuardState { state });
+            }
+            guard_danger.push(state);
+        }
+        guard_danger.sort_unstable();
+        let num_pass = checked_count(reader.next()? as usize, 1, reader.remaining())?;
+        let mut guard_pass = Vec::with_capacity(num_pass);
+        for _ in 0..num_pass {
+            let state = reader.next()? as i32;
+            if state < 0 {
+                return Err(StaticParserDfaError::InvalidGuardState { state });
+            }
+            guard_pass.push(state);
+        }
+        guard_pass.sort_unstable();
+
         let continuation_of = Self::continuation_slots(&continuations, num_states);
         Ok((
             decision,
@@ -1078,6 +1225,9 @@ impl StaticParserTable {
                 conflict_min_alts,
                 continuations,
                 continuation_of,
+                guarded_alts,
+                guard_danger,
+                guard_pass,
                 edge_width,
                 row_of,
                 rows,
@@ -1120,6 +1270,9 @@ impl StaticParserTables {
                     index: i64::from(table.decision),
                     count: num_decisions,
                 });
+            }
+            for &state in table.guard_danger.iter().chain(&table.guard_pass) {
+                check_state(i64::from(state), "guard invoking state")?;
             }
             for continuation in &table.continuations {
                 for node in &continuation.contexts {
@@ -1252,6 +1405,37 @@ mod tests {
             .to_words();
         let decoded = StaticParserTables::from_words(&words).expect("the words decode");
         assert_eq!(decoded.table(0, 0), Some(&built));
+        assert_eq!(decoded.to_words(), words);
+    }
+
+    #[test]
+    fn guarded_takes_round_trip_through_the_guard_section() {
+        let built = StaticParserTable::from_state_edges(
+            0,
+            vec![0, GUARDED],
+            vec![0, 0],
+            vec![0, 0],
+            Vec::new(),
+            &[vec![(1, 1, 1)], Vec::new()],
+        )
+        .with_guards(vec![0, 1], vec![4, 9], vec![2, 7]);
+        assert!(built.has_guards());
+        // `4` reaches a guard root (defer), `9` too; `2` is a pass state, so
+        // the walk continues past it; `5` is sealed (resolve the take).
+        assert_eq!(built.guard_step(4), Some(true));
+        assert_eq!(built.guard_step(2), None);
+        assert_eq!(built.guard_step(5), Some(false));
+        assert_eq!(built.guarded_alt(1), Some(1));
+        assert_eq!(built.guarded_alt(0), None);
+        let words = StaticParserTables::new(vec![DecisionTables::Single(0)], vec![built.clone()])
+            .to_words();
+        let decoded = StaticParserTables::from_words(&words).expect("the words decode");
+        let table = decoded.table(0, 0).expect("the table");
+        assert_eq!(table, &built);
+        assert_eq!(table.accept(1), GUARDED);
+        assert_eq!(table.guard_step(9), Some(true));
+        assert_eq!(table.guard_step(7), None);
+        assert_eq!(table.guard_step(9), Some(true));
         assert_eq!(decoded.to_words(), words);
     }
 

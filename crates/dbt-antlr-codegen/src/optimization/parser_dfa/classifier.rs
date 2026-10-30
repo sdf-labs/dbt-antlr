@@ -2,26 +2,26 @@
 // Copyright (c) 2026 Bo Lin
 //! The SLL DFA classifier: subset construction, budgets, and trust rules.
 
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use dbt_antlr_runtime::analysis::DFA;
 use dbt_antlr_runtime::analysis::{
     ATN, ATNConfigSet, ATNStateRef, ATNStateType, Arena, BOUNDARY_TAINT, BitSet, Bump, DFAState,
     EOF, FOREIGN_CONSUME_TAINT, IATNSimulator, INTERIOR_TAINT, PRECPRED_TAINT, PRED_TAINT,
     ParserATNSimulator, ParserATNSimulatorManager, PrecedencePredicateTransition,
-    PredictionContext, PredictionContextRef, PredictionMode, ProposedDFAState, RuleStartState,
-    WIDENED_TAINT, all_subsets_conflict, all_subsets_equal, conflicting_alt_subsets, get_alts,
-    has_sll_conflict_terminating_prediction,
+    PredictionContext, PredictionContextRef, PredictionMode, ProposedDFAState, ROOTED_TAINT,
+    RuleStartState, WIDENED_TAINT, all_subsets_conflict, all_subsets_equal,
+    conflicting_alt_subsets, get_alts, has_sll_conflict_terminating_prediction,
 };
 use dbt_antlr_runtime::dfa::static_parser_dfa::{
     ContinuationConfigEntry, ContinuationContextNode, ParserContinuation,
 };
 
-use super::closure::{ClosedSet, Closure, ClosureFacts, PrecedenceClass, Taint};
+use super::closure::{ClosedSet, Closure, ClosureFacts, PrecedenceClass, Taint, taint_of};
 use super::loop_block::{ITERATE_ALT, ITERATE_REAL, LoopBlock, is_iterate_exit_pair};
-use super::postfix::{PostfixShape, bottom_frame_is};
+use super::postfix::{PostfixShape, bottom_frame_is, compute_guard_data, reach_eps};
 use super::table::{StaticDfaEdge, StaticDfaState, StaticDfaTable};
-use super::{CONFLICT_ESCAPE, Category, ESCAPE};
+use super::{CONFLICT_ESCAPE, Category, ESCAPE, GUARDED};
 
 /// The state budget of one decision table.
 pub(crate) const MAX_DFA_STATES: usize = 1000;
@@ -53,6 +53,14 @@ const TRUST_TAINT: i32 =
 const POSTFIX_TAKE_ALT: i32 = 1;
 /// The alternative of an optional-postfix decision that skips it.
 const POSTFIX_SKIP_ALT: i32 = 2;
+
+/// Whether a set of live alternatives is exactly the take/skip pair of an
+/// optional-postfix decision.
+fn is_take_skip_pair(alts: &BitSet) -> bool {
+    alts.len() == 2
+        && alts.contains(POSTFIX_TAKE_ALT as usize)
+        && alts.contains(POSTFIX_SKIP_ALT as usize)
+}
 
 const VIRTUAL_ALT_BASE: usize = 65_536;
 const MAX_TRACKED_DEPTH: usize = 30;
@@ -88,6 +96,9 @@ struct StateFacts {
     /// The lowest conflicting alternative of a conflict escape state, `0` when
     /// the runtime cannot resolve the conflict directly.
     conflict_min_alt: i32,
+    /// The alternative a guarded state resolves to, `0` when the state is not
+    /// guarded.
+    guarded_alt: i32,
     /// The closed config set of a frontier escape state.
     continuation: Option<ParserContinuation>,
 }
@@ -106,6 +117,10 @@ struct ClassifyEffects {
     approximation: Option<BitSet>,
     context_sensitive: Option<BitSet>,
     conflict: Option<Vec<i32>>,
+    /// A take-vetoed conflict state that may resolve as a guarded take. The
+    /// payload is the conflicting alternative set, or `None` for a budget
+    /// escape that was never conflict-analyzed.
+    guard_candidate: Option<Option<BitSet>>,
     /// The decision state of the attempt is behind a predicate, so the whole
     /// decision depends on parser state and no table can decide it.
     fail_predicated: bool,
@@ -201,6 +216,8 @@ struct Attempt {
     has_postfix_shape: bool,
     /// Conflict states the optional-postfix take rule resolved to take.
     take_rule_fires: usize,
+    /// Conflict states a guarded take resolved.
+    guarded_takes: usize,
 }
 
 /// The precedence classes of one precedence-loop decision.
@@ -311,6 +328,8 @@ impl DecisionResult {
         }
         if self.escapes > 0 {
             self.escapes.to_string()
+        } else if self.guarded_takes > 0 {
+            format!("{}g", self.guarded_takes)
         } else {
             "0".to_owned()
         }
@@ -322,6 +341,11 @@ impl DecisionResult {
     /// without escapes decides on its own; everything else keeps at least one
     /// adaptive path.
     pub(crate) fn is_fully_static(&self) -> bool {
+        if self.guarded_takes > 0 {
+            // A guarded take defers to the adaptive simulation when the parse
+            // stack reaches a guard root.
+            return false;
+        }
         match self.category {
             Category::LL1
             | Category::NON_GREEDY
@@ -530,7 +554,7 @@ impl DecisionClassifier {
             result.category = Category::CONTEXT_SENSITIVE;
             return result;
         }
-        if result.escapes > 0 {
+        if result.escapes > 0 || table.guarded() > 0 {
             result.category = Category::HYBRID;
             // A table whose start state escapes answers nothing at all.
             let start_decides = table.states.first().is_some_and(|state| !state.is_escape());
@@ -732,12 +756,16 @@ impl DecisionClassifier {
                     policy.depth_bound,
                     precedence,
                     loop_block,
+                    postfix,
                     self.visit_budget,
                 ),
                 policy,
                 allow_continuations: policy.hybrid && precedence.is_none(),
                 precedence_class: precedence.is_some(),
                 postfix,
+                own_roots: HashMap::new(),
+                guard_candidates: BTreeMap::new(),
+                guard_data: None,
                 decision_state,
                 decision,
                 info: HashMap::new(),
@@ -769,6 +797,7 @@ fn apply_facts(result: &mut DecisionResult, attempt: &Attempt) {
     result.utrust_resolutions += attempt.utrust_resolutions;
     result.has_postfix_shape |= attempt.has_postfix_shape;
     result.take_rule_fires += attempt.take_rule_fires;
+    result.guarded_takes += attempt.guarded_takes;
     for conflict in &attempt.conflicts {
         if !result.conflicts.contains(conflict) {
             result.conflicts.push(conflict.clone());
@@ -799,6 +828,15 @@ struct DecisionBuild<'b, 'sim, 'a> {
     precedence_class: bool,
     /// The decision's optional-postfix shape, when it has one.
     postfix: Option<PostfixShape>,
+    /// Guard roots entering each state, keyed by DFA state number.
+    own_roots: HashMap<i32, BTreeSet<i32>>,
+    /// Take-vetoed conflict states that may resolve as a guarded take, with
+    /// their conflicting alternatives (`None` for a budget escape that was
+    /// never conflict-analyzed). A sorted map keeps the resolution order
+    /// deterministic.
+    guard_candidates: BTreeMap<i32, Option<BitSet>>,
+    /// The decision's guard danger and pass sets, once a guarded take resolved.
+    guard_data: Option<(Vec<i32>, Vec<i32>)>,
     decision: usize,
     decision_state: ATNStateRef,
     info: HashMap<i32, StateFacts>,
@@ -851,6 +889,12 @@ where
                 // runtime would reach.
                 if !(self.precedence_class && self.resolve_frontier_iterate(number, &facts)) {
                     self.set_escape(number, ESCAPE);
+                    if self.postfix.is_some() && self.state_has_take_skip_pair(number) {
+                        // A budget escape of a take/skip state: the guarded
+                        // take can still resolve it (eligibility is evaluated
+                        // once the roots have propagated).
+                        self.guard_candidates.insert(number, None);
+                    }
                 }
                 continue;
             }
@@ -868,11 +912,17 @@ where
                 self.attempt.overflow = true;
                 break;
             }
-            for (label, successor) in successors {
+            for (label, successor, roots) in successors {
                 let Some(target) = self.intern(successor, facts.depth + 1) else {
                     self.attempt.overflow = true;
                     break;
                 };
+                if !roots.is_empty() {
+                    self.own_roots
+                        .entry(target.state_number())
+                        .or_default()
+                        .extend(roots);
+                }
                 for interval in label.as_interval_set().as_slice() {
                     for token in interval.a..=interval.b {
                         if token < EOF || token > self.atn.max_token_type {
@@ -888,6 +938,7 @@ where
         }
 
         if !self.attempt.overflow {
+            self.finalize_guarded_takes();
             self.attach_continuations();
             self.attempt.table = Some(self.snapshot());
         }
@@ -900,6 +951,173 @@ where
         self.attempt.state_count = self.states.len();
         self.attempt.facts = std::mem::take(&mut self.closure.facts);
         std::mem::take(&mut self.attempt)
+    }
+
+    /// Second chance for take-vetoed conflicts of an optional-postfix decision.
+    ///
+    /// A vetoed conflict means some skip configuration left the dangling-else
+    /// discipline: it consumed tokens outside the decision's own take path. Such
+    /// a configuration is realizable at run time only on stacks whose
+    /// epsilon-pop chase from the block end reaches the guard root its first
+    /// out-of-discipline consumption passed through. So the conflict resolves to
+    /// take under a runtime stack test: defer to the adaptive simulation when the
+    /// chase can reach a root.
+    ///
+    /// The eligibility rules are conservative. A widening-born skip
+    /// configuration is an analysis artifact unless it is rooted, a clean
+    /// out-of-discipline skip has no root for the guard to catch, a root that the
+    /// block end reaches without popping a frame makes the guard fire on every
+    /// stack, and a block end that cannot pop out of its rule means no root is
+    /// ever reachable (that case resolves to plain take accepts instead). The
+    /// attempt bookkeeping is applied only once every bail has passed.
+    fn finalize_guarded_takes(&mut self) {
+        let Some(postfix) = self.postfix else {
+            return;
+        };
+        if self.guard_candidates.is_empty() {
+            return;
+        }
+        let through = self.propagated_guard_roots();
+        let candidates = std::mem::take(&mut self.guard_candidates);
+        let mut accepted: Vec<(i32, Option<BitSet>, BTreeSet<i32>)> = Vec::new();
+        let mut roots_all: BTreeSet<i32> = BTreeSet::new();
+        for (state, conflicting) in candidates {
+            let Some(facts) = self.info.get(&state) else {
+                continue;
+            };
+            if !matches!(
+                facts.verdict,
+                Verdict::Escape(ESCAPE) | Verdict::Escape(CONFLICT_ESCAPE)
+            ) {
+                continue;
+            }
+            let Some(roots) = through.get(&state).filter(|roots| !roots.is_empty()) else {
+                continue;
+            };
+            let mut eligible = true;
+            let mut real_take = false;
+            for config in self.states[state as usize].configs().get_items() {
+                let taint = taint_of(&facts.taint, config);
+                if config.get_alt() == POSTFIX_TAKE_ALT
+                    && taint & (WIDENED_TAINT | FOREIGN_CONSUME_TAINT) == 0
+                {
+                    real_take = true;
+                }
+                if config.get_alt() != POSTFIX_SKIP_ALT {
+                    continue;
+                }
+                if taint & FOREIGN_CONSUME_TAINT != 0 {
+                    eligible = false;
+                    break;
+                }
+                // A widening-born skip is an analysis artifact unless it is
+                // rooted: then its bottom frame is a real follow state and the
+                // guard covers its realizability.
+                if taint & (WIDENED_TAINT | ROOTED_TAINT) == WIDENED_TAINT {
+                    eligible = false;
+                    break;
+                }
+                if config.get_state().get_rule_index() == self.decision_state.get_rule_index() {
+                    continue;
+                }
+                if taint & ROOTED_TAINT != 0 {
+                    continue;
+                }
+                if config.get_context().is_some_and(|context| {
+                    bottom_frame_is(context, postfix.block_end_state, &mut HashSet::new())
+                }) {
+                    continue;
+                }
+                eligible = false;
+                break;
+            }
+            if !eligible || !real_take {
+                continue;
+            }
+            roots_all.extend(roots.iter().copied());
+            accepted.push((state, conflicting, roots.clone()));
+        }
+        if accepted.is_empty() {
+            return;
+        }
+
+        // A root that the block end reaches without popping any frame would trip
+        // the guard on every stack: useless.
+        let reachable_from_block = reach_eps(postfix.block_end_state);
+        if roots_all
+            .iter()
+            .any(|root| reachable_from_block.contains(*root as usize))
+        {
+            return;
+        }
+        let chase_leaves_the_rule = {
+            let rule_stop =
+                self.atn.rule_to_stop_state[self.decision_state.get_rule_index() as usize];
+            rule_stop.get_state_number() >= 0
+                && reachable_from_block.contains(rule_stop.get_state_number() as usize)
+        };
+        let guard_data = chase_leaves_the_rule.then(|| compute_guard_data(self.atn, &roots_all));
+        let guarded = guard_data
+            .as_ref()
+            .is_some_and(|(danger, _)| !danger.is_empty());
+        for (state, conflicting, _) in accepted {
+            if let Some(chosen) = conflicting {
+                self.attempt
+                    .approximations
+                    .retain(|conflict| conflict != &chosen);
+                self.attempt
+                    .context_sensitive
+                    .retain(|conflict| conflict != &chosen);
+                self.attempt.exact_ambiguities.push(chosen);
+            }
+            if guarded {
+                if let Some(facts) = self.info.get_mut(&state) {
+                    facts.verdict = Verdict::Escape(GUARDED);
+                    facts.guarded_alt = POSTFIX_TAKE_ALT;
+                }
+                self.attempt.guarded_takes += 1;
+            } else {
+                // No guard can ever trip: resolve to a plain take accept.
+                if let Some(facts) = self.info.get_mut(&state) {
+                    facts.verdict = Verdict::Accept(POSTFIX_TAKE_ALT);
+                    facts.resolved_conflict = true;
+                }
+                self.attempt.take_rule_fires += 1;
+            }
+        }
+        if guarded {
+            self.guard_data = guard_data;
+        }
+    }
+
+    /// Propagates the guard roots of every state along the edge graph to a
+    /// fixpoint: `through[s]` is the union of the roots of the paths that reach
+    /// `s`.
+    fn propagated_guard_roots(&self) -> HashMap<i32, BTreeSet<i32>> {
+        let mut successors: HashMap<i32, Vec<i32>> = HashMap::new();
+        for (from, _, to) in self.dfa.enumerate_edges() {
+            let targets = successors.entry(from.state_number()).or_default();
+            if !targets.contains(&to.state_number()) {
+                targets.push(to.state_number());
+            }
+        }
+        let mut through: HashMap<i32, BTreeSet<i32>> = self.own_roots.clone();
+        let mut queue: VecDeque<i32> = self.own_roots.keys().copied().collect();
+        while let Some(source) = queue.pop_front() {
+            let roots = through.get(&source).cloned().unwrap_or_default();
+            let Some(targets) = successors.get(&source) else {
+                continue;
+            };
+            for &target in targets {
+                let entry = through.entry(target).or_default();
+                let before = entry.len();
+                entry.extend(roots.iter().copied());
+                if entry.len() != before {
+                    queue.push_back(target);
+                }
+            }
+        }
+        through
     }
 
     /// Attaches a [`ParserContinuation`] to every frontier escape state whose
@@ -988,13 +1206,23 @@ where
         if effects.conflict.is_some() {
             self.attempt.first_conflict_state.get_or_insert(number);
         }
-        self.commit(effects);
+        self.commit(number, effects);
         let decide = facts.verdict == Verdict::Decide;
         self.info.insert(number, facts);
         if decide && !self.attempt.overflow {
             self.queue.push_back(number);
         }
         Some(state)
+    }
+
+    /// Whether the interned state's live alternatives are exactly the
+    /// take/skip pair of an optional-postfix decision.
+    fn state_has_take_skip_pair(&self, number: i32) -> bool {
+        let mut alts = BitSet::new();
+        for config in self.states[number as usize].configs().get_items() {
+            alts.insert(config.get_alt() as usize);
+        }
+        is_take_skip_pair(&alts)
     }
 
     /// Resolves a budget-frontier state of a precedence class to iterate when
@@ -1094,7 +1322,10 @@ where
     }
 
     /// Records the attempt-level bookkeeping of a newly interned state.
-    fn commit(&mut self, effects: ClassifyEffects) {
+    fn commit(&mut self, number: i32, effects: ClassifyEffects) {
+        if let Some(candidate) = effects.guard_candidate {
+            self.guard_candidates.insert(number, candidate);
+        }
         if effects.utrust {
             self.attempt.utrust_resolutions += 1;
         }
@@ -1145,6 +1376,7 @@ where
             resolved_conflict: false,
             expanded: false,
             conflict_min_alt: 0,
+            guarded_alt: 0,
             continuation: None,
         };
         if self.policy.hybrid && predicated {
@@ -1253,7 +1485,7 @@ where
         // runtime answers take whenever it terminates: unique take, or an
         // ambiguity resolved to the minimum alternative.
         if let Some(postfix) = self.postfix
-            && is_iterate_exit_pair(&conflicting)
+            && is_take_skip_pair(&conflicting)
         {
             let mut skip_foreign = false;
             let mut mirror_ok = true;
@@ -1286,6 +1518,12 @@ where
                 effects.exact_ambiguity = Some(conflicting.clone());
                 facts.verdict = Verdict::Accept(POSTFIX_TAKE_ALT);
                 return (facts, effects);
+            }
+            if self.policy.hybrid && !skip_foreign && real_take {
+                // Vetoed only by the mirror check: a candidate for the guarded
+                // take, resolved after construction once the guard roots have
+                // propagated.
+                effects.guard_candidate = Some(Some(conflicting.clone()));
             }
         }
 
@@ -1361,6 +1599,7 @@ where
                         .map(|facts| facts.conflicts.clone())
                         .unwrap_or_default(),
                     conflict_min_alt: facts.map_or(0, |facts| facts.conflict_min_alt),
+                    guarded_alt: facts.map_or(0, |facts| facts.guarded_alt),
                     continuation: facts.and_then(|facts| facts.continuation.clone()),
                     edges: Vec::new(),
                 }
@@ -1391,7 +1630,12 @@ where
             states[index].edges = merged;
         }
 
-        StaticDfaTable::finish(self.decision, states)
+        let mut table = StaticDfaTable::finish(self.decision, states);
+        if let Some((danger, pass)) = &self.guard_data {
+            table.guard_danger.clone_from(danger);
+            table.guard_pass.clone_from(pass);
+        }
+        table
     }
 
     /// `true` when the conflicting alternatives leave the decision after the
