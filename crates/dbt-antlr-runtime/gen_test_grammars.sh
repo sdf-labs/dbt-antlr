@@ -101,3 +101,11 @@ echo "Generating: parser/GuardExpr"
 echo "Generating: guardexprparser_static"
 "$GEN_BIN" -no-listener --static-parser-dfa -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/GuardExpr.g4"
 mv "$STATIC_TMP/guardexprparser.rs" "$SCRIPT_DIR/tests/gen/guardexprparser_static.rs"
+
+# The `--static-dfa-only` twin of the guarded-take witness: its guarded takes
+# and the states at its lookahead budget predict alternative 1 (the take), so
+# the test pins the inputs where the static-only parser differs from the
+# adaptive one.
+echo "Generating: guardexprparser_static_only"
+"$GEN_BIN" -no-listener --static-dfa-only -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/GuardExpr.g4"
+mv "$STATIC_TMP/guardexprparser.rs" "$SCRIPT_DIR/tests/gen/guardexprparser_static_only.rs"

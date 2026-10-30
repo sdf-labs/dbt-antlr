@@ -3,13 +3,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::optimization::{
-    OptimizationPlan, OptimizationReport, StaticDfaPass, StaticLexerDfa, StaticLexerTables,
-    StaticParserDfa, StaticParserTables,
+    AtnFallback, OptimizationPlan, OptimizationReport, StaticDfaPass, StaticLexerDfa,
+    StaticLexerTables, StaticParserDfa, StaticParserTables,
 };
 
 use super::action::{ActionReferenceParser, action_references};
 use super::atn::{CompiledLexer, CompiledParser, compile_lexer, compile_parser};
-use super::diagnostic::{CompilationError, Diagnostic};
+use super::diagnostic::{CompilationError, Diagnostic, Severity};
 use super::integration::{
     IntegratedGrammarSet, IntegratedVocabularySource, RootOutputs, integrate_loaded,
 };
@@ -109,7 +109,7 @@ pub(crate) fn compile_with_action_reference_parser(
     let grammar = load_grammar(options, plan)?;
     let grammar = transform_grammar(grammar, plan, action_reference_parser)?;
     let compilation = compile_semantics(grammar, plan, action_reference_parser)?;
-    Ok(static_dfa_builds(compilation, plan))
+    static_dfa_builds(compilation, plan)
 }
 
 /// The loaded and integrated grammar handed from the load stage to the
@@ -334,20 +334,37 @@ fn compile_semantics(
 /// Runs the static DFA build passes selected by the plan.
 ///
 /// The stage runs after semantic compilation, so the pass diagnostics it
-/// appends follow the lexer and parser diagnostics.
-fn static_dfa_builds(mut compilation: Compilation, plan: &OptimizationPlan) -> Compilation {
+/// appends follow the lexer and parser diagnostics. An error of a pass (for
+/// example a `--static-dfa-only` decision without a static table) fails the
+/// compilation. In report-only mode, the error stays a diagnostic of the run,
+/// so that the reports still render.
+fn static_dfa_builds(
+    mut compilation: Compilation,
+    plan: &OptimizationPlan,
+) -> Result<Compilation, CompilationError> {
+    let first_pass_diagnostic = compilation.diagnostics.len();
+    let fallback = plan.atn_fallback();
     for pass in plan.static_dfa_passes() {
         match pass {
-            StaticDfaPass::StaticLexerDfa => build_static_lexer_dfas(&mut compilation),
-            StaticDfaPass::StaticParserDfa => build_static_parser_dfas(&mut compilation),
+            StaticDfaPass::StaticLexerDfa => build_static_lexer_dfas(&mut compilation, fallback),
+            StaticDfaPass::StaticParserDfa => build_static_parser_dfas(&mut compilation, fallback),
         }
     }
-    compilation
+    let failed = compilation.diagnostics[first_pass_diagnostic..]
+        .iter()
+        .any(|diagnostic| diagnostic.severity == Severity::Error);
+    if failed && !plan.report_only() {
+        return Err(
+            CompilationError::new(std::mem::take(&mut compilation.diagnostics))
+                .with_sources(&compilation.sources),
+        );
+    }
+    Ok(compilation)
 }
 
 /// Builds the static lexer DFA tables of every root lexer and records their
 /// diagnostics and optimization reports.
-fn build_static_lexer_dfas(compilation: &mut Compilation) {
+fn build_static_lexer_dfas(compilation: &mut Compilation, fallback: AtnFallback) {
     let lexer_ids = compilation
         .roots
         .iter()
@@ -357,7 +374,7 @@ fn build_static_lexer_dfas(compilation: &mut Compilation) {
         let Some(compiled) = compilation.lexers.get(&lexer_id) else {
             continue;
         };
-        let build = StaticLexerDfa::build(compiled);
+        let build = StaticLexerDfa::build(compiled, fallback);
         compilation.diagnostics.extend(build.diagnostics);
         compilation
             .optimization_report
@@ -370,7 +387,7 @@ fn build_static_lexer_dfas(compilation: &mut Compilation) {
 
 /// Builds the static prediction tables of every root parser, stores them for
 /// the emitter, and records the pass diagnostics and report.
-fn build_static_parser_dfas(compilation: &mut Compilation) {
+fn build_static_parser_dfas(compilation: &mut Compilation, fallback: AtnFallback) {
     let parser_ids = compilation
         .roots
         .iter()
@@ -380,7 +397,7 @@ fn build_static_parser_dfas(compilation: &mut Compilation) {
         let Some(compiled) = compilation.parsers.get(&parser_id) else {
             continue;
         };
-        let build = StaticParserDfa::build(compiled);
+        let build = StaticParserDfa::build(compiled, fallback);
         compilation.diagnostics.extend(build.diagnostics);
         compilation
             .optimization_report
@@ -453,6 +470,81 @@ mod tests {
                 .diagnostics
                 .iter()
                 .any(|diagnostic| diagnostic.code == "G4S188")
+        );
+    }
+
+    #[test]
+    fn static_dfa_only_errors_fail_the_compilation_unless_report_only() {
+        for (fixture_name, grammar, code) in [
+            ("lexer-recursion", "LexerRecursion.g4", "G4S188"),
+            ("parser-shapes", "ParserShapes.g4", "G4S190"),
+        ] {
+            let load = || LoadOptions {
+                roots: vec![fixture(fixture_name).join(grammar)],
+                library_directories: Vec::new(),
+            };
+            let mut options = OptimizationOptions::new();
+            options.static_dfa_only(true);
+            let plan = OptimizationPlan::from_options(&options).expect("plan should be valid");
+            let error = compile_with_plan(load(), &plan)
+                .expect_err("a part without a static table fails the compilation");
+            assert!(
+                error
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.code == code
+                        && diagnostic.severity == Severity::Error),
+                "{grammar}: {error:#?}"
+            );
+
+            options.report_only(true);
+            let plan = OptimizationPlan::from_options(&options).expect("plan should be valid");
+            let compilation = compile_with_plan(load(), &plan)
+                .expect("report-only keeps the errors as diagnostics");
+            assert!(
+                compilation
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code == code
+                        && diagnostic.severity == Severity::Error),
+                "{grammar}: {:#?}",
+                compilation.diagnostics
+            );
+        }
+    }
+
+    #[test]
+    fn static_dfa_only_succeeds_for_fully_static_grammars() {
+        let mut options = OptimizationOptions::new();
+        options.static_dfa_only(true);
+        let plan = OptimizationPlan::from_options(&options).expect("plan should be valid");
+        let compilation = compile_with_plan(
+            LoadOptions {
+                roots: vec![fixture("vscode-sentences").join("sentences.g4")],
+                library_directories: Vec::new(),
+            },
+            &plan,
+        )
+        .expect("sentences.g4 is fully static");
+        let [root] = compilation.roots.as_slice() else {
+            panic!("one requested root should produce one compiled root");
+        };
+        let lexer = compilation
+            .static_lexer_tables(root.lexer.expect("combined root has a lexer"))
+            .expect("static lexer tables built");
+        assert!(lexer.omit_atn, "a static-only lexer needs no ATN");
+        assert!(
+            compilation
+                .static_parser_tables(root.parser.expect("combined root has a parser"))
+                .is_some()
+        );
+        assert!(
+            compilation
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.severity != Severity::Error),
+            "{:#?}",
+            compilation.diagnostics
         );
     }
 

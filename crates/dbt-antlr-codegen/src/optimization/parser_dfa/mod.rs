@@ -50,12 +50,14 @@ mod classifier;
 mod closure;
 mod loop_block;
 mod postfix;
+mod static_only;
 mod table;
 mod tables;
 
 pub(crate) use category::Category;
 pub(crate) use classifier::{DecisionClassifier, DecisionResult, MAX_DFA_STATES};
 pub(crate) use closure::DEFAULT_VISIT_BUDGET;
+pub(crate) use static_only::{EscapeResolution, EscapeResolutions};
 pub(crate) use table::StaticDfaTable;
 pub(crate) use tables::build_tables;
 

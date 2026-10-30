@@ -3,7 +3,8 @@
 // Copyright (c) 2026 Bo Lin
 //! Integration tests for `--static-lexer-dfa` (lexer scope): CLI plumbing, the
 //! table statics of the flag-on output, ATN elision for a fully static
-//! lexer, and the escape-reason warnings of the diagnostic channel.
+//! lexer, and the escape-reason warnings of the diagnostic channel. The tests
+//! of `--static-parser-dfa` and `--static-dfa-only` follow the lexer tests.
 //!
 //! Byte-identity of the flag-off output is covered by the golden sweep
 //! (`dbt_emit_sweep.rs`) and is not repeated here.
@@ -110,6 +111,7 @@ fn help_text_lists_the_static_lexer_dfa_flag() {
     for flag in [
         "--static-lexer-dfa",
         "--static-parser-dfa",
+        "--static-dfa-only",
         "--report-decisions",
         "--dump-dfas",
     ] {
@@ -362,6 +364,10 @@ fn static_parser_dfa_writes_the_manifest_entry() {
     assert!(manifest.contains("\"staticDecisions\": 4"), "{manifest}");
     assert!(manifest.contains("\"adaptiveDecisions\": 0"), "{manifest}");
     assert!(manifest.contains("\"escapeStates\": 0"), "{manifest}");
+    assert!(manifest.contains("\"minAltStates\": 0"), "{manifest}");
+    assert!(manifest.contains("\"minViableAltStates\": 0"), "{manifest}");
+    assert!(manifest.contains("\"syntaxErrorStates\": 0"), "{manifest}");
+    assert!(manifest.contains("\"staticDfaOnly\": False"), "{manifest}");
     assert!(manifest.contains("\"grammar\": \"CSVParser\""));
     assert!(
         output.reports.is_empty(),
@@ -709,4 +715,324 @@ fn static_parser_dfa_embeds_the_sdfa_section() {
         !plain.contains("dfa_predict"),
         "flag-off output predicts adaptively"
     );
+}
+
+fn emit_static_only(
+    grammar: &std::path::Path,
+    report_only: bool,
+) -> Result<EmittedOutput, dbt_antlr_codegen::emission::EmitError> {
+    let mut optimization = OptimizationOptions::new();
+    optimization.static_dfa_only(true).report_only(report_only);
+    emit_files_with_options(grammar, &[grammars_dir()], true, false, &optimization)
+}
+
+fn compile_error_diagnostics(
+    error: dbt_antlr_codegen::emission::EmitError,
+) -> Vec<dbt_antlr_codegen::Diagnostic> {
+    match error {
+        dbt_antlr_codegen::emission::EmitError::Compile(error) => error.diagnostics().to_vec(),
+        other => panic!("expected a compile error, got {other:?}"),
+    }
+}
+
+fn parser_shapes_grammar() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/codegen-direct/fixtures/parser-shapes/ParserShapes.g4")
+}
+
+#[test]
+fn static_dfa_only_emits_fully_static_recognizers() {
+    let output =
+        emit_static_only(&grammars_dir().join("CSV.g4"), false).expect("CSV.g4 is fully static");
+    let lexer = lexer_content(&output, "csvlexer.rs");
+    assert!(
+        lexer.contains("new_static_lexer"),
+        "the lexer runs on tables"
+    );
+    assert!(!lexer.contains("_serializedATN"), "the lexer has no ATN");
+    let parser = lexer_content(&output, "csvparser.rs");
+    assert_eq!(parser.matches("adaptive_predict(").count(), 0);
+    let manifest = output.optimization_manifest.expect("manifest written");
+    assert!(manifest.contains("\"name\": \"static-lexer-dfa\""));
+    assert!(manifest.contains("\"name\": \"static-parser-dfa\""));
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.severity() != Severity::Error),
+        "{:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn static_dfa_only_resolves_hybrid_tables_without_adaptive_predict() {
+    let output = emit_static_only(&grammars_dir().join("ReferenceToATN.g4"), false)
+        .expect("the hybrid table resolves");
+    let parser = lexer_content(&output, "referencetoatnparser.rs");
+    assert!(parser.contains("recog.base.dfa_predict(0)?"));
+    assert_eq!(
+        parser.matches("adaptive_predict(").count(),
+        0,
+        "no decision falls back to adaptivePredict"
+    );
+    let warnings = output
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == "G4S192")
+        .map(|diagnostic| {
+            assert_eq!(diagnostic.severity(), Severity::Warning);
+            assert_eq!((diagnostic.line(), diagnostic.column()), (Some(3), Some(4)));
+            diagnostic.message()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        warnings,
+        [
+            "parser decision 0 of rule 'a' resolves its escape states without adaptivePredict: \
+             1 conflict state predicts the minimum alternative (witness: ATN EOF)"
+        ]
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code() != "G4S190"),
+        "{:?}",
+        output.diagnostics
+    );
+    let manifest = output.optimization_manifest.expect("manifest written");
+    assert!(manifest.contains("\"escapeStates\": 0"), "{manifest}");
+    assert!(manifest.contains("\"minAltStates\": 1"), "{manifest}");
+    assert!(manifest.contains("\"minViableAltStates\": 0"), "{manifest}");
+    assert!(manifest.contains("\"syntaxErrorStates\": 0"), "{manifest}");
+    assert!(manifest.contains("\"adaptiveDecisions\": 0"), "{manifest}");
+    assert!(
+        manifest.contains("\"staticDecisions\": 2"),
+        "the resolved hybrid decision is static: {manifest}"
+    );
+    assert!(
+        manifest.contains("\"hybridDecisions\": 1"),
+        "the resolved decision still counts as hybrid: {manifest}"
+    );
+    assert!(manifest.contains("\"staticDfaOnly\": True"), "{manifest}");
+}
+
+#[test]
+fn static_dfa_only_dumps_annotate_the_resolved_states() {
+    let mut optimization = OptimizationOptions::new();
+    optimization.static_dfa_only(true).dump_dfas("a");
+    let output = emit_files_with_options(
+        &grammars_dir().join("ReferenceToATN.g4"),
+        &[grammars_dir()],
+        true,
+        false,
+        &optimization,
+    )
+    .expect("the dump renders");
+    let [dump] = output.reports.as_slice() else {
+        panic!("one dump per parser unit: {:?}", output.reports);
+    };
+    assert!(
+        dump.contains(
+            "    s4: accept alt=1 (static-dfa-only: minimum conflicting alternative); \
+             error-recovery fallback alt=1"
+        ),
+        "{dump}"
+    );
+
+    let mut optimization = OptimizationOptions::new();
+    optimization.static_dfa_only(true).dump_dfas("a");
+    let output = emit_files_with_options(
+        &grammars_dir().join("parser/LowCoverage.g4"),
+        &[grammars_dir()],
+        true,
+        false,
+        &optimization,
+    )
+    .expect("the dump renders");
+    let [dump] = output.reports.as_slice() else {
+        panic!("one dump per parser unit: {:?}", output.reports);
+    };
+    assert!(
+        dump.contains("--- decision 0: rule 'a' (HYBRID, k=1, 12 states) ---"),
+        "{dump}"
+    );
+    assert_eq!(
+        dump.matches("SYNTAX ERROR (static-dfa-only: predicated lookahead)")
+            .count(),
+        10,
+        "{dump}"
+    );
+}
+
+#[test]
+fn static_dfa_only_guesses_the_minimum_viable_alternative_at_the_frontier() {
+    let output = emit_static_only(&grammars_dir().join("parser/GuardExpr.g4"), false)
+        .expect("every decision resolves");
+    let warnings = output
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == "G4S192")
+        .map(|diagnostic| diagnostic.message())
+        .collect::<Vec<_>>();
+    let [warning] = warnings.as_slice() else {
+        panic!("one resolved decision: {warnings:?}");
+    };
+    assert!(
+        warning.starts_with("parser decision 2 of rule 'expr' resolves its escape states"),
+        "{warning}"
+    );
+    let clause = " undecided states predict the minimum viable alternative (witness: '='";
+    let guesses: usize = warning
+        .split_once(clause)
+        .and_then(|(before, _)| before.rsplit(' ').next())
+        .and_then(|count| count.parse().ok())
+        .unwrap_or_else(|| panic!("no guess clause: {warning}"));
+    assert!(guesses > 0);
+    let manifest = output.optimization_manifest.expect("manifest written");
+    assert!(
+        manifest.contains(&format!("\"minViableAltStates\": {guesses}")),
+        "{manifest}"
+    );
+    assert!(manifest.contains("\"syntaxErrorStates\": 0"), "{manifest}");
+
+    let mut optimization = OptimizationOptions::new();
+    optimization.static_dfa_only(true).dump_dfas("expr");
+    let output = emit_files_with_options(
+        &grammars_dir().join("parser/GuardExpr.g4"),
+        &[grammars_dir()],
+        true,
+        false,
+        &optimization,
+    )
+    .expect("the dump renders");
+    let [dump] = output.reports.as_slice() else {
+        panic!("one dump per parser unit: {:?}", output.reports);
+    };
+    assert_eq!(
+        dump.matches("(static-dfa-only: minimum viable alternative)")
+            .count(),
+        guesses,
+        "{dump}"
+    );
+}
+
+#[test]
+fn static_dfa_only_fails_on_a_lexer_that_needs_the_atn() {
+    let error = emit_static_only(&grammars_dir().join("lexer/Spike.g4"), false)
+        .expect_err("the predicate edge has no static table");
+    let diagnostics = compile_error_diagnostics(error);
+    let errors = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == "G4S188")
+        .collect::<Vec<_>>();
+    assert_eq!(errors.len(), 1, "{diagnostics:?}");
+    assert_eq!(errors[0].severity(), Severity::Error);
+    assert_eq!((errors[0].line(), errors[0].column()), (Some(4), Some(16)));
+    assert!(
+        errors[0].message().ends_with(
+            "due to: cross a predicate; --static-dfa-only requires a fully static lexer"
+        ),
+        "{}",
+        errors[0].message()
+    );
+}
+
+#[test]
+fn static_dfa_only_fails_on_a_parser_decision_without_a_table() {
+    let error = emit_static_only(&parser_shapes_grammar(), false)
+        .expect_err("the non-greedy decision has no static table");
+    let diagnostics = compile_error_diagnostics(error);
+    let messages = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.severity() == Severity::Error)
+        .map(|diagnostic| (diagnostic.code(), diagnostic.message()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        messages,
+        [(
+            "G4S190",
+            "parser decision 3 of rule 'nongreedy' is not fully static: the decision is a \
+             non-greedy subrule, and the generated parser predicts non-greedy subrules only with \
+             adaptivePredict; --static-dfa-only requires a static table for every decision"
+        )]
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code() == "G4S192"
+                && diagnostic
+                    .message()
+                    .contains("predicated states report a syntax error")),
+        "the predicated loop still reports its resolution: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn static_dfa_only_report_only_keeps_the_errors_as_diagnostics() {
+    let output = emit_static_only(&parser_shapes_grammar(), true)
+        .expect("report-only renders despite the errors");
+    assert!(output.files.is_empty());
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code() == "G4S190"
+                && diagnostic.severity() == Severity::Error),
+        "{:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn cli_static_dfa_only_reports_and_fails() {
+    let grammar = grammars_dir().join("lexer/Spike.g4");
+    let out_dir =
+        std::env::temp_dir().join(format!("dbt-static-dfa-only-cli-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let args = vec![
+        "-o".to_owned(),
+        out_dir.to_string_lossy().into_owned(),
+        "--static-dfa-only".to_owned(),
+        grammar.to_string_lossy().into_owned(),
+    ];
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let error = cli::run(&args, &mut stdout, &mut stderr)
+        .expect_err("a lexer that needs the ATN fails the run");
+    assert!(error.to_string().contains("cannot emit"), "{error}");
+    assert!(
+        format!("{error:?}").contains("error[G4S188]"),
+        "the error names the escaped edge: {error:?}"
+    );
+    assert!(
+        !out_dir.join("spike.rs").exists(),
+        "a failed static-only run writes no recognizer"
+    );
+
+    let grammar = parser_shapes_grammar();
+    let args = vec![
+        "-n".to_owned(),
+        "--static-dfa-only".to_owned(),
+        "--report-decisions".to_owned(),
+        grammar.to_string_lossy().into_owned(),
+    ];
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let error = cli::run(&args, &mut stdout, &mut stderr)
+        .expect_err("the report-only run still fails on the error");
+    assert!(
+        error.to_string().contains("failed with 1 error(s)"),
+        "{error}"
+    );
+    let stdout = String::from_utf8(stdout).expect("stdout is utf-8");
+    assert!(
+        stdout.contains("=== parser decision report: ParserShapes (4 decisions) ==="),
+        "the report renders: {stdout}"
+    );
+    let stderr = String::from_utf8(stderr).expect("stderr is utf-8");
+    assert!(stderr.contains("error[G4S190]"), "{stderr}");
+    assert!(stderr.contains("warning[G4S192]"), "{stderr}");
+    let _ = std::fs::remove_dir_all(&out_dir);
 }

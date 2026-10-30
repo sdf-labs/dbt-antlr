@@ -11,9 +11,10 @@
 //!
 //! The build result becomes the `StaticLexerTables` of the lexer output
 //! model. Modes that the builder cannot compile, and edges that escape to the
-//! lazy simulator, produce compiler warnings (`G4S188` and `G4S189`). When every
-//! mode compiles and no edge escapes, the generated lexer runs on the tables
-//! alone: its ATN statics are elided and its word stream is never serialized. The
+//! lazy simulator, produce compiler warnings (`G4S188` and `G4S189`). Under
+//! `--static-dfa-only`, these diagnostics are errors. When every mode compiles
+//! and no edge escapes, the generated lexer runs on the tables alone: its ATN
+//! statics are elided and its word stream is never serialized. The
 //! `StaticLexerDfaReport` of each lexer is appended to the
 //! [`OptimizationReport`](super::report::OptimizationReport), which renders the
 //! `static-lexer-dfa` manifest entry.
@@ -26,6 +27,7 @@ use dbt_antlr_runtime::dfa::static_lexer_dfa::{Accel, CONTINUATION_MOVED_CONFIGS
 use dbt_antlr_runtime::int_stream::EOF;
 use minijinja::Value;
 
+use super::config::AtnFallback;
 use super::descriptor::PassDescriptor;
 use super::manifest::{object, option, source_value};
 use crate::grammar::atn::{CompiledLexer, FinalizedTransitionKind};
@@ -45,7 +47,10 @@ impl StaticLexerDfa {
     pub(crate) const SAFETY: SafetyClass = SafetyClass::TreeAndApiPreserving;
 
     /// Builds the static lexer DFA tables of one compiled lexer unit.
-    pub(crate) fn build(compiled: &CompiledLexer) -> StaticLexerDfaArtifact {
+    ///
+    /// With [`AtnFallback::Forbidden`], every mode failure and escaped edge is
+    /// an error instead of a warning.
+    pub(crate) fn build(compiled: &CompiledLexer, fallback: AtnFallback) -> StaticLexerDfaArtifact {
         let build = StaticLexerDfaBuilder::new().build(compiled.atn);
 
         let unit = &compiled.semantic.unit;
@@ -71,12 +76,19 @@ impl StaticLexerDfa {
                     name,
                     failure,
                     compiled,
+                    fallback,
                 ));
             }
             if !mode.escaped_edges.is_empty() {
                 has_escapes = true;
                 for edge in &mode.escaped_edges {
-                    diagnostics.push(escaped_edge_diagnostic(grammar_name, name, edge, compiled));
+                    diagnostics.push(escaped_edge_diagnostic(
+                        grammar_name,
+                        name,
+                        edge,
+                        compiled,
+                        fallback,
+                    ));
                 }
             }
         }
@@ -729,68 +741,85 @@ fn format_ascii_bytes(bytes: &[u8]) -> String {
     out
 }
 
-/// Per-mode failure warning when a whole mode has no static table.
+/// Per-mode failure diagnostic when a whole mode has no static table.
 fn mode_failure_diagnostic(
     grammar_name: &str,
     mode_name: &str,
     failure: ModeFailure,
     compiled: &CompiledLexer,
+    fallback: AtnFallback,
 ) -> Diagnostic {
     let unit = &compiled.semantic.unit;
     let span = mode_span(unit, mode_name);
     let detail = edge_attribution_note(grammar_name, mode_name, None);
 
     let reason = match failure {
-        ModeFailure::StartClosurePredicate => format!(
+        ModeFailure::StartClosurePredicate => Some(format!(
             "start-state closure crosses a predicate{}",
             rule_names_note(rules_with(compiled, mode_name, Construct::Predicate)),
-        ),
-        ModeFailure::StartClosureCustomAction => format!(
+        )),
+        ModeFailure::StartClosureCustomAction => Some(format!(
             "start-state closure runs a position-dependent action{}",
             rule_names_note(rules_with(compiled, mode_name, Construct::Action)),
-        ),
-        ModeFailure::StartClosureRecursiveContext => format!(
+        )),
+        ModeFailure::StartClosureRecursiveContext => Some(format!(
             "start-state closure reaches a recursive rule context{}",
             rule_names_note(rules_with(compiled, mode_name, Construct::Recursive)),
-        ),
-        ModeFailure::StartStateBudgetExceeded => {
-            return Diagnostic::warning(
-                "G4S189",
-                span,
-                format!(
-                    "{detail}: static DFA expansion exceeded the cap of {DEFAULT_MAX_STATES_PER_MODE} states; \
-                     the whole mode is deferred to runtime expansion"
-                ),
-            );
-        }
+        )),
+        ModeFailure::StartStateBudgetExceeded => None,
     };
-    Diagnostic::warning(
-        "G4S188",
-        span,
-        format!(
-            "{detail}: static DFA expansion failed: {reason}; the whole mode is deferred to runtime expansion"
+    let (code, message) = match reason {
+        Some(reason) => (
+            "G4S188",
+            format!("{detail}: static DFA expansion failed: {reason}"),
         ),
-    )
+        None => (
+            "G4S189",
+            format!(
+                "{detail}: static DFA expansion exceeded the cap of {DEFAULT_MAX_STATES_PER_MODE} states"
+            ),
+        ),
+    };
+    match fallback {
+        AtnFallback::Allowed => Diagnostic::warning(
+            code,
+            span,
+            format!("{message}; the whole mode is deferred to runtime expansion"),
+        ),
+        AtnFallback::Forbidden => static_only_error(code, span, &message),
+    }
 }
 
-/// Per-edge warning for one escaped DFA edge, with a source span in the `.g4` file.
+/// Per-edge diagnostic for one escaped DFA edge, with a source span in the
+/// `.g4` file.
 fn escaped_edge_diagnostic(
     grammar_name: &str,
     mode_name: &str,
     edge: &EscapedEdge,
     compiled: &CompiledLexer,
+    fallback: AtnFallback,
 ) -> Diagnostic {
     let (span, rule_name, reason) = resolve_escape_site(compiled, edge.reason);
     let detail = edge_attribution_note(grammar_name, mode_name, rule_name);
     let symbol = format_edge_label(edge.lo, edge.hi);
-    Diagnostic::warning(
-        "G4S188",
+    let message = format!(
+        "{detail}: static-lexer-dfa failed to expand edge on {symbol} (state {}) \
+         due to: {reason}",
+        edge.state,
+    );
+    match fallback {
+        AtnFallback::Allowed => Diagnostic::warning("G4S188", span, message),
+        AtnFallback::Forbidden => static_only_error("G4S188", span, &message),
+    }
+}
+
+/// The error that replaces a static lexer DFA warning under
+/// `--static-dfa-only`.
+fn static_only_error(code: &'static str, span: SourceSpan, message: &str) -> Diagnostic {
+    Diagnostic::error(
+        code,
         span,
-        format!(
-            "{detail}: static-lexer-dfa failed to expand edge on {symbol} (state {}) \
-             due to: {reason}",
-            edge.state,
-        ),
+        format!("{message}; --static-dfa-only requires a fully static lexer"),
     )
 }
 
