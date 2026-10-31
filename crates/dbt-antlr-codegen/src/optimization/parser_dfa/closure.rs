@@ -489,7 +489,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             let context = config.get_context().expect("config has a context");
             if !context.is_empty() {
                 for i in 0..context.length() {
-                    if context.get_return_state(i) == ATNStateRef::invalid() {
+                    if context.get_return_state(i) == ATNStateRef::empty_return() {
                         let popped = config
                             .clone()
                             .with_prediction_context(Some(PredictionContextRef::new_empty()));
@@ -727,7 +727,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
         let mut agreed = None;
         for i in 0..context.length() {
             let return_state = context.get_return_state(i);
-            if return_state == ATNStateRef::invalid() {
+            if return_state == ATNStateRef::empty_return() {
                 return None;
             }
             let call = self.call_info(return_state.get_state_number())?;
@@ -754,7 +754,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
         }
         let mut max_depth = 0;
         for i in 0..context.length() {
-            if context.get_return_state(i) == ATNStateRef::invalid() {
+            if context.get_return_state(i) == ATNStateRef::empty_return() {
                 continue;
             }
             let depth = match context.get_parent(i) {
@@ -819,7 +819,7 @@ fn has_return_state(mut context: PredictionContextRef<'_>, return_state_number: 
         if return_state.get_state_number() == return_state_number {
             return true;
         }
-        if return_state == ATNStateRef::invalid() {
+        if return_state == ATNStateRef::empty_return() {
             return false;
         }
         match context.get_parent(0) {
@@ -847,7 +847,7 @@ fn has_return_state_in_dag(
         if return_state.get_state_number() == return_state_number {
             return true;
         }
-        if return_state != ATNStateRef::invalid()
+        if return_state != ATNStateRef::empty_return()
             && context
                 .get_parent(i)
                 .is_some_and(|parent| has_return_state_in_dag(parent, return_state_number, visited))

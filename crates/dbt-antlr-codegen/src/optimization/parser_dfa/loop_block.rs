@@ -175,7 +175,7 @@ impl LoopBlock {
         }
         for index in 0..context.length() {
             let return_state = context.get_return_state(index);
-            if return_state == ATNStateRef::invalid() {
+            if return_state == ATNStateRef::empty_return() {
                 continue;
             }
             if self
@@ -204,7 +204,7 @@ impl LoopBlock {
         }
         for index in 0..context.length() {
             let return_state = context.get_return_state(index);
-            if return_state == ATNStateRef::invalid() {
+            if return_state == ATNStateRef::empty_return() {
                 continue;
             }
             if return_state.get_rule_index() == self.rule_index && self.is_pending(return_state) {

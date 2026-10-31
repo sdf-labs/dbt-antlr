@@ -45,7 +45,7 @@ pub struct SingletonPredictionContext<'ephemeral> {
 impl SingletonPredictionContext<'_> {
     #[inline(always)]
     fn is_empty(&self) -> bool {
-        self.return_state == ATNStateRef::invalid() && self.parent_ctx.is_none()
+        self.return_state == ATNStateRef::empty_return() && self.parent_ctx.is_none()
     }
 }
 
@@ -60,7 +60,7 @@ impl Display for PredictionContext<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
             Singleton(s) => {
-                if s.return_state == ATNStateRef::invalid() {
+                if s.return_state == ATNStateRef::empty_return() {
                     f.write_str("$")
                 } else if let Some(parent) = &s.parent_ctx {
                     f.write_fmt(format_args!(
@@ -78,11 +78,11 @@ impl Display for PredictionContext<'_> {
                     if i > 0 {
                         f.write_str(", ")?;
                     }
-                    if arr.return_states[i] == ATNStateRef::invalid() {
+                    if arr.return_states[i] == ATNStateRef::empty_return() {
                         f.write_str("$")?;
-                    } else {
-                        f.write_str(&arr.return_states[i].get_state_number().to_string())?;
+                        continue;
                     }
+                    f.write_str(&arr.return_states[i].get_state_number().to_string())?;
                     if let Some(parent) = &arr.parents[i] {
                         f.write_fmt(format_args!(" {}", parent))?;
                     } else {
@@ -106,7 +106,7 @@ static EMPTY_PREDICTION_CONTEXT: LazyLock<PredictionContext<'static>> = LazyLock
     Singleton(SingletonPredictionContext {
         cached_hash: 0,
         parent_ctx: None,
-        return_state: ATNStateRef::invalid(),
+        return_state: ATNStateRef::empty_return(),
     })
     .modify_with(|x| x.calc_hash())
 });
@@ -204,12 +204,12 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
         if let Singleton(singleton) = self {
             return singleton.is_empty();
         }
-        self.get_return_state(0) == ATNStateRef::invalid()
+        self.get_return_state(0) == ATNStateRef::empty_return()
     }
 
     #[inline(always)]
     pub fn has_empty_path(&self) -> bool {
-        self.get_return_state(self.length() - 1) == ATNStateRef::invalid()
+        self.get_return_state(self.length() - 1) == ATNStateRef::empty_return()
     }
 
     #[inline(always)]
@@ -325,9 +325,8 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
                 return Some(
                     merge_cache
                         .alloc(Self::new_array(
-                            merge_cache
-                                .alloc([b.parent_ctx, Some(PredictionContextRef::new_empty())]),
-                            merge_cache.alloc([b.return_state, ATNStateRef::invalid()]),
+                            merge_cache.alloc([b.parent_ctx, None]),
+                            merge_cache.alloc([b.return_state, ATNStateRef::empty_return()]),
                         ))
                         .into(),
                 );
@@ -336,9 +335,8 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
                 return Some(
                     merge_cache
                         .alloc(Self::new_array(
-                            merge_cache
-                                .alloc([a.parent_ctx, Some(PredictionContextRef::new_empty())]),
-                            merge_cache.alloc([a.return_state, ATNStateRef::invalid()]),
+                            merge_cache.alloc([a.parent_ctx, None]),
+                            merge_cache.alloc([a.return_state, ATNStateRef::empty_return()]),
                         ))
                         .into(),
                 );
@@ -364,8 +362,9 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
             let b_parent = b.get_parent(j);
             if a.get_return_state(i) == b.get_return_state(j) {
                 let payload = a.get_return_state(i);
-                let both =
-                    payload == ATNStateRef::invalid() && a_parent.is_none() && b_parent.is_none();
+                let both = payload == ATNStateRef::empty_return()
+                    && a_parent.is_none()
+                    && b_parent.is_none();
                 let ax_ax = a_parent.is_some() && b_parent.is_some() && a_parent == b_parent;
 
                 if both || ax_ax {
@@ -408,6 +407,9 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
         }
 
         if parents.len() == 1 {
+            if return_states[0] == ATNStateRef::empty_return() && parents[0].is_none() {
+                return PredictionContextRef::new_empty();
+            }
             merge_cache
                 .alloc(Self::new_singleton(parents[0], return_states[0]))
                 .into()
@@ -815,5 +817,5 @@ impl BuildHasher for NoopHasherBuilder {
     }
 }
 
-// #[cfg(test)]
-// mod test;
+#[cfg(test)]
+mod test;

@@ -1929,7 +1929,7 @@ fn serialize_continuation(
     taint: &Taint,
 ) -> ParserContinuation {
     fn return_state_number(return_state: ATNStateRef) -> i32 {
-        if return_state == ATNStateRef::invalid() {
+        if return_state == ATNStateRef::empty_return() {
             -1
         } else {
             return_state.get_state_number()
@@ -2118,10 +2118,10 @@ fn top_prefix_wildcard_match<'a>(
         return false;
     }
     let return_state = shadow.get_return_state(0);
-    if return_state == ATNStateRef::invalid() {
+    if return_state == ATNStateRef::empty_return() {
         return true;
     }
-    if exact.get_return_state(0) == ATNStateRef::invalid() {
+    if exact.get_return_state(0) == ATNStateRef::empty_return() {
         return false;
     }
     return_state == exact.get_return_state(0)
@@ -2145,7 +2145,7 @@ fn branch<'a>(
         .get_parent(index)
         .unwrap_or_else(PredictionContextRef::new_empty);
     let return_state = context.get_return_state(index);
-    if return_state == ATNStateRef::invalid() && parent.is_empty() {
+    if return_state == ATNStateRef::empty_return() && parent.is_empty() {
         return PredictionContextRef::new_empty();
     }
     PredictionContextRef::from(
