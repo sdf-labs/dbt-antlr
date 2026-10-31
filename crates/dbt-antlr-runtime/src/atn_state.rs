@@ -22,6 +22,7 @@ pub(crate) const ATNSTATE_STAR_LOOP_ENTRY: i32 = 10;
 pub(crate) const ATNSTATE_PLUS_LOOP_BACK: i32 = 11;
 pub(crate) const ATNSTATE_LOOP_END: i32 = 12;
 pub(crate) const ATNSTATE_INVALID_STATE_NUMBER: i32 = -1;
+pub(crate) const ATNSTATE_EMPTY_RETURN_NUMBER: i32 = i32::MAX;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ATNStateType {
@@ -340,6 +341,19 @@ impl ATNState {
             epsilon_only_transitions: false,
             rule_index: -1,
             state_number: ATNSTATE_INVALID_STATE_NUMBER,
+            state_type_id: ATNSTATE_INVALID_TYPE,
+            next_tokens_within_rule: OnceLock::new(),
+            transitions: Vec::new(),
+            ext: ATNStateExt { invalid: () },
+        }
+    }
+
+    const fn empty_return() -> Self {
+        ATNState {
+            state_type: ATNStateType::Invalid,
+            epsilon_only_transitions: false,
+            rule_index: -1,
+            state_number: ATNSTATE_EMPTY_RETURN_NUMBER,
             state_type_id: ATNSTATE_INVALID_TYPE,
             next_tokens_within_rule: OnceLock::new(),
             transitions: Vec::new(),
@@ -683,6 +697,17 @@ impl ATNStateRef {
         static INVALID_STATE: ATNState = ATNState::invalid();
 
         ATNStateRef(NonNull::from(&INVALID_STATE))
+    }
+
+    /// The return state of an empty path in a prediction context.
+    ///
+    /// Its state number is `i32::MAX`, so it sorts after every ATN state, and
+    /// an array prediction context keeps its empty path as the last entry.
+    #[inline]
+    pub fn empty_return() -> Self {
+        static EMPTY_RETURN_STATE: ATNState = ATNState::empty_return();
+
+        ATNStateRef(NonNull::from(&EMPTY_RETURN_STATE))
     }
 
     #[allow(clippy::mut_from_ref)]

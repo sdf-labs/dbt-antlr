@@ -1233,7 +1233,7 @@ pub(crate) fn closure_core<'scratch>(
         if config.get_context().map(|x| x.is_empty()) == Some(false) {
             let ctx = config.take_context();
             for i in 0..ctx.length() {
-                if ctx.get_return_state(i) != ATNStateRef::invalid() {
+                if ctx.get_return_state(i) != ATNStateRef::empty_return() {
                     let new_ctx = ctx.get_parent(i);
                     let return_state = ctx.get_return_state(i);
                     let next_config = config

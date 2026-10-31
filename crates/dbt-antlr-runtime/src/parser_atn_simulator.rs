@@ -389,7 +389,7 @@ impl<'sim> ParserATNSimulator<'sim> {
                     parent,
                     return_state,
                 } => PredictionContext::new_singleton(
-                    Some(context_ref(&contexts, *parent)),
+                    (*return_state >= 0).then(|| context_ref(&contexts, *parent)),
                     return_state_ref(atn, *return_state),
                 ),
                 ContinuationContextNode::Array {
@@ -399,7 +399,10 @@ impl<'sim> ParserATNSimulator<'sim> {
                     let parents = local.scratch().alloc_slice_fill_iter(
                         parents
                             .iter()
-                            .map(|&parent| Some(context_ref(&contexts, parent))),
+                            .zip(return_states)
+                            .map(|(&parent, &return_state)| {
+                                (return_state >= 0).then(|| context_ref(&contexts, parent))
+                            }),
                     );
                     let return_states = local.scratch().alloc_slice_fill_iter(
                         return_states
@@ -1233,7 +1236,7 @@ impl<'sim> ParserATNSimulator<'sim> {
         if config.get_state().state_type() == ATNStateType::RuleStop {
             if !config.get_context().unwrap().is_empty() {
                 config.get_context().unwrap().run(|temp| {
-                    if temp.get_return_state(temp.length() - 1) == ATNStateRef::invalid() {
+                    if temp.get_return_state(temp.length() - 1) == ATNStateRef::empty_return() {
                         if full_ctx {
                             let new_config = config
                                 .clone()
@@ -1256,7 +1259,7 @@ impl<'sim> ParserATNSimulator<'sim> {
                 });
                 let context = config.take_context();
                 for i in 0..context.length() {
-                    if context.get_return_state(i) == ATNStateRef::invalid() {
+                    if context.get_return_state(i) == ATNStateRef::empty_return() {
                         assert!(
                             i == context.length() - 1,
                             "EMPTY_RETURN_STATE is not last for some reason, please report error"
@@ -1898,10 +1901,11 @@ fn context_ref<'a>(contexts: &[PredictionContextRef<'a>], index: u32) -> Predict
     }
 }
 
-/// The ATN state a continuation return state number names.
+/// The return state that a continuation return state number names. A negative
+/// number names the empty return state.
 fn return_state_ref(atn: &ATN, return_state: i32) -> ATNStateRef {
     if return_state < 0 {
-        ATNStateRef::invalid()
+        ATNStateRef::empty_return()
     } else {
         atn.make_state_ref(return_state)
     }

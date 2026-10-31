@@ -349,7 +349,7 @@ fn collect_roots_in(
                 collect_roots_in(state, &parent, block_end_state, sites, out, visited);
             }
             _ => {
-                if return_state == ATNStateRef::invalid() {
+                if return_state == ATNStateRef::empty_return() {
                     out.insert(state.get_state_number());
                 } else if return_state != block_end_state {
                     let number = return_state.get_state_number();
