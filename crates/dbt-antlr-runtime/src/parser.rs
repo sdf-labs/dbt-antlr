@@ -15,6 +15,7 @@ use crate::error_strategy::ErrorStrategy;
 use crate::errors::ANTLRError;
 use crate::interval_set::IntervalSet;
 use crate::parser_atn_simulator::ParserATNSimulator;
+use crate::prediction_mode::PredictionMode;
 use crate::recognizer::{Actions, Recognizer};
 use crate::rule_context::{states_stack, RuleContext as _};
 use crate::token::{OwningToken, Token, TOKEN_EOF, TOKEN_EPSILON};
@@ -95,6 +96,12 @@ where
         Self: Sized;
 
     fn is_expected_token(&self, symbol: i32) -> bool;
+
+    /// Called when a prediction reads the rule invocation stack: a
+    /// full-context simulation or a stack guard. A shared-descent group
+    /// discards a neutral parse that did, because the stack of the neutral
+    /// parse is the one of a single member.
+    fn note_stack_dependent_prediction(&self) {}
     fn get_precedence(&self) -> i32;
 
     fn get_state(&self) -> i32;
@@ -126,6 +133,8 @@ where
     children: usize,
     precedence_depth: usize,
     syntax_errors: i32,
+    /// [`BaseParser::stack_dependent`] of the enclosing neutral parse.
+    outer_stack_dependent: bool,
     matched_eof: bool,
     #[cfg(feature = "recursion-limit")]
     recursion_depth: u32,
@@ -210,6 +219,9 @@ where
     /// The pending re-descent of a shared-descent group (see
     /// [`Self::resume_neutral_parse`]).
     resume: Option<Resume<'input, 'arena, Node, TF::Tok>>,
+    /// Whether a prediction of the current neutral parse read the rule
+    /// invocation stack (see [`Parser::note_stack_dependent_prediction`]).
+    stack_dependent: Cell<bool>,
 
     pub arena: &'arena Arena,
     ext: Ext,
@@ -476,6 +488,12 @@ where
         unimplemented!()
     }
 
+    fn note_stack_dependent_prediction(&self) {
+        if self.muted > 0 {
+            self.stack_dependent.set(true);
+        }
+    }
+
     fn get_precedence(&self) -> i32 {
         *self.precedence_stack.last().unwrap_or(&-1)
     }
@@ -566,6 +584,7 @@ where
             )],
             muted: 0,
             resume: None,
+            stack_dependent: Cell::new(false),
             arena,
             ext,
             pd: PhantomData,
@@ -643,6 +662,7 @@ where
                 };
             }
             if accept == GUARDED {
+                self.note_stack_dependent_prediction();
                 // Guarded take of an optional-postfix decision: resolve to the
                 // guarded alternative unless the real parse stack's epsilon-pop
                 // chase from the decision's block end can reach a guard root.
@@ -740,6 +760,7 @@ where
         mut context: Option<&'arena TreeNode<'input, 'arena, Node, TF::Tok>>,
         token: i32,
     ) -> bool {
+        self.note_stack_dependent_prediction();
         let atn = self.get_interpreter().atn();
         while let Some(node) = context {
             let invoking_state = node.get_invoking_state();
@@ -772,10 +793,17 @@ where
     /// A group cannot start while the re-descent of another group is pending,
     /// and not while parse listeners are attached without a parse tree: the
     /// muted listener events of the shared rule are replayed from its subtree.
+    ///
+    /// A group also cannot start in the SLL prediction mode. For an ambiguous
+    /// input, SLL resolves the conflict of the decision to its minimum
+    /// alternative, but the tail dispatch after the shared rule can select
+    /// another member.
     #[doc(hidden)]
     pub fn descent_ready(&mut self) -> bool {
         self.drop_stale_resume();
-        self.resume.is_none() && (self.build_parse_trees || self.parse_listeners.is_empty())
+        self.resume.is_none()
+            && (self.build_parse_trees || self.parse_listeners.is_empty())
+            && self.get_interpreter().get_prediction_mode() != PredictionMode::SLL
     }
 
     /// Ends a re-descent that moved past the start of its shared rule without
@@ -822,23 +850,26 @@ where
             children: ctx.map_or(0, |ctx| ctx.get_child_count()),
             precedence_depth: self.precedence_stack.len(),
             syntax_errors: self._syntax_errors.get(),
+            outer_stack_dependent: self.muted > 0 && self.stack_dependent.get(),
             matched_eof: self.matched_eof,
             #[cfg(feature = "recursion-limit")]
             recursion_depth: self.current_recursion_depth,
         };
+        self.stack_dependent.set(false);
         self.muted += 1;
         self.state = call_site;
         neutral
     }
 
-    /// Whether the neutral parse reported a syntax error. Its subtree must not
-    /// be used then.
+    /// Whether the subtree of the neutral parse is the one every member would
+    /// parse: the parse reported no syntax error, and no prediction in it read
+    /// the rule invocation stack, which holds the call site of one member only.
     #[doc(hidden)]
-    pub fn neutral_parse_failed(
+    pub fn neutral_parse_usable(
         &self,
         neutral: &NeutralParse<'input, 'arena, Node, TF::Tok>,
     ) -> bool {
-        self._syntax_errors.get() != neutral.syntax_errors
+        self._syntax_errors.get() == neutral.syntax_errors && !self.stack_dependent.get()
     }
 
     /// Discards a neutral parse: rewinds the stream to the decision start and
@@ -889,6 +920,9 @@ where
         self.precedence_stack.truncate(neutral.precedence_depth);
         self.state = neutral.state;
         self.matched_eof = neutral.matched_eof;
+        // The predictions of this neutral parse belong to the enclosing one.
+        self.stack_dependent
+            .set(neutral.outer_stack_dependent || self.stack_dependent.get());
         #[cfg(feature = "recursion-limit")]
         {
             self.current_recursion_depth = neutral.recursion_depth;

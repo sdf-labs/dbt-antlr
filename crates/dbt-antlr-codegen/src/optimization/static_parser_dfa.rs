@@ -25,11 +25,13 @@ use minijinja::Value;
 use super::config::AtnFallback;
 use super::descriptor::PassDescriptor;
 use super::manifest::{object, source_value};
-use dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables as RuntimeTables;
+use dbt_antlr_runtime::dfa::static_parser_dfa::{
+    StaticParserTables as RuntimeTables, VIRTUAL_ALT_BASE,
+};
 
 use super::parser_dfa::{
-    Category, DecisionClassifier, DecisionResult, EscapeResolution, EscapeResolutions,
-    StaticDfaTable,
+    Category, DecisionClassifier, DecisionResult, DescentPlan, DescentRules, EscapeResolution,
+    EscapeResolutions, StaticDfaTable,
 };
 use crate::grammar::atn::CompiledParser;
 use crate::grammar::diagnostic::Diagnostic;
@@ -61,6 +63,8 @@ pub(crate) struct StaticParserTables {
     /// has to defer to `adaptivePredict` when prediction returns no
     /// alternative.
     defers: Vec<bool>,
+    /// The shared-descent groups each decision's table accepts with.
+    descent: Vec<Option<DescentPlan>>,
     atn_fallback: AtnFallback,
 }
 
@@ -82,6 +86,10 @@ impl StaticParserTables {
             tables: super::parser_dfa::build_tables(results),
             has_table,
             defers,
+            descent: results
+                .iter()
+                .map(|result| result.descent.clone())
+                .collect(),
             atn_fallback,
         }
     }
@@ -94,6 +102,20 @@ impl StaticParserTables {
     /// `true` when the decision still reaches the adaptive simulation.
     pub(crate) fn defers(&self, decision: usize) -> bool {
         self.defers.get(decision).copied().unwrap_or(false)
+    }
+
+    /// The shared-descent groups the decision's table accepts with, when it
+    /// has any: the decision must be emitted as a `DescentAltBlock`.
+    pub(crate) fn descent(&self, decision: usize) -> Option<&DescentPlan> {
+        self.descent.get(decision).and_then(Option::as_ref)
+    }
+
+    /// The shared rules of every decision's groups.
+    pub(crate) fn shared_rules(&self) -> impl Iterator<Item = usize> + '_ {
+        self.descent
+            .iter()
+            .flatten()
+            .flat_map(|plan| plan.groups.iter().map(|group| group.rule))
     }
 
     /// Whether the generated parser can call `adaptivePredict` at all.
@@ -129,6 +151,7 @@ impl StaticParserDfa {
         let ll1_disjoint = ll1_disjointness(compiled);
         let mut results = DecisionClassifier::new(atn, ll1_disjoint)
             .with_atn_fallback(atn_fallback)
+            .with_descent_rules(descent_rules(compiled))
             .classify_all();
         if atn_fallback == AtnFallback::Forbidden {
             for result in &mut results {
@@ -156,6 +179,7 @@ impl StaticParserDfa {
             grammar: compiled.semantic.unit.name.clone(),
             source_span: compiled.semantic.unit.span.clone(),
             vocabulary,
+            rule_names: recognizer.rule_names.clone(),
             decisions,
             atn_fallback,
         };
@@ -193,6 +217,10 @@ impl StaticParserDfa {
                 Value::from(totals.min_viable_alt_states),
             ),
             ("syntaxErrorStates", Value::from(totals.syntax_error_states)),
+            (
+                "descentGroupStates",
+                Value::from(totals.descent_group_states),
+            ),
         ]);
         let rendered = Value::from_iter(
             parsers
@@ -263,13 +291,16 @@ pub(crate) struct StaticParserDfaReport {
     /// Display names of the token types `1..=max_token_type`, indexed by
     /// `token_type - 1`.
     pub(crate) vocabulary: Vec<String>,
+    /// Rule names, indexed by rule index.
+    pub(crate) rule_names: Vec<String>,
     pub(crate) decisions: Vec<StaticParserDecisionReport>,
     /// Whether the generated parser can defer to the adaptive simulation.
     pub(crate) atn_fallback: AtnFallback,
 }
 
 impl StaticParserDfaReport {
-    /// The number of decisions that run without any adaptive prediction.
+    /// The number of decisions whose tables never escape to the adaptive
+    /// simulation (see [`DecisionResult::is_fully_static`]).
     fn static_decisions(&self) -> usize {
         self.decisions
             .iter()
@@ -293,6 +324,16 @@ impl StaticParserDfaReport {
             .iter()
             .filter(|decision| !decision.result.is_fully_static())
             .count()
+    }
+
+    /// The states that accept with the virtual alternative of a shared-descent
+    /// group, summed over the decisions that keep their table.
+    fn descent_group_states(&self) -> usize {
+        self.decisions
+            .iter()
+            .filter(|decision| decision.result.descent.is_some())
+            .map(|decision| decision.result.descent_group_states)
+            .sum()
     }
 
     fn escape_states(&self) -> usize {
@@ -329,6 +370,7 @@ struct ReportMetrics {
     min_alt_states: usize,
     min_viable_alt_states: usize,
     syntax_error_states: usize,
+    descent_group_states: usize,
 }
 
 impl ReportMetrics {
@@ -342,6 +384,7 @@ impl ReportMetrics {
         self.min_alt_states += resolved.min_alt;
         self.min_viable_alt_states += resolved.min_viable_alt;
         self.syntax_error_states += resolved.syntax_error;
+        self.descent_group_states += parser.descent_group_states();
     }
 }
 
@@ -371,6 +414,10 @@ fn parser_report_value(parser: &StaticParserDfaReport, sources: &SourceSet) -> V
         ("minAltStates", Value::from(resolved.min_alt)),
         ("minViableAltStates", Value::from(resolved.min_viable_alt)),
         ("syntaxErrorStates", Value::from(resolved.syntax_error)),
+        (
+            "descentGroupStates",
+            Value::from(parser.descent_group_states()),
+        ),
     ])
 }
 
@@ -399,6 +446,51 @@ pub(super) fn ll1_disjointness(compiled: &CompiledParser) -> Vec<bool> {
         .collect()
 }
 
+/// The rule facts that decide which rules a shared-descent group may share,
+/// indexed by rule index.
+pub(super) fn descent_rules(compiled: &CompiledParser) -> DescentRules {
+    let rules = &compiled.semantic.unit.rules;
+    DescentRules {
+        has_arguments: rules
+            .iter()
+            .map(|rule| {
+                compiled
+                    .semantic
+                    .bindings
+                    .attributes
+                    .get(&rule.id)
+                    .is_some_and(|attributes| !attributes.arguments.is_empty())
+            })
+            .collect(),
+        has_actions: rules
+            .iter()
+            .map(|rule| {
+                rule.actions
+                    .iter()
+                    .any(|action| matches!(action.name.as_str(), "init" | "after"))
+                    || !rule.catches.is_empty()
+                    || rule.finally_action.is_some()
+                    || block_has_action(&rule.block)
+            })
+            .collect(),
+    }
+}
+
+/// Whether a block runs an embedded action. The empty actions that the
+/// left-recursion rewrite inserts run nothing.
+fn block_has_action(block: &Block) -> bool {
+    block.alternatives.iter().any(|alternative| {
+        alternative
+            .elements
+            .iter()
+            .any(|element| match &element.kind {
+                ElementKind::Action { body, .. } => !body.trim().is_empty(),
+                ElementKind::Block(block) => block_has_action(block),
+                _ => false,
+            })
+    })
+}
+
 /// The display name of one token type, as the Java tool prints it: the string
 /// literal, then the token name, then the numeric type.
 fn token_display_name(recognizer: &RecognizerModel, token_type: i32) -> String {
@@ -421,6 +513,7 @@ fn decision_report_text(report: &StaticParserDfaReport) -> String {
     )];
     lines.push(summary_line(&report.decisions));
     lines.extend(take_rule_line(&report.decisions));
+    lines.extend(descent_line(&report.decisions));
     lines.extend(decision_rows(&report.decisions));
     lines.extend(k_summary(&report.decisions));
     finish_block(lines)
@@ -463,6 +556,26 @@ fn take_rule_line(decisions: &[StaticParserDecisionReport]) -> Option<String> {
         .sum();
     Some(format!(
         "take-rule: {postfix_decisions} optional-postfix decisions; fires at {fires} conflict states; guarded takes={guarded}"
+    ))
+}
+
+/// The shared-descent summary: how many decisions accept with a group's virtual
+/// alternative, and in how many states.
+fn descent_line(decisions: &[StaticParserDecisionReport]) -> Option<String> {
+    let with_groups = decisions
+        .iter()
+        .filter(|decision| decision.result.descent.is_some())
+        .count();
+    if with_groups == 0 {
+        return None;
+    }
+    let states: usize = decisions
+        .iter()
+        .filter(|decision| decision.result.descent.is_some())
+        .map(|decision| decision.result.descent_group_states)
+        .sum();
+    Some(format!(
+        "descent: {with_groups} decisions with shared-descent groups; {states} group-accept states"
     ))
 }
 
@@ -634,7 +747,10 @@ fn decision_dump_lines(
                 }
             }
         }
-        (Some(table), None) => lines.extend(table_dump_lines(report, table, with_paths)),
+        (Some(table), None) => {
+            lines.extend(descent_dump_lines(report, result.descent.as_ref()));
+            lines.extend(table_dump_lines(report, table, with_paths));
+        }
         (None, None) if matches!(result.category, Category::LL1 | Category::NON_GREEDY) => {
             lines.push(format!("  no table needed: {}", adaptive_reason(result)));
         }
@@ -668,7 +784,9 @@ fn table_dump_lines(
     }
     for (index, state) in table.states.iter().enumerate() {
         let mut line = format!("    s{index}: ");
-        if state.accept > 0 {
+        if state.accept >= VIRTUAL_ALT_BASE {
+            line.push_str(&format!("GROUP {}", state.accept));
+        } else if state.accept > 0 {
             line.push_str(&format!("accept alt={}", state.accept));
             match state.resolution {
                 Some(EscapeResolution::MinAlt) => {
@@ -708,6 +826,52 @@ fn table_dump_lines(
         }
     }
     lines
+}
+
+/// One line per shared-descent group of a decision.
+fn descent_dump_lines(report: &StaticParserDfaReport, plan: Option<&DescentPlan>) -> Vec<String> {
+    let Some(plan) = plan else {
+        return Vec::new();
+    };
+    plan.groups
+        .iter()
+        .map(|group| {
+            let mut text = format!(
+                "  group {}: shared rule '{}' after {} prefix tokens, members {:?}; tails:",
+                group.virtual_alt,
+                report
+                    .rule_names
+                    .get(group.rule)
+                    .map_or("?", String::as_str),
+                group.prefix.len(),
+                group.alts
+            );
+            for arm in &group.arms {
+                let tokens: Vec<String> = arm
+                    .tokens
+                    .iter()
+                    .map(|token| token_name(&report.vocabulary, *token))
+                    .collect();
+                text.push_str(&format!(
+                    " alt {} on {}{}",
+                    arm.alt,
+                    tokens.join(" "),
+                    if arm.guarded {
+                        " (unless it can follow the rule)"
+                    } else {
+                        ""
+                    }
+                ));
+                text.push(';');
+            }
+            if group.default_alt > 0 {
+                text.push_str(&format!(" otherwise alt {}", group.default_alt));
+            } else {
+                text.push_str(" otherwise full prediction");
+            }
+            text
+        })
+        .collect()
 }
 
 /// The display name of one token type of the unit's vocabulary.
