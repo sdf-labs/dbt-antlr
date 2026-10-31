@@ -109,3 +109,8 @@ mv "$STATIC_TMP/guardexprparser.rs" "$SCRIPT_DIR/tests/gen/guardexprparser_stati
 echo "Generating: guardexprparser_static_only"
 "$GEN_BIN" -no-listener --static-dfa-only -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/GuardExpr.g4"
 mv "$STATIC_TMP/guardexprparser.rs" "$SCRIPT_DIR/tests/gen/guardexprparser_static_only.rs"
+
+# The full-context witness: a call of `send` as the parse entry predicts its
+# operator loop with an empty outer context (tests/full_context.rs).
+echo "Generating: parser/LoopVeto"
+"$GEN_BIN" -no-listener -o "$SCRIPT_DIR/tests/gen" "$SCRIPT_DIR/grammars/parser/LoopVeto.g4"
