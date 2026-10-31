@@ -69,6 +69,16 @@ pub const CONFLICT_ESCAPE: i32 = -2;
 /// defers to the adaptive simulation.
 pub const GUARDED: i32 = -3;
 
+/// First virtual alternative of a decision.
+///
+/// A state whose live alternatives all start with the same shared rule accepts
+/// with the virtual alternative `VIRTUAL_ALT_BASE + group` of that
+/// shared-descent group instead of escaping. A generated block with an arm for
+/// the group parses the shared rule once and picks the member alternative from
+/// the token after it; a block without one defers to the adaptive simulation.
+/// No decision has this many alternatives.
+pub const VIRTUAL_ALT_BASE: i32 = 65_536;
+
 /// The empty prediction context in a continuation context DAG.
 pub(crate) const EMPTY_CONTEXT: u32 = u32::MAX;
 
@@ -794,7 +804,9 @@ impl StaticParserTable {
         self.accepts.len()
     }
 
-    /// The accept marker or predicted alternative of a state.
+    /// The accept marker or predicted alternative of a state. A value at or
+    /// above [`VIRTUAL_ALT_BASE`] is the virtual alternative of a
+    /// shared-descent group.
     #[inline]
     pub fn accept(&self, state: i32) -> i32 {
         self.accepts[state as usize]
@@ -1437,6 +1449,22 @@ mod tests {
         assert_eq!(table.guard_step(7), None);
         assert_eq!(table.guard_step(9), Some(true));
         assert_eq!(decoded.to_words(), words);
+    }
+
+    #[test]
+    fn virtual_alternatives_round_trip_as_accepts() {
+        let built = table(
+            0,
+            vec![0, VIRTUAL_ALT_BASE + 1, 2],
+            &[vec![(1, 1, 1), (2, 2, 2)], Vec::new(), Vec::new()],
+        );
+        let words = StaticParserTables::new(vec![DecisionTables::Single(0)], vec![built.clone()])
+            .to_words();
+        let decoded = StaticParserTables::from_words(&words).expect("the words decode");
+        let table = decoded.table(0, 0).expect("decision 0 has a table");
+        assert_eq!(table, &built);
+        assert_eq!(table.accept(1), VIRTUAL_ALT_BASE + 1);
+        assert_eq!(table.accept(2), 2);
     }
 
     #[test]
