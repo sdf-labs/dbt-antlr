@@ -80,9 +80,9 @@ impl Display for PredictionContext<'_> {
                     }
                     if arr.return_states[i] == ATNStateRef::invalid() {
                         f.write_str("$")?;
-                    } else {
-                        f.write_str(&arr.return_states[i].get_state_number().to_string())?;
+                        continue;
                     }
+                    f.write_str(&arr.return_states[i].get_state_number().to_string())?;
                     if let Some(parent) = &arr.parents[i] {
                         f.write_fmt(format_args!(" {}", parent))?;
                     } else {
@@ -110,6 +110,21 @@ static EMPTY_PREDICTION_CONTEXT: LazyLock<PredictionContext<'static>> = LazyLock
     })
     .modify_with(|x| x.calc_hash())
 });
+
+/// The sort key of a return state in an array context.
+///
+/// The empty return state sorts last, as `EMPTY_RETURN_STATE`
+/// (`Integer.MAX_VALUE`) does in the Java runtime. An empty path is always
+/// the last entry, and only a lone empty path is an empty context:
+/// `has_empty_path`, `is_empty` and the stop-state closure of the parser
+/// simulator read the entries with this rule.
+fn return_state_order(return_state: ATNStateRef) -> i32 {
+    if return_state == ATNStateRef::invalid() {
+        i32::MAX
+    } else {
+        return_state.get_state_number()
+    }
+}
 
 impl<'ephemeral> PredictionContext<'ephemeral> {
     pub fn new_singleton(
@@ -296,7 +311,7 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
                     .scratch()
                     .alloc([a.return_state, b.return_state]);
 
-                if return_states[0] > return_states[1] {
+                if return_state_order(return_states[0]) > return_state_order(return_states[1]) {
                     parents.swap(0, 1);
                     return_states.swap(0, 1);
                 }
@@ -325,8 +340,7 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
                 return Some(
                     merge_cache
                         .alloc(Self::new_array(
-                            merge_cache
-                                .alloc([b.parent_ctx, Some(PredictionContextRef::new_empty())]),
+                            merge_cache.alloc([b.parent_ctx, None]),
                             merge_cache.alloc([b.return_state, ATNStateRef::invalid()]),
                         ))
                         .into(),
@@ -336,8 +350,7 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
                 return Some(
                     merge_cache
                         .alloc(Self::new_array(
-                            merge_cache
-                                .alloc([a.parent_ctx, Some(PredictionContextRef::new_empty())]),
+                            merge_cache.alloc([a.parent_ctx, None]),
                             merge_cache.alloc([a.return_state, ATNStateRef::invalid()]),
                         ))
                         .into(),
@@ -383,7 +396,9 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
                 }
                 i += 1;
                 j += 1;
-            } else if a.get_return_state(i) < b.get_return_state(j) {
+            } else if return_state_order(a.get_return_state(i))
+                < return_state_order(b.get_return_state(j))
+            {
                 return_states.push(a.get_return_state(i));
                 parents.push(a_parent);
                 i += 1;
@@ -408,6 +423,9 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
         }
 
         if parents.len() == 1 {
+            if return_states[0] == ATNStateRef::invalid() && parents[0].is_none() {
+                return PredictionContextRef::new_empty();
+            }
             merge_cache
                 .alloc(Self::new_singleton(parents[0], return_states[0]))
                 .into()
@@ -815,5 +833,5 @@ impl BuildHasher for NoopHasherBuilder {
     }
 }
 
-// #[cfg(test)]
-// mod test;
+#[cfg(test)]
+mod test;

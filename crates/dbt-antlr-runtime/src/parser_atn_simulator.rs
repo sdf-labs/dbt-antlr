@@ -389,7 +389,7 @@ impl<'sim> ParserATNSimulator<'sim> {
                     parent,
                     return_state,
                 } => PredictionContext::new_singleton(
-                    Some(context_ref(&contexts, *parent)),
+                    (*return_state >= 0).then(|| context_ref(&contexts, *parent)),
                     return_state_ref(atn, *return_state),
                 ),
                 ContinuationContextNode::Array {
@@ -399,7 +399,10 @@ impl<'sim> ParserATNSimulator<'sim> {
                     let parents = local.scratch().alloc_slice_fill_iter(
                         parents
                             .iter()
-                            .map(|&parent| Some(context_ref(&contexts, parent))),
+                            .zip(return_states)
+                            .map(|(&parent, &return_state)| {
+                                (return_state >= 0).then(|| context_ref(&contexts, parent))
+                            }),
                     );
                     let return_states = local.scratch().alloc_slice_fill_iter(
                         return_states
