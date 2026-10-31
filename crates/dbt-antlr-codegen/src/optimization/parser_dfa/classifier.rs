@@ -18,6 +18,7 @@ use dbt_antlr_runtime::dfa::static_parser_dfa::{
 };
 
 use super::closure::{ClosedSet, Closure, ClosureFacts, PrecedenceClass, Taint, taint_of};
+use super::descent::{DescentAnalyzer, DescentPlan, DescentRules};
 use super::loop_block::{ITERATE_ALT, ITERATE_REAL, LoopBlock, is_iterate_exit_pair};
 use super::postfix::{PostfixShape, bottom_frame_is, compute_guard_data, reach_eps};
 use super::table::{StaticDfaEdge, StaticDfaState, StaticDfaTable};
@@ -71,7 +72,7 @@ fn is_take_skip_pair(alts: &BitSet) -> bool {
         && alts.contains(POSTFIX_SKIP_ALT as usize)
 }
 
-const VIRTUAL_ALT_BASE: usize = 65_536;
+use dbt_antlr_runtime::dfa::static_parser_dfa::VIRTUAL_ALT_BASE;
 const MAX_TRACKED_DEPTH: usize = 30;
 const VARIABLE_DEPTH: usize = 31;
 
@@ -135,6 +136,9 @@ struct ClassifyEffects {
     /// The decision state of the attempt is behind a predicate, so the whole
     /// decision depends on parser state and no table can decide it.
     fail_predicated: bool,
+    /// The state accepts with the virtual alternative of a shared-descent
+    /// group.
+    descent_group: bool,
     abort: bool,
 }
 
@@ -244,6 +248,11 @@ struct Attempt {
     take_rule_fires: usize,
     /// Conflict states a guarded take resolved.
     guarded_takes: usize,
+    /// States that accept with the virtual alternative of a shared-descent
+    /// group.
+    descent_group_states: usize,
+    /// The shared-descent plan of the attempt, when it had one.
+    descent: Option<DescentPlan>,
 }
 
 /// The precedence classes of one precedence-loop decision.
@@ -282,6 +291,11 @@ pub(crate) struct DecisionResult {
     pub(crate) take_rule_fires: usize,
     /// Conflict states a guarded take resolved (Phase 5.2b).
     pub(crate) guarded_takes: usize,
+    /// States that accept with the virtual alternative of a shared-descent
+    /// group.
+    pub(crate) descent_group_states: usize,
+    /// The shared-descent groups the table accepts with.
+    pub(crate) descent: Option<DescentPlan>,
     pub(crate) utrust_resolutions: usize,
     pub(crate) conflict_witness: Option<Vec<i32>>,
     pub(crate) budget_witness: Option<Vec<i32>>,
@@ -315,6 +329,8 @@ impl DecisionResult {
             has_postfix_shape: false,
             take_rule_fires: 0,
             guarded_takes: 0,
+            descent_group_states: 0,
+            descent: None,
             utrust_resolutions: 0,
             conflict_witness: None,
             budget_witness: None,
@@ -386,12 +402,15 @@ impl DecisionResult {
         }
     }
 
-    /// `true` when the decision never falls back to the adaptive simulation.
+    /// `true` when the table of the decision never escapes to the adaptive
+    /// simulation.
     ///
     /// `LL(1)` and non-greedy decisions need no table at all, and a table
     /// without escapes decides on its own; everything else keeps at least one
     /// adaptive path. A decision that `--static-dfa-only` resolved never falls
-    /// back.
+    /// back. The arm of a shared-descent group still calls `adaptivePredict`
+    /// after an errorful neutral parse, and for a tail token that no arm
+    /// takes.
     pub(crate) fn is_fully_static(&self) -> bool {
         if self.static_only.is_some() {
             return true;
@@ -436,6 +455,8 @@ pub(crate) struct DecisionClassifier {
     /// it cannot (`--static-dfa-only`), a partial table is kept regardless of
     /// its coverage, because the alternative is no table at all.
     atn_fallback: AtnFallback,
+    /// The shared-descent plans of the decisions.
+    descent: DescentAnalyzer,
 }
 
 impl DecisionClassifier {
@@ -448,6 +469,7 @@ impl DecisionClassifier {
             loop_blocks: HashMap::new(),
             postfix_shapes: HashMap::new(),
             atn_fallback: AtnFallback::Allowed,
+            descent: DescentAnalyzer::new(atn),
         }
     }
 
@@ -479,6 +501,12 @@ impl DecisionClassifier {
     #[cfg(test)]
     pub(crate) fn with_visit_budget(mut self, budget: u64) -> Self {
         self.visit_budget = budget;
+        self
+    }
+
+    /// Enables shared-descent groups with the rule facts of the grammar.
+    pub(crate) fn with_descent_rules(mut self, rules: DescentRules) -> Self {
+        self.descent = self.descent.with_rules(rules);
         self
     }
 
@@ -531,7 +559,7 @@ impl DecisionClassifier {
             result.k = 1;
             return result;
         }
-        if state.get_transitions().len() >= VIRTUAL_ALT_BASE {
+        if state.get_transitions().len() >= VIRTUAL_ALT_BASE as usize {
             result.category = Category::OVERFLOW;
             return result;
         }
@@ -632,6 +660,7 @@ impl DecisionClassifier {
             let covers = result.coverage_percent >= HYBRID_MIN_COVERAGE_PERCENT
                 || self.atn_fallback == AtnFallback::Forbidden;
             if start_decides && covers {
+                result.descent = used_groups(outcome.descent.as_ref(), &table);
                 result.table = Some(table);
             }
             return result;
@@ -653,6 +682,7 @@ impl DecisionClassifier {
             result.category,
             Category::LLK | Category::LLSTAR | Category::EXACT_AMBIG
         ) {
+            result.descent = used_groups(outcome.descent.as_ref(), &table);
             result.table = Some(table);
         }
         result
@@ -829,6 +859,14 @@ impl DecisionClassifier {
         let decision_state = atn.decision_to_state[decision];
         let loop_block = precedence.map(|_| self.loop_block(decision_state));
         let postfix = self.postfix_shape(decision_state);
+        // Shared-descent groups resolve escapes, so only hybrid attempts use
+        // them; a precedence class table is selected by the precedence, which a
+        // group arm cannot see.
+        let descent = if policy.hybrid && precedence.is_none() {
+            self.descent.plan(decision)
+        } else {
+            None
+        };
         let mut completion_depths = std::mem::take(&mut self.completion_depths);
         let attempt = Arena::with(|arena| {
             let manager = ParserATNSimulatorManager::new(atn);
@@ -854,6 +892,7 @@ impl DecisionClassifier {
                 allow_continuations: policy.hybrid && precedence.is_none(),
                 precedence_class: precedence.is_some(),
                 postfix,
+                descent,
                 own_roots: HashMap::new(),
                 guard_candidates: BTreeMap::new(),
                 guard_data: None,
@@ -877,6 +916,22 @@ impl DecisionClassifier {
     }
 }
 
+/// The groups of `plan` that some state of `table` accepts with.
+fn used_groups(plan: Option<&DescentPlan>, table: &StaticDfaTable) -> Option<DescentPlan> {
+    let groups: Vec<_> = plan?
+        .groups
+        .iter()
+        .filter(|group| {
+            table
+                .states
+                .iter()
+                .any(|state| state.accept == group.virtual_alt)
+        })
+        .cloned()
+        .collect();
+    (!groups.is_empty()).then_some(DescentPlan { groups })
+}
+
 /// Merges the facts of one attempt into the decision result.
 fn apply_facts(result: &mut DecisionResult, attempt: &Attempt) {
     result.used_widening |= attempt.facts.used_widening;
@@ -889,6 +944,7 @@ fn apply_facts(result: &mut DecisionResult, attempt: &Attempt) {
     result.has_postfix_shape |= attempt.has_postfix_shape;
     result.take_rule_fires += attempt.take_rule_fires;
     result.guarded_takes += attempt.guarded_takes;
+    result.descent_group_states += attempt.descent_group_states;
     for conflict in &attempt.conflicts {
         if !result.conflicts.contains(conflict) {
             result.conflicts.push(conflict.clone());
@@ -919,6 +975,9 @@ struct DecisionBuild<'b, 'sim, 'a> {
     precedence_class: bool,
     /// The decision's optional-postfix shape, when it has one.
     postfix: Option<PostfixShape>,
+    /// The decision's shared-descent groups, when the attempt may accept with
+    /// them.
+    descent: Option<DescentPlan>,
     /// Guard roots entering each state, keyed by DFA state number.
     own_roots: HashMap<i32, BTreeSet<i32>>,
     /// Take-vetoed conflict states that may resolve as a guarded take, with
@@ -974,6 +1033,9 @@ where
                 // lineage property, independent of any collision. So the
                 // argument below applies, and iterate is the answer the
                 // runtime would reach.
+                if self.accept_descent_group(number, &facts) {
+                    continue;
+                }
                 if !(self.precedence_class && self.resolve_frontier_iterate(number, &facts)) {
                     self.set_escape(number, ESCAPE);
                     if self.postfix.is_some() && self.state_has_take_skip_pair(number) {
@@ -1054,6 +1116,9 @@ where
         self.attempt.decision = self.decision;
         self.attempt.state_count = self.states.len();
         self.attempt.facts = std::mem::take(&mut self.closure.facts);
+        if self.attempt.descent_group_states > 0 {
+            self.attempt.descent = self.descent.take();
+        }
         std::mem::take(&mut self.attempt)
     }
 
@@ -1302,7 +1367,7 @@ where
                 existing.predicated |= facts.predicated;
             }
             if new_trust_taint != 0 {
-                self.on_taint_increase(number, verdict, resolved_conflict, new_trust_taint);
+                self.on_taint_increase(number, verdict, resolved_conflict);
             }
             return Some(state);
         }
@@ -1320,6 +1385,40 @@ where
             self.queue.push_back(number);
         }
         Some(state)
+    }
+
+    /// Accepts a budget-frontier state with the virtual alternative of the
+    /// shared-descent group that covers it, when there is one (see
+    /// [`DescentPlan::group_for`]).
+    fn accept_descent_group(&mut self, number: i32, facts: &StateFacts) -> bool {
+        let Some(plan) = &self.descent else {
+            return false;
+        };
+        let configs: Vec<_> = self.states[number as usize]
+            .configs()
+            .get_items()
+            .cloned()
+            .collect();
+        let mut live = BitSet::new();
+        for config in &configs {
+            live.insert(config.get_alt() as usize);
+        }
+        let Some(alt) = plan
+            .group_for(&live, facts.depth, &configs, &facts.taint)
+            .map(|group| group.virtual_alt)
+        else {
+            return false;
+        };
+        if let Some(facts) = self.info.get_mut(&number) {
+            facts.verdict = Verdict::Accept(alt);
+            // The group accept depends on the taint of the paths.
+            facts.resolved_conflict = true;
+        }
+        // The group resolves the frontier like an exact ambiguity: the table is
+        // not a plain LL(k) table.
+        self.attempt.exact_ambiguities.push(live);
+        self.attempt.descent_group_states += 1;
+        true
     }
 
     /// Whether the interned state's live alternatives are exactly the
@@ -1377,20 +1476,19 @@ where
     /// escape (hybrid) or invalidates the whole attempt (a non-hybrid table has
     /// no escapes), while a decision state is queued again so its successors
     /// see the union of both paths' taint.
-    fn on_taint_increase(
-        &mut self,
-        number: i32,
-        verdict: Verdict,
-        resolved_conflict: bool,
-        added: i32,
-    ) {
+    fn on_taint_increase(&mut self, number: i32, verdict: Verdict, resolved_conflict: bool) {
         match verdict {
             // A single-viable-alternative accept does not depend on taint: no
             // other alternative survives the lookahead, so there is nothing a
             // different path could add. A *conflict-resolved* accept does: the
             // min-alt argument only holds while every path that reaches the
             // state is taint-free.
-            Verdict::Accept(_) if resolved_conflict => {
+            Verdict::Accept(alt) if resolved_conflict => {
+                // A group accept rests on the taint of the paths too (see
+                // `DescentPlan::group_for`).
+                if alt >= VIRTUAL_ALT_BASE {
+                    self.attempt.descent_group_states -= 1;
+                }
                 // A frontier state resolved by substitution carries no
                 // conflict, so it degrades to a plain escape: the runtime
                 // restarts the adaptive simulation, and the report keeps the
@@ -1403,8 +1501,12 @@ where
                     self.attempt.first_conflict_state.get_or_insert(number);
                 }
                 if self.policy.hybrid {
-                    let approximated = added & (WIDENED_TAINT | PRECPRED_TAINT) != 0;
                     if let Some(facts) = self.info.get_mut(&number) {
+                        // The taint of every path, the first one included.
+                        let approximated = facts
+                            .taint
+                            .values()
+                            .any(|taint| taint & (WIDENED_TAINT | PRECPRED_TAINT) != 0);
                         facts.verdict = if conflicted {
                             Verdict::Escape(CONFLICT_ESCAPE)
                         } else {
@@ -1450,6 +1552,9 @@ where
         }
         if effects.fail_predicated {
             self.attempt.predicated = true;
+        }
+        if effects.descent_group {
+            self.attempt.descent_group_states += 1;
         }
         if effects.abort {
             self.attempt.stopped = true;
@@ -1658,6 +1763,22 @@ where
                 facts.verdict = Verdict::Accept(min_alt);
                 return (facts, effects);
             }
+        }
+        // A conflict among the members of a shared-descent group is resolved
+        // by the group's tail dispatch after one parse of the shared rule.
+        if self.policy.hybrid
+            && let Some(alt) = self
+                .descent
+                .as_ref()
+                .and_then(|plan| plan.group_for(&alts, depth, &closed.configs, &closed.taint))
+                .map(|group| group.virtual_alt)
+        {
+            effects.guard_candidate = None;
+            effects.exact_ambiguity = Some(conflicting);
+            effects.descent_group = true;
+            facts.resolved_conflict = true;
+            facts.verdict = Verdict::Accept(alt);
+            return (facts, effects);
         }
         if untrusted {
             effects.approximation = Some(conflicting.clone());

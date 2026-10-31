@@ -15,11 +15,13 @@ use crate::error_strategy::ErrorStrategy;
 use crate::errors::ANTLRError;
 use crate::interval_set::IntervalSet;
 use crate::parser_atn_simulator::ParserATNSimulator;
+use crate::prediction_mode::PredictionMode;
 use crate::recognizer::{Actions, Recognizer};
 use crate::rule_context::{states_stack, RuleContext as _};
-use crate::token::{OwningToken, Token, TOKEN_EOF};
+use crate::token::{OwningToken, Token, TOKEN_EOF, TOKEN_EPSILON};
 use crate::token_factory::TokenFactory;
 use crate::token_stream::TokenStream;
+use crate::transition::RuleTransition;
 use crate::tree::{NodeKindType, ParseTreeListener, Tree as _, TreeNode};
 use crate::utils::cell_update;
 use crate::vocabulary::Vocabulary;
@@ -94,6 +96,12 @@ where
         Self: Sized;
 
     fn is_expected_token(&self, symbol: i32) -> bool;
+
+    /// Called when a prediction reads the rule invocation stack: a
+    /// full-context simulation or a stack guard. A shared-descent group
+    /// discards a neutral parse that did, because the stack of the neutral
+    /// parse is the one of a single member.
+    fn note_stack_dependent_prediction(&self) {}
     fn get_precedence(&self) -> i32;
 
     fn get_state(&self) -> i32;
@@ -104,6 +112,49 @@ where
     fn get_recursion_limit(&self) -> u32;
     #[cfg(feature = "recursion-limit")]
     fn set_recursion_limit(&mut self, v: u32);
+}
+
+/// The parser state that the neutral parse of a shared-descent group saves and
+/// restores (see [`BaseParser::begin_neutral_parse`]).
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct NeutralParse<'input, 'arena, Node, Tok>
+where
+    'input: 'arena,
+    Node: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+{
+    start_index: isize,
+    mark: isize,
+    /// The stream index where the shared rule starts, after the prefix.
+    shared_index: isize,
+    state: i32,
+    ctx: Option<&'arena TreeNode<'input, 'arena, Node, Tok>>,
+    children: usize,
+    precedence_depth: usize,
+    syntax_errors: i32,
+    /// [`BaseParser::stack_dependent`] of the enclosing neutral parse.
+    outer_stack_dependent: bool,
+    matched_eof: bool,
+    #[cfg(feature = "recursion-limit")]
+    recursion_depth: u32,
+}
+
+/// A shared rule parsed by a neutral parse, waiting for the re-descent to call
+/// it (see [`BaseParser::resume_take`]).
+struct Resume<'input, 'arena, Node, Tok>
+where
+    'input: 'arena,
+    Node: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+{
+    node: &'arena TreeNode<'input, 'arena, Node, Tok>,
+    rule: usize,
+    shared_index: isize,
+    tail_index: isize,
+    /// `matched_eof` after the shared rule.
+    matched_eof: bool,
+    mark: isize,
 }
 
 /// Abstract base parser implementation
@@ -161,6 +212,16 @@ where
     parse_listeners: Vec<Box<Node::Listener>>,
     _syntax_errors: Cell<i32>,
     error_listeners: Vec<ErrorListenerDelegate<'input, 'arena, Self, TF::Tok>>,
+    /// Mutes the parse and error listeners while it is above zero. A counter,
+    /// because the neutral parses of nested shared-descent groups nest (see
+    /// [`Self::begin_neutral_parse`]).
+    muted: u32,
+    /// The pending re-descent of a shared-descent group (see
+    /// [`Self::resume_neutral_parse`]).
+    resume: Option<Resume<'input, 'arena, Node, TF::Tok>>,
+    /// Whether a prediction of the current neutral parse read the rule
+    /// invocation stack (see [`Parser::note_stack_dependent_prediction`]).
+    stack_dependent: Cell<bool>,
 
     pub arena: &'arena Arena,
     ext: Ext,
@@ -314,20 +375,24 @@ where
                 // todo report ructc inference issue
                 let node = self.create_error_node(o)?;
                 self.add_child_to_ctx(node);
-                for listener in &mut self.parse_listeners {
-                    listener.visit_error_node(
-                        node.as_error_node()
-                            .expect("node was created as error node"),
-                    )?
+                if self.muted == 0 {
+                    for listener in &mut self.parse_listeners {
+                        listener.visit_error_node(
+                            node.as_error_node()
+                                .expect("node was created as error node"),
+                        )?
+                    }
                 }
             } else {
                 let node = self.create_token_node(o)?;
                 self.add_child_to_ctx(node);
-                for listener in &mut self.parse_listeners {
-                    listener.visit_terminal(
-                        node.as_terminal_node()
-                            .expect("node was created as terminal node"),
-                    )?
+                if self.muted == 0 {
+                    for listener in &mut self.parse_listeners {
+                        listener.visit_terminal(
+                            node.as_terminal_node()
+                                .expect("node was created as terminal node"),
+                        )?
+                    }
                 }
             }
         }
@@ -385,6 +450,9 @@ where
         err: Option<&ANTLRError>,
     ) {
         cell_update(&self._syntax_errors, |it| it + 1);
+        if self.muted > 0 {
+            return;
+        }
         let offending_token: Option<&_> = match offending_token {
             None => Some(self.get_current_token().borrow()),
             Some(x) => Some(self.input.get(x).borrow()),
@@ -407,13 +475,23 @@ where
     fn get_error_lister_dispatch<'a>(
         &'a self,
     ) -> Box<dyn ErrorListener<'input, 'arena, Self, TF::Tok> + 'a> {
-        Box::new(ProxyErrorListener {
-            delegates: self.error_listeners.borrow(),
-        })
+        // The ambiguity reports of a muted neutral parse are muted too.
+        let delegates: &[_] = if self.muted > 0 {
+            &[]
+        } else {
+            self.error_listeners.borrow()
+        };
+        Box::new(ProxyErrorListener { delegates })
     }
 
     fn is_expected_token(&self, _symbol: i32) -> bool {
         unimplemented!()
+    }
+
+    fn note_stack_dependent_prediction(&self) {
+        if self.muted > 0 {
+            self.stack_dependent.set(true);
+        }
     }
 
     fn get_precedence(&self) -> i32 {
@@ -504,6 +582,9 @@ where
                 Box::new(ConsoleErrorListener {})
                     as Box<dyn ErrorListener<'input, 'arena, Self, TF::Tok> + 'input>,
             )],
+            muted: 0,
+            resume: None,
+            stack_dependent: Cell::new(false),
             arena,
             ext,
             pd: PhantomData,
@@ -522,8 +603,10 @@ where
     ///
     /// Returns [`INVALID_ALT`] when the decision has no table and when the walk
     /// leaves the table at an escape state the generated code must handle with
-    /// [`ParserATNSimulator::adaptive_predict`]. A lookahead that has no table
-    /// edge and no fallback alternative fails like the adaptive simulation does.
+    /// [`ParserATNSimulator::adaptive_predict`]. The virtual alternative of a
+    /// shared-descent group is an escape too: this block has no arm for it (see
+    /// [`Self::dfa_predict_virtual`]). A lookahead that has no table edge and no
+    /// fallback alternative fails like the adaptive simulation does.
     ///
     /// The walk consumes tokens while it reads them and rewinds afterwards, so
     /// every step costs one `la(1)` and one `consume`. It must not read
@@ -532,6 +615,25 @@ where
     ///
     /// [`INVALID_ALT`]: crate::atn::INVALID_ALT
     pub fn dfa_predict(&mut self, decision: i32) -> Result<i32, ANTLRError> {
+        let alt = self.dfa_walk(decision)?;
+        if alt >= crate::dfa::static_parser_dfa::VIRTUAL_ALT_BASE {
+            return Ok(crate::atn::INVALID_ALT);
+        }
+        Ok(alt)
+    }
+
+    /// Predicts like [`Self::dfa_predict`], but returns the virtual alternative
+    /// of a shared-descent group (at or above
+    /// [`VIRTUAL_ALT_BASE`](crate::dfa::static_parser_dfa::VIRTUAL_ALT_BASE))
+    /// instead of deferring. A generated `DescentAltBlock` resolves the group to
+    /// one of its member alternatives.
+    pub fn dfa_predict_virtual(&mut self, decision: i32) -> Result<i32, ANTLRError> {
+        self.dfa_walk(decision)
+    }
+
+    /// The table walk of [`Self::dfa_predict`] and
+    /// [`Self::dfa_predict_virtual`].
+    fn dfa_walk(&mut self, decision: i32) -> Result<i32, ANTLRError> {
         use crate::dfa::static_parser_dfa::{CONFLICT_ESCAPE, ESCAPE, GUARDED};
 
         let tables = self.get_interpreter().atn().static_dfas();
@@ -560,6 +662,7 @@ where
                 };
             }
             if accept == GUARDED {
+                self.note_stack_dependent_prediction();
                 // Guarded take of an optional-postfix decision: resolve to the
                 // guarded alternative unless the real parse stack's epsilon-pop
                 // chase from the decision's block end can reach a guard root.
@@ -635,6 +738,345 @@ where
         };
         self.input.release(mark);
         result
+    }
+
+    /// Whether `token` can follow the current rule on the real parse stack.
+    ///
+    /// Walks the context frames upward. At each frame, the token follows when
+    /// it starts the caller's continuation after the frame's call site; the
+    /// walk goes on to the next frame only while that continuation can
+    /// complete without a token. Above the outermost frame only EOF follows.
+    /// The guarded tail arm of a shared-descent group commits only when this
+    /// is `false`, because the group's nullable member is then dead.
+    pub fn follow_contains(&self, token: i32) -> bool {
+        self.follow_contains_at(self.ctx(), token)
+    }
+
+    /// [`Self::follow_contains`] for the stack whose innermost frame is
+    /// `context`.
+    #[doc(hidden)]
+    pub fn follow_contains_at(
+        &self,
+        mut context: Option<&'arena TreeNode<'input, 'arena, Node, TF::Tok>>,
+        token: i32,
+    ) -> bool {
+        self.note_stack_dependent_prediction();
+        let atn = self.get_interpreter().atn();
+        while let Some(node) = context {
+            let invoking_state = node.get_invoking_state();
+            if invoking_state < 0 {
+                break;
+            }
+            let Some(call) = atn
+                .get_state(invoking_state)
+                .get_transitions()
+                .first()
+                .and_then(|transition| transition.try_as::<RuleTransition>())
+            else {
+                // Not a call site: assume the token can follow.
+                return true;
+            };
+            let continuation = atn.next_tokens::<TF::Tok>(&call.follow_state);
+            if continuation.contains(token) {
+                return true;
+            }
+            if !continuation.contains(TOKEN_EPSILON) {
+                return false;
+            }
+            context = node.get_parent();
+        }
+        token == TOKEN_EOF
+    }
+
+    /// Whether a shared-descent group can start a neutral parse here.
+    ///
+    /// A group cannot start while the re-descent of another group is pending,
+    /// and not while parse listeners are attached without a parse tree: the
+    /// muted listener events of the shared rule are replayed from its subtree.
+    ///
+    /// A group also cannot start in the SLL prediction mode. For an ambiguous
+    /// input, SLL resolves the conflict of the decision to its minimum
+    /// alternative, but the tail dispatch after the shared rule can select
+    /// another member.
+    #[doc(hidden)]
+    pub fn descent_ready(&mut self) -> bool {
+        self.drop_stale_resume();
+        self.resume.is_none()
+            && (self.build_parse_trees || self.parse_listeners.is_empty())
+            && self.get_interpreter().get_prediction_mode() != PredictionMode::SLL
+    }
+
+    /// Ends a re-descent that moved past the start of its shared rule without
+    /// calling it. An error recovery in the prefix can do that; the kept
+    /// subtree is then useless.
+    fn drop_stale_resume(&mut self) {
+        let index = self.input.index();
+        if let Some(resume) = self.resume.take_if(|resume| index > resume.shared_index) {
+            self.input.release(resume.mark);
+        }
+    }
+
+    /// Starts the neutral parse of a shared-descent group: the generated block
+    /// calls the shared rule once, with every listener muted, to read the
+    /// token after it.
+    ///
+    /// Skips the `prefix_len` leading tokens of the group (the table walk read
+    /// them) and sets the call-site state, so the shared rule's context has a
+    /// real invoking state. Finish with [`Self::end_neutral_parse`] to discard
+    /// the parse, or with [`Self::resume_neutral_parse`] to keep its subtree
+    /// for the re-descent.
+    #[doc(hidden)]
+    pub fn begin_neutral_parse(
+        &mut self,
+        call_site: i32,
+        prefix_len: usize,
+    ) -> NeutralParse<'input, 'arena, Node, TF::Tok> {
+        let ctx = self.ctx();
+        let start_index = self.input.index();
+        let mark = self.input.mark();
+        // Skip by consuming, not by index arithmetic: a channel-filtering
+        // stream has off-channel tokens between the prefix tokens.
+        for _ in 0..prefix_len {
+            if self.input.la(1) != TOKEN_EOF {
+                self.input.consume();
+            }
+        }
+        let neutral = NeutralParse {
+            start_index,
+            mark,
+            shared_index: self.input.index(),
+            state: self.state,
+            ctx,
+            children: ctx.map_or(0, |ctx| ctx.get_child_count()),
+            precedence_depth: self.precedence_stack.len(),
+            syntax_errors: self._syntax_errors.get(),
+            outer_stack_dependent: self.muted > 0 && self.stack_dependent.get(),
+            matched_eof: self.matched_eof,
+            #[cfg(feature = "recursion-limit")]
+            recursion_depth: self.current_recursion_depth,
+        };
+        self.stack_dependent.set(false);
+        self.muted += 1;
+        self.state = call_site;
+        neutral
+    }
+
+    /// Whether the subtree of the neutral parse is the one every member would
+    /// parse: the parse reported no syntax error, and no prediction in it read
+    /// the rule invocation stack, which holds the call site of one member only.
+    #[doc(hidden)]
+    pub fn neutral_parse_usable(
+        &self,
+        neutral: &NeutralParse<'input, 'arena, Node, TF::Tok>,
+    ) -> bool {
+        self._syntax_errors.get() == neutral.syntax_errors && !self.stack_dependent.get()
+    }
+
+    /// Discards a neutral parse: rewinds the stream to the decision start and
+    /// restores the parser state of [`Self::begin_neutral_parse`].
+    #[doc(hidden)]
+    pub fn end_neutral_parse(&mut self, neutral: NeutralParse<'input, 'arena, Node, TF::Tok>) {
+        self.restore_neutral_state(&neutral);
+        self.input.release(neutral.mark);
+    }
+
+    /// Finishes a neutral parse and keeps the subtree `node` of the shared rule
+    /// `rule` for the re-descent.
+    ///
+    /// Rewinds the stream to the decision start like
+    /// [`Self::end_neutral_parse`]. The member alternative then re-descends
+    /// through its prefix to its call of the shared rule, where
+    /// [`Self::resume_take`] returns `node` instead of parsing it again.
+    #[doc(hidden)]
+    pub fn resume_neutral_parse(
+        &mut self,
+        neutral: NeutralParse<'input, 'arena, Node, TF::Tok>,
+        node: &'arena TreeNode<'input, 'arena, Node, TF::Tok>,
+        rule: usize,
+    ) {
+        // The mark stays until the re-descent seeks forward to the tail.
+        self.resume = Some(Resume {
+            node,
+            rule,
+            shared_index: neutral.shared_index,
+            tail_index: self.input.index(),
+            matched_eof: self.matched_eof,
+            mark: neutral.mark,
+        });
+        self.restore_neutral_state(&neutral);
+    }
+
+    fn restore_neutral_state(&mut self, neutral: &NeutralParse<'input, 'arena, Node, TF::Tok>) {
+        debug_assert!(self.muted > 0, "no neutral parse is active");
+        self.muted -= 1;
+        self.input.seek(neutral.start_index);
+        self.set_current_ctx(neutral.ctx);
+        // Truncate rather than pop: a left-recursive shared rule adds its
+        // context to the parent only when it unrolls, so an error can leave
+        // no child behind.
+        if let Some(ctx) = unsafe { self.ctx_mut() } {
+            ctx.truncate_children(neutral.children);
+        }
+        self.precedence_stack.truncate(neutral.precedence_depth);
+        self.state = neutral.state;
+        self.matched_eof = neutral.matched_eof;
+        // The predictions of this neutral parse belong to the enclosing one.
+        self.stack_dependent
+            .set(neutral.outer_stack_dependent || self.stack_dependent.get());
+        #[cfg(feature = "recursion-limit")]
+        {
+            self.current_recursion_depth = neutral.recursion_depth;
+        }
+    }
+
+    /// Returns the subtree that a neutral parse kept for the shared rule
+    /// `rule`, when the re-descent calls it at the position where the neutral
+    /// parse started it. The subtree is grafted under the current context, the
+    /// muted listener events are replayed, and the stream moves to the token
+    /// after the subtree.
+    ///
+    /// Returns `None` when no re-descent is pending or `rule` is another rule.
+    /// A call of `rule` at another position ends the re-descent: the kept
+    /// subtree does not belong there, so the rule parses normally.
+    #[doc(hidden)]
+    pub fn resume_take(
+        &mut self,
+        rule: usize,
+    ) -> Result<Option<&'arena TreeNode<'input, 'arena, Node, TF::Tok>>, ANTLRError> {
+        let Some(resume) = self.resume.take_if(|resume| resume.rule == rule) else {
+            return Ok(None);
+        };
+        if self.input.index() != resume.shared_index {
+            self.input.release(resume.mark);
+            return Ok(None);
+        }
+        let node = resume.node;
+        let state = self.state;
+        let parent = self.ctx();
+        if self.build_parse_trees {
+            self.add_child_to_ctx(node);
+        }
+        // The neutral parse created the context under the decision's context
+        // at the time; the re-descent's context and call site may differ.
+        self.set_current_ctx(Some(node));
+        self.with_mut_ctx(|ctx| {
+            ctx.set_parent(parent);
+            ctx.set_invoking_state(state);
+        });
+        self.set_current_ctx(parent);
+        if self.muted == 0 && !self.parse_listeners.is_empty() {
+            self.replay_listener_events(node)?;
+        }
+        self.matched_eof = resume.matched_eof;
+        self.input.seek(resume.tail_index);
+        self.input.release(resume.mark);
+        Ok(Some(node))
+    }
+
+    /// Fires the parse listener events of the subtree `root` in the order of
+    /// a live parse: enter events in listener order, exit events in reverse
+    /// listener order.
+    ///
+    /// A live parse of a left-recursive rule exits the previous context of
+    /// the operator loop before it enters the new recursion context, and that
+    /// previous context is the first child of the new one. So the replay
+    /// visits such a first child before it enters its parent.
+    fn replay_listener_events(
+        &mut self,
+        root: &'arena TreeNode<'input, 'arena, Node, TF::Tok>,
+    ) -> Result<(), ANTLRError> {
+        struct Frame<'a, T> {
+            node: &'a T,
+            next_child: usize,
+            entered: bool,
+        }
+        // An explicit stack: the subtree can be as deep as the input.
+        let mut stack = vec![Frame {
+            node: root,
+            next_child: 0,
+            entered: false,
+        }];
+        while let Some(Frame {
+            node,
+            mut next_child,
+            mut entered,
+        }) = stack.pop()
+        {
+            if let Some(terminal) = node.as_terminal_node() {
+                for listener in &mut self.parse_listeners {
+                    listener.visit_terminal(terminal)?;
+                }
+                continue;
+            }
+            if let Some(error) = node.as_error_node() {
+                for listener in &mut self.parse_listeners {
+                    listener.visit_error_node(error)?;
+                }
+                continue;
+            }
+            if !entered {
+                let previous = if next_child == 0 {
+                    self.recursion_predecessor(node)
+                } else {
+                    None
+                };
+                if let Some(previous) = previous {
+                    stack.push(Frame {
+                        node,
+                        next_child: 1,
+                        entered: false,
+                    });
+                    stack.push(Frame {
+                        node: previous,
+                        next_child: 0,
+                        entered: false,
+                    });
+                    continue;
+                }
+                for listener in self.parse_listeners.iter_mut() {
+                    listener.enter_every_rule(node)?;
+                    node.enter_rule(listener)?;
+                }
+                entered = true;
+            }
+            if let Some(child) = node.get_child(next_child) {
+                next_child += 1;
+                stack.push(Frame {
+                    node,
+                    next_child,
+                    entered,
+                });
+                stack.push(Frame {
+                    node: child,
+                    next_child: 0,
+                    entered: false,
+                });
+            } else {
+                for listener in self.parse_listeners.iter_mut().rev() {
+                    node.exit_rule(listener)?;
+                    listener.exit_every_rule(node)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The previous context of the left-recursive operator loop that created
+    /// the recursion context `node`: its first child, a context of the same
+    /// rule that `push_new_recursion_context` re-parented with the rule start
+    /// state as its invoking state.
+    fn recursion_predecessor(
+        &self,
+        node: &'arena TreeNode<'input, 'arena, Node, TF::Tok>,
+    ) -> Option<&'arena TreeNode<'input, 'arena, Node, TF::Tok>> {
+        let first = node.get_child(0)?;
+        if first.as_terminal_node().is_some() || first.as_error_node().is_some() {
+            return None;
+        }
+        let rule = node.get_rule_index();
+        let start = self.get_interpreter().atn().rule_to_start_state.get(rule)?;
+        (first.get_rule_index() == rule && first.get_invoking_state() == start.get_state_number())
+            .then_some(first)
     }
 
     /// If current context is same as the given one by pointer comparison
@@ -787,6 +1229,9 @@ where
     }
 
     pub fn trigger_enter_rule_event(&mut self) -> Result<(), ANTLRError> {
+        if self.muted > 0 {
+            return Ok(());
+        }
         let ctx = self.ctx().unwrap();
         for listener in self.parse_listeners.iter_mut() {
             listener.enter_every_rule(ctx)?;
@@ -796,6 +1241,9 @@ where
     }
 
     pub fn trigger_exit_rule_event(&mut self) -> Result<(), ANTLRError> {
+        if self.muted > 0 {
+            return Ok(());
+        }
         let ctx = self.ctx().unwrap();
         for listener in self.parse_listeners.iter_mut().rev() {
             ctx.exit_rule(listener)?;

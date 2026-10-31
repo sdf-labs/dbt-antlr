@@ -109,3 +109,29 @@ mv "$STATIC_TMP/guardexprparser.rs" "$SCRIPT_DIR/tests/gen/guardexprparser_stati
 echo "Generating: guardexprparser_static_only"
 "$GEN_BIN" -no-listener --static-dfa-only -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/GuardExpr.g4"
 mv "$STATIC_TMP/guardexprparser.rs" "$SCRIPT_DIR/tests/gen/guardexprparser_static_only.rs"
+
+# The full-context witness: a call of `send` as the parse entry predicts its
+# operator loop with an empty outer context (tests/full_context.rs).
+echo "Generating: parser/LoopVeto"
+"$GEN_BIN" -no-listener -o "$SCRIPT_DIR/tests/gen" "$SCRIPT_DIR/grammars/parser/LoopVeto.g4"
+
+# The shared-descent witness with a one-token prefix, generated three ways: the
+# adaptive parser is the oracle of the differential tests, the static twin
+# parses `'(' e` once for the row-constructor/parens group, and the
+# `--static-dfa-only` twin takes the group's fallbacks without adaptivePredict.
+echo "Generating: parser/ParenExpr"
+"$GEN_BIN" -no-listener -o "$SCRIPT_DIR/tests/gen" "$SCRIPT_DIR/grammars/parser/ParenExpr.g4"
+echo "Generating: parenexprparser_static"
+"$GEN_BIN" -no-listener --static-parser-dfa -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/ParenExpr.g4"
+mv "$STATIC_TMP/parenexprparser.rs" "$SCRIPT_DIR/tests/gen/parenexprparser_static.rs"
+echo "Generating: parenexprparser_static_only"
+"$GEN_BIN" -no-listener --static-dfa-only -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/ParenExpr.g4"
+mv "$STATIC_TMP/parenexprparser.rs" "$SCRIPT_DIR/tests/gen/parenexprparser_static_only.rs"
+
+# Shared-descent groups whose shared rule parses differently per member: the
+# static twin must discard such neutral parses and match the adaptive parser.
+echo "Generating: parser/DescentContext"
+"$GEN_BIN" -no-listener -o "$SCRIPT_DIR/tests/gen" "$SCRIPT_DIR/grammars/parser/DescentContext.g4"
+echo "Generating: descentcontextparser_static"
+"$GEN_BIN" -no-listener --static-parser-dfa -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/DescentContext.g4"
+mv "$STATIC_TMP/descentcontextparser.rs" "$SCRIPT_DIR/tests/gen/descentcontextparser_static.rs"

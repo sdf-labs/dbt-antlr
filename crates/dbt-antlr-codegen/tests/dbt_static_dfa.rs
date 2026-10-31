@@ -723,6 +723,50 @@ fn static_parser_dfa_emits_table_prediction_for_hybrid_decisions() {
 }
 
 #[test]
+fn shared_descent_groups_emit_descent_blocks_and_resume_hooks() {
+    let output = emit_grammar("parser/ParenExpr.g4", |options| {
+        options.static_parser_dfa(true);
+    });
+    let parser = lexer_content(&output, "parenexprparser.rs");
+    assert_eq!(
+        parser
+            .matches("dbt_antlr_runtime::shared_descent!(")
+            .count(),
+        1,
+        "the primary block of `e` has one group"
+    );
+    assert!(parser.contains("recog.base.dfa_predict_virtual(1)?"));
+    assert!(parser.contains("prefix: 1,"), "the group skips '('");
+    assert!(parser.contains("invoke: e_rec(0),"));
+    assert!(parser.contains("fallback: recog.get_interpreter().adaptive_predict(1,"));
+    assert_eq!(
+        parser.matches("self.base.resume_take(RULE_").count(),
+        1,
+        "only the shared rule `e` takes a kept subtree"
+    );
+    assert!(parser.contains("self.base.resume_take(RULE_e)?"));
+
+    // Without the flag, nothing of the protocol is emitted.
+    let plain = emit_grammar("parser/ParenExpr.g4", |_| {});
+    let plain = lexer_content(&plain, "parenexprparser.rs");
+    assert!(!plain.contains("shared_descent!"));
+    assert!(!plain.contains("resume_take"));
+}
+
+#[test]
+fn static_dfa_only_groups_fall_back_to_their_minimum_member() {
+    let output = emit_static_only(&grammars_dir().join("parser/ParenExpr.g4"), false)
+        .expect("emission succeeds");
+    let parser = lexer_content(&output, "parenexprparser.rs");
+    assert!(parser.contains("dbt_antlr_runtime::shared_descent!("));
+    assert!(
+        parser.contains("fallback: 3,"),
+        "rowConstructor is the minimum member"
+    );
+    assert_eq!(parser.matches("adaptive_predict(").count(), 0);
+}
+
+#[test]
 fn fully_static_parser_never_defers() {
     let output = emit_grammar("parser/StaticDFA.g4", |options| {
         options.static_parser_dfa(true);
