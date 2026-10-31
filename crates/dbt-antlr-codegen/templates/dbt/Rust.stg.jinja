@@ -663,104 +663,49 @@ loop {
 	_ => {}
 }
 {%- endmacro -%}
-{#- The virtual-alt, factored, descent, and resume macros below are staged for
-    Phase 6 (prefix-factor and shared-descent codegen): no `SrcOpModel` variant
-    reaches them yet, so they are inert. They stay next to the DFA* macros
-    because both families share `tableCanDefer` and the walker protocol. -#}
-{%- macro virtualAltPredict(choice) -%}
-{ let _vap = {{ self() }}.base.dfa_predict_virtual({{ choice.decision }})?; {% if choice.tableCanDefer %}if _vap == INVALID_ALT { {{ self() }}.get_interpreter().adaptive_predict({{ choice.decision }},&mut {{ self() }}.base)? } else { _vap }{% else %}_vap{% endif %} }
-{%- endmacro -%}
-{%- macro FactoredAltBlock(choice, preamble, singletons, groups, error, parser, file) -%}
+{#- DescentAltBlock: a DFAAltBlock whose table can accept with the virtual
+    alternative of a shared-descent group. Each group arm is one
+    `shared_descent!` invocation, which evaluates to the member alternative;
+    the outer match then runs that alternative's ordinary arm, whose call of
+    the shared rule takes the subtree of the neutral parse (`resumeTakeHook`).
+    A group's fallback is `adaptivePredict`, or under `--static-dfa-only` its
+    minimum member alternative. -#}
+{%- macro DescentAltBlock(choice, preamble, alts, groups, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
 {{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
 {% if preamble %}{{ Ops(preamble, parser, file) }}
-{% endif %}match {{ virtualAltPredict(choice) }} {
-{% if singletons %}{{ Ops(singletons, parser, file) | st_indent("\t") }}
-{% endif %}{% if groups %}{{ Ops(groups, parser, file) | st_indent("\t") }}
-{% endif %}	_ => {}
-}
-{%- endmacro -%}
-{%- macro SingletonArm(alt, body, parser, file) -%}
-{{ alt.armKey }} =>{
-{{ Op(body, parser, file) | st_indent("\t") }}
-}
-{%- endmacro -%}
-{%- macro FactoredGroup(grp, prefix, tails, parser, file) -%}
-{{ grp.virtualAlt }} =>{
-{{ Ops(prefix, parser, file) | st_indent("\t") }}
-	match {{ self() }}.input.la(1) {
-{{ Ops(tails, parser, file) | st_indent("\t") }}
-		_ => Err(ANTLRError::no_alt(&mut {{ self() }}.base))?
+{% endif %}match {
+	let _vap = {{ self() }}.base.dfa_predict_virtual({{ choice.decision }})?;
+	match _vap {
+{% for g in groups %}		{{ g.virtualAlt }} => dbt_antlr_runtime::shared_descent!(
+			{{ self() }},
+			call_site: {{ g.callSite }},
+			prefix: {{ g.prefixLen }},
+			rule: RULE_{{ g.ruleName }},
+			invoke: {{ g.invoke }},
+			tails: { {% for t in g.tails %}{{ cases(t.tokens, parser) }} => {{ t.alt }}, {% endfor %}},
+			guarded: { {% for t in g.guardedTails %}{{ cases(t.tokens, parser) }} => {{ t.alt }}, {% endfor %}},
+			default: {{ g.defaultAlt }},
+			fallback: {% if g.staticFallback is not none %}{{ g.staticFallback }}{% else %}{{ self() }}.get_interpreter().adaptive_predict({{ choice.decision }},&mut {{ self() }}.base)?{% endif %},
+		),
+{% endfor %}{% if choice.tableCanDefer %}		INVALID_ALT => {{ self() }}.get_interpreter().adaptive_predict({{ choice.decision }},&mut {{ self() }}.base)?,
+{% endif %}		_vap => _vap,
 	}
+} {
+{% for alt in alts %}
+	{{ loop.index }} =>{
+{{ Op(alt, parser, file) | st_indent("\t\t") }}
+	}
+{% if not loop.last %},{{ "\n" }}{% endif %}{% endfor %}
+
+	_ => {}
 }
 {%- endmacro -%}
-{%- macro FactoredTailArm(t, body, parser, file) -%}
-{{ t.armKey }} =>{
-{{ Op(body, parser, file) | st_indent("\t") }}
-}
-{%- endmacro -%}
-{%- macro descentPredict(choice, groups, parser, file) -%}
-{ let _vap = {{ self() }}.base.dfa_predict_virtual({{ choice.decision }})?;
-  match _vap {
-{% if groups %}{{ Ops(groups, parser, file) }}
-{% endif %}    x if x == INVALID_ALT || x >= VIRTUAL_ALT_BASE => {{ self() }}.get_interpreter().adaptive_predict({{ choice.decision }},&mut {{ self() }}.base)?,
-    a => a,
-  } }
-{%- endmacro -%}
-{%- macro DescentGroup(g, tails, parser, file) -%}
-    {{ g.virtualAlt }} if !{{ self() }}.base.resume_active() => {
-        {{ self() }}.base.set_state({{ g.callSiteState }});
-        let _neutral_state = {{ self() }}.base.begin_neutral_parse({{ g.prefixLen }});
-        match {{ self() }}.{{ g.ruleName }}() {
-            Err(e) if !e.is_recoverable() => {
-                    {{ self() }}.base.end_neutral_parse(&_neutral_state);
-                    return Err(e)
-                },
-            Err(_) => {
-                {{ self() }}.base.end_neutral_parse(&_neutral_state);
-                {{ self() }}.get_interpreter().adaptive_predict({{ g.decision }},&mut {{ self() }}.base)?
-            },
-            Ok(_node) => {
-                if {{ self() }}.base.syntax_error_count() != _neutral_state.2 {
-                    {{ self() }}.base.end_neutral_parse(&_neutral_state);
-                    {{ self() }}.get_interpreter().adaptive_predict({{ g.decision }},&mut {{ self() }}.base)?
-                }
-                else {
-                    let _tailalt = { let _t = {{ self() }}.input.la(1); match _t {
-{% if tails %}{{ Ops(tails, parser, file) | st_indent("                        ") }}
-{% endif %}                        _ => {% if g.defaultAlt %}Some({{ g.defaultAlt }}){% else %}None{% endif %},
-                    } };
-                    match _tailalt {
-                        Some(alt) => {
-                            {{ self() }}.base.start_resume(_node.as_node(), RULE_{{ g.ruleName }});
-                            {{ self() }}.base.end_neutral_parse(&_neutral_state);
-                            alt
-                        }
-                        None => {
-                            {{ self() }}.base.end_neutral_parse(&_neutral_state);
-                            {{ self() }}.get_interpreter().adaptive_predict({{ g.decision }},&mut {{ self() }}.base)?
-                        }
-                    }
-                }
-            },
-        }
-    },
-{%- endmacro -%}
-{%- macro Tail(t) -%}
-{{ t.armKey }} if !{{ t.guarded }} || !{{ self() }}.base.follow_contains(_t) => Some({{ t.altNum }}),
-{%- endmacro -%}
+{#- resumeTakeHook: at the top of a rule that a shared-descent group shares,
+    the re-descent of a member takes the subtree of the neutral parse. -#}
 {%- macro resumeTakeHook(currentRule) -%}
-if let Some(_node) = self.base.resume_take(RULE_{{ currentRule.escapedName }})? {
+if let Some(_node) = self.base.resume_take(RULE_{{ currentRule.name }})? {
     return Ok(_node.as_rule_context().unwrap());
-}
-{%- endmacro -%}
-{%- macro DescentAltBlock(choice, preamble, singletons, groups, error, parser, file) -%}
-{{ self() }}.base.set_state({{ choice.stateNumber }});
-{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-{% if preamble %}{{ Ops(preamble, parser, file) }}
-{% endif %}match {{ descentPredict(choice, groups, parser, file) }} {
-{% if singletons %}{{ Ops(singletons, parser, file) | st_indent("\t") }}
-{% endif %}	_ => {}
 }
 {%- endmacro -%}
 {%- macro DFAOptionalBlock(choice, alts, parser, file) -%}
@@ -971,6 +916,8 @@ unsafe { {{ self() }}.ctx_mut().unwrap().as_rule_context_mut::<{{ actionChunk.ct
 {{ PlusBlock(op.choice, op.alts, op.error, parser, file) }}
 {%- elif op.kind == "DFAAltBlock" -%}
 {{ DFAAltBlock(op.choice, op.preamble, op.alts, parser, file) }}
+{%- elif op.kind == "DescentAltBlock" -%}
+{{ DescentAltBlock(op.choice, op.preamble, op.alts, op.groups, parser, file) }}
 {%- elif op.kind == "DFAOptionalBlock" -%}
 {{ DFAOptionalBlock(op.choice, op.alts, parser, file) }}
 {%- elif op.kind == "DFAStarBlock" -%}

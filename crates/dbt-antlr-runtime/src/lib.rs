@@ -1252,6 +1252,101 @@ macro_rules! parse_rule {
     };
 }
 
+/// The arm of one shared-descent group in a generated `DescentAltBlock`.
+///
+/// Evaluates to the member alternative to parse. The arm parses the shared
+/// rule once with every listener muted (see
+/// [`BaseParser::begin_neutral_parse`](crate::parser::BaseParser::begin_neutral_parse)),
+/// reads the token after it, and selects a tail arm: an unguarded arm
+/// selects its alternative, a guarded arm only when the token cannot follow
+/// the decision rule on the parse stack, and any other token selects
+/// `default`. For an alternative, the subtree is kept for the re-descent of
+/// that member (see `resume_take`); for `INVALID_ALT` the parse is discarded
+/// and the arm evaluates `fallback`.
+///
+/// The arm also evaluates `fallback` without a neutral parse when another
+/// re-descent is pending or the error strategy is recovering from an error:
+/// a recovering strategy suppresses its reports, so an errorful neutral parse
+/// would go unnoticed. When it discards a neutral parse, it restores the
+/// recovery state of the strategy, so the fallback parses from the state
+/// before the neutral parse.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! shared_descent {
+    (
+        $recog:ident,
+        call_site: $call_site:expr,
+        prefix: $prefix:expr,
+        rule: $rule:expr,
+        invoke: $invoke:ident ( $($arg:expr),* ),
+        tails: { $($tail:pat => $tail_alt:expr),* $(,)? },
+        guarded: { $($guarded:pat => $guarded_alt:expr),* $(,)? },
+        default: $default:expr,
+        fallback: $fallback:expr $(,)?
+    ) => {{
+        if !$recog.base.descent_ready()
+            || $crate::error_strategy::ErrorStrategy::in_error_recovery_mode(
+                &mut $recog.err_handler,
+                &mut $recog.base,
+            )
+        {
+            $fallback
+        } else {
+            let strategy = $crate::error_strategy::ErrorStrategy::save_recovery_state(
+                &mut $recog.err_handler,
+            );
+            let neutral = $recog.base.begin_neutral_parse($call_site, $prefix);
+            // Any error discards the neutral parse, also one that cancels the
+            // parse (`BailErrorStrategy`): the stack of the neutral parse can
+            // make an input of another member look invalid. The fallback
+            // meets a genuine error again.
+            let alt: i32 = match $recog.$invoke($($arg),*) {
+                ::std::result::Result::Ok(node) if $recog.base.neutral_parse_usable(&neutral) => {
+                    let token = $crate::int_stream::IntStream::la(&mut $recog.base.input, 1);
+                    let alt: i32 = match token {
+                        $($tail => $tail_alt,)*
+                        $($guarded if !$recog.base.follow_contains(token) => $guarded_alt,)*
+                        _ => $default,
+                    };
+                    if alt == $crate::atn::INVALID_ALT {
+                        $recog.base.end_neutral_parse(neutral);
+                    } else {
+                        $recog.base.resume_neutral_parse(
+                            neutral,
+                            $crate::tree::NodeInner::as_node(node),
+                            $rule,
+                        );
+                    }
+                    alt
+                }
+                _ => {
+                    $recog.base.end_neutral_parse(neutral);
+                    $crate::atn::INVALID_ALT
+                }
+            };
+            if alt != $crate::atn::INVALID_ALT {
+                alt
+            } else {
+                match strategy {
+                    ::std::option::Option::Some(strategy) => {
+                        $crate::error_strategy::ErrorStrategy::restore_recovery_state(
+                            &mut $recog.err_handler,
+                            strategy,
+                        )
+                    }
+                    ::std::option::Option::None => {
+                        $crate::error_strategy::ErrorStrategy::reset(
+                            &mut $recog.err_handler,
+                            &mut $recog.base,
+                        )
+                    }
+                }
+                $fallback
+            }
+        }
+    }};
+}
+
 #[macro_export]
 macro_rules! impl_parser_recog {
     ($ext:ident, $nodekind:ident, $file:literal

@@ -86,6 +86,49 @@ where
     /// This method is called when the parser successfully matches an input
     /// symbol.
     fn report_match(&mut self, recognizer: &mut P);
+
+    /// Saves the recovery state of the strategy before a parse that can be
+    /// discarded: the neutral parse of a shared-descent group. `None` when the
+    /// strategy has no state to restore; [`Self::reset`] is then used instead.
+    #[doc(hidden)]
+    fn save_recovery_state(&mut self) -> Option<RecoveryState<'input, 'arena, TF, P>> {
+        None
+    }
+
+    /// Restores a state of [`Self::save_recovery_state`].
+    #[doc(hidden)]
+    fn restore_recovery_state(&mut self, _state: RecoveryState<'input, 'arena, TF, P>) {}
+}
+
+/// The recovery state of a [`DefaultErrorStrategy`] (see
+/// [`ErrorStrategy::save_recovery_state`]).
+#[doc(hidden)]
+pub struct RecoveryState<'input, 'arena, TF, P>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    P: Parser<'input, 'arena, TF>,
+{
+    error_recovery_mode: bool,
+    last_error_index: isize,
+    last_error_states: Option<IntervalSetBuf>,
+    next_tokens_state: i32,
+    next_tokens_ctx: Option<&'arena TreeNode<'input, 'arena, P::Node, TF::Tok>>,
+}
+
+impl<'input, 'arena, TF, P> fmt::Debug for RecoveryState<'input, 'arena, TF, P>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    P: Parser<'input, 'arena, TF>,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RecoveryState")
+            .field("error_recovery_mode", &self.error_recovery_mode)
+            .field("last_error_index", &self.last_error_index)
+            .field("next_tokens_state", &self.next_tokens_state)
+            .finish_non_exhaustive()
+    }
 }
 
 /// This is the default implementation of `ErrorStrategy` used for
@@ -449,6 +492,24 @@ where
         self.end_error_condition(recognizer);
         //println!("matched token succesfully {}", recognizer.get_input_stream().la(1))
     }
+
+    fn save_recovery_state(&mut self) -> Option<RecoveryState<'input, 'arena, TF, P>> {
+        Some(RecoveryState {
+            error_recovery_mode: self.error_recovery_mode,
+            last_error_index: self.last_error_index,
+            last_error_states: self.last_error_states.clone(),
+            next_tokens_state: self.next_tokens_state,
+            next_tokens_ctx: self.next_tokens_ctx,
+        })
+    }
+
+    fn restore_recovery_state(&mut self, state: RecoveryState<'input, 'arena, TF, P>) {
+        self.error_recovery_mode = state.error_recovery_mode;
+        self.last_error_index = state.last_error_index;
+        self.last_error_states = state.last_error_states;
+        self.next_tokens_state = state.next_tokens_state;
+        self.next_tokens_ctx = state.next_tokens_ctx;
+    }
 }
 
 /// This implementation of `ANTLRErrorStrategy` responds to syntax errors
@@ -564,6 +625,14 @@ where
 
     #[inline(always)]
     fn report_match(&mut self, _recognizer: &mut P) {}
+
+    fn save_recovery_state(&mut self) -> Option<RecoveryState<'input, 'arena, TF, P>> {
+        self.0.save_recovery_state()
+    }
+
+    fn restore_recovery_state(&mut self, state: RecoveryState<'input, 'arena, TF, P>) {
+        self.0.restore_recovery_state(state);
+    }
 }
 
 /// Essentially a type-erased `Box<dyn ErrorStrategy<'input, 'arena, TF, P> +
@@ -682,5 +751,15 @@ where
     #[inline(always)]
     fn report_match(&mut self, recognizer: &mut P) {
         self.as_mut_dyn().report_match(recognizer)
+    }
+
+    #[inline(always)]
+    fn save_recovery_state(&mut self) -> Option<RecoveryState<'input, 'arena, TF, P>> {
+        self.as_mut_dyn().save_recovery_state()
+    }
+
+    #[inline(always)]
+    fn restore_recovery_state(&mut self, state: RecoveryState<'input, 'arena, TF, P>) {
+        self.as_mut_dyn().restore_recovery_state(state)
     }
 }

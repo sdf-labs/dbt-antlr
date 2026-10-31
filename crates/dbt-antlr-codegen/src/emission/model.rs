@@ -279,6 +279,9 @@ pub struct RuleFunctionModel {
     pub has_lookahead_block: bool,
     /// Whether the rule was rewritten for left recursion.
     pub left_recursive: bool,
+    /// Whether a shared-descent group shares this rule: its function starts
+    /// with the `resume_take` hook.
+    pub resume_target: bool,
     pub args: Vec<DeclModel>,
     pub locals: Vec<DeclModel>,
     pub code: Vec<SrcOpModel>,
@@ -322,6 +325,41 @@ pub struct ChoiceModel {
     /// `Choice.tableCanDefer`: whether the static table prediction can return
     /// no alternative and has to fall back to `adaptivePredict`.
     pub table_can_defer: bool,
+}
+
+/// One shared-descent group of a `DescentAltBlock`.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DescentGroupModel {
+    /// The virtual alternative the table accepts with for the group.
+    pub virtual_alt: i32,
+    /// The call-site state of the shared rule for the neutral parse.
+    pub call_site: i32,
+    /// The number of leading tokens before the shared rule.
+    pub prefix_len: usize,
+    /// The shared rule name, as `RULE_<name>` spells it.
+    pub rule_name: String,
+    /// The call of the shared rule: `<name>()`, or `<name>_rec(<p>)` for a
+    /// left-recursive rule.
+    pub invoke: String,
+    /// The unguarded tail arms.
+    pub tails: Vec<DescentTailModel>,
+    /// The tail arms that commit only when the token cannot follow the
+    /// decision rule.
+    pub guarded_tails: Vec<DescentTailModel>,
+    /// The alternative of every other token, `0` to fall back.
+    pub default_alt: i32,
+    /// The alternative a fallback predicts under `--static-dfa-only`; `None`
+    /// falls back to `adaptivePredict`.
+    pub static_fallback: Option<i32>,
+}
+
+/// One tail arm of a shared-descent group.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DescentTailModel {
+    pub alt: i32,
+    pub tokens: Vec<TokenInfoModel>,
 }
 
 /// One bitset window of `TestSetInline.Bitset`.
@@ -571,6 +609,14 @@ pub enum SrcOpModel {
         choice: ChoiceModel,
         preamble: Vec<Self>,
         alts: Vec<Self>,
+    },
+    /// A `(A | B | C)` block predicted from a static SLL DFA table whose states
+    /// can accept with the virtual alternative of a shared-descent group.
+    DescentAltBlock {
+        choice: ChoiceModel,
+        preamble: Vec<Self>,
+        alts: Vec<Self>,
+        groups: Vec<DescentGroupModel>,
     },
     /// An optional `(...)?` block predicted from a static SLL DFA table.
     DFAOptionalBlock {

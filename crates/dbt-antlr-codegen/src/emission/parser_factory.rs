@@ -26,10 +26,10 @@ use crate::emission::lexer_factory::{
 };
 use crate::emission::listener_factory::alt_labels;
 use crate::emission::model::{
-    ActionChunkModel, BitsetModel, ChoiceModel, ChunkContextModel, DeclModel, IndexedActionModel,
-    OpLabelModel, PackedAtnModel, ParserFileContext, ParserFileModel, ParserModel,
-    RuleActionFunctionModel, RuleFunctionModel, RuleNamedActionsModel, RuleRefModel, SrcOpModel,
-    StructDeclModel, TokenInfoModel,
+    ActionChunkModel, BitsetModel, ChoiceModel, ChunkContextModel, DeclModel, DescentGroupModel,
+    DescentTailModel, IndexedActionModel, OpLabelModel, PackedAtnModel, ParserFileContext,
+    ParserFileModel, ParserModel, RuleActionFunctionModel, RuleFunctionModel,
+    RuleNamedActionsModel, RuleRefModel, SrcOpModel, StructDeclModel, TokenInfoModel,
 };
 use crate::error::EmitError;
 use crate::grammar::atn::{
@@ -42,7 +42,7 @@ use crate::grammar::model::{
 };
 use crate::grammar::provenance::Origin;
 use crate::grammar::source::SourceSet;
-use crate::optimization::{AtnFallback, StaticParserTables};
+use crate::optimization::{AtnFallback, DescentGroup, DescentPlan, StaticParserTables, TailArm};
 
 /// `Token.EOF`.
 const TOKEN_EOF: i32 = -1;
@@ -157,6 +157,8 @@ struct WalkContext<'a> {
     sources: &'a SourceSet,
     /// The static prediction tables of this unit, when the pass selected one.
     static_tables: Option<&'a StaticParserTables>,
+    /// The rules that shared-descent groups share, by rule index.
+    resume_targets: BTreeSet<usize>,
 }
 
 impl<'a> WalkContext<'a> {
@@ -233,6 +235,9 @@ impl<'a> WalkContext<'a> {
             rule_retvals,
             sources,
             static_tables,
+            resume_targets: static_tables
+                .map(|tables| tables.shared_rules().collect())
+                .unwrap_or_default(),
         }
     }
 
@@ -240,6 +245,28 @@ impl<'a> WalkContext<'a> {
     fn has_static_table(&self, decision: usize) -> bool {
         self.static_tables
             .is_some_and(|tables| tables.has_table(decision))
+    }
+
+    /// The shared-descent groups of the decision's table, when it has any.
+    fn descent_plan(&self, decision: usize) -> Option<&'a DescentPlan> {
+        self.static_tables
+            .and_then(|tables| tables.descent(decision))
+    }
+
+    /// Rejects a shared-descent group on a block that has no group arms.
+    ///
+    /// # Errors
+    ///
+    /// The static parser DFA pass plans groups only for plain alternative
+    /// blocks, so this error marks an inconsistency between the pass and the
+    /// emitter.
+    fn no_descent_groups(&self, decision: usize) -> Result<(), EmitError> {
+        if self.descent_plan(decision).is_some() {
+            return Err(unsupported(format!(
+                "parser decision {decision} has shared-descent groups but is not an alternative block"
+            )));
+        }
+        Ok(())
     }
 
     /// `true` when the decision can still reach the adaptive simulation.
@@ -469,6 +496,7 @@ fn build_rule_function(
             start_state: to_i32(walk.graph.rule_starts[rule_index]),
             has_lookahead_block,
             left_recursive: left_recursion,
+            resume_target: walk.resume_targets.contains(&rule_index),
             args: ctxs.args,
             locals,
             code,
@@ -542,7 +570,8 @@ fn inject_left_recursion_ops(code: &mut [SrcOpModel], rule: &Rule) -> Result<(),
     let mut primary_alts_code = match &mut ops[0] {
         SrcOpModel::LL1AltBlock { alts, .. }
         | SrcOpModel::AltBlock { alts, .. }
-        | SrcOpModel::DFAAltBlock { alts, .. } => alts.iter_mut().collect::<Vec<_>>(),
+        | SrcOpModel::DFAAltBlock { alts, .. }
+        | SrcOpModel::DescentAltBlock { alts, .. } => alts.iter_mut().collect::<Vec<_>>(),
         single @ SrcOpModel::CodeBlockForAlt { .. } => vec![single],
         _ => return Err(unexpected()),
     };
@@ -604,7 +633,11 @@ fn inject_left_recursion_ops(code: &mut [SrcOpModel], rule: &Rule) -> Result<(),
     let mut op_alt_infos = op_alt_infos.iter();
     match wrapper.first_mut() {
         // Multiple operator alternatives: one code block per alternative.
-        Some(SrcOpModel::AltBlock { alts, .. } | SrcOpModel::DFAAltBlock { alts, .. }) => {
+        Some(
+            SrcOpModel::AltBlock { alts, .. }
+            | SrcOpModel::DFAAltBlock { alts, .. }
+            | SrcOpModel::DescentAltBlock { alts, .. },
+        ) => {
             for alt in alts {
                 let SrcOpModel::CodeBlockForAlt { ops, .. } = alt else {
                     return Err(unexpected());
@@ -991,6 +1024,19 @@ impl RuleWalk<'_, '_> {
         } else if self.walk.has_static_table(decision) {
             let mut choice = choice_model(state, decision);
             choice.table_can_defer = self.walk.static_table_defers(decision)?;
+            if let Some(plan) = self.walk.descent_plan(decision) {
+                let groups = plan
+                    .groups
+                    .iter()
+                    .map(|group| self.descent_group_model(group))
+                    .collect();
+                return Ok(SrcOpModel::DescentAltBlock {
+                    choice,
+                    preamble: Vec::new(),
+                    alts,
+                    groups,
+                });
+            }
             Ok(SrcOpModel::DFAAltBlock {
                 choice,
                 preamble: Vec::new(),
@@ -1055,6 +1101,7 @@ impl RuleWalk<'_, '_> {
                         })
                     }
                 } else if greedy && self.walk.has_static_table(decision) {
+                    self.walk.no_descent_groups(decision)?;
                     let mut choice = choice_model(state, decision);
                     choice.table_can_defer = self.walk.static_table_defers(decision)?;
                     Ok(SrcOpModel::DFAOptionalBlock { choice, alts })
@@ -1091,6 +1138,7 @@ impl RuleWalk<'_, '_> {
                         iteration: vec![capture_next_token_type()],
                     })
                 } else if greedy && self.walk.has_static_table(decision) {
+                    self.walk.no_descent_groups(decision)?;
                     choice.table_can_defer = self.walk.static_table_defers(decision)?;
                     Ok(SrcOpModel::DFAStarBlock {
                         choice,
@@ -1135,6 +1183,7 @@ impl RuleWalk<'_, '_> {
                         iteration: vec![capture_next_token_type()],
                     })
                 } else if greedy && self.walk.has_static_table(decision) {
+                    self.walk.no_descent_groups(decision)?;
                     choice.table_can_defer = self.walk.static_table_defers(decision)?;
                     Ok(SrcOpModel::DFAPlusBlock {
                         choice,
@@ -1643,6 +1692,53 @@ impl RuleWalk<'_, '_> {
 
     /// `Choice.getAltLookaheadAsStringLists` for LL(1) choices (all
     /// alternatives have a look set by disjointness).
+    /// The `DescentAltBlock` model of one shared-descent group.
+    fn descent_group_model(&self, group: &DescentGroup) -> DescentGroupModel {
+        let rule = &self.walk.unit.rules[group.rule];
+        let escaped_name = escape_if_needed(&rule.name);
+        let invoke = if rule.left_recursion.is_some() {
+            format!("{escaped_name}_rec({})", group.precedence)
+        } else {
+            format!("{escaped_name}()")
+        };
+        let tail = |arm: &TailArm| DescentTailModel {
+            alt: arm.alt,
+            tokens: arm
+                .tokens
+                .iter()
+                .map(|ttype| TokenInfoModel {
+                    ttype: *ttype,
+                    name: escape_if_needed(&self.walk.token_name(*ttype)),
+                })
+                .collect(),
+        };
+        let static_only = self
+            .walk
+            .static_tables
+            .is_some_and(|tables| tables.atn_fallback() == AtnFallback::Forbidden);
+        DescentGroupModel {
+            virtual_alt: group.virtual_alt,
+            call_site: group.call_site,
+            prefix_len: group.prefix.len(),
+            rule_name: rule.name.clone(),
+            invoke,
+            tails: group
+                .arms
+                .iter()
+                .filter(|arm| !arm.guarded)
+                .map(tail)
+                .collect(),
+            guarded_tails: group
+                .arms
+                .iter()
+                .filter(|arm| arm.guarded)
+                .map(tail)
+                .collect(),
+            default_alt: group.default_alt,
+            static_fallback: static_only.then(|| group.min_alt()),
+        }
+    }
+
     fn alt_look_token_lists(&self, look: &[Option<Vec<(i32, i32)>>]) -> Vec<Vec<TokenInfoModel>> {
         look.iter()
             .map(|alternative| {

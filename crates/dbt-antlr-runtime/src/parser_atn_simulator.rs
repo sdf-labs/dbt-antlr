@@ -283,6 +283,7 @@ impl<'sim> ParserATNSimulator<'sim> {
             pd: PhantomData,
         };
 
+        local.parser.note_stack_dependent_prediction();
         let outer_context = match local.outer_context() {
             Some(outer_context) => PredictionContext::from_rule_context(
                 self.atn(),
@@ -501,6 +502,7 @@ impl<'sim> ParserATNSimulator<'sim> {
                     local.parser,
                 );
                 let atn_start_state = dfa.atn_start_state;
+                local.parser.note_stack_dependent_prediction();
 
                 let s0_closure = self.compute_start_state(
                     atn_start_state,
