@@ -37,14 +37,14 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use dbt_antlr_runtime::analysis::{
     ATN, ATNConfig, ATNStateRef, ATNStateType, BOUNDARY_TAINT, BitSet, Bump, EOF,
-    FOREIGN_CONSUME_TAINT, INTERIOR_TAINT, IntervalSetBuf, MergeCache, MutableATNConfigSet,
-    NotSetTransition, PRECPRED_TAINT, PRED_TAINT, PrecedencePredicateTransition,
-    PredicateTransition, PredictionContext, PredictionContextRef, ROOTED_TAINT, RuleTransition,
-    TOKEN_MIN_USER_TOKEN_TYPE, TransitionType, WIDENED_TAINT,
+    FOREIGN_CONSUME_TAINT, FOREIGN_LINEAGE_TAINT, INTERIOR_TAINT, IntervalSetBuf, MIDWAY_TAINT,
+    MergeCache, MutableATNConfigSet, NotSetTransition, PRECPRED_TAINT, PRED_TAINT,
+    PrecedencePredicateTransition, PredicateTransition, PredictionContext, PredictionContextRef,
+    ROOTED_TAINT, RuleTransition, TOKEN_MIN_USER_TOKEN_TYPE, TransitionType, WIDENED_TAINT,
 };
 
 use super::loop_block::LoopBlock;
-use super::postfix::{PostfixShape, bottom_frame_is, collect_guard_roots};
+use super::postfix::{PostfixShape, collect_guard_roots};
 
 /// The alternative of an optional-postfix decision that skips the postfix
 /// element.
@@ -72,6 +72,70 @@ impl ClosedSet<'_> {
     pub(super) fn taint_of(&self, config: &ATNConfig<'_>) -> i32 {
         taint_of(&self.taint, config)
     }
+}
+
+/// Whether a boundary-popped config with `context` is in the frame that it
+/// popped into. The boundary chase gives that frame the empty context, and an
+/// invocation started from it pushes a frame on top.
+pub(super) fn in_popped_frame(context: Option<PredictionContextRef<'_>>) -> bool {
+    context.is_none_or(|context| context.has_empty_path())
+}
+
+/// The positions of rule `rule_index` that still owe input before an epsilon
+/// path reaches `stop`: some epsilon path that avoids `stop` reaches a token or
+/// a rule call of the rule.
+pub(super) fn positions_owing_input(atn: &ATN, rule_index: i32, stop: ATNStateRef) -> BitSet {
+    let mut owing = BitSet::new();
+    for state in atn.iter_states() {
+        if state.get_rule_index() != rule_index {
+            continue;
+        }
+        let start = atn.make_state_ref(state.get_state_number());
+        let mut visited = BitSet::new();
+        let mut work = vec![start];
+        'walk: while let Some(current) = work.pop() {
+            if current == stop
+                || current.get_rule_index() != rule_index
+                || current.state_type() == ATNStateType::RuleStop
+                || !visited.insert(current.get_state_number() as usize)
+            {
+                continue;
+            }
+            for transition in current.get_transitions() {
+                if !transition.is_epsilon() || transition.try_as::<RuleTransition>().is_some() {
+                    owing.insert(state.get_state_number() as usize);
+                    break 'walk;
+                }
+                work.push(transition.get_target());
+            }
+        }
+    }
+    owing
+}
+
+/// The positions of the rule of `start` that `start` reaches inside that rule:
+/// rule calls contribute their follow states, and the walk stops at the rule
+/// stop and at `end`.
+pub(super) fn rule_positions(start: ATNStateRef, end: Option<ATNStateRef>) -> BitSet {
+    let rule_index = start.get_rule_index();
+    let mut states = BitSet::new();
+    let mut work = vec![start];
+    while let Some(state) = work.pop() {
+        if Some(state) == end
+            || state.get_rule_index() != rule_index
+            || state.state_type() == ATNStateType::RuleStop
+            || !states.insert(state.get_state_number() as usize)
+        {
+            continue;
+        }
+        for transition in state.get_transitions() {
+            work.push(match transition.try_as::<RuleTransition>() {
+                Some(rule) => rule.follow_state,
+                None => transition.get_target(),
+            });
+        }
+    }
+    states
 }
 
 /// The taint recorded for one config of a set closed under `taint`.
@@ -191,8 +255,8 @@ pub(super) struct Closure<'atn, 'a> {
     /// The optional-postfix shape of the decision, when it has one: skip
     /// consumption outside its discipline records guard roots.
     postfix: Option<PostfixShape>,
-    /// Rule index of the decision state, when the decision has a postfix shape.
-    decision_rule_index: i32,
+    /// The decision state of the build, set by [`Closure::start`].
+    decision_state: ATNStateRef,
     /// Configs visited by this closure, across all roots of the attempt.
     visits: u64,
     visit_budget: u64,
@@ -224,7 +288,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             precedence_start: false,
             loop_block,
             postfix,
-            decision_rule_index: -1,
+            decision_state: ATNStateRef::invalid(),
             visits: 0,
             visit_budget,
             exhausted: false,
@@ -241,7 +305,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
     /// alternative, each starting from the empty prediction context.
     pub(super) fn start(&mut self, decision_state: ATNStateRef) -> ClosedSet<'a> {
         let mut out = SetBuilder::new();
-        self.decision_rule_index = decision_state.get_rule_index();
+        self.decision_state = decision_state;
         self.precedence_start = self.precedence.is_some();
         for (index, transition) in decision_state.get_transitions().iter().enumerate() {
             let config = ATNConfig::new(
@@ -355,7 +419,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             }
         }
 
-        let sites = self.postfix.map(|_| self.build_site_map());
+        let sites = self.postfix.is_some().then(|| self.build_site_map());
         let mut successors = Vec::with_capacity(classes.len());
         for (class, label) in classes {
             if self.exhausted {
@@ -369,37 +433,35 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                     out.insert(source.clone(), taints[index]);
                 } else {
                     // A boundary-popped configuration consumes on behalf of
-                    // "some caller". Inside the operator loop that caller is an
-                    // enclosing invocation of this loop, so the consumption is
-                    // the loop's own and the enter/exit substitution still
-                    // applies; anywhere else the phantom consumer is foreign,
-                    // and the substitution must not fire.
+                    // "some caller". When that caller is an enclosing
+                    // invocation of this loop, the consumption is the loop's
+                    // own and the enter/exit substitution still applies.
+                    // Otherwise the consumer is foreign, and the substitution
+                    // must not fire.
                     let mut taint = taints[index];
                     if taint & BOUNDARY_TAINT != 0
                         && self.loop_block.as_ref().is_some_and(|block| {
-                            !block.is_loop_consumption(source.get_state(), source.get_context())
+                            !block.is_loop_consumption(
+                                source.get_state(),
+                                source.get_context(),
+                                taint,
+                            )
                         })
                     {
                         taint |= FOREIGN_CONSUME_TAINT;
                     }
-                    // A skip-lineage configuration that consumed outside the
-                    // dangling-else discipline is realizable at run time only
-                    // on stacks whose epsilon-pop chase from the block end
-                    // reaches the positions this consumption passed through.
-                    // Record them as guard roots.
-                    if let (Some(postfix), Some(sites)) = (self.postfix, sites.as_ref())
+                    if let (Some(postfix), Some(sites)) = (self.postfix.as_ref(), sites.as_ref())
                         && source.get_alt() == POSTFIX_SKIP_ALT
                         && taint & ROOTED_TAINT == 0
-                        && source.get_state().get_rule_index() != self.decision_rule_index
-                        && !source.get_context().is_none_or(|context| {
-                            bottom_frame_is(context, postfix.block_end_state, &mut HashSet::new())
-                        })
+                        && !postfix.skip_mirrors(source.get_state(), source.get_context(), taint)
                     {
+                        let mirror_return = (taint & (FOREIGN_LINEAGE_TAINT | MIDWAY_TAINT) == 0)
+                            .then_some(postfix.block_end_state);
                         taint |= ROOTED_TAINT;
                         collect_guard_roots(
                             source.get_state(),
                             source.get_context(),
-                            postfix.block_end_state,
+                            mirror_return,
                             sites,
                             &mut roots,
                         );
@@ -484,6 +546,14 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             return;
         }
         let state = config.get_state();
+        if taint & MIDWAY_TAINT != 0
+            && state == self.decision_state
+            && in_popped_frame(config.get_context())
+        {
+            // The enclosing invocation finished the alternative that the
+            // boundary chase returned into, and is back at its decision.
+            taint &= !MIDWAY_TAINT;
+        }
 
         if state.state_type() == ATNStateType::RuleStop {
             let context = config.get_context().expect("config has a context");
@@ -550,8 +620,23 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                     }
                     let mut next = config.clone().with_state(transition.get_target());
                     let mut next_depth = depth;
+                    let mut next_taint = taint;
                     if boundary_chase {
                         next_depth = (depth - 1).min(-1);
+                        // A return into the middle of an alternative of an
+                        // enclosing invocation that still owes input (after an
+                        // operand, as in `e '?' e '-' ID`): that alternative owns
+                        // the next tokens until the config reaches the decision
+                        // again.
+                        let target = transition.get_target();
+                        let midway = match (&self.loop_block, &self.postfix) {
+                            (Some(block), _) => block.is_midway(target),
+                            (None, Some(postfix)) => postfix.is_midway(target),
+                            (None, None) => false,
+                        };
+                        if midway {
+                            next_taint |= MIDWAY_TAINT;
+                        }
                         if self.precedence_start
                             && self
                                 .precedence
@@ -561,7 +646,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                             next.set_precedence_filter_suppressed(true);
                         }
                     }
-                    self.closure(next, taint, next_depth, out);
+                    self.closure(next, next_taint, next_depth, out);
                 }
                 _ => {}
             }
@@ -605,6 +690,20 @@ impl<'atn, 'a> Closure<'atn, 'a> {
         if widened {
             self.facts.used_widening = true;
             callee_taint |= WIDENED_TAINT;
+        }
+        let foreign_call = taint & BOUNDARY_TAINT != 0
+            && (taint & MIDWAY_TAINT != 0
+                || match (&self.loop_block, &self.postfix) {
+                    (Some(block), _) => {
+                        block.is_foreign_call(config.get_state(), config.get_context())
+                    }
+                    (None, Some(postfix)) => {
+                        postfix.is_foreign_call(config.get_state(), config.get_context())
+                    }
+                    (None, None) => false,
+                });
+        if foreign_call {
+            callee_taint |= FOREIGN_LINEAGE_TAINT;
         }
         let next_depth = if depth >= 0 { depth + 1 } else { depth };
         self.closure(callee, callee_taint, next_depth, out);

@@ -22,8 +22,9 @@ const SUPPRESS_PRECEDENCE_FILTER: i32 = 0x40000000;
 pub const BOUNDARY_TAINT: i32 = 1;
 pub const PRECPRED_TAINT: i32 = 2;
 pub const WIDENED_TAINT: i32 = 4;
-/// Reserved for the guarded-take and guarded-iterate analyses: a config that
-/// consumed input outside the loop or postfix discipline it belongs to.
+/// A config of a precedence decision that consumed input outside the operator
+/// loop: the token belongs to neither an enclosing invocation of the loop nor
+/// an invocation that such a loop started.
 pub const FOREIGN_CONSUME_TAINT: i32 = 8;
 /// Reserved for the guarded-take and guarded-iterate analyses: a position an
 /// exit lineage had to pass through.
@@ -35,6 +36,18 @@ pub const PRED_TAINT: i32 = 32;
 /// usage", and mixed usage is never trusted, no matter which path is found
 /// first.
 pub const INTERIOR_TAINT: i32 = 64;
+/// The config popped the decision boundary and then called a rule from a
+/// position outside the discipline of its decision: the operator loop of a
+/// precedence decision, or the take path of an optional-postfix decision. The
+/// tokens that the config consumes from then on are foreign to the decision.
+/// Widening and merged contexts can remove the frame of that call, so the
+/// analysis keeps this fact as taint and not in the context.
+pub const FOREIGN_LINEAGE_TAINT: i32 = 128;
+/// The boundary chase returned the config into the rule of its decision, in
+/// the middle of an alternative of an enclosing invocation. The config has not
+/// reached the decision state since then. Until it does, it consumes and calls
+/// for that alternative, not for the decision.
+pub const MIDWAY_TAINT: i32 = 256;
 
 #[derive(Clone)]
 pub struct ATNConfig<'ephemeral> {

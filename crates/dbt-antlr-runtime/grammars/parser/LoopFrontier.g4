@@ -1,15 +1,14 @@
 // Witness for the enter/exit substitution beyond the hybrid construction
-// budget. It is the LoopSubst grammar with a follow that re-enters the loop:
-// `expr+` puts the loop's own first tokens in FOLLOW(expr), and
-// `expr '||' INT EOF` makes the exit lineage consume an operator token in a
-// frame that is not this loop's own.
+// budget, where every follow of the loop is foreign. It is the LoopSubst
+// grammar with two follows:
+// - `expr+` starts a new invocation of `expr` after the exit. That
+//   invocation can read the next `'-'` as a prefix operator where the loop
+//   reads a binary operator.
+// - `expr '||' INT EOF` consumes an operator token in a frame that is not this
+//   loop's own.
 //
-// Two facts to keep:
-// - Without the substitution this decision escapes 20 times: the budget
-//   frontier cuts iterate/exit states at the depth cap, and the foreign
-//   consumption of the `'||' INT EOF` follow vetoes the rest.
-// - With it, 18 of those states are resolved and 2 escapes remain, both
-//   foreign-vetoed iterate/exit conflicts.
+// The substitution resolves none of the iterate/exit states of this
+// decision, neither the conflicts nor the states at the budget frontier.
 grammar LoopFrontier;
 
 start : expr+ EOF | expr '||' INT EOF ;

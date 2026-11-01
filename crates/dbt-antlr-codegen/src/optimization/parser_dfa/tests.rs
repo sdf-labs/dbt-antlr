@@ -18,11 +18,14 @@
 
 use std::path::{Path, PathBuf};
 
+use dbt_antlr_runtime::analysis::{BOUNDARY_TAINT, FOREIGN_LINEAGE_TAINT};
+
 use crate::grammar::compiler::compile;
 use crate::grammar::loader::LoadOptions;
 use crate::optimization::AtnFallback;
 
 use super::loop_block::LoopBlock;
+use super::table::{StaticDfaState, StaticDfaTable};
 use super::{Category, DecisionClassifier, DecisionResult};
 
 fn grammars_dir() -> PathBuf {
@@ -648,10 +651,10 @@ fn packed_atn_tail_decodes_back_into_the_same_tables() {
     }
 }
 
-/// The loop block of a left-recursive rule covers the rule's own positions and
-/// nothing else.
+/// The operator loop of a left-recursive rule covers the loop decision and the
+/// operator alternatives, not the base alternatives and not other rules.
 #[test]
-fn loop_block_covers_the_rule_locals_only() {
+fn operator_loop_covers_the_loop_positions_only() {
     let atn = parser_atn(&grammars_dir().join("parser").join("LoopSubst.g4"));
     let decision = precedence_decision(atn);
     let block = LoopBlock::of(atn, decision);
@@ -659,21 +662,28 @@ fn loop_block_covers_the_rule_locals_only() {
 
     assert!(block.guards_are_simple(), "the arithmetic loop is simple");
     assert!(
-        block.is_loop_consumption(atn.rule_to_start_state[rule_index as usize], None),
-        "the rule start is inside the loop block"
+        block.is_loop_consumption(decision, None, BOUNDARY_TAINT),
+        "the loop decision is part of the loop"
     );
-    assert!(
-        block.is_loop_consumption(decision, None),
-        "the loop decision is inside the loop block"
+    // An enclosing invocation that continues a base alternative consumes for
+    // that alternative.
+    let rule_start = atn.rule_to_start_state[rule_index as usize];
+    assert!(!block.is_loop_consumption(rule_start, None, BOUNDARY_TAINT));
+    assert!(block.is_foreign_call(rule_start, None));
+    // An operand body runs with an operator-loop frame in its context, so its
+    // own positions are not loop positions.
+    let operand_state = atn.make_state_ref(
+        atn.iter_states()
+            .find(|state| state.get_rule_index() != rule_index)
+            .expect("the grammar has another rule")
+            .get_state_number(),
     );
-    // An operand body runs with a loop-block frame in its context, so its own
-    // positions are not loop-block states.
-    let operand_state = atn
-        .iter_states()
-        .find(|state| state.get_rule_index() != rule_index)
-        .expect("the grammar has another rule")
-        .get_state_number();
-    assert!(!block.is_loop_consumption(atn.make_state_ref(operand_state), None));
+    assert!(!block.is_loop_consumption(operand_state, None, BOUNDARY_TAINT));
+    assert!(block.is_foreign_call(operand_state, None));
+    assert!(!block.is_foreign_call(decision, None));
+    // A new invocation that a foreign call started owns its tokens, even at the
+    // positions of the loop.
+    assert!(!block.is_loop_consumption(decision, None, BOUNDARY_TAINT | FOREIGN_LINEAGE_TAINT));
     // The decision reaches itself by epsilon, so it owes no token.
     assert!(!block.is_pending(decision));
 }
@@ -715,11 +725,8 @@ fn compound_guarded_alternatives_are_not_substitutable() {
 }
 
 /// The same shape without the compound alternative stays fully static: the
-/// iterate/exit conflicts of every class resolve by substitution.
-///
-/// `k == 5` pins that the construction went past the hybrid depth cap, and
-/// `escapes == 0` pins that the substitution decided those states: without it
-/// this decision escapes 33 times.
+/// iterate/exit conflicts after a lambda body (`x -> a + b`) resolve by
+/// substitution. Without it this decision escapes 4 times.
 #[test]
 fn simple_guarded_alternatives_need_no_escape() {
     let results = classify(&grammars_dir().join("parser").join("LoopSubst.g4"));
@@ -727,15 +734,14 @@ fn simple_guarded_alternatives_need_no_escape() {
         .iter()
         .find(|result| result.category == Category::LR_PRECEDENCE)
         .expect("the arithmetic loop decision");
-    assert_eq!(result.k, 5);
-    assert_eq!(result.num_dfa_states, 171);
     assert_eq!(result.escapes, 0);
     assert!(result.is_fully_static());
     assert_eq!(result.fallback_text(), "0");
     let classes = result.precedence.as_ref().expect("precedence tables");
     assert_eq!(classes.adaptive_classes, 0);
     assert!(classes.tables.iter().all(Option::is_some));
-    for table in classes.tables.iter().flatten() {
+    let tables: Vec<_> = classes.tables.iter().flatten().collect();
+    for table in &tables {
         assert!(
             table
                 .states
@@ -744,10 +750,19 @@ fn simple_guarded_alternatives_need_no_escape() {
             "no iterate/exit state escapes"
         );
     }
+    assert!(
+        tables
+            .iter()
+            .flat_map(|table| table.states.iter())
+            .any(|state| state.accept == 1 && state.conflicts == [1, 2]),
+        "the substitution resolves an iterate/exit conflict to iterate"
+    );
 }
 
-/// A follow that re-enters the loop keeps the frontier states decidable but
-/// vetoes the foreign one: 20 escapes without the substitution, 2 with it.
+/// A follow that starts a new invocation of the loop's rule (`expr+`), or that
+/// consumes an operator outside the loop (`expr '||' INT EOF`), is foreign to
+/// the loop. The substitution then resolves none of the iterate/exit states,
+/// neither the conflicts nor the states at the budget frontier.
 #[test]
 fn foreign_consumption_vetoes_the_substitution_at_the_frontier() {
     let results = classify(&grammars_dir().join("parser").join("LoopFrontier.g4"));
@@ -755,23 +770,241 @@ fn foreign_consumption_vetoes_the_substitution_at_the_frontier() {
         .iter()
         .find(|result| result.category == Category::LR_PRECEDENCE)
         .expect("the arithmetic loop decision");
-    assert_eq!(result.k, 5);
-    assert_eq!(result.num_dfa_states, 229);
-    assert_eq!(result.escapes, 2, "only the foreign-vetoed pair escapes");
+    assert!(result.escapes > 0);
     assert!(!result.is_fully_static());
     let classes = result.precedence.as_ref().expect("precedence tables");
     assert_eq!(classes.adaptive_classes, 0);
-    let escaping: Vec<_> = classes
+    let states: Vec<_> = classes
         .tables
         .iter()
         .flatten()
         .flat_map(|table| table.states.iter())
-        .filter(|state| state.is_escape())
         .collect();
-    assert_eq!(escaping.len(), 2);
-    for state in escaping {
-        assert_eq!(state.conflicts, [1, 2], "both escapes are iterate/exit");
+    assert!(
+        states
+            .iter()
+            .all(|state| !(state.accept == 1 && state.conflicts == [1, 2])),
+        "no iterate/exit conflict resolves to iterate"
+    );
+}
+
+/// The token types of `names`, each a literal (`'-'`) or a symbolic token name
+/// of one grammar's parser root.
+fn token_types(path: &Path, names: &[&str]) -> Vec<i32> {
+    let compilation = compile(LoadOptions {
+        roots: vec![path.to_path_buf()],
+        library_directories: Vec::new(),
+    })
+    .expect("grammar compiles");
+    let root = compilation.roots.first().expect("one root");
+    let parser = compilation
+        .parser(root.parser.expect("parser root"))
+        .expect("parser artifact");
+    let recognizer = &parser.semantic.recognizer;
+    names
+        .iter()
+        .map(|name| {
+            let position = |names: &[Option<String>]| {
+                names
+                    .iter()
+                    .position(|candidate| candidate.as_deref() == Some(*name))
+            };
+            position(&recognizer.literal_names)
+                .or_else(|| position(&recognizer.symbolic_names))
+                .unwrap_or_else(|| panic!("unknown token {name}")) as i32
+        })
+        .collect()
+}
+
+/// The state that `tokens` lead to from the start state, or `None` when a token
+/// has no edge.
+fn walk<'t>(table: &'t StaticDfaTable, tokens: &[i32]) -> Option<&'t StaticDfaState> {
+    let mut state = &table.states[0];
+    for token in tokens {
+        let edge = state
+            .edges
+            .iter()
+            .find(|edge| edge.lo <= *token && *token <= edge.hi)?;
+        state = &table.states[edge.target];
     }
+    Some(state)
+}
+
+/// After the exit, the loop does not own the tokens of a new invocation of the
+/// rule, or the tokens that an enclosing alternative still owes.
+/// `LoopSibling.g4` reads `a - - a ;` as `a` and `- - a`,
+/// `with pair a - pair - a a` as `pair a (- pair (- a) a)`, `if a ? a - a` as
+/// `a ? a - a`, and `opt a ? a - a - a !` as `a ? a - a - a !`. No loop can
+/// resolve the iterate/exit conflict on these paths to iterate.
+#[test]
+fn tokens_that_the_loop_does_not_own_veto_the_substitution() {
+    let path = grammars_dir().join("parser").join("LoopSibling.g4");
+    let results = classify(&path);
+    let names = rule_names(&path, &results);
+    let types = token_types(&path, &["'-'", "'pair'", "ID"]);
+    let (minus, pair, id) = (types[0], types[1], types[2]);
+    for (rule, tokens) in [
+        ("expr", vec![minus, minus, id]),
+        ("term", vec![minus, pair, minus, id]),
+        ("cond", vec![minus, id]),
+        ("tail", vec![minus, id, minus, id]),
+    ] {
+        let (result, _) = results
+            .iter()
+            .zip(&names)
+            .find(|(result, name)| result.category == Category::LR_PRECEDENCE && *name == rule)
+            .unwrap_or_else(|| panic!("the loop decision of {rule}"));
+        let ends: Vec<&StaticDfaState> = result
+            .precedence
+            .as_ref()
+            .expect("precedence tables")
+            .tables
+            .iter()
+            .flatten()
+            .filter_map(|table| walk(table, &tokens))
+            .collect();
+        assert!(
+            ends.iter().any(|state| state.is_escape()),
+            "{rule}: the iterate/exit conflict escapes"
+        );
+        assert!(
+            ends.iter().all(|state| state.accept != 1),
+            "{rule}: no class table iterates on the path"
+        );
+    }
+}
+
+/// The call site of the first of two side-by-side calls of `rule_index`
+/// (`r r`): the call whose follow state calls the rule again.
+fn first_of_two_calls(atn: &dbt_antlr_runtime::analysis::ATN, rule_index: usize) -> i32 {
+    use dbt_antlr_runtime::analysis::RuleTransition;
+    let calls = |state: dbt_antlr_runtime::analysis::ATNStateRef| {
+        state.get_transitions().iter().any(|transition| {
+            transition
+                .try_as::<RuleTransition>()
+                .is_some_and(|call| call.get_target().get_rule_index() as usize == rule_index)
+        })
+    };
+    atn.iter_states()
+        .map(|state| atn.make_state_ref(state.get_state_number()))
+        .find(|state| {
+            state.get_transitions().iter().any(|transition| {
+                transition.try_as::<RuleTransition>().is_some_and(|call| {
+                    call.get_target().get_rule_index() as usize == rule_index
+                        && calls(call.follow_state)
+                })
+            })
+        })
+        .expect("two side-by-side calls")
+        .get_state_number()
+}
+
+/// After the skip, a new invocation of the decision rule owns the tokens that
+/// it reads. `PostfixSibling.g4` reads `A - B ;` as `A` and `- B`, and
+/// `with [ A - B ] X` as `[ A (- B) ] X`. On these paths the tables of `r` and
+/// `q` must not take, and a guard must defer at the first of the two
+/// side-by-side calls. In `mid A - B A - B A - B !` the skip of the second `m`
+/// returns into the middle of the take path of the first, so `m` must not take
+/// on that path either.
+#[test]
+fn new_invocations_after_the_skip_are_out_of_discipline() {
+    let path = grammars_dir().join("parser").join("PostfixSibling.g4");
+    let atn = parser_atn(&path);
+    let results = classify(&path);
+    let names = rule_names(&path, &results);
+    let types = token_types(&path, &["'-'", "'B'", "';'", "']'", "'A'"]);
+    let (minus, b, semi, close, a) = (types[0], types[1], types[2], types[3], types[4]);
+    for (rule, tokens) in [
+        ("r", vec![minus, b, semi]),
+        ("q", vec![minus, b, close]),
+        ("m", vec![minus, b, a, minus]),
+    ] {
+        let (result, _) = results
+            .iter()
+            .zip(&names)
+            .find(|(result, name)| result.has_postfix_shape && *name == rule)
+            .unwrap_or_else(|| panic!("the postfix decision of {rule}"));
+        let table = result.table.as_ref().expect("a hybrid table");
+        let state = walk(table, &tokens).expect("the path has edges");
+        assert_ne!(state.accept, 1, "{rule}: the table does not take outright");
+        assert!(
+            state.is_escape() || state.is_guarded(),
+            "{rule}: the conflict defers"
+        );
+        if state.is_guarded() && rule != "m" {
+            let first_call = first_of_two_calls(atn, result.rule_index);
+            assert!(
+                table.guard_danger.contains(&first_call),
+                "{rule}: the guard defers at the first of the two calls"
+            );
+        }
+    }
+}
+
+/// A new invocation of the decision rule in an optional element after the
+/// postfix can read what the postfix takes (`c : 'A' w? (c 'C' '!')?`), so the
+/// shape check rejects it.
+#[test]
+fn optional_elements_after_the_postfix_starve_it() {
+    let path = grammars_dir().join("parser").join("PostfixSibling.g4");
+    let results = classify(&path);
+    let names = rule_names(&path, &results);
+    let shaped: Vec<&str> = results
+        .iter()
+        .zip(&names)
+        .filter(|(result, _)| result.has_postfix_shape)
+        .map(|(_, name)| name.as_str())
+        .collect();
+    assert_eq!(shaped, ["r", "q", "m"]);
+}
+
+/// The mirror test of a skip configuration, with no context: the frame that it
+/// popped into.
+#[test]
+fn skip_mirrors_need_the_take_path_of_the_popped_frame() {
+    use dbt_antlr_runtime::analysis::{MIDWAY_TAINT, ROOTED_TAINT};
+
+    let atn = parser_atn(&grammars_dir().join("parser").join("DanglingElse.g4"));
+    let (decision, shape) = atn
+        .decision_to_state
+        .iter()
+        .find_map(|state| {
+            super::postfix::PostfixShape::analyze(atn, *state).map(|shape| (*state, shape))
+        })
+        .expect("the `e?` shape");
+    let take = decision.get_transitions()[0].get_target();
+    let rule_start = atn.rule_to_start_state[decision.get_rule_index() as usize];
+
+    assert!(
+        shape.skip_mirrors(rule_start, None, 0),
+        "inside the decision invocation"
+    );
+    assert!(
+        shape.skip_mirrors(take, None, BOUNDARY_TAINT),
+        "on the take path"
+    );
+    assert!(
+        !shape.skip_mirrors(rule_start, None, BOUNDARY_TAINT),
+        "off the take path"
+    );
+    for taint in [MIDWAY_TAINT, FOREIGN_LINEAGE_TAINT, ROOTED_TAINT] {
+        assert!(!shape.skip_mirrors(take, None, BOUNDARY_TAINT | taint));
+    }
+    assert!(
+        !shape.is_foreign_call(take, None),
+        "the take path calls `e`"
+    );
+    assert!(shape.is_foreign_call(rule_start, None));
+}
+
+/// A skip that consumes on the take path of an enclosing invocation mirrors
+/// the take reading: the dangling `else` still resolves to take.
+#[test]
+fn the_take_path_of_an_enclosing_invocation_mirrors_the_take() {
+    let results = classify(&grammars_dir().join("parser").join("DanglingElse.g4"));
+    let fires: usize = results.iter().map(|result| result.take_rule_fires).sum();
+    assert_eq!(fires, 1);
+    assert!(results.iter().all(DecisionResult::is_fully_static));
 }
 
 /// `pred=predicate?` is the canonical optional-postfix shape, and the
