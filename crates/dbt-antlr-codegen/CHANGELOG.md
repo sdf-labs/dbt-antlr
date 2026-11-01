@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-codegen-v0.6.0...dbt-antlr-codegen-v0.6.1) - 2026-11-01
+
+### Fixed
+
+- *(codegen)* attribute consumption after a decision by invocation, not by rule ([#45](https://github.com/sdf-labs/dbt-antlr/pull/45))
+- *(runtime)* give prediction contexts a distinct empty return state ([#43](https://github.com/sdf-labs/dbt-antlr/pull/43))
+
 ## [0.6.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-codegen-v0.5.0...dbt-antlr-codegen-v0.6.0) - 2026-10-30
 
 ### Added
