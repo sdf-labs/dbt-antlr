@@ -749,9 +749,9 @@ impl StaticParserTable {
         }
     }
 
-    /// Attaches the guarded-take section: the alternative of every guarded
-    /// state, plus the decision's guard danger and pass sets (sorted invoking
-    /// state numbers).
+    /// Attaches the guard section: the alternative of every guarded state,
+    /// plus the decision's guard danger and pass sets (sorted invoking state
+    /// numbers).
     ///
     /// The caller sets `accepts[state] = GUARDED` for every state named here.
     #[must_use]

@@ -85,7 +85,7 @@ pub(crate) struct StaticDfaTable {
     /// runtime guard defers when the parse stack carries one.
     pub(crate) guard_danger: Vec<i32>,
     /// Sorted invoking states whose follow region can pop out of its rule
-    /// without reaching a guard root: the runtime guard resolves the take.
+    /// without reaching a guard root: the runtime guard continues up the stack.
     pub(crate) guard_pass: Vec<i32>,
 }
 

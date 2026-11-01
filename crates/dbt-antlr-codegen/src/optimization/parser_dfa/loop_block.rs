@@ -31,14 +31,13 @@
 //!   [`LoopBlock::is_foreign_call`] marks the call that starts such an
 //!   invocation with [`FOREIGN_LINEAGE_TAINT`], because widening and merged
 //!   contexts can remove its frame later.
-//! - **Pending obligations** ([`LoopBlock::has_obligated_return`]): positions
-//!   that cannot reach the loop decision by epsilon alone. Such a position owes
-//!   a token of the current alternative. An enclosing frame that sits there
-//!   therefore owes something the iterate reading does not owe. Example: the
-//!   list element of `expr (',' expr)* '>>' expr` returns into a pending
-//!   `','`/`'>>'`. Such an obligation vetoes the substitution. A frame that can
-//!   skip to the decision owes only the next operator, which the iterate
-//!   reading owes too, and is benign.
+//! - **Pending obligations**: positions that cannot reach the loop decision by
+//!   epsilon alone. Such a position owes a token of the current alternative. A
+//!   frame in the exit lineage that owes a token of an operator alternative
+//!   that the iterate reading does not also owe vetoes the substitution. A
+//!   frame that the iterate reading shares (such as the `']'` after the index
+//!   of `e '[' e ']'`) or that belongs to a foreign invocation already rooted
+//!   by [`FOREIGN_CONSUME_TAINT`] does not veto it.
 //! - **Midway returns**: the boundary chase can return a configuration into
 //!   the middle of an alternative of an enclosing invocation, with no frame
 //!   left. In `e '?' e '-' ID` the middle operand returns before `'-'`, and in
@@ -54,13 +53,6 @@
 //!   valid only while the operand completes the recursive structure of the
 //!   alternative. A compound alternative breaks it: `expr (',' expr)* '>>'
 //!   expr` would complete an inner construct as a list element and then fail.
-//!
-//! Obligations of *phantom-born* frames will become guard roots when the
-//! stack-guard machinery lands (Phase 5.3). A phantom-born frame is a frame
-//! value that only a wildcard lineage produced. Until that machinery lands,
-//! every obligation is a hard veto. This module therefore resolves strictly
-//! fewer conflicts than the reference classifier, and never more.
-
 use std::collections::HashSet;
 
 use dbt_antlr_runtime::analysis::{
@@ -130,14 +122,24 @@ impl LoopBlock {
     /// nothing the iterate reading does not owe, and iterate viability is
     /// attested by a configuration that is neither widened nor foreign.
     pub(super) fn iterate_exit_attestation(&self, configs: &[ATNConfig<'_>], taint: &Taint) -> i32 {
+        let mut iterate_pending = BitSet::new();
+        for config in configs {
+            if config.get_alt() == ITERATE_ALT
+                && let Some(context) = config.get_context()
+            {
+                let mut visited = HashSet::new();
+                self.collect_pending(&context, &mut visited, &mut iterate_pending);
+            }
+        }
         let mut attestation = 0;
         for config in configs {
             let taint = taint_of(taint, config);
             if config.get_alt() == EXIT_ALT {
-                if taint & FOREIGN_CONSUME_TAINT != 0 {
+                let foreign = taint & FOREIGN_CONSUME_TAINT != 0;
+                if foreign {
                     attestation |= EXIT_FOREIGN;
                 }
-                if self.has_obligated_return(config.get_context()) {
+                if self.has_unshared_obligation(config.get_context(), &iterate_pending, foreign) {
                     attestation |= EXIT_OBLIGATED;
                 }
             }
@@ -195,14 +197,19 @@ impl LoopBlock {
                 .contains(state.get_state_number() as usize)
     }
 
-    /// Whether the context holds a same-rule return into a pending position -
-    /// a frame that owes tokens the iterate reading does not also owe.
-    pub(super) fn has_obligated_return(&self, context: Option<PredictionContextRef<'_>>) -> bool {
+    /// Whether the context holds a same-rule return into a pending position
+    /// that the iterate reading does not also owe.
+    fn has_unshared_obligation(
+        &self,
+        context: Option<PredictionContextRef<'_>>,
+        iterate_pending: &BitSet,
+        foreign: bool,
+    ) -> bool {
         let Some(context) = context else {
             return false;
         };
         let mut visited = HashSet::new();
-        self.obligation_in(&context, &mut visited)
+        self.obligation_in(&context, iterate_pending, foreign, &mut visited)
     }
 
     /// Whether a boundary chase that returns into `state` lands in the middle
@@ -227,9 +234,34 @@ impl LoopBlock {
             .contains(state.get_state_number() as usize)
     }
 
+    fn collect_pending(
+        &self,
+        context: &PredictionContextRef<'_>,
+        visited: &mut HashSet<*const ()>,
+        out: &mut BitSet,
+    ) {
+        if context.is_empty() || !visited.insert(pointer_key(context)) {
+            return;
+        }
+        for index in 0..context.length() {
+            let return_state = context.get_return_state(index);
+            if return_state == ATNStateRef::empty_return() {
+                continue;
+            }
+            if return_state.get_rule_index() == self.rule_index && self.is_pending(return_state) {
+                out.insert(return_state.get_state_number() as usize);
+            }
+            if let Some(parent) = context.get_parent(index) {
+                self.collect_pending(&parent, visited, out);
+            }
+        }
+    }
+
     fn obligation_in(
         &self,
         context: &PredictionContextRef<'_>,
+        iterate_pending: &BitSet,
+        foreign: bool,
         visited: &mut HashSet<*const ()>,
     ) -> bool {
         if context.is_empty() || !visited.insert(pointer_key(context)) {
@@ -240,13 +272,17 @@ impl LoopBlock {
             if return_state == ATNStateRef::empty_return() {
                 continue;
             }
-            if return_state.get_rule_index() == self.rule_index && self.is_pending(return_state) {
+            if return_state.get_rule_index() == self.rule_index
+                && self.is_pending(return_state)
+                && (!foreign || self.is_loop_state(return_state))
+                && !iterate_pending.contains(return_state.get_state_number() as usize)
+            {
                 return true;
             }
             let Some(parent) = context.get_parent(index) else {
                 continue;
             };
-            if self.obligation_in(&parent, visited) {
+            if self.obligation_in(&parent, iterate_pending, foreign, visited) {
                 return true;
             }
         }

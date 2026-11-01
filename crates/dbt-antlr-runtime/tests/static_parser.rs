@@ -9,6 +9,9 @@
 mod gen {
     // Generated parsers/lexers: lint with the codegen template, not here.
     #![allow(clippy::all, warnings)]
+    pub mod betweenexprlexer;
+    pub mod betweenexprparser;
+    pub mod betweenexprparser_static;
     pub mod fuzzexprlexer;
     pub mod fuzzexprparser;
     pub mod fuzzexprparser_static;
@@ -903,6 +906,16 @@ fn guarded_iterates_match_the_adaptive_engine() {
         "set 1 || 2",
         "set 1 + 2 || 3",
         "set ( 1 || 2 ) || 3",
+        // The budget-frontier guard: inside `SUBSTRING` without `FROM`, `1`
+        // exits so `- 2` and `- ( 2 )` become the second argument; with `FROM`
+        // or inside parentheses, `1` iterates to absorb the `-`.
+        "SUBSTRING ( 1 - 2 )",
+        "SUBSTRING ( 1 - ( 2 ) )",
+        "SUBSTRING ( 1 - - 2 )",
+        "SUBSTRING ( 1 - 2 FROM 3 )",
+        "SUBSTRING ( 1 - ( 2 ) FROM 3 )",
+        "( 1 - ( 2 ) )",
+        "1 - - 2",
     ];
     for input in corpus {
         assert_eq!(
@@ -911,18 +924,113 @@ fn guarded_iterates_match_the_adaptive_engine() {
             "tree divergence on {input:?}"
         );
     }
-    // Both guard directions are load-bearing. Inside the foreign caller the
-    // exit reading wins, so the assignment's `'||' INT` tail must reach `start`
-    // rather than being absorbed by the expression loop.
+    // Both guard directions are load-bearing for conflict and frontier states.
+    // Inside the foreign callers the exit reading wins.
     let deferring = parse_frontier_static("set 1 || 2");
     assert!(
         deferring.contains("set (expr (operand 1)) || 2"),
         "the guarded exit must let the `set` tail through: {deferring}"
+    );
+    let frontier_deferring = parse_frontier_static("SUBSTRING ( 1 - ( 2 ) )");
+    assert!(
+        frontier_deferring.contains(
+            "SUBSTRING ( (expr (operand 1)) (expr - (expr (operand ( (expr (operand 2)) )))) )"
+        ),
+        "the frontier guard must defer inside SUBSTRING: {frontier_deferring}"
     );
     // Everywhere else the iterate reading wins.
     let resolving = parse_frontier_static("1 || 2");
     assert!(
         resolving.contains("(expr (expr (operand 1)) || (expr (operand 2)))"),
         "the guarded iterate must absorb the operator: {resolving}"
+    );
+    let frontier_resolving = parse_frontier_static("( 1 - ( 2 ) )");
+    assert!(
+        frontier_resolving.contains(
+            "(operand ( (expr (expr (operand 1)) - (expr (operand ( (expr (operand 2)) )))) ))"
+        ),
+        "the frontier guard must iterate outside SUBSTRING: {frontier_resolving}"
+    );
+}
+
+fn parse_between_static(input: &str) -> Result<String, String> {
+    Arena::with(|arena| {
+        let lexer = gen::betweenexprlexer::BetweenExprLexer::<_, CommonTokenFactory>::new(
+            arena,
+            InputStream::new(input),
+        );
+        let tokens = CommonTokenStream::new(lexer);
+        let mut parser = gen::betweenexprparser_static::BetweenExprParser::new(arena, tokens);
+        parser
+            .s()
+            .map(|ctx| string_tree(ctx, parser.get_rule_names()))
+            .map_err(|error| format!("{error:?}"))
+    })
+}
+
+fn parse_between_adaptive(input: &str) -> Result<String, String> {
+    Arena::with(|arena| {
+        let lexer = gen::betweenexprlexer::BetweenExprLexer::<_, CommonTokenFactory>::new(
+            arena,
+            InputStream::new(input),
+        );
+        let tokens = CommonTokenStream::new(lexer);
+        let mut parser = gen::betweenexprparser::BetweenExprParser::new(arena, tokens);
+        parser
+            .s()
+            .map(|ctx| string_tree(ctx, parser.get_rule_names()))
+            .map_err(|error| format!("{error:?}"))
+    })
+}
+
+#[test]
+fn between_and_collision_matches_the_adaptive_engine() {
+    let corners = [
+        "a BETWEEN 1 AND 2",
+        "a BETWEEN 1 + 1 AND 2 * 3",
+        "a BETWEEN 1 AND 2 AND b",
+        "a BETWEEN 1 AND 2 AND b AND c",
+        "a AND b BETWEEN 1 AND 2",
+        "a = 1 AND b BETWEEN 2 AND 3",
+        "a BETWEEN 1 AND 2 AND b BETWEEN 3 AND 4",
+        "a BETWEEN 1 AND 2 OR b BETWEEN 3 AND 4 AND c",
+        "x BETWEEN a AND b AND c AND d AND e",
+        "a AND b BETWEEN 1 AND 2 AND c AND d BETWEEN 3 AND 4 AND e",
+        "a BETWEEN 1 + 2 AND 3 - 4 AND b BETWEEN 5 * 6 AND 7 / 8",
+        "NOT a BETWEEN 1 AND 2",
+        "a NOT BETWEEN 1 AND 2",
+        "a NOT BETWEEN 1 AND 2 AND b NOT BETWEEN 3 AND 4",
+        "NOT a AND b NOT BETWEEN 1 AND 2",
+        "a = b AND c BETWEEN 1 AND 2",
+        "a < b OR c > d BETWEEN 1 AND 2",
+        "( a BETWEEN 1 AND 2 ) AND b",
+        "a BETWEEN ( x AND y ) AND z",
+        "a BETWEEN ( x ) AND ( y )",
+        "a BETWEEN 1 AND ( 2 ) AND b",
+        "( a AND b ) BETWEEN 1 AND 2",
+        "a BETWEEN ( x AND y ) AND ( p OR q ) AND r",
+        "x BETWEEN y -> a AND b AND c",
+        "x BETWEEN y -> a AND y -> b AND c",
+        "x BETWEEN a AND y -> b AND c",
+        "f -> a BETWEEN 1 AND 2",
+        "f -> a AND b",
+        "f -> a AND b BETWEEN 1 AND 2",
+        "x BETWEEN f -> a AND b",
+        "x BETWEEN f -> a AND b AND c",
+        "( x BETWEEN f -> a AND b ) AND c",
+        "f -> g -> a AND b BETWEEN 1 AND 2 AND c",
+    ];
+    for input in corners {
+        let adaptive = parse_between_adaptive(input).expect(input);
+        let static_tree = parse_between_static(input).expect(input);
+        assert_eq!(static_tree, adaptive, "tree divergence on {input:?}");
+    }
+    assert_eq!(
+        parse_between_static("x BETWEEN y -> a AND b AND c").unwrap(),
+        "(s (b (v (atom x)) (pred BETWEEN (v (atom y -> (b (b (v (atom a))) AND (b (v (atom b)))))) AND (v (atom c)))) <EOF>)"
+    );
+    assert_eq!(
+        parse_between_static("x BETWEEN f -> a AND b").unwrap(),
+        "(s (b (v (atom x)) (pred BETWEEN (v (atom f -> (b (v (atom a))))) AND (v (atom b)))) <EOF>)"
     );
 }

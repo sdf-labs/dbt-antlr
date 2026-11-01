@@ -11,9 +11,8 @@
 // `set expr '||' INT`, the exit reading of the expression is the right one, so
 // the guard must defer there. Everywhere else the iterate reading wins.
 //
-// Neither follow is owned by the loop: the budget-frontier states of `expr+`
-// escape, and the two `'||' INT EOF` conflict states resolve under the runtime
-// stack guard.
+// Neither follow is owned by the loop: all 39 iterate/exit states (20 conflict
+// states and 19 budget-frontier states) resolve under the runtime stack guard.
 grammar LoopFrontier;
 
 start : expr+ EOF

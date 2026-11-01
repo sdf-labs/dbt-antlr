@@ -3,11 +3,7 @@
 //! Classifier tests over the golden grammar corpus.
 //!
 //! The expected categories are the ones the reference `antlr4.base2` classifier
-//! reports for the same grammars (`-Xdecision-report`), with one deliberate
-//! divergence on the small corpus: `Perf.g4`'s `stat` decision is
-//! `EXACT_AMBIG` upstream only because the upstream classifier has
-//! shared-descent groups, which this tree does not implement yet, so it
-//! classifies conservatively as `HYBRID`.
+//! reports for the same grammars (`-Xdecision-report`).
 //!
 //! The same conservatism shows on large grammars, where the reference
 //! classifier resolves a conflict from the *first* path that reached a config
@@ -760,9 +756,9 @@ fn simple_guarded_alternatives_need_no_escape() {
 }
 
 /// A follow that starts a new invocation of the loop's rule (`expr+`), or that
-/// consumes an operator outside the loop (`'set' expr '||' INT EOF`), puts its
-/// iterate/exit conflicts under a stack guard (20 guarded conflict states),
-/// while the budget-frontier states of `expr+` escape.
+/// consumes an operator outside the loop (`'set' expr '||' INT EOF`), puts all
+/// 39 iterate/exit states (20 conflict states and 19 budget-frontier states)
+/// under a stack guard.
 #[test]
 fn foreign_consumption_guards_the_iterate_reading() {
     let results = classify(&grammars_dir().join("parser").join("LoopFrontier.g4"));
@@ -770,8 +766,13 @@ fn foreign_consumption_guards_the_iterate_reading() {
         .iter()
         .find(|result| result.category == Category::LR_PRECEDENCE)
         .expect("the arithmetic loop decision");
-    assert!(result.escapes > 0, "the `expr+` frontier states escape");
-    assert_eq!(result.guarded_iterates, 20);
+    assert_eq!(result.k, 4);
+    assert_eq!(result.num_dfa_states, 228);
+    assert_eq!(
+        result.escapes, 0,
+        "both conflict and frontier states are guarded, not escaped"
+    );
+    assert_eq!(result.guarded_iterates, 39);
     assert_eq!(result.iterate_accepts, 0);
     assert!(!result.is_fully_static(), "a guard may defer");
     let classes = result.precedence.as_ref().expect("precedence tables");
@@ -793,13 +794,27 @@ fn foreign_consumption_guards_the_iterate_reading() {
         .copied()
         .filter(|state| state.is_guarded())
         .collect();
-    assert_eq!(guarded.len(), 20);
+    assert_eq!(guarded.len(), 39);
+    let conflict_guards = guarded
+        .iter()
+        .filter(|state| state.conflicts == [1, 2])
+        .count();
+    let frontier_guards = guarded
+        .iter()
+        .filter(|state| state.conflicts.is_empty())
+        .count();
+    assert_eq!((conflict_guards, frontier_guards), (20, 19));
     for state in guarded {
         assert_eq!(state.guarded_alt, 1, "a guarded iterate takes alt 1");
-        assert_eq!(state.conflicts, [1, 2]);
     }
     let table = classes.tables[0].as_ref().expect("class 0 table");
     assert!(!table.guard_danger.is_empty(), "the guard can trip");
+
+    let between = classify(&grammars_dir().join("parser").join("BetweenExpr.g4"));
+    let boolean_loop = &between[3];
+    assert_eq!(boolean_loop.category, Category::LR_PRECEDENCE);
+    assert_eq!(boolean_loop.escapes, 0);
+    assert_eq!(boolean_loop.guarded_iterates, 2);
 }
 
 /// The token types of `names`, each a literal (`'-'`) or a symbolic token name
@@ -855,13 +870,14 @@ fn tokens_that_the_loop_does_not_own_veto_the_substitution() {
     let path = grammars_dir().join("parser").join("LoopSibling.g4");
     let results = classify(&path);
     let names = rule_names(&path, &results);
-    let types = token_types(&path, &["'-'", "'pair'", "ID"]);
-    let (minus, pair, id) = (types[0], types[1], types[2]);
+    let types = token_types(&path, &["'-'", "'+'", "'pair'", "ID"]);
+    let (minus, plus, pair, id) = (types[0], types[1], types[2], types[3]);
     for (rule, tokens) in [
         ("expr", vec![minus, minus, id]),
         ("term", vec![minus, pair, minus, id]),
         ("cond", vec![minus, id]),
         ("tail", vec![minus, id, minus, id]),
+        ("prec", vec![plus, id, plus, id]),
     ] {
         let (result, _) = results
             .iter()

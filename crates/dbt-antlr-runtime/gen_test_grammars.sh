@@ -116,7 +116,7 @@ echo "Generating: parser/LoopVeto"
 "$GEN_BIN" -no-listener -o "$SCRIPT_DIR/tests/gen" "$SCRIPT_DIR/grammars/parser/LoopVeto.g4"
 
 # The ownership and guarded-iterate witnesses are generated both ways.
-for grammar in "LoopFrontier" "LoopSibling" "LoopSubst" "PostfixSibling"; do
+for grammar in "BetweenExpr" "LoopFrontier" "LoopSibling" "LoopSubst" "PostfixSibling"; do
     lower="$(echo "$grammar" | tr '[:upper:]' '[:lower:]')"
     echo "Generating: parser/$grammar"
     "$GEN_BIN" -no-listener -o "$SCRIPT_DIR/tests/gen" "$SCRIPT_DIR/grammars/parser/$grammar.g4"

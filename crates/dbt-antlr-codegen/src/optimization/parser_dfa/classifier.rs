@@ -143,7 +143,7 @@ struct ClassifyEffects {
     guard_candidate: Option<Option<BitSet>>,
     /// An iterate/exit conflict state vetoed only on foreign consumption: a
     /// candidate for the guarded iterate.
-    guard_iterate_candidate: Option<BitSet>,
+    guard_iterate_candidate: Option<Option<BitSet>>,
     /// The decision state of the attempt is behind a predicate, so the whole
     /// decision depends on parser state and no table can decide it.
     fail_predicated: bool,
@@ -961,8 +961,9 @@ struct DecisionBuild<'b, 'sim, 'a> {
     /// never conflict-analyzed). A sorted map keeps the resolution order
     /// deterministic.
     guard_candidates: BTreeMap<i32, Option<BitSet>>,
-    /// Iterate/exit conflict states vetoed only on foreign consumption.
-    guard_iterate_candidates: BTreeMap<i32, BitSet>,
+    /// Iterate/exit states (conflict or budget frontier) vetoed only on foreign
+    /// consumption.
+    guard_iterate_candidates: BTreeMap<i32, Option<BitSet>>,
     /// The decision's guard danger and pass sets, once a guarded conflict
     /// (an optional-postfix take or a precedence-loop iterate) resolved.
     guard_data: Option<(Vec<i32>, Vec<i32>)>,
@@ -1243,7 +1244,7 @@ where
         }
         let through = self.propagated_guard_roots();
         let candidates = std::mem::take(&mut self.guard_iterate_candidates);
-        let mut accepted: Vec<(i32, BitSet, BTreeSet<i32>)> = Vec::new();
+        let mut accepted: Vec<(i32, Option<BitSet>, BTreeSet<i32>)> = Vec::new();
         let mut roots_all: BTreeSet<i32> = BTreeSet::new();
         for (state, conflicting) in candidates {
             let Some(facts) = self.info.get(&state) else {
@@ -1307,13 +1308,15 @@ where
         let guard_data = compute_guard_data(self.atn, &roots_all);
         let guarded = !guard_data.0.is_empty();
         for (state, conflicting, _) in accepted {
-            self.attempt
-                .approximations
-                .retain(|conflict| conflict != &conflicting);
-            self.attempt
-                .context_sensitive
-                .retain(|conflict| conflict != &conflicting);
-            self.attempt.exact_ambiguities.push(conflicting);
+            if let Some(conflicting) = conflicting {
+                self.attempt
+                    .approximations
+                    .retain(|conflict| conflict != &conflicting);
+                self.attempt
+                    .context_sensitive
+                    .retain(|conflict| conflict != &conflicting);
+                self.attempt.exact_ambiguities.push(conflicting);
+            }
             if let Some(facts) = self.info.get_mut(&state) {
                 if guarded {
                     facts.verdict = Verdict::Escape(GUARDED);
@@ -1496,17 +1499,22 @@ where
         let Some(block) = self.closure.loop_block() else {
             return false;
         };
-        if !block.guards_are_simple()
-            || block.iterate_exit_attestation(&configs, &facts.taint) != ITERATE_REAL
-        {
+        if !block.guards_are_simple() {
             return false;
         }
-        if let Some(facts) = self.info.get_mut(&number) {
-            facts.verdict = Verdict::Accept(ITERATE_ALT);
-            facts.resolved_conflict = true;
+        let attestation = block.iterate_exit_attestation(&configs, &facts.taint);
+        if attestation == ITERATE_REAL {
+            if let Some(facts) = self.info.get_mut(&number) {
+                facts.verdict = Verdict::Accept(ITERATE_ALT);
+                facts.resolved_conflict = true;
+            }
+            self.attempt.exact_ambiguities.push(alts.iter().collect());
+            return true;
         }
-        self.attempt.exact_ambiguities.push(alts.iter().collect());
-        true
+        if self.postfix.is_none() && attestation == (ITERATE_REAL | EXIT_FOREIGN) {
+            self.guard_iterate_candidates.insert(number, None);
+        }
+        false
     }
 
     /// Reacts to a second path adding trust taint to an already interned
@@ -1730,7 +1738,7 @@ where
                 // Vetoed only by foreign consumption of the exit lineage: a
                 // candidate for the guarded iterate, resolved once the guard
                 // roots have propagated.
-                effects.guard_iterate_candidate = Some(conflicting.clone());
+                effects.guard_iterate_candidate = Some(Some(conflicting.clone()));
             }
         }
 
