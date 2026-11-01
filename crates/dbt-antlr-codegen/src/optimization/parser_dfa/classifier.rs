@@ -18,7 +18,9 @@ use dbt_antlr_runtime::dfa::static_parser_dfa::{
 };
 
 use super::closure::{ClosedSet, Closure, ClosureFacts, PrecedenceClass, Taint, taint_of};
-use super::loop_block::{ITERATE_ALT, ITERATE_REAL, LoopBlock, is_iterate_exit_pair};
+use super::loop_block::{
+    EXIT_ALT, EXIT_FOREIGN, ITERATE_ALT, ITERATE_REAL, LoopBlock, is_iterate_exit_pair,
+};
 use super::postfix::{PostfixShape, compute_guard_data, epsilon_closure};
 use super::table::{StaticDfaEdge, StaticDfaState, StaticDfaTable};
 use super::{CONFLICT_ESCAPE, Category, ESCAPE, EscapeResolutions, GUARDED};
@@ -139,6 +141,9 @@ struct ClassifyEffects {
     /// payload is the conflicting alternative set, or `None` for a budget
     /// escape that was never conflict-analyzed.
     guard_candidate: Option<Option<BitSet>>,
+    /// An iterate/exit conflict state vetoed only on foreign consumption: a
+    /// candidate for the guarded iterate.
+    guard_iterate_candidate: Option<Option<BitSet>>,
     /// The decision state of the attempt is behind a predicate, so the whole
     /// decision depends on parser state and no table can decide it.
     fail_predicated: bool,
@@ -251,6 +256,11 @@ struct Attempt {
     take_rule_fires: usize,
     /// Conflict states a guarded take resolved.
     guarded_takes: usize,
+    /// Conflict states a guarded iterate resolved under the stack guard.
+    guarded_iterates: usize,
+    /// Conflict states the iterate reading resolved outright, because no
+    /// invoking state can trip an iterate guard.
+    iterate_accepts: usize,
 }
 
 /// The precedence classes of one precedence-loop decision.
@@ -289,6 +299,10 @@ pub(crate) struct DecisionResult {
     pub(crate) take_rule_fires: usize,
     /// Conflict states a guarded take resolved (Phase 5.2b).
     pub(crate) guarded_takes: usize,
+    /// Conflict states a guarded iterate resolved under the stack guard.
+    pub(crate) guarded_iterates: usize,
+    /// Conflict states the iterate reading resolved outright.
+    pub(crate) iterate_accepts: usize,
     pub(crate) utrust_resolutions: usize,
     pub(crate) conflict_witness: Option<Vec<i32>>,
     pub(crate) budget_witness: Option<Vec<i32>>,
@@ -322,6 +336,8 @@ impl DecisionResult {
             has_postfix_shape: false,
             take_rule_fires: 0,
             guarded_takes: 0,
+            guarded_iterates: 0,
+            iterate_accepts: 0,
             utrust_resolutions: 0,
             conflict_witness: None,
             budget_witness: None,
@@ -364,6 +380,9 @@ impl DecisionResult {
                 return "all".to_owned();
             };
             if self.escapes == 0 && precedence.adaptive_classes == 0 {
+                if self.guarded_iterates > 0 {
+                    return format!("{}g", self.guarded_iterates);
+                }
                 return "0".to_owned();
             }
             let mut text = String::new();
@@ -403,9 +422,9 @@ impl DecisionResult {
         if self.static_only.is_some() {
             return true;
         }
-        if self.guarded_takes > 0 {
-            // A guarded take defers to the adaptive simulation when the parse
-            // stack reaches a guard root.
+        if self.guarded_takes > 0 || self.guarded_iterates > 0 {
+            // A guarded conflict defers to the adaptive simulation when the
+            // parse stack reaches a guard root.
             return false;
         }
         match self.category {
@@ -784,6 +803,11 @@ impl DecisionClassifier {
             }
             result.saw_precedence_predicate |= outcome.saw_precedence_predicate;
             result.utrust_resolutions += outcome.utrust_resolutions;
+            result.guarded_takes += outcome.guarded_takes;
+            result.guarded_iterates += outcome.guarded_iterates;
+            result.iterate_accepts += outcome.iterate_accepts;
+            result.take_rule_fires += outcome.take_rule_fires;
+            result.has_postfix_shape |= outcome.has_postfix_shape;
             if result.conflict_witness.is_none() {
                 result.conflict_witness = outcome.conflict_witness.clone();
             }
@@ -864,6 +888,7 @@ impl DecisionClassifier {
                 postfix,
                 own_roots: HashMap::new(),
                 guard_candidates: BTreeMap::new(),
+                guard_iterate_candidates: BTreeMap::new(),
                 guard_data: None,
                 decision_state,
                 decision,
@@ -897,6 +922,8 @@ fn apply_facts(result: &mut DecisionResult, attempt: &Attempt) {
     result.has_postfix_shape |= attempt.has_postfix_shape;
     result.take_rule_fires += attempt.take_rule_fires;
     result.guarded_takes += attempt.guarded_takes;
+    result.guarded_iterates += attempt.guarded_iterates;
+    result.iterate_accepts += attempt.iterate_accepts;
     for conflict in &attempt.conflicts {
         if !result.conflicts.contains(conflict) {
             result.conflicts.push(conflict.clone());
@@ -934,7 +961,11 @@ struct DecisionBuild<'b, 'sim, 'a> {
     /// never conflict-analyzed). A sorted map keeps the resolution order
     /// deterministic.
     guard_candidates: BTreeMap<i32, Option<BitSet>>,
-    /// The decision's guard danger and pass sets, once a guarded take resolved.
+    /// Iterate/exit states (conflict or budget frontier) vetoed only on foreign
+    /// consumption.
+    guard_iterate_candidates: BTreeMap<i32, Option<BitSet>>,
+    /// The decision's guard danger and pass sets, once a guarded conflict
+    /// (an optional-postfix take or a precedence-loop iterate) resolved.
     guard_data: Option<(Vec<i32>, Vec<i32>)>,
     decision: usize,
     decision_state: ATNStateRef,
@@ -1033,7 +1064,7 @@ where
         }
 
         if !self.attempt.overflow {
-            self.finalize_guarded_takes();
+            self.finalize_guards();
             self.attach_continuations();
             self.attempt.table = Some(self.snapshot());
         }
@@ -1082,6 +1113,14 @@ where
     /// stack, and a block end that cannot pop out of its rule means no root is
     /// ever reachable (that case resolves to plain take accepts instead). The
     /// attempt bookkeeping is applied only once every bail has passed.
+    fn finalize_guards(&mut self) {
+        self.finalize_guarded_takes();
+        if self.guard_data.is_none() {
+            self.finalize_guarded_iterates();
+        }
+    }
+
+    /// The take pass of [`Self::finalize_guards`].
     fn finalize_guarded_takes(&mut self) {
         let Some(postfix) = self.postfix.clone() else {
             return;
@@ -1187,6 +1226,115 @@ where
         }
         if guarded {
             self.guard_data = guard_data;
+        }
+    }
+
+    /// Second chance for iterate/exit conflicts that only foreign consumption
+    /// vetoed.
+    ///
+    /// The canonical shape is Trino's `BETWEEN ... AND ...`: the exit lineage
+    /// consumes an operator token in a frame that is not an enclosing invocation
+    /// of the same loop. Such a conflict resolves to iterate (alt 1) under a
+    /// stack guard, or outright when no invoking state in the grammar can trip
+    /// it, because then the foreign consumption is unreachable on every real
+    /// stack and exit can never uniquely win.
+    fn finalize_guarded_iterates(&mut self) {
+        if self.guard_iterate_candidates.is_empty() {
+            return;
+        }
+        let through = self.propagated_guard_roots();
+        let candidates = std::mem::take(&mut self.guard_iterate_candidates);
+        let mut accepted: Vec<(i32, Option<BitSet>, BTreeSet<i32>)> = Vec::new();
+        let mut roots_all: BTreeSet<i32> = BTreeSet::new();
+        for (state, conflicting) in candidates {
+            let Some(facts) = self.info.get(&state) else {
+                continue;
+            };
+            if !matches!(
+                facts.verdict,
+                Verdict::Escape(ESCAPE) | Verdict::Escape(CONFLICT_ESCAPE)
+            ) {
+                continue;
+            }
+            let Some(roots) = through.get(&state).filter(|roots| !roots.is_empty()) else {
+                continue;
+            };
+            let mut eligible = true;
+            let mut real_iterate = false;
+            for config in self.states[state as usize].configs().get_items() {
+                let taint = taint_of(&facts.taint, config);
+                if config.get_alt() == ITERATE_ALT
+                    && taint & (WIDENED_TAINT | FOREIGN_CONSUME_TAINT) == 0
+                {
+                    real_iterate = true;
+                }
+                if config.get_alt() != EXIT_ALT {
+                    continue;
+                }
+                // Foreign consumption must be rooted: then the stack guard
+                // covers its realizability. A widening-born exit is an analysis
+                // artifact unless it is rooted too.
+                if taint & FOREIGN_CONSUME_TAINT != 0 && taint & ROOTED_TAINT == 0 {
+                    eligible = false;
+                    break;
+                }
+                if taint & (WIDENED_TAINT | ROOTED_TAINT) == WIDENED_TAINT {
+                    eligible = false;
+                    break;
+                }
+            }
+            if !eligible || !real_iterate {
+                continue;
+            }
+            roots_all.extend(roots.iter().copied());
+            accepted.push((state, conflicting, roots.clone()));
+        }
+        if accepted.is_empty() {
+            return;
+        }
+
+        // A root that the loop's exit reaches without popping any frame would
+        // trip the guard on every stack: useless.
+        let rule_stop = self.atn.rule_to_stop_state[self.decision_state.get_rule_index() as usize];
+        if rule_stop.get_state_number() >= 0 {
+            let reachable_from_stop = epsilon_closure(rule_stop);
+            if roots_all
+                .iter()
+                .any(|root| reachable_from_stop.contains(*root as usize))
+            {
+                return;
+            }
+        }
+        let guard_data = compute_guard_data(self.atn, &roots_all);
+        let guarded = !guard_data.0.is_empty();
+        for (state, conflicting, _) in accepted {
+            if let Some(conflicting) = conflicting {
+                self.attempt
+                    .approximations
+                    .retain(|conflict| conflict != &conflicting);
+                self.attempt
+                    .context_sensitive
+                    .retain(|conflict| conflict != &conflicting);
+                self.attempt.exact_ambiguities.push(conflicting);
+            }
+            if let Some(facts) = self.info.get_mut(&state) {
+                if guarded {
+                    facts.verdict = Verdict::Escape(GUARDED);
+                    facts.guarded_alt = ITERATE_ALT;
+                    facts.resolved_conflict = true;
+                } else {
+                    facts.verdict = Verdict::Accept(ITERATE_ALT);
+                    facts.resolved_conflict = true;
+                }
+            }
+            if guarded {
+                self.attempt.guarded_iterates += 1;
+            } else {
+                self.attempt.iterate_accepts += 1;
+            }
+        }
+        if guarded {
+            self.guard_data = Some(guard_data);
         }
     }
 
@@ -1351,17 +1499,22 @@ where
         let Some(block) = self.closure.loop_block() else {
             return false;
         };
-        if !block.guards_are_simple()
-            || block.iterate_exit_attestation(&configs, &facts.taint) != ITERATE_REAL
-        {
+        if !block.guards_are_simple() {
             return false;
         }
-        if let Some(facts) = self.info.get_mut(&number) {
-            facts.verdict = Verdict::Accept(ITERATE_ALT);
-            facts.resolved_conflict = true;
+        let attestation = block.iterate_exit_attestation(&configs, &facts.taint);
+        if attestation == ITERATE_REAL {
+            if let Some(facts) = self.info.get_mut(&number) {
+                facts.verdict = Verdict::Accept(ITERATE_ALT);
+                facts.resolved_conflict = true;
+            }
+            self.attempt.exact_ambiguities.push(alts.iter().collect());
+            return true;
         }
-        self.attempt.exact_ambiguities.push(alts.iter().collect());
-        true
+        if self.postfix.is_none() && attestation == (ITERATE_REAL | EXIT_FOREIGN) {
+            self.guard_iterate_candidates.insert(number, None);
+        }
+        false
     }
 
     /// Reacts to a second path adding trust taint to an already interned
@@ -1428,6 +1581,9 @@ where
     fn commit(&mut self, number: i32, effects: ClassifyEffects) {
         if let Some(candidate) = effects.guard_candidate {
             self.guard_candidates.insert(number, candidate);
+        }
+        if let Some(candidate) = effects.guard_iterate_candidate {
+            self.guard_iterate_candidates.insert(number, candidate);
         }
         if effects.utrust {
             self.attempt.utrust_resolutions += 1;
@@ -1567,12 +1723,23 @@ where
         if let Some(block) = self.closure.loop_block()
             && block.guards_are_simple()
             && is_iterate_exit_pair(&conflicting)
-            && block.iterate_exit_attestation(&closed.configs, &closed.taint) == ITERATE_REAL
         {
-            facts.resolved_conflict = true;
-            effects.exact_ambiguity = Some(conflicting.clone());
-            facts.verdict = Verdict::Accept(ITERATE_ALT);
-            return (facts, effects);
+            let attestation = block.iterate_exit_attestation(&closed.configs, &closed.taint);
+            if attestation == ITERATE_REAL {
+                facts.resolved_conflict = true;
+                effects.exact_ambiguity = Some(conflicting.clone());
+                facts.verdict = Verdict::Accept(ITERATE_ALT);
+                return (facts, effects);
+            }
+            if self.policy.hybrid
+                && self.postfix.is_none()
+                && attestation == (ITERATE_REAL | EXIT_FOREIGN)
+            {
+                // Vetoed only by foreign consumption of the exit lineage: a
+                // candidate for the guarded iterate, resolved once the guard
+                // roots have propagated.
+                effects.guard_iterate_candidate = Some(Some(conflicting.clone()));
+            }
         }
 
         // Optional-postfix take rule: resolve a take/skip conflict to take when

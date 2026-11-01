@@ -7,11 +7,17 @@
 // - `expr '||' INT EOF` consumes an operator token in a frame that is not this
 //   loop's own.
 //
-// The substitution resolves none of the iterate/exit states of this
-// decision, neither the conflicts nor the states at the budget frontier.
+// The `set` prefix makes the foreign caller reachable at run time: inside
+// `set expr '||' INT`, the exit reading of the expression is the right one, so
+// the guard must defer there. Everywhere else the iterate reading wins.
+//
+// Neither follow is owned by the loop: all 39 iterate/exit states (20 conflict
+// states and 19 budget-frontier states) resolve under the runtime stack guard.
 grammar LoopFrontier;
 
-start : expr+ EOF | expr '||' INT EOF ;
+start : expr+ EOF
+      | 'set' expr '||' INT EOF
+      ;
 
 expr
     : operand

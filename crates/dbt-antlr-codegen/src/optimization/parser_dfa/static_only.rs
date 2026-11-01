@@ -6,7 +6,7 @@
 //! construction stopped. Without that fallback, each escape state gets a
 //! static verdict:
 //!
-//! - A state with an SLL conflict (a conflict escape or a guarded take)
+//! - A state with an SLL conflict (a conflict escape or a guarded state)
 //!   accepts its minimum conflicting alternative. This is the choice of the
 //!   SLL prediction mode.
 //! - A state where the lookahead budget stopped the construction accepts its
@@ -81,7 +81,7 @@ impl StaticDfaTable {
                 continue;
             }
             let conflict_alt = if state.accept == GUARDED && state.guarded_alt > 0 {
-                // The guarded alternative is the take of a take/skip pair,
+                // The guarded alternative is the take or iterate branch,
                 // which is the minimum alternative of the pair.
                 Some(state.guarded_alt)
             } else {
@@ -157,6 +157,7 @@ impl DecisionResult {
         }
         self.escapes = 0;
         self.guarded_takes = 0;
+        self.guarded_iterates = 0;
         self.static_only = Some(resolutions);
         true
     }
