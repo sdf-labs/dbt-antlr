@@ -36,9 +36,10 @@ pub const PRED_TAINT: i32 = 32;
 /// usage", and mixed usage is never trusted, no matter which path is found
 /// first.
 pub const INTERIOR_TAINT: i32 = 64;
-/// The config of a precedence decision popped the decision boundary and then
-/// called a rule from a position that is not part of the operator loop. The
-/// tokens that the config consumes from then on are foreign to the loop.
+/// The config popped the decision boundary and then called a rule from a
+/// position outside the discipline of its decision: the operator loop of a
+/// precedence decision, or the take path of an optional-postfix decision. The
+/// tokens that the config consumes from then on are foreign to the decision.
 /// Widening and merged contexts can remove the frame of that call, so the
 /// analysis keeps this fact as taint and not in the context.
 pub const FOREIGN_LINEAGE_TAINT: i32 = 128;

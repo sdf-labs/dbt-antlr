@@ -9,6 +9,10 @@
 //! must leave the iterate/exit conflict to adaptive prediction. `LoopSubst.g4`
 //! is the conflict that the tables do decide: an operator after a lambda body,
 //! which an enclosing invocation of the loop can also consume.
+//!
+//! `PostfixSibling.g4` does the same after a skipped optional postfix: a new
+//! invocation of the decision rule reads the tokens that the postfix would
+//! take, so the take must defer on the stacks where that invocation follows.
 
 #[rustfmt::skip]
 mod gen {
@@ -20,6 +24,9 @@ mod gen {
     pub mod loopsubstlexer;
     pub mod loopsubstparser;
     pub mod loopsubstparser_static;
+    pub mod postfixsiblinglexer;
+    pub mod postfixsiblingparser;
+    pub mod postfixsiblingparser_static;
 }
 
 use std::cell::RefCell;
@@ -118,6 +125,19 @@ parse_fn!(
     subst_static,
     gen::loopsubstlexer::LoopSubstLexer<'_, '_, _, CommonTokenFactory>,
     gen::loopsubstparser_static::LoopSubstParser<'_, '_, _, _>,
+    start
+);
+
+parse_fn!(
+    postfix_adaptive,
+    gen::postfixsiblinglexer::PostfixSiblingLexer<'_, '_, _, CommonTokenFactory>,
+    gen::postfixsiblingparser::PostfixSiblingParser<'_, '_, _, _>,
+    start
+);
+parse_fn!(
+    postfix_static,
+    gen::postfixsiblinglexer::PostfixSiblingLexer<'_, '_, _, CommonTokenFactory>,
+    gen::postfixsiblingparser_static::PostfixSiblingParser<'_, '_, _, _>,
     start
 );
 
@@ -236,4 +256,68 @@ fn operators_after_a_lambda_body_extend_the_body() {
         tree.contains("-> (expr (expr (operand a)) + (expr (operand b)))"),
         "the body takes the operator: {tree}"
     );
+}
+
+#[test]
+fn new_invocations_after_the_skip_parse_like_the_adaptive_parser() {
+    let cases = [
+        ("A - B ;", "(start (r A) (r - B) ; <EOF>)"),
+        ("A - B - B ;", "(start (r A (y - B)) (r - B) ; <EOF>)"),
+        ("( A - B - B )", "(start ( (r A (y - B)) (r - B) ) <EOF>)"),
+        (
+            "with [ A - B ] X",
+            "(start with (q [ (q A) (q - B) ] X) <EOF>)",
+        ),
+        (
+            "with [ A - B A ] X",
+            "(start with (q [ (q A (z - B)) (q A) ] X) <EOF>)",
+        ),
+        ("cont A - B C !", "(start cont (c A (c - B) C !) <EOF>)"),
+        ("cont A - B", "(start cont (c A (w - B)) <EOF>)"),
+        (
+            "mid A - B A - B A - B !",
+            "(start mid (m A (v - B) (m A) - B (m A (v - B)) !) <EOF>)",
+        ),
+        (
+            "mid A - B A - B !",
+            "(start mid (m A (v - B) (m A) - B !) <EOF>)",
+        ),
+    ];
+    for (input, expected) in cases {
+        let adaptive = postfix_adaptive(input);
+        assert_eq!(adaptive.tree.as_deref(), Ok(expected), "{input:?}");
+        assert!(adaptive.errors.is_empty(), "{input:?}: {adaptive:?}");
+        assert_eq!(postfix_static(input), adaptive, "{input:?}");
+    }
+}
+
+/// Every short sentence over the tokens of `r`, and every `with`, `cont` and
+/// `mid` sentence over the tokens of `q`, `c` and `m`: the static parser
+/// accepts exactly the sentences that the adaptive parser accepts, with the
+/// same trees.
+#[test]
+fn short_postfix_sentences_parse_like_the_adaptive_parser() {
+    let mut inputs = sentences(&[";", "(", ")", "A", "-", "B"], 5);
+    for (keyword, tokens, len) in [
+        ("with", &["[", "]", "X", "A", "-", "B"][..], 5),
+        ("cont", &["A", "-", "B", "C", "!"][..], 6),
+        ("mid", &["A", "-", "B", "!"][..], 7),
+    ] {
+        inputs.extend(
+            sentences(tokens, len)
+                .into_iter()
+                .map(|body| format!("{keyword} {body}")),
+        );
+    }
+    let mut valid = 0;
+    for input in inputs {
+        let adaptive = postfix_adaptive(&input);
+        let parsed = postfix_static(&input);
+        assert_eq!(parsed.is_valid(), adaptive.is_valid(), "{input:?}");
+        if adaptive.is_valid() {
+            valid += 1;
+            assert_eq!(parsed, adaptive, "{input:?}");
+        }
+    }
+    assert!(valid > 0, "the enumeration reaches the valid sentences");
 }

@@ -9,85 +9,153 @@
 //! consumed by the take structure, so both readings meet at the same block
 //! end.
 //!
-//! The rule needs three facts about a conflict set:
+//! The rule needs two facts about a conflict set:
 //!
-//! - **Mirror**: every skip configuration that descended into another rule has
-//!   its deepest context frame return into the decision's block end. Such a
-//!   skip re-entered through this decision's own take path. A skip that
-//!   bottoms out anywhere else consumed tokens outside the discipline.
-//! - **Foreign consumption**: no skip configuration is marked
-//!   [`FOREIGN_CONSUME_TAINT`]. A marked skip consumed at a position that is
-//!   not the decision rule's own. The alias family is the canonical shape: its
-//!   clause continuations (`LIMIT`, `FROM`, ...) let skip genuinely win.
-//! - **Real take**: a take configuration that is neither widened nor foreign
-//!   attests that taking is viable.
+//! - **Mirror** ([`PostfixShape::skip_mirrors`]): every skip configuration
+//!   consumes for the decision's own discipline. Inside the decision
+//!   invocation, it consumes the continuation of the decision rule. After a
+//!   boundary pop, it consumes on the take path of an enclosing invocation (the
+//!   dangling-else reading), or in an invocation whose deepest context frame
+//!   returns into the decision's block end. Any other skip consumes tokens
+//!   outside the discipline, and skip can genuinely win:
+//!   - The alias family bottoms out elsewhere: its clause continuations
+//!     (`LIMIT`, `FROM`, ...) follow the skipped alias.
+//!   - A new invocation of the decision rule after the skip owns its tokens:
+//!     in `s : r r ';'` with `r : 'A' y? | '-' 'B'` and `y : '-' 'B'`, the
+//!     second `r` reads the `- B` of `A - B ;`.
 //!
-//! The analyzer also rejects shapes where a mandatory element follows the
-//! optional one and its FIRST set intersects the optional's. There the skipped
-//! input can serve that element instead (`TRIM(x)`, `IN foo`), so skip
-//! genuinely wins and the rule must not apply.
+//!   [`PostfixShape::is_foreign_call`] marks the call that starts such an
+//!   invocation, because widening and merged contexts can remove its frame
+//!   later.
+//! - **Real take**: a take configuration that is not widened attests that
+//!   taking is viable.
+//!
+//! The analyzer also rejects shapes where an element of the rule follows the
+//! optional one and its FIRST set intersects the optional's, whether that
+//! element is mandatory or optional. There the skipped input can serve that
+//! element instead (`TRIM(x)`, `IN foo`), so skip genuinely wins and the rule
+//! must not apply.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 
 use dbt_antlr_runtime::analysis::{
-    ATN, ATNStateRef, ATNStateType, BasicBlockStartState, BitSet, IntervalSetBuf, NotSetTransition,
-    PlusBlockStartState, PredictionContextRef, RuleTransition, StarBlockStartState,
+    ATN, ATNStateRef, ATNStateType, BOUNDARY_TAINT, BasicBlockStartState, BitSet,
+    FOREIGN_LINEAGE_TAINT, IntervalSetBuf, MIDWAY_TAINT, NotSetTransition, PlusBlockStartState,
+    PredictionContextRef, ROOTED_TAINT, RuleTransition, StarBlockStartState,
     TOKEN_MIN_USER_TOKEN_TYPE, TransitionType,
 };
 
+use super::closure::{in_popped_frame, positions_owing_input, rule_positions};
+
 /// The optional-postfix shape of one decision.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(super) struct PostfixShape {
     /// State number of the decision block's end state. The mirror check
     /// requires every descended skip configuration's deepest frame to return
     /// into this state.
     pub(super) block_end_state: ATNStateRef,
+    /// The positions of the take alternative, from the decision to the block
+    /// end. Rule calls contribute their follow states.
+    take_states: Arc<BitSet>,
+    /// The take-path positions that still owe input before the block end.
+    midway_states: Arc<BitSet>,
 }
 
 impl PostfixShape {
     /// Detects the optional-postfix shape of a decision, or returns `None`.
     pub(super) fn analyze(atn: &ATN, decision_state: ATNStateRef) -> Option<Self> {
-        let block = block_end_state(atn, decision_state)?;
+        let block = block_end_state(decision_state)?;
         let transitions = decision_state.get_transitions();
         if transitions.len() != 2 {
             return None;
         }
-        // Alternative 2 skips: an epsilon-only path to the block end.
         if !epsilon_path_to(transitions[1].get_target(), block) {
             return None;
         }
-        // Alternative 1 heads into a postfix element.
         let first = first_element(transitions[0].get_target())?;
-        let postfix_rule = first
+        if !first
             .get_transitions()
             .iter()
-            .find_map(|transition| transition.try_as::<RuleTransition>())
-            .map_or(-1, |rule| rule.get_target().get_rule_index());
-        let compound = postfix_rule < 0;
-        if compound && !is_block_start(first.state_type()) {
+            .any(|transition| transition.try_as::<RuleTransition>().is_some())
+        {
             return None;
         }
 
-        // Starvation check: a mandatory element after the optional whose FIRST
-        // set intersects the optional's can be served by the skipped input, so
-        // skip genuinely wins there.
         let rule_stop = atn.rule_to_stop_state[decision_state.get_rule_index() as usize];
         let continuation = look(atn, block, rule_stop);
-        if !continuation.epsilon {
-            let take = look(atn, transitions[0].get_target(), block);
-            if continuation
-                .tokens
-                .intersection(&take.tokens)
-                .next()
-                .is_some()
-            {
-                return None;
-            }
+        let take = look(atn, transitions[0].get_target(), block);
+        if continuation.intersection(&take).next().is_some() {
+            return None;
         }
 
         Some(Self {
             block_end_state: block,
+            take_states: Arc::new(rule_positions(transitions[0].get_target(), Some(block))),
+            midway_states: Arc::new(positions_owing_input(
+                atn,
+                decision_state.get_rule_index(),
+                block,
+            )),
         })
+    }
+
+    /// Whether a skip configuration at `state` consumes for the decision's own
+    /// discipline (see the module documentation).
+    ///
+    /// A configuration that did not pop the decision boundary is inside the
+    /// decision invocation, so the decision rule's positions are its own. In
+    /// the frame that a configuration popped into, only the take path of the
+    /// enclosing invocation mirrors the take reading, and only after the
+    /// configuration came back through the decision ([`MIDWAY_TAINT`]). In any
+    /// other invocation, the deepest context frame must return into the block
+    /// end.
+    pub(super) fn skip_mirrors(
+        &self,
+        state: ATNStateRef,
+        context: Option<PredictionContextRef<'_>>,
+        taint: i32,
+    ) -> bool {
+        if taint & (FOREIGN_LINEAGE_TAINT | MIDWAY_TAINT | ROOTED_TAINT) != 0 {
+            return false;
+        }
+        if state.get_rule_index() == self.block_end_state.get_rule_index() {
+            if taint & BOUNDARY_TAINT == 0 {
+                return true;
+            }
+            if in_popped_frame(context) {
+                return self.is_take_state(state);
+            }
+        }
+        context.is_some_and(|context| {
+            bottom_frame_is(context, self.block_end_state, &mut HashSet::new())
+        })
+    }
+
+    /// Whether a rule call of a boundary-popped configuration at `state`
+    /// starts an invocation outside the decision's discipline: the call leaves
+    /// the frame that the configuration popped into from a position off the
+    /// take path.
+    pub(super) fn is_foreign_call(
+        &self,
+        state: ATNStateRef,
+        context: Option<PredictionContextRef<'_>>,
+    ) -> bool {
+        in_popped_frame(context) && !self.is_take_state(state)
+    }
+
+    /// Whether a boundary chase that returns into `state` lands in the middle
+    /// of the take path of an enclosing invocation, which still owes input
+    /// before its block end.
+    pub(super) fn is_midway(&self, state: ATNStateRef) -> bool {
+        self.is_take_state(state)
+            && self
+                .midway_states
+                .contains(state.get_state_number() as usize)
+    }
+
+    fn is_take_state(&self, state: ATNStateRef) -> bool {
+        self.take_states.contains(state.get_state_number() as usize)
     }
 }
 
@@ -98,7 +166,7 @@ impl PostfixShape {
 /// decision through this decision's own take path. A branch that reaches the
 /// empty context without such a frame consumed tokens fully outside the
 /// decision's discipline.
-pub(super) fn bottom_frame_is(
+fn bottom_frame_is(
     context: PredictionContextRef<'_>,
     end_state: ATNStateRef,
     visited: &mut HashSet<*const ()>,
@@ -128,12 +196,11 @@ pub(super) fn bottom_frame_is(
 }
 
 /// The block start state's end state, when `state` starts a block.
-fn block_end_state(atn: &ATN, state: ATNStateRef) -> Option<ATNStateRef> {
+fn block_end_state(state: ATNStateRef) -> Option<ATNStateRef> {
     let number = state.get_state_number();
     if number < 0 {
         return None;
     }
-    let state = atn.get_state(number);
     match state.state_type() {
         ATNStateType::BasicBlockStart => state
             .try_as::<BasicBlockStartState>()
@@ -146,13 +213,6 @@ fn block_end_state(atn: &ATN, state: ATNStateRef) -> Option<ATNStateRef> {
             .map(|start| start.end_state),
         _ => None,
     }
-}
-
-fn is_block_start(kind: ATNStateType) -> bool {
-    matches!(
-        kind,
-        ATNStateType::BasicBlockStart | ATNStateType::StarBlockStart | ATNStateType::PlusBlockStart
-    )
 }
 
 /// Whether an epsilon-only path leads from `from` to `to`.
@@ -194,43 +254,21 @@ fn first_element(start: ATNStateRef) -> Option<ATNStateRef> {
     None
 }
 
-/// The lookahead of the states reachable from `start` up to the end of its
-/// rule: the token types they can start with, and whether they can reach the
-/// rule end without consuming a token.
-struct Look {
-    tokens: BitSet,
-    epsilon: bool,
-}
-
-/// `LOOK(start)` until `stop` (inclusive) or the end of the start state's rule,
-/// predicates transparent.
-fn look(atn: &ATN, start: ATNStateRef, stop: ATNStateRef) -> Look {
-    let mut result = Look {
-        tokens: BitSet::new(),
-        epsilon: false,
-    };
+/// `LOOK(start)` until `stop` or the end of the start state's rule.
+fn look(atn: &ATN, start: ATNStateRef, stop: ATNStateRef) -> BitSet {
+    let mut tokens = BitSet::new();
     let mut visited: HashSet<(i32, usize)> = HashSet::new();
     let mut work: Vec<(ATNStateRef, Vec<ATNStateRef>)> = vec![(start, Vec::new())];
     while let Some((state, returns)) = work.pop() {
         let number = state.get_state_number();
-        if number < 0 {
-            continue;
-        }
-        if !visited.insert((number, returns.len())) {
-            continue;
-        }
-        if state == stop {
-            result.epsilon = true;
+        if number < 0 || state == stop || !visited.insert((number, returns.len())) {
             continue;
         }
         if state.state_type() == ATNStateType::RuleStop {
-            match returns.last() {
-                Some(follow) => {
-                    let mut next = returns.clone();
-                    next.pop();
-                    work.push((*follow, next));
-                }
-                None => result.epsilon = true,
+            if let Some(follow) = returns.last() {
+                let mut next = returns.clone();
+                next.pop();
+                work.push((*follow, next));
             }
             continue;
         }
@@ -264,10 +302,10 @@ fn look(atn: &ATN, start: ATNStateRef, stop: ATNStateRef) -> Look {
                     None => continue,
                 },
             };
-            add_intervals(&mut result.tokens, &label);
+            add_intervals(&mut tokens, &label);
         }
     }
-    result
+    tokens
 }
 
 fn add_intervals(tokens: &mut BitSet, label: &IntervalSetBuf) {
@@ -280,11 +318,9 @@ fn add_intervals(tokens: &mut BitSet, label: &IntervalSetBuf) {
     }
 }
 
-/// Epsilon-reachable ATN states of `start`, `start` included: rule invocations
-/// descend into the callee, and a rule stop state is a leaf (the grammar-wide
-/// FOLLOW links attached to stop states are the build-time closure's business,
-/// not the runtime chase's).
-pub(super) fn reach_eps(start: ATNStateRef) -> BitSet {
+/// The ATN states that `start` reaches by epsilon, `start` included. Rule
+/// stops are leaves.
+pub(super) fn epsilon_closure(start: ATNStateRef) -> BitSet {
     let mut out = BitSet::new();
     let mut work = vec![start];
     while let Some(state) = work.pop() {
@@ -304,33 +340,26 @@ pub(super) fn reach_eps(start: ATNStateRef) -> BitSet {
     out
 }
 
-/// The guard roots of one out-of-discipline skip consumption: the consumption's
-/// own ATN position for context branches that bottom out at the empty context,
-/// plus the call site of every non-mirror deepest context frame.
-///
-/// A mirror branch (its deepest frame returns into the decision's block end) is
-/// realizable through the decision's own take path and contributes no root.
+/// The guard roots of one skip consumption outside the decision's discipline.
 pub(super) fn collect_guard_roots(
     state: ATNStateRef,
     context: Option<PredictionContextRef<'_>>,
-    block_end_state: ATNStateRef,
+    mirror_return: Option<ATNStateRef>,
     sites: &HashMap<i32, i32>,
     out: &mut BTreeSet<i32>,
 ) {
     let Some(context) = context.filter(|context| !context.is_empty()) else {
-        // The consumption happened in the caller itself, so the chase must
-        // reach this very position.
         out.insert(state.get_state_number());
         return;
     };
     let mut visited: HashSet<*const ()> = HashSet::new();
-    collect_roots_in(state, &context, block_end_state, sites, out, &mut visited)
+    collect_roots_in(state, &context, mirror_return, sites, out, &mut visited)
 }
 
 fn collect_roots_in(
     state: ATNStateRef,
     context: &PredictionContextRef<'_>,
-    block_end_state: ATNStateRef,
+    mirror_return: Option<ATNStateRef>,
     sites: &HashMap<i32, i32>,
     out: &mut BTreeSet<i32>,
     visited: &mut HashSet<*const ()>,
@@ -346,12 +375,12 @@ fn collect_roots_in(
         let return_state = context.get_return_state(index);
         match context.get_parent(index) {
             Some(parent) if !parent.is_empty() => {
-                collect_roots_in(state, &parent, block_end_state, sites, out, visited);
+                collect_roots_in(state, &parent, mirror_return, sites, out, visited);
             }
             _ => {
                 if return_state == ATNStateRef::empty_return() {
                     out.insert(state.get_state_number());
-                } else if return_state != block_end_state {
+                } else if Some(return_state) != mirror_return {
                     let number = return_state.get_state_number();
                     out.insert(sites.get(&number).copied().unwrap_or(number));
                 }
@@ -359,7 +388,6 @@ fn collect_roots_in(
         }
     }
 }
-
 /// The danger and pass sets of a guard-root set, as sorted invoking state
 /// numbers.
 ///
@@ -391,7 +419,7 @@ pub(super) fn compute_guard_data(atn: &ATN, roots: &BTreeSet<i32>) -> (Vec<i32>,
             let follow = rule.follow_state.get_state_number();
             let region = reachable
                 .entry(follow)
-                .or_insert_with(|| reach_eps(rule.follow_state));
+                .or_insert_with(|| epsilon_closure(rule.follow_state));
             if roots.iter().any(|root| region.contains(*root as usize)) {
                 any_danger = true;
             }

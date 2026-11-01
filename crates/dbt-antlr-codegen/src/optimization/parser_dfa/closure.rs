@@ -44,7 +44,7 @@ use dbt_antlr_runtime::analysis::{
 };
 
 use super::loop_block::LoopBlock;
-use super::postfix::{PostfixShape, bottom_frame_is, collect_guard_roots};
+use super::postfix::{PostfixShape, collect_guard_roots};
 
 /// The alternative of an optional-postfix decision that skips the postfix
 /// element.
@@ -419,7 +419,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             }
         }
 
-        let sites = self.postfix.map(|_| self.build_site_map());
+        let sites = self.postfix.is_some().then(|| self.build_site_map());
         let mut successors = Vec::with_capacity(classes.len());
         for (class, label) in classes {
             if self.exhausted {
@@ -450,25 +450,18 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                     {
                         taint |= FOREIGN_CONSUME_TAINT;
                     }
-                    // A skip-lineage configuration that consumed outside the
-                    // dangling-else discipline is realizable at run time only
-                    // on stacks whose epsilon-pop chase from the block end
-                    // reaches the positions this consumption passed through.
-                    // Record them as guard roots.
-                    if let (Some(postfix), Some(sites)) = (self.postfix, sites.as_ref())
+                    if let (Some(postfix), Some(sites)) = (self.postfix.as_ref(), sites.as_ref())
                         && source.get_alt() == POSTFIX_SKIP_ALT
                         && taint & ROOTED_TAINT == 0
-                        && source.get_state().get_rule_index()
-                            != self.decision_state.get_rule_index()
-                        && !source.get_context().is_none_or(|context| {
-                            bottom_frame_is(context, postfix.block_end_state, &mut HashSet::new())
-                        })
+                        && !postfix.skip_mirrors(source.get_state(), source.get_context(), taint)
                     {
+                        let mirror_return = (taint & (FOREIGN_LINEAGE_TAINT | MIDWAY_TAINT) == 0)
+                            .then_some(postfix.block_end_state);
                         taint |= ROOTED_TAINT;
                         collect_guard_roots(
                             source.get_state(),
                             source.get_context(),
-                            postfix.block_end_state,
+                            mirror_return,
                             sites,
                             &mut roots,
                         );
@@ -635,11 +628,13 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                         // operand, as in `e '?' e '-' ID`): that alternative owns
                         // the next tokens until the config reaches the decision
                         // again.
-                        if self
-                            .loop_block
-                            .as_ref()
-                            .is_some_and(|block| block.is_midway(transition.get_target()))
-                        {
+                        let target = transition.get_target();
+                        let midway = match (&self.loop_block, &self.postfix) {
+                            (Some(block), _) => block.is_midway(target),
+                            (None, Some(postfix)) => postfix.is_midway(target),
+                            (None, None) => false,
+                        };
+                        if midway {
                             next_taint |= MIDWAY_TAINT;
                         }
                         if self.precedence_start
@@ -696,12 +691,18 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             self.facts.used_widening = true;
             callee_taint |= WIDENED_TAINT;
         }
-        if taint & BOUNDARY_TAINT != 0
-            && self.loop_block.as_ref().is_some_and(|block| {
-                taint & MIDWAY_TAINT != 0
-                    || block.is_foreign_call(config.get_state(), config.get_context())
-            })
-        {
+        let foreign_call = taint & BOUNDARY_TAINT != 0
+            && (taint & MIDWAY_TAINT != 0
+                || match (&self.loop_block, &self.postfix) {
+                    (Some(block), _) => {
+                        block.is_foreign_call(config.get_state(), config.get_context())
+                    }
+                    (None, Some(postfix)) => {
+                        postfix.is_foreign_call(config.get_state(), config.get_context())
+                    }
+                    (None, None) => false,
+                });
+        if foreign_call {
             callee_taint |= FOREIGN_LINEAGE_TAINT;
         }
         let next_depth = if depth >= 0 { depth + 1 } else { depth };

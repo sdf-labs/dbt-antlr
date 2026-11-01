@@ -115,11 +115,13 @@ mv "$STATIC_TMP/guardexprparser.rs" "$SCRIPT_DIR/tests/gen/guardexprparser_stati
 echo "Generating: parser/LoopVeto"
 "$GEN_BIN" -no-listener -o "$SCRIPT_DIR/tests/gen" "$SCRIPT_DIR/grammars/parser/LoopVeto.g4"
 
-# The iterate/exit substitution witnesses are generated both ways. In
-# LoopSibling, a new invocation of the rule after the loop's exit owns the next
-# tokens, so the static tables must defer. In LoopSubst, the substitution
-# decides the conflicts after a lambda body (tests/sibling_invocations.rs).
-for grammar in "LoopSibling" "LoopSubst"; do
+# The ownership witnesses are generated both ways. In LoopSibling, tokens
+# after the loop's exit that the loop does not own make the static tables
+# defer. In LoopSubst, the substitution decides the conflicts after a lambda
+# body. In PostfixSibling, a new invocation of the decision rule after a
+# skipped optional postfix owns the next tokens, so the take must defer
+# (tests/sibling_invocations.rs).
+for grammar in "LoopSibling" "LoopSubst" "PostfixSibling"; do
     lower="$(echo "$grammar" | tr '[:upper:]' '[:lower:]')"
     echo "Generating: parser/$grammar"
     "$GEN_BIN" -no-listener -o "$SCRIPT_DIR/tests/gen" "$SCRIPT_DIR/grammars/parser/$grammar.g4"

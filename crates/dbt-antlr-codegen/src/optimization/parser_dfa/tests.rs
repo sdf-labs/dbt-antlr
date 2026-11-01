@@ -874,6 +874,139 @@ fn tokens_that_the_loop_does_not_own_veto_the_substitution() {
     }
 }
 
+/// The call site of the first of two side-by-side calls of `rule_index`
+/// (`r r`): the call whose follow state calls the rule again.
+fn first_of_two_calls(atn: &dbt_antlr_runtime::analysis::ATN, rule_index: usize) -> i32 {
+    use dbt_antlr_runtime::analysis::RuleTransition;
+    let calls = |state: dbt_antlr_runtime::analysis::ATNStateRef| {
+        state.get_transitions().iter().any(|transition| {
+            transition
+                .try_as::<RuleTransition>()
+                .is_some_and(|call| call.get_target().get_rule_index() as usize == rule_index)
+        })
+    };
+    atn.iter_states()
+        .map(|state| atn.make_state_ref(state.get_state_number()))
+        .find(|state| {
+            state.get_transitions().iter().any(|transition| {
+                transition.try_as::<RuleTransition>().is_some_and(|call| {
+                    call.get_target().get_rule_index() as usize == rule_index
+                        && calls(call.follow_state)
+                })
+            })
+        })
+        .expect("two side-by-side calls")
+        .get_state_number()
+}
+
+/// After the skip, a new invocation of the decision rule owns the tokens that
+/// it reads. `PostfixSibling.g4` reads `A - B ;` as `A` and `- B`, and
+/// `with [ A - B ] X` as `[ A (- B) ] X`. On these paths the tables of `r` and
+/// `q` must not take, and a guard must defer at the first of the two
+/// side-by-side calls. In `mid A - B A - B A - B !` the skip of the second `m`
+/// returns into the middle of the take path of the first, so `m` must not take
+/// on that path either.
+#[test]
+fn new_invocations_after_the_skip_are_out_of_discipline() {
+    let path = grammars_dir().join("parser").join("PostfixSibling.g4");
+    let atn = parser_atn(&path);
+    let results = classify(&path);
+    let names = rule_names(&path, &results);
+    let types = token_types(&path, &["'-'", "'B'", "';'", "']'", "'A'"]);
+    let (minus, b, semi, close, a) = (types[0], types[1], types[2], types[3], types[4]);
+    for (rule, tokens) in [
+        ("r", vec![minus, b, semi]),
+        ("q", vec![minus, b, close]),
+        ("m", vec![minus, b, a, minus]),
+    ] {
+        let (result, _) = results
+            .iter()
+            .zip(&names)
+            .find(|(result, name)| result.has_postfix_shape && *name == rule)
+            .unwrap_or_else(|| panic!("the postfix decision of {rule}"));
+        let table = result.table.as_ref().expect("a hybrid table");
+        let state = walk(table, &tokens).expect("the path has edges");
+        assert_ne!(state.accept, 1, "{rule}: the table does not take outright");
+        assert!(
+            state.is_escape() || state.is_guarded(),
+            "{rule}: the conflict defers"
+        );
+        if state.is_guarded() && rule != "m" {
+            let first_call = first_of_two_calls(atn, result.rule_index);
+            assert!(
+                table.guard_danger.contains(&first_call),
+                "{rule}: the guard defers at the first of the two calls"
+            );
+        }
+    }
+}
+
+/// A new invocation of the decision rule in an optional element after the
+/// postfix can read what the postfix takes (`c : 'A' w? (c 'C' '!')?`), so the
+/// shape check rejects it.
+#[test]
+fn optional_elements_after_the_postfix_starve_it() {
+    let path = grammars_dir().join("parser").join("PostfixSibling.g4");
+    let results = classify(&path);
+    let names = rule_names(&path, &results);
+    let shaped: Vec<&str> = results
+        .iter()
+        .zip(&names)
+        .filter(|(result, _)| result.has_postfix_shape)
+        .map(|(_, name)| name.as_str())
+        .collect();
+    assert_eq!(shaped, ["r", "q", "m"]);
+}
+
+/// The mirror test of a skip configuration, with no context: the frame that it
+/// popped into.
+#[test]
+fn skip_mirrors_need_the_take_path_of_the_popped_frame() {
+    use dbt_antlr_runtime::analysis::{MIDWAY_TAINT, ROOTED_TAINT};
+
+    let atn = parser_atn(&grammars_dir().join("parser").join("DanglingElse.g4"));
+    let (decision, shape) = atn
+        .decision_to_state
+        .iter()
+        .find_map(|state| {
+            super::postfix::PostfixShape::analyze(atn, *state).map(|shape| (*state, shape))
+        })
+        .expect("the `e?` shape");
+    let take = decision.get_transitions()[0].get_target();
+    let rule_start = atn.rule_to_start_state[decision.get_rule_index() as usize];
+
+    assert!(
+        shape.skip_mirrors(rule_start, None, 0),
+        "inside the decision invocation"
+    );
+    assert!(
+        shape.skip_mirrors(take, None, BOUNDARY_TAINT),
+        "on the take path"
+    );
+    assert!(
+        !shape.skip_mirrors(rule_start, None, BOUNDARY_TAINT),
+        "off the take path"
+    );
+    for taint in [MIDWAY_TAINT, FOREIGN_LINEAGE_TAINT, ROOTED_TAINT] {
+        assert!(!shape.skip_mirrors(take, None, BOUNDARY_TAINT | taint));
+    }
+    assert!(
+        !shape.is_foreign_call(take, None),
+        "the take path calls `e`"
+    );
+    assert!(shape.is_foreign_call(rule_start, None));
+}
+
+/// A skip that consumes on the take path of an enclosing invocation mirrors
+/// the take reading: the dangling `else` still resolves to take.
+#[test]
+fn the_take_path_of_an_enclosing_invocation_mirrors_the_take() {
+    let results = classify(&grammars_dir().join("parser").join("DanglingElse.g4"));
+    let fires: usize = results.iter().map(|result| result.take_rule_fires).sum();
+    assert_eq!(fires, 1);
+    assert!(results.iter().all(DecisionResult::is_fully_static));
+}
+
 /// `pred=predicate?` is the canonical optional-postfix shape, and the
 /// `set expr '=' expr` caller is where skip genuinely wins. The reference
 /// classifier reports one postfix decision for this grammar with no take-rule

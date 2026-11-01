@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Bo Lin
 //! The SLL DFA classifier: subset construction, budgets, and trust rules.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use dbt_antlr_runtime::analysis::DFA;
 use dbt_antlr_runtime::analysis::{
@@ -19,7 +19,7 @@ use dbt_antlr_runtime::dfa::static_parser_dfa::{
 
 use super::closure::{ClosedSet, Closure, ClosureFacts, PrecedenceClass, Taint, taint_of};
 use super::loop_block::{ITERATE_ALT, ITERATE_REAL, LoopBlock, is_iterate_exit_pair};
-use super::postfix::{PostfixShape, bottom_frame_is, compute_guard_data, reach_eps};
+use super::postfix::{PostfixShape, compute_guard_data, epsilon_closure};
 use super::table::{StaticDfaEdge, StaticDfaState, StaticDfaTable};
 use super::{CONFLICT_ESCAPE, Category, ESCAPE, EscapeResolutions, GUARDED};
 use crate::optimization::AtnFallback;
@@ -61,6 +61,7 @@ const TRUST_TAINT: i32 = WIDENED_TAINT
     | FOREIGN_CONSUME_TAINT
     | FOREIGN_LINEAGE_TAINT
     | MIDWAY_TAINT
+    | ROOTED_TAINT
     | INTERIOR_TAINT;
 
 /// The alternative of an optional-postfix decision that takes the postfix
@@ -472,11 +473,11 @@ impl DecisionClassifier {
     /// The optional-postfix shape of one decision, detected on first use.
     fn postfix_shape(&mut self, decision_state: ATNStateRef) -> Option<PostfixShape> {
         if let Some(cached) = self.postfix_shapes.get(&decision_state.get_state_number()) {
-            return *cached;
+            return cached.clone();
         }
         let shape = PostfixShape::analyze(self.atn, decision_state);
         self.postfix_shapes
-            .insert(decision_state.get_state_number(), shape);
+            .insert(decision_state.get_state_number(), shape.clone());
         shape
     }
 
@@ -835,6 +836,7 @@ impl DecisionClassifier {
         let decision_state = atn.decision_to_state[decision];
         let loop_block = precedence.map(|_| self.loop_block(decision_state));
         let postfix = self.postfix_shape(decision_state);
+        let has_postfix_shape = postfix.is_some();
         let mut completion_depths = std::mem::take(&mut self.completion_depths);
         let attempt = Arena::with(|arena| {
             let manager = ParserATNSimulatorManager::new(atn);
@@ -853,7 +855,7 @@ impl DecisionClassifier {
                     policy.depth_bound,
                     precedence,
                     loop_block,
-                    postfix,
+                    postfix.clone(),
                     self.visit_budget,
                 ),
                 policy,
@@ -872,7 +874,7 @@ impl DecisionClassifier {
                 attempt: Attempt {
                     decision,
                     hybrid: policy.hybrid,
-                    has_postfix_shape: postfix.is_some(),
+                    has_postfix_shape,
                     ..Attempt::default()
                 },
             };
@@ -1081,7 +1083,7 @@ where
     /// ever reachable (that case resolves to plain take accepts instead). The
     /// attempt bookkeeping is applied only once every bail has passed.
     fn finalize_guarded_takes(&mut self) {
-        let Some(postfix) = self.postfix else {
+        let Some(postfix) = self.postfix.clone() else {
             return;
         };
         if self.guard_candidates.is_empty() {
@@ -1108,17 +1110,11 @@ where
             let mut real_take = false;
             for config in self.states[state as usize].configs().get_items() {
                 let taint = taint_of(&facts.taint, config);
-                if config.get_alt() == POSTFIX_TAKE_ALT
-                    && taint & (WIDENED_TAINT | FOREIGN_CONSUME_TAINT) == 0
-                {
+                if config.get_alt() == POSTFIX_TAKE_ALT && taint & WIDENED_TAINT == 0 {
                     real_take = true;
                 }
                 if config.get_alt() != POSTFIX_SKIP_ALT {
                     continue;
-                }
-                if taint & FOREIGN_CONSUME_TAINT != 0 {
-                    eligible = false;
-                    break;
                 }
                 // A widening-born skip is an analysis artifact unless it is
                 // rooted: then its bottom frame is a real follow state and the
@@ -1127,15 +1123,9 @@ where
                     eligible = false;
                     break;
                 }
-                if config.get_state().get_rule_index() == self.decision_state.get_rule_index() {
-                    continue;
-                }
-                if taint & ROOTED_TAINT != 0 {
-                    continue;
-                }
-                if config.get_context().is_some_and(|context| {
-                    bottom_frame_is(context, postfix.block_end_state, &mut HashSet::new())
-                }) {
+                if taint & ROOTED_TAINT != 0
+                    || postfix.skip_mirrors(config.get_state(), config.get_context(), taint)
+                {
                     continue;
                 }
                 eligible = false;
@@ -1153,7 +1143,7 @@ where
 
         // A root that the block end reaches without popping any frame would trip
         // the guard on every stack: useless.
-        let reachable_from_block = reach_eps(postfix.block_end_state);
+        let reachable_from_block = epsilon_closure(postfix.block_end_state);
         if roots_all
             .iter()
             .any(|root| reachable_from_block.contains(*root as usize))
@@ -1585,56 +1575,33 @@ where
             return (facts, effects);
         }
 
-        // Optional-postfix take rule: the take/skip conflict of an `X Y?`
-        // decision is a dangling-else shape. Skip is never uniquely viable
-        // when every token it consumes is mirrored into the take structure.
-        // Three facts attest that:
-        //
-        // - no skip configuration consumed outside the decision rule,
-        // - every descended skip configuration bottoms out at the decision's
-        //   block end (it re-entered through this decision's own take path),
-        // - a clean take configuration attests take viability.
-        //
-        // Take's continuation after the optional is then the same block end as
-        // skip's, and the mirrored re-descents consume the same tokens. So the
-        // runtime answers take whenever it terminates: unique take, or an
-        // ambiguity resolved to the minimum alternative.
-        if let Some(postfix) = self.postfix
+        // Optional-postfix take rule: resolve a take/skip conflict to take when
+        // every skip configuration mirrors the take reading and a non-widened
+        // take configuration attests take viability.
+        if let Some(postfix) = self.postfix.clone()
             && is_take_skip_pair(&conflicting)
         {
-            let mut skip_foreign = false;
             let mut mirror_ok = true;
             let mut real_take = false;
             for config in &closed.configs {
                 let taint = closed.taint_of(config);
-                if config.get_alt() == POSTFIX_SKIP_ALT {
-                    if taint & FOREIGN_CONSUME_TAINT != 0 {
-                        skip_foreign = true;
-                    }
-                    if config.get_state().get_rule_index() != self.decision_state.get_rule_index()
-                        && !bottom_frame_is(
-                            config.get_context().expect("config has a context"),
-                            postfix.block_end_state,
-                            &mut HashSet::new(),
-                        )
-                    {
-                        mirror_ok = false;
-                    }
-                }
-                if config.get_alt() == POSTFIX_TAKE_ALT
-                    && taint & (WIDENED_TAINT | FOREIGN_CONSUME_TAINT) == 0
+                if config.get_alt() == POSTFIX_SKIP_ALT
+                    && !postfix.skip_mirrors(config.get_state(), config.get_context(), taint)
                 {
+                    mirror_ok = false;
+                }
+                if config.get_alt() == POSTFIX_TAKE_ALT && taint & WIDENED_TAINT == 0 {
                     real_take = true;
                 }
             }
-            if mirror_ok && !skip_foreign && real_take {
+            if mirror_ok && real_take {
                 self.attempt.take_rule_fires += 1;
                 facts.resolved_conflict = true;
                 effects.exact_ambiguity = Some(conflicting.clone());
                 facts.verdict = Verdict::Accept(POSTFIX_TAKE_ALT);
                 return (facts, effects);
             }
-            if self.policy.hybrid && !skip_foreign && real_take {
+            if self.policy.hybrid && real_take {
                 // Vetoed only by the mirror check: a candidate for the guarded
                 // take, resolved after construction once the guard roots have
                 // propagated.
