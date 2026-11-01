@@ -12,15 +12,25 @@
 //! then leaves through the free loop exit into the same caller continuation.
 //!
 //! That argument only holds while the exit lineage's tokens are the loop's own
-//! tokens. Three facts decide it, all computed here once per rule:
+//! tokens. Four facts decide it:
 //!
-//! - **Loop block** ([`LoopBlock::is_loop_consumption`]): the rule-local
-//!   positions of the loop. These are the base alternatives, the operand
-//!   descents, and the operator loop. Token consumption at such a position
-//!   belongs to the loop. So does consumption by a configuration whose context
-//!   returns into the block. Any other consumption by a boundary-popped
-//!   configuration is *foreign*. The phantom consumer is then not an enclosing
-//!   invocation of this loop, so the substitution does not apply.
+//! - **Operator loop** ([`LoopBlock::is_loop_consumption`]): the loop
+//!   decision, the operator alternatives, and the follow states of their
+//!   operands. A boundary-popped configuration is in the frame that it popped
+//!   into, or in an invocation that it started from that frame. In the popped
+//!   frame, consumption at an operator-loop position belongs to an enclosing
+//!   invocation of the loop. In an invocation that an operator-loop position
+//!   started (an operand descent), consumption also belongs to the loop. All
+//!   other consumption is *foreign*, and the substitution does not apply.
+//!   - A new invocation of the rule after the exit is foreign: in
+//!     `s : e e ';'` the second `e` can read the `'-'` that the first `e` reads
+//!     as an operator.
+//!   - A base alternative of an enclosing invocation is foreign too: in
+//!     `e : ... | 'pair' e e` the second `e` of `pair` can read that `'-'`.
+//!
+//!   [`LoopBlock::is_foreign_call`] marks the call that starts such an
+//!   invocation with [`FOREIGN_LINEAGE_TAINT`], because widening and merged
+//!   contexts can remove its frame later.
 //! - **Pending obligations** ([`LoopBlock::has_obligated_return`]): positions
 //!   that cannot reach the loop decision by epsilon alone. Such a position owes
 //!   a token of the current alternative. An enclosing frame that sits there
@@ -29,6 +39,14 @@
 //!   `','`/`'>>'`. Such an obligation vetoes the substitution. A frame that can
 //!   skip to the decision owes only the next operator, which the iterate
 //!   reading owes too, and is benign.
+//! - **Midway returns**: the boundary chase can return a configuration into
+//!   the middle of an alternative of an enclosing invocation, with no frame
+//!   left. In `e '?' e '-' ID` the middle operand returns before `'-'`, and in
+//!   `e '?' e ('-' ID)?` before an optional suffix. That alternative owns the
+//!   next tokens. The chase marks the configuration with [`MIDWAY_TAINT`],
+//!   and the mark stays until the configuration reaches the loop decision
+//!   again. A return that leads straight back to the loop decision, as after
+//!   the right operand of `e '-' e`, gets no mark.
 //! - **Simple guarded alternatives** ([`LoopBlock::guards_are_simple`]): at
 //!   most one rule invocation, and no internal iteration, between the
 //!   precedence predicate and the loop end. The substitution maps "operator
@@ -47,17 +65,18 @@ use std::collections::HashSet;
 
 use dbt_antlr_runtime::analysis::{
     ATN, ATNConfig, ATNStateRef, ATNStateType, BitSet, FOREIGN_CONSUME_TAINT,
-    PrecedencePredicateTransition, PredictionContextRef, RuleTransition, WIDENED_TAINT,
+    FOREIGN_LINEAGE_TAINT, MIDWAY_TAINT, PrecedencePredicateTransition, PredictionContextRef,
+    RuleTransition, WIDENED_TAINT,
 };
 
-use super::closure::{Taint, taint_of};
+use super::closure::{Taint, in_popped_frame, positions_owing_input, rule_positions, taint_of};
 
 /// The alternative of the loop's iterate branch.
 pub(super) const ITERATE_ALT: i32 = 1;
 /// The alternative of the loop's exit branch.
 pub(super) const EXIT_ALT: i32 = 2;
 
-/// The exit lineage consumed a token outside the loop block.
+/// The exit lineage consumed a token outside the operator loop.
 pub(super) const EXIT_FOREIGN: i32 = 1;
 /// The exit lineage holds a frame that owes tokens the iterate reading does
 /// not also owe.
@@ -66,16 +85,20 @@ pub(super) const EXIT_OBLIGATED: i32 = 2;
 /// nor foreign.
 pub(super) const ITERATE_REAL: i32 = 4;
 
-/// The rule-local loop block of one left-recursive rule.
+/// The operator loop of one left-recursive rule, and the token obligations of
+/// its positions.
 #[derive(Clone, Debug)]
 pub(super) struct LoopBlock {
     rule_index: i32,
-    /// Rule-local positions of the loop block: base alternatives, operand
-    /// descent follow states, and the operator loop.
-    loop_states: BitSet,
+    /// Positions of the operator loop: the loop decision, the operator
+    /// alternatives, and the follow states of their operands.
+    operator_states: BitSet,
     /// Rule-local positions that cannot epsilon-reach the loop decision, and
     /// so owe a token of the current alternative.
     pending_states: BitSet,
+    /// Rule-local positions from which the current alternative can consume or
+    /// call before an epsilon path reaches the loop decision.
+    midway_states: BitSet,
     /// Whether every guarded (precedence-bearing) alternative is simple: at
     /// most one rule invocation and no internal iteration.
     simple: bool,
@@ -85,13 +108,15 @@ impl LoopBlock {
     /// Analyses the loop block of the rule owning `decision_state`.
     pub(super) fn of(atn: &ATN, decision_state: ATNStateRef) -> Self {
         let rule_index = decision_state.get_rule_index();
-        let loop_states = loop_states(atn, rule_index);
+        let operator_states = operator_states(decision_state);
         let pending_states = pending_states(atn, decision_state, rule_index);
+        let midway_states = positions_owing_input(atn, rule_index, decision_state);
         let simple = guards_are_simple(atn, decision_state, rule_index);
         Self {
             rule_index,
-            loop_states,
+            operator_states,
             pending_states,
+            midway_states,
             simple,
         }
     }
@@ -99,7 +124,7 @@ impl LoopBlock {
     /// The iterate/exit substitution attestations of one conflict set (see
     /// [`EXIT_FOREIGN`], [`EXIT_OBLIGATED`] and [`ITERATE_REAL`]).
     ///
-    /// The substitution may resolve to iterate only when the result is exactly
+    /// The substitution resolves to iterate only when the result is exactly
     /// [`ITERATE_REAL`]: the exit lineage stayed inside the loop and owes
     /// nothing the iterate reading does not owe, and iterate viability is
     /// attested by a configuration that is neither widened nor foreign.
@@ -130,22 +155,43 @@ impl LoopBlock {
         self.simple
     }
 
-    /// Whether a token consumed by `config` is attributable to the operator
-    /// loop: either the consumption position is inside the block, or a calling
-    /// frame returns into it (an operand descent).
+    /// Whether a token that a boundary-popped configuration consumes at
+    /// `state` belongs to the operator loop (see the module documentation).
+    ///
+    /// A context with an empty path puts the configuration in the frame that
+    /// it popped into, so the position decides. Any other context puts it in
+    /// an invocation that it started from that frame. That invocation belongs
+    /// to the loop unless `taint` holds [`FOREIGN_LINEAGE_TAINT`]. A
+    /// configuration with [`MIDWAY_TAINT`] consumes for an enclosing
+    /// alternative.
     pub(super) fn is_loop_consumption(
         &self,
         state: ATNStateRef,
         context: Option<PredictionContextRef<'_>>,
+        taint: i32,
     ) -> bool {
-        if self.loop_states.contains(state.get_state_number() as usize) {
-            return true;
-        }
-        let Some(context) = context else {
+        if taint & (FOREIGN_LINEAGE_TAINT | MIDWAY_TAINT) != 0 {
             return false;
-        };
-        let mut visited = HashSet::new();
-        self.has_loop_return(context, &mut visited)
+        }
+        !in_popped_frame(context)
+            || self
+                .operator_states
+                .contains(state.get_state_number() as usize)
+    }
+
+    /// Whether a rule call of a boundary-popped configuration at `state`
+    /// starts an invocation that is foreign to the loop: the call leaves the
+    /// frame that the configuration popped into from a position outside the
+    /// operator loop.
+    pub(super) fn is_foreign_call(
+        &self,
+        state: ATNStateRef,
+        context: Option<PredictionContextRef<'_>>,
+    ) -> bool {
+        in_popped_frame(context)
+            && !self
+                .operator_states
+                .contains(state.get_state_number() as usize)
     }
 
     /// Whether the context holds a same-rule return into a pending position -
@@ -158,40 +204,19 @@ impl LoopBlock {
         self.obligation_in(&context, &mut visited)
     }
 
+    /// Whether a boundary chase that returns into `state` lands in the middle
+    /// of an alternative that can still consume or call before it reaches the
+    /// loop decision (see the module documentation).
+    pub(super) fn is_midway(&self, state: ATNStateRef) -> bool {
+        self.midway_states
+            .contains(state.get_state_number() as usize)
+    }
+
     /// Whether `state` is a rule-local position that owes a token of the
     /// current alternative.
     pub(super) fn is_pending(&self, state: ATNStateRef) -> bool {
         self.pending_states
             .contains(state.get_state_number() as usize)
-    }
-
-    fn has_loop_return(
-        &self,
-        context: PredictionContextRef<'_>,
-        visited: &mut HashSet<*const ()>,
-    ) -> bool {
-        if context.is_empty() || !visited.insert(pointer_key(&context)) {
-            return false;
-        }
-        for index in 0..context.length() {
-            let return_state = context.get_return_state(index);
-            if return_state == ATNStateRef::empty_return() {
-                continue;
-            }
-            if self
-                .loop_states
-                .contains(return_state.get_state_number() as usize)
-            {
-                return true;
-            }
-            let Some(parent) = context.get_parent(index) else {
-                continue;
-            };
-            if self.has_loop_return(parent, visited) {
-                return true;
-            }
-        }
-        false
     }
 
     fn obligation_in(
@@ -232,30 +257,16 @@ fn pointer_key(context: &PredictionContextRef<'_>) -> *const () {
     context.as_ref() as *const _ as *const ()
 }
 
-/// Every rule-local position of the loop block: the rule start, the base
-/// alternatives, the operand descents (through their follow states), and the
-/// operator loop. Rule references contribute their follow state, never the
-/// callee's body - an operand runs with a loop-block frame in its context, so
-/// its own consumption is attributed by [`LoopBlock::is_loop_consumption`].
-fn loop_states(atn: &ATN, rule_index: i32) -> BitSet {
-    let mut states = BitSet::new();
-    let mut work: Vec<ATNStateRef> = vec![atn.rule_to_start_state[rule_index as usize]];
-    while let Some(state) = work.pop() {
-        if state.get_rule_index() != rule_index
-            || state.state_type() == ATNStateType::RuleStop
-            || states.contains(state.get_state_number() as usize)
-        {
-            continue;
-        }
-        states.insert(state.get_state_number() as usize);
-        for transition in state.get_transitions() {
-            work.push(match transition.try_as::<RuleTransition>() {
-                Some(rule) => rule.follow_state,
-                None => transition.get_target(),
-            });
-        }
-    }
-    states
+/// Every position of the operator loop: the loop decision, the operator
+/// alternatives, and the follow states of their operands. Rule references
+/// contribute their follow state, never the callee's body - an operand runs
+/// with an operator-loop frame in its context, so its own consumption is
+/// attributed by [`LoopBlock::is_loop_consumption`]. The base alternatives are
+/// not part of the loop: an enclosing invocation that continues a base
+/// alternative (`'(' e ')'`, `'pair' e e`) consumes for that alternative, not
+/// for the loop.
+fn operator_states(decision_state: ATNStateRef) -> BitSet {
+    rule_positions(decision_state, None)
 }
 
 /// Rule-local positions that cannot reach the loop decision by epsilon alone.

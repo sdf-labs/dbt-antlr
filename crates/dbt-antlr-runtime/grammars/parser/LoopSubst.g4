@@ -1,8 +1,14 @@
 // Witness for the enter/exit substitution (`loop_block`): the operator loop of
 // a left-recursive rule whose operand is a rule with structured, multi-token
-// alternatives. Beyond the hybrid construction budget the conflict between
-// iterating the loop and leaving it is decided by the substitution instead of
-// escaping to the adaptive engine.
+// alternatives. The lambda alternative `ID '->' expr` ends an operand with an
+// `expr`. After `x -> a`, the next operator can extend the lambda body
+// (iterate) or apply to the whole lambda (exit). Both readings parse, and the
+// substitution resolves the conflict to iterate, which is the answer of the
+// adaptive engine, without an escape.
+//
+// `SUBSTRING` keeps `FROM` mandatory. With `FROM?` its two operands stand side
+// by side, and a new invocation of `expr` owns the next `'-'` (see
+// `LoopSibling.g4`).
 grammar LoopSubst;
 
 start : expr EOF ;
@@ -26,11 +32,12 @@ operand
     | ID '(' (expr (',' expr)*)? ')'
     | ID '.' ID
     | EXTRACT '(' ID FROM expr ')'
-    | SUBSTRING '(' expr FROM? expr (FOR expr)? ')'
+    | SUBSTRING '(' expr FROM expr (FOR expr)? ')'
     | POSITION '(' expr IN expr ')'
     | ROW '(' expr (',' expr)* ')'
     | TIMESTAMP STRING
     | INTERVAL STRING ID
+    | ID '->' expr
     ;
 
 type_ : ID | ID VARYING | INT ;

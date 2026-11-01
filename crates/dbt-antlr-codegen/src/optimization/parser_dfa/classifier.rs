@@ -7,11 +7,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use dbt_antlr_runtime::analysis::DFA;
 use dbt_antlr_runtime::analysis::{
     ATN, ATNConfigSet, ATNStateRef, ATNStateType, Arena, BOUNDARY_TAINT, BitSet, Bump, DFAState,
-    EOF, FOREIGN_CONSUME_TAINT, IATNSimulator, INTERIOR_TAINT, PRECPRED_TAINT, PRED_TAINT,
-    ParserATNSimulator, ParserATNSimulatorManager, PrecedencePredicateTransition,
-    PredictionContext, PredictionContextRef, PredictionMode, ProposedDFAState, ROOTED_TAINT,
-    RuleStartState, WIDENED_TAINT, all_subsets_conflict, all_subsets_equal,
-    conflicting_alt_subsets, get_alts, has_sll_conflict_terminating_prediction,
+    EOF, FOREIGN_CONSUME_TAINT, FOREIGN_LINEAGE_TAINT, IATNSimulator, INTERIOR_TAINT, MIDWAY_TAINT,
+    PRECPRED_TAINT, PRED_TAINT, ParserATNSimulator, ParserATNSimulatorManager,
+    PrecedencePredicateTransition, PredictionContext, PredictionContextRef, PredictionMode,
+    ProposedDFAState, ROOTED_TAINT, RuleStartState, WIDENED_TAINT, all_subsets_conflict,
+    all_subsets_equal, conflicting_alt_subsets, get_alts, has_sll_conflict_terminating_prediction,
 };
 use dbt_antlr_runtime::dfa::static_parser_dfa::{
     ContinuationConfigEntry, ContinuationContextNode, ParserContinuation,
@@ -53,9 +53,15 @@ pub(crate) const HYBRID_MIN_COVERAGE_PERCENT: u32 = 10;
 pub(crate) const MAX_CONTINUATION_WORDS: usize = 64;
 
 /// Taint bits that invalidate a trusted verdict when a second path adds them
-/// to an already interned state.
-const TRUST_TAINT: i32 =
-    WIDENED_TAINT | PRECPRED_TAINT | BOUNDARY_TAINT | FOREIGN_CONSUME_TAINT | INTERIOR_TAINT;
+/// to an already interned state. A decision state that gets one of them is
+/// expanded again, so its successors get the bit too.
+const TRUST_TAINT: i32 = WIDENED_TAINT
+    | PRECPRED_TAINT
+    | BOUNDARY_TAINT
+    | FOREIGN_CONSUME_TAINT
+    | FOREIGN_LINEAGE_TAINT
+    | MIDWAY_TAINT
+    | INTERIOR_TAINT;
 
 /// The alternative of an optional-postfix decision that takes the postfix
 /// element.

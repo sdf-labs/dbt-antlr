@@ -114,3 +114,16 @@ mv "$STATIC_TMP/guardexprparser.rs" "$SCRIPT_DIR/tests/gen/guardexprparser_stati
 # operator loop with an empty outer context (tests/full_context.rs).
 echo "Generating: parser/LoopVeto"
 "$GEN_BIN" -no-listener -o "$SCRIPT_DIR/tests/gen" "$SCRIPT_DIR/grammars/parser/LoopVeto.g4"
+
+# The iterate/exit substitution witnesses are generated both ways. In
+# LoopSibling, a new invocation of the rule after the loop's exit owns the next
+# tokens, so the static tables must defer. In LoopSubst, the substitution
+# decides the conflicts after a lambda body (tests/sibling_invocations.rs).
+for grammar in "LoopSibling" "LoopSubst"; do
+    lower="$(echo "$grammar" | tr '[:upper:]' '[:lower:]')"
+    echo "Generating: parser/$grammar"
+    "$GEN_BIN" -no-listener -o "$SCRIPT_DIR/tests/gen" "$SCRIPT_DIR/grammars/parser/$grammar.g4"
+    echo "Generating: ${lower}parser_static"
+    "$GEN_BIN" -no-listener --static-parser-dfa -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/$grammar.g4"
+    mv "$STATIC_TMP/${lower}parser.rs" "$SCRIPT_DIR/tests/gen/${lower}parser_static.rs"
+done

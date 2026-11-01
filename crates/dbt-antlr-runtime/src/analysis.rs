@@ -29,8 +29,8 @@ pub use bumpalo::Bump;
 pub use crate::arena::Arena;
 pub use crate::atn::{ATN, INVALID_ALT};
 pub use crate::atn_config::{
-    ATNConfig, BOUNDARY_TAINT, FOREIGN_CONSUME_TAINT, INTERIOR_TAINT, PRECPRED_TAINT, PRED_TAINT,
-    ROOTED_TAINT, WIDENED_TAINT,
+    ATNConfig, BOUNDARY_TAINT, FOREIGN_CONSUME_TAINT, FOREIGN_LINEAGE_TAINT, INTERIOR_TAINT,
+    MIDWAY_TAINT, PRECPRED_TAINT, PRED_TAINT, ROOTED_TAINT, WIDENED_TAINT,
 };
 pub use crate::atn_config_set::{ATNConfigSet, MutableATNConfigSet};
 pub use crate::atn_simulator::IATNSimulator;
