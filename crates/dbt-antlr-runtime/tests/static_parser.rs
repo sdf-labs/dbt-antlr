@@ -362,10 +362,19 @@ fn parse_fuzz_static(input: &str) -> Result<String, String> {
         );
         let tokens = CommonTokenStream::new(lexer);
         let mut parser = gen::fuzzexprparser_static::FuzzExprParser::new(arena, tokens);
-        parser
+        let listener = CollectingErrorListener::default();
+        let messages = listener.messages.clone();
+        parser.remove_error_listeners();
+        parser.add_error_listener(Box::new(listener));
+        let tree = parser
             .s()
             .map(|ctx| string_tree(ctx, parser.get_rule_names()))
-            .map_err(|e| format!("{e:?}"))
+            .map_err(|e| format!("{e:?}"))?;
+        let errors = messages.borrow().clone();
+        if !errors.is_empty() {
+            return Err(errors.join("; "));
+        }
+        Ok(tree)
     })
 }
 
@@ -377,10 +386,19 @@ fn parse_fuzz_adaptive(input: &str) -> Result<String, String> {
         );
         let tokens = CommonTokenStream::new(lexer);
         let mut parser = gen::fuzzexprparser::FuzzExprParser::new(arena, tokens);
-        parser
+        let listener = CollectingErrorListener::default();
+        let messages = listener.messages.clone();
+        parser.remove_error_listeners();
+        parser.add_error_listener(Box::new(listener));
+        let tree = parser
             .s()
             .map(|ctx| string_tree(ctx, parser.get_rule_names()))
-            .map_err(|e| format!("{e:?}"))
+            .map_err(|e| format!("{e:?}"))?;
+        let errors = messages.borrow().clone();
+        if !errors.is_empty() {
+            return Err(errors.join("; "));
+        }
+        Ok(tree)
     })
 }
 
@@ -452,7 +470,46 @@ fn gen_expr(rng: &mut Rng, depth: usize, out: &mut String) {
     }
 }
 
+/// One `s` input: mostly items, sometimes a `let`, `pick`, or `alias`
+/// statement.
 fn gen_input(rng: &mut Rng) -> String {
+    let mut out = String::new();
+    match rng.below(10) {
+        0 | 1 => {}
+        2 => {
+            out.push_str("pick ");
+            let depth = 1 + rng.below(4);
+            gen_expr(rng, depth, &mut out);
+            if rng.below(2) == 0 {
+                out.push_str(" as y");
+            }
+            return out;
+        }
+        3 => {
+            out.push_str("alias ");
+            let depth = 1 + rng.below(4);
+            gen_expr(rng, depth, &mut out);
+            if rng.below(2) == 0 {
+                out.push_str(" as y");
+            }
+            out.push_str(" as z");
+            return out;
+        }
+        _ => return gen_item_input(rng),
+    }
+    out.push_str("let ");
+    let depth = 1 + rng.below(4);
+    gen_expr(rng, depth, &mut out);
+    if rng.below(2) == 0 {
+        out.push_str(" = ");
+        let depth = 1 + rng.below(3);
+        gen_expr(rng, depth, &mut out);
+    }
+    out
+}
+
+/// One `s` input of the form `item, item, ... ;`.
+fn gen_item_input(rng: &mut Rng) -> String {
     let mut out = String::new();
     let items = 1 + rng.below(3);
     for item in 0..items {
@@ -478,6 +535,10 @@ fn fuzz_valid_expressions() {
     let mut rng = Rng(0x5EED_0001);
     for _ in 0..400 {
         let input = gen_input(&mut rng);
+        assert!(
+            parse_fuzz_adaptive(&input).is_ok(),
+            "valid input had syntax error: {input:?}"
+        );
         assert_fuzz_equivalent(&input);
     }
 }
@@ -485,7 +546,7 @@ fn fuzz_valid_expressions() {
 #[test]
 fn fuzz_token_soup() {
     const TOKENS: &[&str] = &[
-        "x", "1", "as", "+", "-", "*", "/", "^", "(", ")", "[", "]", ",", ";", ".", "f",
+        "x", "1", "as", "+", "-", "*", "/", "^", "(", ")", "[", "]", ",", ";", ".", "f", "let", "=",
     ];
     let mut rng = Rng(0x5EED_0002);
     for _ in 0..400 {
@@ -532,6 +593,9 @@ fn sdfa_words_round_trip() {
     });
 }
 
+/// The `FuzzExpr.g4` decision of `binding : target '=' e | e`.
+const BINDING: i32 = 5;
+
 /// Walks a decision's static table over the tokens of `input` and returns the
 /// escape state the walk leaves at, mirroring `BaseParser::dfa_predict`.
 fn frontier_escape_state(
@@ -574,14 +638,17 @@ fn frontier_escape_resumes_from_the_continuation() {
         let simulator = manager.get_simulator(arena);
         let tables = simulator.atn().static_dfas();
 
-        // `item : e 'as' name | e` is the hybrid decision: its table stops at
-        // the depth-4 frontier and carries the frontier config sets.
-        let item = tables.table(2, 0).expect("item has a hybrid table");
-        let input = "a + b.c as y";
-        let escape_state = frontier_escape_state(item, input).expect("the walk leaves the table");
-        let (slot, _) = item
+        // `binding : target '=' e | e` is the hybrid decision: its table stops
+        // at the depth-4 frontier and carries the frontier config sets.
+        let binding = tables
+            .table(BINDING, 0)
+            .expect("binding has a hybrid table");
+        let escape_state =
+            frontier_escape_state(binding, "a + b.c = y").expect("the walk leaves the table");
+        let (slot, _) = binding
             .continuation(escape_state)
             .expect("the frontier escape carries a continuation");
+        let input = "let a + b.c = y";
 
         let tree = {
             let lexer = gen::fuzzexprlexer::FuzzExprLexer::<_, CommonTokenFactory>::new(
@@ -599,7 +666,9 @@ fn frontier_escape_resumes_from_the_continuation() {
 
         // The escape was resumed from the continuation: the frontier config
         // set is materialized in the dynamic DFA, keyed by its slot.
-        let decision = simulator.decision_to_dfa(2).expect("decision 2 exists");
+        let decision = simulator
+            .decision_to_dfa(BINDING as usize)
+            .expect("the binding decision exists");
         let state = decision
             .get_continuation_state(slot)
             .expect("the escape materialized its continuation state");
@@ -616,12 +685,15 @@ fn continuation_state_is_reused_across_parses() {
         let manager = gen::fuzzexprparser_static::parser_simulator_manager();
         let simulator = manager.get_simulator(arena);
         let tables = simulator.atn().static_dfas();
-        let item = tables.table(2, 0).expect("item has a hybrid table");
-        let input = "a + b.c as y";
-        let escape_state = frontier_escape_state(item, input).expect("the walk leaves the table");
-        let (slot, _) = item
+        let binding = tables
+            .table(BINDING, 0)
+            .expect("binding has a hybrid table");
+        let escape_state =
+            frontier_escape_state(binding, "a + b.c = y").expect("the walk leaves the table");
+        let (slot, _) = binding
             .continuation(escape_state)
             .expect("the frontier escape carries a continuation");
+        let input = "let a + b.c = y";
 
         let mut numbers = Vec::new();
         for _ in 0..3 {
@@ -633,7 +705,9 @@ fn continuation_state_is_reused_across_parses() {
             let mut parser = gen::fuzzexprparser_static::FuzzExprParser::new(arena, tokens);
             parser.s().expect("parse succeeds");
 
-            let decision = simulator.decision_to_dfa(2).expect("decision 2 exists");
+            let decision = simulator
+                .decision_to_dfa(BINDING as usize)
+                .expect("the binding decision exists");
             numbers.push(
                 decision
                     .get_continuation_state(slot)

@@ -449,17 +449,70 @@ impl<'ephemeral> PredictionContext<'ephemeral> {
         Node: NodeKindType<'arena, Tok>,
         Tok: Token + 'input,
     {
-        if outer_context.get_parent().is_none() || outer_context.get_rule_context().is_empty()
-        /*ptr::eq(outer_context, empty_ctx().as_ref())*/
-        {
+        Self::from_rule_context_with_neutral(atn, outer_context, &[], arena)
+    }
+
+    pub fn from_rule_context_with_neutral<'input, 'arena, Node, Tok>(
+        atn: &ATN,
+        outer_context: &'arena TreeNode<'input, 'arena, Node, Tok>,
+        neutral_call_sites: &[(*const (), &[i32])],
+        arena: &'ephemeral bumpalo::Bump,
+    ) -> PredictionContextRef<'ephemeral>
+    where
+        'input: 'arena,
+        Node: NodeKindType<'arena, Tok>,
+        Tok: Token + 'input,
+    {
+        let invoking_state = outer_context.get_rule_context().get_invoking_state();
+        let Some(parent_node) = outer_context.get_parent() else {
+            return PredictionContextRef::new_empty();
+        };
+        if invoking_state < 0 {
             return PredictionContextRef::new_empty();
         }
 
-        let parent =
-            PredictionContext::from_rule_context(atn, outer_context.get_parent().unwrap(), arena);
+        let parent = PredictionContext::from_rule_context_with_neutral(
+            atn,
+            parent_node,
+            neutral_call_sites,
+            arena,
+        );
+
+        let parent_ptr = parent_node as *const _ as *const ();
+        if let Some(&(_, call_sites)) = neutral_call_sites.iter().find(|&&(ptr, sites)| {
+            ptr == parent_ptr && sites.len() > 1 && sites.first() == Some(&invoking_state)
+        }) {
+            let mut follow_states: Vec<ATNStateRef> = call_sites
+                .iter()
+                .map(|&site| {
+                    atn.get_state(site)
+                        .get_transitions()
+                        .first()
+                        .unwrap()
+                        .try_as::<RuleTransition>()
+                        .unwrap()
+                        .follow_state
+                })
+                .collect();
+            follow_states.sort_unstable_by_key(|state| state.get_state_number());
+            follow_states.dedup();
+            if follow_states.len() == 1 {
+                return arena
+                    .alloc(PredictionContext::new_singleton(
+                        Some(parent),
+                        follow_states[0],
+                    ))
+                    .into();
+            }
+            let parents = arena.alloc_slice_fill_copy(follow_states.len(), Some(parent));
+            let return_states = arena.alloc_slice_copy(&follow_states);
+            return arena
+                .alloc(PredictionContext::new_array(parents, return_states))
+                .into();
+        }
 
         let transition = atn
-            .get_state(outer_context.get_rule_context().get_invoking_state())
+            .get_state(invoking_state)
             .get_transitions()
             .first()
             .unwrap()

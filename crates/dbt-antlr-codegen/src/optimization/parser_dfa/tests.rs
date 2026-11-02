@@ -5,7 +5,7 @@
 //! The expected categories are the ones the reference `antlr4.base2` classifier
 //! reports for the same grammars (`-Xdecision-report`).
 //!
-//! The same conservatism shows on large grammars, where the reference
+//! Large grammars diverge in a conservative direction: the reference
 //! classifier resolves a conflict from the *first* path that reached a config
 //! set, while this classifier keeps the union of every path's taint
 //! (`INTERIOR_TAINT` marks the paths that never popped the decision boundary).
@@ -40,6 +40,15 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
+/// The classifier of one compiled parser, set up as the static parser DFA
+/// pass sets it up.
+fn classifier(parser: &crate::grammar::atn::CompiledParser) -> DecisionClassifier {
+    let ll1 = crate::optimization::static_parser_dfa::ll1_disjointness(parser);
+    DecisionClassifier::new(parser.atn, ll1).with_descent_rules(
+        crate::optimization::static_parser_dfa::descent_rules(parser),
+    )
+}
+
 /// Classifies every decision of every root parser of one grammar file.
 fn classify(path: &Path) -> Vec<DecisionResult> {
     classify_with(path, AtnFallback::Allowed)
@@ -58,9 +67,8 @@ fn classify_with(path: &Path, atn_fallback: AtnFallback) -> Vec<DecisionResult> 
             continue;
         };
         let parser = compilation.parser(parser_id).expect("parser artifact");
-        let ll1 = crate::optimization::static_parser_dfa::ll1_disjointness(parser);
         results.extend(
-            DecisionClassifier::new(parser.atn, ll1)
+            classifier(parser)
                 .with_atn_fallback(atn_fallback)
                 .classify_all(),
         );
@@ -110,12 +118,12 @@ fn golden_corpus_categories_match_the_reference_classifier() {
         ("VisitorBasic.g4", &[]),
         ("VisitorCalc.g4", &[Category::LLK, Category::LR_PRECEDENCE]),
         ("ReferenceToATN.g4", &[Category::HYBRID, Category::LL1]),
-        // Upstream reports `EXACT_AMBIG` for the first decision via its
-        // shared-descent groups; without them the conflict stays untrusted.
+        // The shared-descent group of `expr ';' | expr '.'` cures every
+        // conflict of the first decision, as upstream.
         (
             "Perf.g4",
             &[
-                Category::HYBRID,
+                Category::EXACT_AMBIG,
                 Category::LL1,
                 Category::LLK,
                 Category::LR_PRECEDENCE,
@@ -303,8 +311,7 @@ fn fixture_corpus_classifies_without_panicking() {
                 continue;
             };
             let parser = compilation.parser(parser_id).expect("parser artifact");
-            let ll1 = crate::optimization::static_parser_dfa::ll1_disjointness(parser);
-            let results = DecisionClassifier::new(parser.atn, ll1).classify_all();
+            let results = classifier(parser).classify_all();
             for result in results {
                 classified += 1;
                 for table in result.table.iter().chain(
@@ -386,10 +393,7 @@ fn whole_fixture_corpus_classifies_under_a_small_budget() {
                 continue;
             };
             let parser = compilation.parser(parser_id).expect("parser artifact");
-            let ll1 = crate::optimization::static_parser_dfa::ll1_disjointness(parser);
-            let results = DecisionClassifier::new(parser.atn, ll1)
-                .with_visit_budget(20_000)
-                .classify_all();
+            let results = classifier(parser).with_visit_budget(20_000).classify_all();
             for result in results {
                 for table in result.table.iter().chain(
                     result
@@ -482,10 +486,7 @@ fn classify_with_budget(path: &Path, budget: u64) -> Vec<DecisionResult> {
     let parser = compilation
         .parser(root.parser.expect("parser root"))
         .expect("parser artifact");
-    let ll1 = crate::optimization::static_parser_dfa::ll1_disjointness(parser);
-    DecisionClassifier::new(parser.atn, ll1)
-        .with_visit_budget(budget)
-        .classify_all()
+    classifier(parser).with_visit_budget(budget).classify_all()
 }
 
 /// Builds the runtime tables of one grammar through the pass, exactly as the
@@ -546,9 +547,11 @@ fn fully_static_decisions_never_defer() {
 #[test]
 fn hybrid_frontier_escapes_carry_continuations() {
     let (results, tables) = build_tables(&grammars_dir().join("parser/FuzzExpr.g4"));
+    // `binding`, the decision with the most frontier escapes.
     let hybrid = results
         .iter()
-        .find(|result| result.category == Category::HYBRID && result.escapes > 0)
+        .filter(|result| result.category == Category::HYBRID)
+        .max_by_key(|result| result.escapes)
         .expect("FuzzExpr has a hybrid decision");
     let words = tables.words();
     let decoded = dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables::from_words(&words)
@@ -1365,4 +1368,233 @@ fn static_only_keeps_partial_tables_below_the_coverage_threshold() {
     assert_eq!((resolved.min_alt, resolved.syntax_error), (0, 10));
     assert_eq!(decision.fallback_text(), "10x");
     assert_no_runtime_escapes(&results);
+}
+
+/// Classifies a grammar written to a scratch directory.
+fn classify_source(name: &str, source: &str) -> Vec<DecisionResult> {
+    let directory =
+        std::env::temp_dir().join(format!("dbt-antlr-descent-{}-{name}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("scratch directory");
+    let path = directory.join(format!("{name}.g4"));
+    std::fs::write(&path, source).expect("scratch grammar");
+    let results = classify(&path);
+    let _ = std::fs::remove_dir_all(&directory);
+    results
+}
+
+/// Whether any decision of rule `rule_index` accepts with a shared-descent
+/// group.
+fn rule_has_groups(results: &[DecisionResult], rule_index: usize) -> bool {
+    results
+        .iter()
+        .filter(|result| result.rule_index == rule_index)
+        .any(|result| result.descent.is_some())
+}
+
+#[test]
+fn shared_descent_groups_cure_the_escapes_of_the_fuzz_items() {
+    let results = classify(&grammars_dir().join("parser/FuzzExpr.g4"));
+    let path = grammars_dir().join("parser/FuzzExpr.g4");
+    let rules = rule_names(&path, &results);
+    let by_rule = |name: &str| {
+        results
+            .iter()
+            .zip(&rules)
+            .find(|(_, rule)| *rule == name)
+            .map(|(result, _)| result)
+            .expect("the rule has a decision")
+    };
+
+    // `item : e 'as' name | e`: one parse of `e`, then 'as' or anything else.
+    let item = by_rule("item");
+    assert_eq!(item.category, Category::EXACT_AMBIG);
+    assert_eq!(item.escapes, 0);
+    assert_eq!(item.descent_group_states, 15);
+    let plan = item.descent.as_ref().expect("item accepts with a group");
+    let [group] = &plan.groups[..] else {
+        panic!("one group: {plan:?}");
+    };
+    assert_eq!(group.alts, [1, 2]);
+    assert!(group.prefix.is_empty());
+    assert_eq!(group.default_alt, 2);
+    assert_eq!(group.arms.len(), 1);
+    assert_eq!(group.arms[0].alt, 1);
+    assert!(
+        item.table
+            .as_ref()
+            .expect("item has a table")
+            .states
+            .iter()
+            .any(|state| state.accept == group.virtual_alt)
+    );
+
+    // `alias`: 'as' can follow the rule, so the member follow sets at the
+    // shared call site overlap on 'as' and the group is rejected.
+    let alias = by_rule("alias");
+    assert!(alias.descent.is_none());
+    assert!(alias.escapes > 0);
+    // `binding`: the members reach `e` through different rules.
+    let binding = by_rule("binding");
+    assert!(binding.descent.is_none());
+    assert!(binding.escapes > 0);
+}
+
+#[test]
+fn shared_descent_groups_share_a_one_token_prefix() {
+    let results = classify(&grammars_dir().join("parser/ParenExpr.g4"));
+    let primary = results
+        .iter()
+        .find(|result| result.descent.is_some())
+        .expect("the primary block accepts with a group");
+    assert_eq!(primary.descent_group_states, 8);
+    assert_eq!(primary.escapes, 8);
+    let group = &primary.descent.as_ref().unwrap().groups[0];
+    assert_eq!(group.alts, [3, 4]);
+    assert_eq!(group.prefix.len(), 1);
+    assert_eq!(group.default_alt, 0);
+    let arms: Vec<(i32, usize)> = group
+        .arms
+        .iter()
+        .map(|arm| (arm.alt, arm.tokens.len()))
+        .collect();
+    assert_eq!(arms, [(3, 1), (4, 1)], "',' and ')'");
+}
+
+/// A grammar whose `x` decision needs unbounded lookahead between its two
+/// alternatives, which share the rule `y` after `prefix`.
+fn descent_witness(name: &str, x: &str, y: &str) -> String {
+    format!(
+        "grammar {name};\ns : x EOF ;\nx : {x} ;\ny : {y} ;\nID : [a-z]+ ;\nWS : [ \\t]+ -> skip ;\n"
+    )
+}
+
+#[test]
+fn shared_descent_accepts_a_plain_group() {
+    let results = classify_source(
+        "DescentPlain",
+        &descent_witness("DescentPlain", "y '+' ID | y", "'(' y ')' | ID"),
+    );
+    assert!(rule_has_groups(&results, 1), "{results:?}");
+    assert!(results.iter().all(|result| result.escapes == 0));
+}
+
+#[test]
+fn shared_descent_rejects_a_rule_with_arguments() {
+    let results = classify_source(
+        "DescentArgs",
+        &descent_witness("DescentArgs", "y[1] '+' ID | y[1]", "'(' y[1] ')' | ID")
+            .replace("y : ", "y[i32 depth] : "),
+    );
+    assert!(!rule_has_groups(&results, 1));
+}
+
+#[test]
+fn shared_descent_rejects_a_rule_that_runs_an_action() {
+    let results = classify_source(
+        "DescentAction",
+        &descent_witness(
+            "DescentAction",
+            "y '+' ID | y",
+            "'(' y ')' | ID {}  {let _ = 1;}",
+        ),
+    );
+    assert!(!rule_has_groups(&results, 1));
+}
+
+#[test]
+fn shared_descent_rejects_members_with_another_prefix_length() {
+    // Alternative 1 reaches `y` after one or two tokens, so skipping one token
+    // would not land on `y` for every input.
+    let results = classify_source(
+        "DescentPrefix",
+        &descent_witness(
+            "DescentPrefix",
+            "('[' | '[' '[') y '+' ID | '[' y",
+            "'(' y ')' | ID",
+        ),
+    );
+    assert!(!rule_has_groups(&results, 1));
+    // A multi-token set transition before `y` is not a single-token prefix.
+    let results = classify_source(
+        "DescentSetPrefix",
+        &descent_witness(
+            "DescentSetPrefix",
+            "('[' | ']') y '+' ID | '[' y",
+            "'(' y ')' | ID",
+        ),
+    );
+    assert!(!rule_has_groups(&results, 1));
+}
+
+#[test]
+fn shared_descent_skips_optional_blocks() {
+    // Both alternatives of the optional block start with `y`, but the block is
+    // emitted as an optional block, which has no group arms.
+    let results = classify_source(
+        "DescentOptional",
+        &descent_witness("DescentOptional", "(y '+' ID)? y", "'(' y ')' | ID"),
+    );
+    assert!(results.iter().all(|result| result.descent.is_none()));
+}
+
+#[test]
+fn shared_descent_rejects_decisions_and_loops_before_the_shared_rule() {
+    // A loop around `y` calls it again after its first call returned.
+    let results = classify_source(
+        "DescentLoop",
+        &descent_witness(
+            "DescentLoop",
+            "(y '+')+ ':' ID | y ';' ID",
+            "'(' y ')' | ID",
+        ),
+    );
+    assert!(!rule_has_groups(&results, 1));
+    // The re-descent of alternative 1 would have to predict the optional block
+    // before it reaches `y`.
+    let results = classify_source(
+        "DescentOptionalPrefix",
+        &descent_witness(
+            "DescentOptionalPrefix",
+            "'['? y '+' ID | y ';' ID",
+            "'(' y ')' | ID",
+        ),
+    );
+    assert!(!rule_has_groups(&results, 1));
+}
+
+#[test]
+fn shared_descent_excludes_rules_whose_shared_rule_conflicts_with_member_tails() {
+    // In `DescentContext.g4`, `d`, `g`, and `k` call a shared rule (`r` or
+    // `h`) that can both exit and continue on a token of the member tails
+    // ('+' or 'as'), and `h`'s own members overlap on 'as' in FOLLOW(h).
+    // Condition 2 excludes all of them at compile time.
+    let results = classify(&grammars_dir().join("parser/DescentContext.g4"));
+    assert!(
+        results
+            .iter()
+            .all(|result| result.descent.is_none() && result.descent_group_states == 0),
+        "{results:?}"
+    );
+    // Distinct subrules `a` and `b` inside `r` that match the same input `ID`,
+    // after which `a` exits `r` while `b` continues with `'+' ID`.
+    let results = classify_source(
+        "DescentDistinctSubrules",
+        concat!(
+            "grammar DescentDistinctSubrules;\n",
+            "s : d EOF ;\n",
+            "d : r '+' ID ';' ID | r ';' ID INT ;\n",
+            "r : '(' r ')' | b '+' ID | a ;\n",
+            "a : '[' a ']' | ID ;\n",
+            "b : '[' b ']' | ID ;\n",
+            "ID : [a-z]+ ;\n",
+            "INT : [0-9]+ ;\n",
+            "WS : [ \\t\\n]+ -> skip ;\n",
+        ),
+    );
+    assert!(
+        results
+            .iter()
+            .all(|result| result.descent.is_none() && result.descent_group_states == 0),
+        "{results:?}"
+    );
 }

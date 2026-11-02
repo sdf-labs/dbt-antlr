@@ -27,6 +27,8 @@ pub(crate) use config::{AtnFallback, OptimizationPlan, StaticDfaPass};
 pub(crate) use metrics::{StructuralMetrics, integrated_grammar_metrics};
 pub use options::OptimizationOptions;
 #[cfg(feature = "generator")]
+pub(crate) use parser_dfa::{DescentGroup, DescentPlan, TailArm};
+#[cfg(feature = "generator")]
 pub(crate) use report::OptimizationReport;
 #[cfg(feature = "generator")]
 pub(crate) use static_lexer_dfa::{StaticLexerDfa, StaticLexerTables};

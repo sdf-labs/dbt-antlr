@@ -1252,6 +1252,54 @@ macro_rules! parse_rule {
     };
 }
 
+/// The arm of one shared-descent group in a generated `DescentAltBlock`.
+///
+/// Evaluates to the member alternative to parse. The arm parses the shared
+/// rule once with parse listeners muted (see
+/// [`BaseParser::begin_neutral_parse`](crate::parser::BaseParser::begin_neutral_parse)),
+/// reads the token after it, and selects the member alternative whose tail
+/// starts with that token (or `default` otherwise). The subtree is kept for
+/// the re-descent of that member (see `resume_take`).
+#[doc(hidden)]
+#[macro_export]
+macro_rules! shared_descent {
+    (
+        $recog:ident,
+        call_sites: $call_sites:expr,
+        prefix: $prefix:expr,
+        rule: $rule:expr,
+        invoke: $invoke:ident ( $($arg:expr),* ),
+        tails: { $($tail:pat => $tail_alt:expr),* $(,)? },
+        default: $default:expr,
+        fallback: $fallback:expr $(,)?
+    ) => {{
+        if !$recog.base.descent_ready() {
+            $fallback
+        } else {
+            let neutral = $recog.base.begin_neutral_parse($call_sites, $prefix);
+            match $recog.$invoke($($arg),*) {
+                ::std::result::Result::Ok(node) => {
+                    let token = $crate::int_stream::IntStream::la(&mut $recog.base.input, 1);
+                    let alt: i32 = match token {
+                        $($tail => $tail_alt,)*
+                        _ => $default,
+                    };
+                    $recog.base.resume_neutral_parse(
+                        neutral,
+                        $crate::tree::NodeInner::as_node(node),
+                        $rule,
+                    );
+                    alt
+                }
+                ::std::result::Result::Err(err) => {
+                    $recog.base.abort_neutral_parse(neutral);
+                    return ::std::result::Result::Err(err);
+                }
+            }
+        }
+    }};
+}
+
 #[macro_export]
 macro_rules! impl_parser_recog {
     ($ext:ident, $nodekind:ident, $file:literal

@@ -284,9 +284,10 @@ impl<'sim> ParserATNSimulator<'sim> {
         };
 
         let outer_context = match local.outer_context() {
-            Some(outer_context) => PredictionContext::from_rule_context(
+            Some(outer_context) => PredictionContext::from_rule_context_with_neutral(
                 self.atn(),
                 outer_context,
+                local.parser.neutral_call_sites(),
                 local.merge_cache.scratch,
             ),
             None => PredictionContextRef::new_empty(),
@@ -505,9 +506,10 @@ impl<'sim> ParserATNSimulator<'sim> {
                 let s0_closure = self.compute_start_state(
                     atn_start_state,
                     match local.outer_context() {
-                        Some(outer_context) => PredictionContext::from_rule_context(
+                        Some(outer_context) => PredictionContext::from_rule_context_with_neutral(
                             self.atn(),
                             outer_context,
+                            local.parser.neutral_call_sites(),
                             local.merge_cache.scratch,
                         ),
                         None => PredictionContextRef::new_empty(),

@@ -352,6 +352,14 @@ where
         ctx.children.pop();
     }
 
+    /// Drops every child after the first `len` children.
+    pub fn truncate_children(&mut self, len: usize) {
+        let Some(ctx) = self.as_rule_context_common_mut() else {
+            return;
+        };
+        ctx.children.truncate(len);
+    }
+
     pub fn add_child(&mut self, _child: &'arena Self) {
         let Some(ctx) = self.as_rule_context_common_mut() else {
             return;
