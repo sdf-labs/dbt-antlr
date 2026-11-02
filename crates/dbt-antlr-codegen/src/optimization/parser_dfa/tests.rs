@@ -905,6 +905,52 @@ fn tokens_that_the_loop_does_not_own_veto_the_substitution() {
     }
 }
 
+/// In `LoopObligation.g4`, the exit lineage enters the second `p` of
+/// `'trim' '(' p p ')'` and owes `')'` at the lookahead budget. That obligation
+/// belongs to a foreign invocation that `FOREIGN_CONSUME_TAINT` already roots,
+/// so all 10 iterate/exit states (2 conflict states and 8 budget-frontier
+/// states) resolve under the stack guard.
+#[test]
+fn foreign_rooted_obligations_guard_the_iterate_reading() {
+    let path = grammars_dir().join("parser").join("LoopObligation.g4");
+    let results = classify(&path);
+    let result = results
+        .iter()
+        .find(|result| result.category == Category::LR_PRECEDENCE)
+        .expect("the loop decision of `p`");
+    assert_eq!(result.k, 4);
+    assert_eq!(result.num_dfa_states, 36);
+    assert_eq!(result.escapes, 0);
+    assert_eq!(result.guarded_iterates, 10);
+    assert_eq!(result.iterate_accepts, 0);
+    assert!(!result.is_fully_static());
+    assert_eq!(result.fallback_text(), "10g");
+
+    let classes = result.precedence.as_ref().expect("precedence tables");
+    assert_eq!(classes.adaptive_classes, 0);
+    let types = token_types(&path, &["'['", "':'", "'.'", "'prior'", "'trim'", "ID"]);
+    let (open, colon, dot, prior, trim, id) =
+        (types[0], types[1], types[2], types[3], types[4], types[5]);
+
+    for class in 0..2 {
+        let table = classes.tables[class].as_ref().expect("hybrid class table");
+        assert_eq!(table.guard_danger, [9, 15]);
+        assert_eq!(table.guard_pass, [40]);
+
+        let conflict = walk(table, &[dot, id]).expect("`.` ID edge");
+        assert!(conflict.is_guarded());
+        assert_eq!(conflict.guarded_alt, 1);
+        assert_eq!(conflict.conflicts, [1, 2]);
+
+        for tail in [open, prior, trim, id] {
+            let frontier = walk(table, &[open, id, colon, tail]).expect("frontier edge");
+            assert!(frontier.is_guarded());
+            assert_eq!(frontier.guarded_alt, 1);
+            assert!(frontier.conflicts.is_empty());
+        }
+    }
+}
+
 /// The call site of the first of two side-by-side calls of `rule_index`
 /// (`r r`): the call whose follow state calls the rule again.
 fn first_of_two_calls(atn: &dbt_antlr_runtime::analysis::ATN, rule_index: usize) -> i32 {
