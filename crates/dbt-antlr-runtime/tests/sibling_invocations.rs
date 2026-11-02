@@ -188,6 +188,10 @@ fn new_invocations_after_the_exit_parse_like_the_adaptive_parser() {
             "opt a ? a - a - a !",
             "(start opt (tail (tail a) ? (tail a) - a - a !) <EOF>)",
         ),
+        (
+            "prec a * a + a : a",
+            "(start prec (prec (prec (prec a) * (prec a)) + (prec a) : a) <EOF>)",
+        ),
     ];
     for (input, expected) in cases {
         let adaptive = sibling_adaptive(input);
@@ -223,6 +227,11 @@ fn short_sentences_parse_like_the_adaptive_parser() {
             sentences(&["-", "?", "!", "a"], 7)
                 .into_iter()
                 .map(|body| format!("opt {body}")),
+        )
+        .chain(
+            sentences(&["+", "*", ":", "a"], 7)
+                .into_iter()
+                .map(|body| format!("prec {body}")),
         );
     for input in bodies {
         let adaptive = sibling_adaptive(&input);

@@ -50,6 +50,9 @@ use super::postfix::{PostfixShape, collect_guard_roots};
 /// element.
 const POSTFIX_SKIP_ALT: i32 = 2;
 
+/// The alternative of a precedence loop's exit branch.
+const ITERATE_EXIT_ALT: i32 = 2;
+
 /// Union of the taints of every path that reached a closed config, keyed by
 /// `(ATN state number, alternative)`.
 pub(super) type Taint = HashMap<(i32, i32), i32>;
@@ -419,7 +422,8 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             }
         }
 
-        let sites = self.postfix.is_some().then(|| self.build_site_map());
+        let sites =
+            (self.postfix.is_some() || self.loop_block.is_some()).then(|| self.build_site_map());
         let mut successors = Vec::with_capacity(classes.len());
         for (class, label) in classes {
             if self.exhausted {
@@ -448,20 +452,34 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                             )
                         })
                     {
+                        let in_loop = taint & (FOREIGN_LINEAGE_TAINT | MIDWAY_TAINT) == 0;
                         taint |= FOREIGN_CONSUME_TAINT;
+                        if let (Some(block), Some(sites)) =
+                            (self.loop_block.as_ref(), sites.as_ref())
+                            && source.get_alt() == ITERATE_EXIT_ALT
+                            && taint & ROOTED_TAINT == 0
+                        {
+                            taint |= ROOTED_TAINT;
+                            collect_guard_roots(
+                                source.get_state(),
+                                source.get_context(),
+                                &|state| in_loop && block.is_loop_state(state),
+                                sites,
+                                &mut roots,
+                            );
+                        }
                     }
                     if let (Some(postfix), Some(sites)) = (self.postfix.as_ref(), sites.as_ref())
                         && source.get_alt() == POSTFIX_SKIP_ALT
                         && taint & ROOTED_TAINT == 0
                         && !postfix.skip_mirrors(source.get_state(), source.get_context(), taint)
                     {
-                        let mirror_return = (taint & (FOREIGN_LINEAGE_TAINT | MIDWAY_TAINT) == 0)
-                            .then_some(postfix.block_end_state);
+                        let in_take = taint & (FOREIGN_LINEAGE_TAINT | MIDWAY_TAINT) == 0;
                         taint |= ROOTED_TAINT;
                         collect_guard_roots(
                             source.get_state(),
                             source.get_context(),
-                            mirror_return,
+                            &|state| in_take && state == postfix.block_end_state,
                             sites,
                             &mut roots,
                         );

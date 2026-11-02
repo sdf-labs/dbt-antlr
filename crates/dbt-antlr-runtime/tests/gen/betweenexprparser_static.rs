@@ -1,0 +1,1212 @@
+// Generated from BetweenExpr.g4 by ANTLR 4.13.2
+use dbt_antlr_runtime::prelude::*;
+use dbt_antlr_runtime::atn_simulator::ParserATNSimulatorManager as ATNSimulatorManager;
+dbt_antlr_runtime::check_version!("0","6");
+pub const BetweenExpr_T__0:i32=1; 
+pub const BetweenExpr_T__1:i32=2; 
+pub const BetweenExpr_T__2:i32=3; 
+pub const BetweenExpr_T__3:i32=4; 
+pub const BetweenExpr_T__4:i32=5; 
+pub const BetweenExpr_T__5:i32=6; 
+pub const BetweenExpr_T__6:i32=7; 
+pub const BetweenExpr_T__7:i32=8; 
+pub const BetweenExpr_T__8:i32=9; 
+pub const BetweenExpr_T__9:i32=10; 
+pub const BetweenExpr_T__10:i32=11; 
+pub const BetweenExpr_T__11:i32=12; 
+pub const BetweenExpr_T__12:i32=13; 
+pub const BetweenExpr_T__13:i32=14; 
+pub const BetweenExpr_ID:i32=15; 
+pub const BetweenExpr_INT:i32=16; 
+pub const BetweenExpr_WS:i32=17;
+pub const BetweenExpr_EOF:i32=EOF;
+pub const RULE_s:usize = 0; 
+pub const RULE_b:usize = 1; 
+pub const RULE_pred:usize = 2; 
+pub const RULE_v:usize = 3; 
+pub const RULE_atom:usize = 4;
+pub const ruleNames: [&'static str; 5] = [
+    "s", "b", "pred", "v", "atom"
+];
+
+pub const _LITERAL_NAMES: [Option<&'static str>;15] = [
+	None, Some("'NOT'"), Some("'AND'"), Some("'OR'"), Some("'BETWEEN'"), Some("'='"), 
+	Some("'<'"), Some("'>'"), Some("'*'"), Some("'/'"), Some("'+'"), Some("'-'"), 
+	Some("'('"), Some("')'"), Some("'->'")
+];
+pub const _SYMBOLIC_NAMES: [Option<&'static str>;18]  = [
+	None, None, None, None, None, None, None, None, None, None, None, None, 
+	None, None, None, Some("ID"), Some("INT"), Some("WS")
+];
+
+static VOCABULARY: LazyLock<Box<dyn Vocabulary>> = LazyLock::new(|| Box::new(VocabularyImpl::new(_LITERAL_NAMES.iter(), _SYMBOLIC_NAMES.iter(), None)));
+
+pub type BaseParserType<'input, 'arena, Input, TF> = BaseParser<'input, 'arena, BetweenExprParserExt<'input, 'arena>, BetweenExprParserNodeKind, Input, TF>;
+pub fn parser_simulator_manager() -> &'static ATNSimulatorManager { &ATN_SIMULATOR_MANAGER }
+
+pub struct BetweenExprParser<'input, 'arena, Input, TF>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    Input: TokenStream<'input, 'arena, TF> + 'arena,
+{
+	base: BaseParserType<'input, 'arena, Input, TF>,
+    err_handler: ErrorStrategyDelegate<'input, 'arena, TF, BaseParserType<'input, 'arena, Input, TF>>,
+}
+
+impl<'input, 'arena, Input, TF> BetweenExprParser<'input, 'arena, Input, TF>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    Input: TokenStream<'input, 'arena, TF> + 'arena,
+{
+    pub fn with_strategy(arena: &'arena Arena, input: Input, strategy: Box<dyn ErrorStrategy<'input, 'arena, TF, BaseParserType<'input, 'arena, Input, TF>> + 'arena>) -> Self {
+		Self {
+			base: BaseParser::new_base_parser(
+				arena, input,
+				BetweenExprParserExt {
+					_pd: Default::default(),
+				}
+			),
+            err_handler: unsafe { ErrorStrategyDelegate::new(strategy) },
+        }
+    }
+
+    pub fn new(arena: &'arena Arena, input: Input) -> Self{
+    	Self::with_strategy(arena, input, Box::new(DefaultErrorStrategy::new()))
+    }
+
+    pub fn set_error_strategy(&mut self, strategy: Box<dyn ErrorStrategy<'input, 'arena, TF, BaseParserType<'input, 'arena, Input, TF>> + 'arena>) {
+        self.err_handler = unsafe { ErrorStrategyDelegate::new(strategy) };
+    }
+
+    /// Adds parse listener for this parser
+    /// returns `listener_id` that can be used later to get listener back
+    ///
+    /// ### Example for listener usage:
+    /// todo
+    pub fn add_parse_listener<L>(
+        &mut self,
+        listener: Box<L>,
+    ) -> ListenerId<L>
+    where
+        L: ParseTreeListener<'arena, BetweenExprParserNodeKind, TF::Tok> + 'static,
+    {
+        let id = ListenerId::new(&listener);
+        self.base.add_dyn_parse_listener(listener);
+        id
+    }
+}
+pub struct BetweenExprTreeWalker;
+impl BetweenExprTreeWalker
+{
+    pub fn walk<'input, 'arena, Tok, L, T>(
+        listener: Box<L>,
+        tree: &'arena T,
+    ) -> Result<Box<L>, ANTLRError>
+    where
+        'input: 'arena,
+        L: ParseTreeListener<'arena, BetweenExprParserNodeKind, Tok> + 'static,
+        T: NodeInner<'input, 'arena, BetweenExprParserNodeKind, Tok>,
+        Tok: Token + 'input,
+    {
+        let listener_ptr = Box::into_raw(listener);
+        let listener = unsafe { Box::from_raw(listener_ptr as *mut <BetweenExprParserNodeKind as NodeKindType<Tok>>::Listener) };
+        let listener = ParseTreeWalker::walk(listener, tree.as_node())?;
+        Ok(unsafe { Box::from_raw(Box::into_raw(listener) as *mut L) } )
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u16)]
+pub enum BetweenExprParserNodeKind {
+    SContext,
+    BContext,
+    PredContext,
+    VContext,
+    AtomContext,
+    Terminal,
+    Error,
+}
+pub type BetweenExprParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, BetweenExprParserNodeKind, Tok>;
+
+dbt_antlr_runtime::impl_deref! { parser => BetweenExprParser }
+dbt_antlr_runtime::impl_node_kind! { BetweenExprParserNodeKind {
+    BContext(BContextAll), PredContext(PredContextAll), ; SContext(), VContext(), AtomContext(), 
+    }; 
+}
+
+pub struct BetweenExprParserExt<'input, 'arena> {
+	_pd: PhantomData<(&'input str, &'arena ())>,
+}
+
+impl<'input, 'arena> BetweenExprParserExt<'input, 'arena> {
+}
+
+dbt_antlr_runtime::impl_parser_recog! { BetweenExprParserExt, BetweenExprParserNodeKind, "BetweenExpr.g4"; sempred (BetweenExprParserNode<'input, 'arena, TF::Tok>, BetweenExprParser) { 1 => b_sempred,
+3 => v_sempred, } }
+
+impl<'input, 'arena, Input, TF> BetweenExprParser<'input, 'arena, Input, TF>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    Input: TokenStream<'input, 'arena, TF> + 'arena,
+{
+	fn b_sempred(_ctx: Option<&'arena BContext<'input, 'arena, TF::Tok>>, pred_index:i32, recog: &mut <Self as Deref>::Target) -> bool
+	 {
+		match pred_index {
+	        0 => {
+			recog.precpred(None, 2)
+		    }
+	        1 => {
+			recog.precpred(None, 1)
+		    }
+		    _ => true
+		}
+	}
+
+	fn v_sempred(_ctx: Option<&'arena VContext<'input, 'arena, TF::Tok>>, pred_index:i32, recog: &mut <Self as Deref>::Target) -> bool
+	 {
+		match pred_index {
+	        2 => {
+			recog.precpred(None, 3)
+		    }
+	        3 => {
+			recog.precpred(None, 2)
+		    }
+		    _ => true
+		}
+	}
+}
+//------------------- s ----------------
+pub type SContextAll<'input, 'arena, Tok = CommonToken<'input>> = SContext<'input, 'arena, Tok>;
+
+dbt_antlr_runtime::impl_ctx! { BetweenExprParserNodeKind, SContext, SContextExt, RULE_s }
+
+pub trait SContextAttrs<'input, 'arena, Tok>: ParserRuleContext<'input, 'arena>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+    fn b(&self) -> Option<&'arena BContextAll<'input, 'arena, Tok>>;
+    /// Retrieves first TerminalNode corresponding to token EOF
+    /// Returns `None` if there is no child corresponding to token EOF
+    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+}
+
+impl<'input, 'arena, Tok: Token + 'input> SContextAttrs<'input, 'arena, Tok> for SContext<'input, 'arena, Tok>
+where
+    'input: 'arena,
+{
+    fn b(&self) -> Option<&'arena BContextAll<'input, 'arena, Tok>> {
+        self.child_of_type(0)
+    }
+    /// Retrieves first TerminalNode corresponding to token EOF
+    /// Returns `None` if there is no child corresponding to token EOF
+    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
+        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == BetweenExpr_EOF)
+    }
+}
+
+impl<'input, 'arena, Input, TF> BetweenExprParser<'input, 'arena, Input, TF>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    Input: TokenStream<'input, 'arena, TF> + 'arena,
+{
+	pub fn s(&mut self,) -> Result<&'arena SContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
+        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, SContext<TF::Tok>, RULE_s, 0, |_parentctx| SContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        let _local_ctx_fn = |recog: &Self| -> &'arena SContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
+		/*------- Outer Most Alt 1 -------*/
+		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
+		{
+		recog.base.set_state(10);
+		recog.b_rec(0)?;
+		recog.base.set_state(11);
+		recog.base.match_token(BetweenExpr_EOF,&mut recog.err_handler)?;
+		}
+		})
+	}
+}
+//------------------- b ----------------
+#[derive(Debug)]
+#[repr(C, u16)]
+pub enum BContextAll<'input, 'arena, Tok = CommonToken<'input>>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+	NotContext(NotContext<'input, 'arena, Tok>),
+	PredicatedContext(PredicatedContext<'input, 'arena, Tok>),
+	OrContext(OrContext<'input, 'arena, Tok>),
+	AndContext(AndContext<'input, 'arena, Tok>),
+    Error(BContext<'input, 'arena, Tok>)
+}
+
+dbt_antlr_runtime::impl_rule_context! { BContextAll { } { NotContext, PredicatedContext, OrContext, AndContext, Error, } }
+dbt_antlr_runtime::impl_parser_rule_context! { BContextAll { } { NotContext, PredicatedContext, OrContext, AndContext, Error, } }
+dbt_antlr_runtime::impl_tree_trait_delegates! { BetweenExprParserNodeKind::BContextAll { NotContext, PredicatedContext, OrContext, AndContext, Error, } }
+dbt_antlr_runtime::impl_node_inner! { BetweenExprParserNodeKind::BContext::BContextAll { NotContext, PredicatedContext, OrContext, AndContext, Error, } }
+
+impl<'input, 'arena, Tok> Deref for BContextAll<'input, 'arena, Tok>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+	type Target = dyn BContextAttrs<'input, 'arena, Tok> + 'arena;
+	fn deref(&self) -> &Self::Target{
+		use BContextAll::*;
+		match self{
+			NotContext(inner) => inner,
+			PredicatedContext(inner) => inner,
+			OrContext(inner) => inner,
+			AndContext(inner) => inner,
+            Error(inner) => inner
+		}
+	}
+}
+
+pub type BContext<'input, 'arena, Tok = CommonToken<'input>> = BaseParserRuleContext<'input, 'arena, BContextExt<'input, 'arena, Tok>, BetweenExprParserNodeKind, Tok>;
+#[derive(Debug)]
+pub struct BContextExt<'input: 'arena, 'arena, Tok: Token + 'input = CommonToken<'input>> {
+    ph: PhantomData<(&'arena (), &'input Tok)>,
+}
+
+dbt_antlr_runtime::impl_ctx! { @labeled BetweenExprParserNodeKind::BContext, BContextAll, BContextExt, RULE_b }
+impl<'input: 'arena, 'arena, Tok: Token + 'input> BContextExt<'input, 'arena, Tok>{
+	fn create(arena: &'arena Arena, parent: Option<&'arena BetweenExprParserNode<'input, 'arena, Tok>>, invoking_state: i32) -> Result<&'arena mut BetweenExprParserNode<'input, 'arena, Tok>, ANTLRError>
+    {
+        BaseParserRuleContext::create(arena, parent, invoking_state, BContextExt {
+				ph: PhantomData
+			}
+		)
+	}
+}
+pub trait BContextAttrs<'input, 'arena, Tok>: ParserRuleContext<'input, 'arena>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+}
+
+impl<'input, 'arena, Tok: Token + 'input> BContextAttrs<'input, 'arena, Tok> for BContext<'input, 'arena, Tok>
+where
+    'input: 'arena,
+{
+}
+
+pub type NotContext<'input, 'arena, Tok = CommonToken<'input>> = BaseParserRuleContext<'input, 'arena, NotContextExt<'input, 'arena, Tok>, BetweenExprParserNodeKind, Tok>;
+
+pub trait NotContextAttrs<'input, 'arena, Tok>: ParserRuleContext<'input, 'arena>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+	fn b(&self) -> Option<&'arena BContextAll<'input, 'arena, Tok>>;
+}
+
+impl<'input: 'arena, 'arena, Tok: Token + 'input> NotContextAttrs<'input, 'arena, Tok> for NotContext<'input, 'arena, Tok>
+{
+    fn b(&self) -> Option<&'arena BContextAll<'input, 'arena, Tok>> {
+        self.child_of_type(0)
+    }
+}
+#[derive(Debug)]
+pub struct NotContextExt<'input: 'arena, 'arena, Tok: Token + 'input = CommonToken<'input>> {
+	base: BContextExt<'input, 'arena, Tok>,
+    pd: PhantomData<(&'arena (), &'input Tok)>
+}
+
+dbt_antlr_runtime::impl_ctx! { @alt BetweenExprParserNodeKind::BContext, BContextAll::NotContext, NotContextExt, RULE_b }
+
+impl<'input, 'arena, Tok> BContextAttrs<'input, 'arena, Tok> for NotContext<'input, 'arena, Tok>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+}
+
+impl<'input: 'arena, 'arena, Tok: Token + 'input> NotContextExt<'input, 'arena, Tok> {
+	fn new(base: BContextExt<'input, 'arena, Tok>) -> Self {
+        Self {
+            base,
+            pd: PhantomData
+        }
+    }
+
+	fn copy_from(src: &mut BetweenExprParserNode<'input, 'arena, Tok>) {
+        let invoking_state = src.get_invoking_state();
+        let ctx = {
+            let Some(base_ctx): Option<&mut BContext<'input, 'arena, Tok>> = src.as_rule_context_mut() else {
+                panic!("invalid node type for copy_from!");
+            };
+            let tmp = unsafe { std::ptr::read(base_ctx) };
+            BContextAll::NotContext(tmp.morph(|ext_src| Self::new(ext_src)))
+        };
+let _old = std::mem::replace(dbt_antlr_runtime::cast_unchecked!(src => mut BContextAll<'input, 'arena, Tok>), ctx);
+        std::mem::forget(_old);
+        src.set_invoking_state(invoking_state);
+        src.node_tag = <Self as CustomRuleContext<'input, 'arena, Tok>>::node_tag();
+	}
+}
+
+pub type PredicatedContext<'input, 'arena, Tok = CommonToken<'input>> = BaseParserRuleContext<'input, 'arena, PredicatedContextExt<'input, 'arena, Tok>, BetweenExprParserNodeKind, Tok>;
+
+pub trait PredicatedContextAttrs<'input, 'arena, Tok>: ParserRuleContext<'input, 'arena>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+	fn v(&self) -> Option<&'arena VContextAll<'input, 'arena, Tok>>;
+	fn pred(&self) -> Option<&'arena PredContextAll<'input, 'arena, Tok>>;
+}
+
+impl<'input: 'arena, 'arena, Tok: Token + 'input> PredicatedContextAttrs<'input, 'arena, Tok> for PredicatedContext<'input, 'arena, Tok>
+{
+    fn v(&self) -> Option<&'arena VContextAll<'input, 'arena, Tok>> {
+        self.child_of_type(0)
+    }
+    fn pred(&self) -> Option<&'arena PredContextAll<'input, 'arena, Tok>> {
+        self.child_of_type(0)
+    }
+}
+#[derive(Debug)]
+pub struct PredicatedContextExt<'input: 'arena, 'arena, Tok: Token + 'input = CommonToken<'input>> {
+	base: BContextExt<'input, 'arena, Tok>,
+    pd: PhantomData<(&'arena (), &'input Tok)>
+}
+
+dbt_antlr_runtime::impl_ctx! { @alt BetweenExprParserNodeKind::BContext, BContextAll::PredicatedContext, PredicatedContextExt, RULE_b }
+
+impl<'input, 'arena, Tok> BContextAttrs<'input, 'arena, Tok> for PredicatedContext<'input, 'arena, Tok>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+}
+
+impl<'input: 'arena, 'arena, Tok: Token + 'input> PredicatedContextExt<'input, 'arena, Tok> {
+	fn new(base: BContextExt<'input, 'arena, Tok>) -> Self {
+        Self {
+            base,
+            pd: PhantomData
+        }
+    }
+
+	fn copy_from(src: &mut BetweenExprParserNode<'input, 'arena, Tok>) {
+        let invoking_state = src.get_invoking_state();
+        let ctx = {
+            let Some(base_ctx): Option<&mut BContext<'input, 'arena, Tok>> = src.as_rule_context_mut() else {
+                panic!("invalid node type for copy_from!");
+            };
+            let tmp = unsafe { std::ptr::read(base_ctx) };
+            BContextAll::PredicatedContext(tmp.morph(|ext_src| Self::new(ext_src)))
+        };
+let _old = std::mem::replace(dbt_antlr_runtime::cast_unchecked!(src => mut BContextAll<'input, 'arena, Tok>), ctx);
+        std::mem::forget(_old);
+        src.set_invoking_state(invoking_state);
+        src.node_tag = <Self as CustomRuleContext<'input, 'arena, Tok>>::node_tag();
+	}
+}
+
+pub type OrContext<'input, 'arena, Tok = CommonToken<'input>> = BaseParserRuleContext<'input, 'arena, OrContextExt<'input, 'arena, Tok>, BetweenExprParserNodeKind, Tok>;
+
+pub trait OrContextAttrs<'input, 'arena, Tok>: ParserRuleContext<'input, 'arena>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+	fn b_all(&self) -> Vec<&'arena BContextAll<'input, 'arena, Tok>>;
+	fn b(&self, i: usize) -> Option<&'arena BContextAll<'input, 'arena, Tok>>;
+}
+
+impl<'input: 'arena, 'arena, Tok: Token + 'input> OrContextAttrs<'input, 'arena, Tok> for OrContext<'input, 'arena, Tok>
+{
+    fn b_all(&self) -> Vec<&'arena BContextAll<'input, 'arena, Tok>> {
+        self.children_of_type()
+    }
+    fn b(&self, i: usize) -> Option<&'arena BContextAll<'input, 'arena, Tok>> {
+        self.child_of_type(i)
+    }
+}
+#[derive(Debug)]
+pub struct OrContextExt<'input: 'arena, 'arena, Tok: Token + 'input = CommonToken<'input>> {
+	base: BContextExt<'input, 'arena, Tok>,
+    pd: PhantomData<(&'arena (), &'input Tok)>
+}
+
+dbt_antlr_runtime::impl_ctx! { @alt BetweenExprParserNodeKind::BContext, BContextAll::OrContext, OrContextExt, RULE_b }
+
+impl<'input, 'arena, Tok> BContextAttrs<'input, 'arena, Tok> for OrContext<'input, 'arena, Tok>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+}
+
+impl<'input: 'arena, 'arena, Tok: Token + 'input> OrContextExt<'input, 'arena, Tok> {
+	fn new(base: BContextExt<'input, 'arena, Tok>) -> Self {
+        Self {
+            base,
+            pd: PhantomData
+        }
+    }
+
+	fn copy_from(src: &mut BetweenExprParserNode<'input, 'arena, Tok>) {
+        let invoking_state = src.get_invoking_state();
+        let ctx = {
+            let Some(base_ctx): Option<&mut BContext<'input, 'arena, Tok>> = src.as_rule_context_mut() else {
+                panic!("invalid node type for copy_from!");
+            };
+            let tmp = unsafe { std::ptr::read(base_ctx) };
+            BContextAll::OrContext(tmp.morph(|ext_src| Self::new(ext_src)))
+        };
+let _old = std::mem::replace(dbt_antlr_runtime::cast_unchecked!(src => mut BContextAll<'input, 'arena, Tok>), ctx);
+        std::mem::forget(_old);
+        src.set_invoking_state(invoking_state);
+        src.node_tag = <Self as CustomRuleContext<'input, 'arena, Tok>>::node_tag();
+	}
+}
+
+pub type AndContext<'input, 'arena, Tok = CommonToken<'input>> = BaseParserRuleContext<'input, 'arena, AndContextExt<'input, 'arena, Tok>, BetweenExprParserNodeKind, Tok>;
+
+pub trait AndContextAttrs<'input, 'arena, Tok>: ParserRuleContext<'input, 'arena>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+	fn b_all(&self) -> Vec<&'arena BContextAll<'input, 'arena, Tok>>;
+	fn b(&self, i: usize) -> Option<&'arena BContextAll<'input, 'arena, Tok>>;
+}
+
+impl<'input: 'arena, 'arena, Tok: Token + 'input> AndContextAttrs<'input, 'arena, Tok> for AndContext<'input, 'arena, Tok>
+{
+    fn b_all(&self) -> Vec<&'arena BContextAll<'input, 'arena, Tok>> {
+        self.children_of_type()
+    }
+    fn b(&self, i: usize) -> Option<&'arena BContextAll<'input, 'arena, Tok>> {
+        self.child_of_type(i)
+    }
+}
+#[derive(Debug)]
+pub struct AndContextExt<'input: 'arena, 'arena, Tok: Token + 'input = CommonToken<'input>> {
+	base: BContextExt<'input, 'arena, Tok>,
+    pd: PhantomData<(&'arena (), &'input Tok)>
+}
+
+dbt_antlr_runtime::impl_ctx! { @alt BetweenExprParserNodeKind::BContext, BContextAll::AndContext, AndContextExt, RULE_b }
+
+impl<'input, 'arena, Tok> BContextAttrs<'input, 'arena, Tok> for AndContext<'input, 'arena, Tok>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+}
+
+impl<'input: 'arena, 'arena, Tok: Token + 'input> AndContextExt<'input, 'arena, Tok> {
+	fn new(base: BContextExt<'input, 'arena, Tok>) -> Self {
+        Self {
+            base,
+            pd: PhantomData
+        }
+    }
+
+	fn copy_from(src: &mut BetweenExprParserNode<'input, 'arena, Tok>) {
+        let invoking_state = src.get_invoking_state();
+        let ctx = {
+            let Some(base_ctx): Option<&mut BContext<'input, 'arena, Tok>> = src.as_rule_context_mut() else {
+                panic!("invalid node type for copy_from!");
+            };
+            let tmp = unsafe { std::ptr::read(base_ctx) };
+            BContextAll::AndContext(tmp.morph(|ext_src| Self::new(ext_src)))
+        };
+let _old = std::mem::replace(dbt_antlr_runtime::cast_unchecked!(src => mut BContextAll<'input, 'arena, Tok>), ctx);
+        std::mem::forget(_old);
+        src.set_invoking_state(invoking_state);
+        src.node_tag = <Self as CustomRuleContext<'input, 'arena, Tok>>::node_tag();
+	}
+}
+
+impl<'input, 'arena, Input, TF> BetweenExprParser<'input, 'arena, Input, TF>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    Input: TokenStream<'input, 'arena, TF> + 'arena,
+{
+    #[inline]
+	pub fn  b(&mut self,) -> Result<&'arena BContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
+		self.b_rec(0)
+	}
+
+	fn b_rec(&mut self, _p: i32) -> Result<&'arena BContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
+        dbt_antlr_runtime::parse_rule!(rec recog = self, _parentctx, _parentState, BContext<TF::Tok>, RULE_b, 2, |_parentctx| BContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); _p; {
+        let _local_ctx_fn = |recog: &Self| -> &'arena BContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
+		let _startState = 2;
+        let mut _alt: i32;
+		/*------- Outer Most Alt 1 -------*/
+		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
+		{
+		recog.base.set_state(20);
+		recog.err_handler.sync(&mut recog.base)?;
+		match recog.base.input.la(1) {
+		    BetweenExpr_T__11 |BetweenExpr_ID |BetweenExpr_INT  => {
+		        {
+		        recog.base.with_mut_ctx(|ctx| { PredicatedContextExt::copy_from(ctx); });
+		        let _local_ctx_fn = |recog: &Self| -> &'arena PredicatedContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
+
+		        recog.base.set_state(14);
+		        recog.v_rec(0)?;
+		        recog.base.set_state(16);
+		        recog.err_handler.sync(&mut recog.base)?;
+		        match { let _sdp = recog.base.dfa_predict(0)?; _sdp } {
+		        	x if x == 1 =>{
+		        		{
+		        		recog.base.set_state(15);
+		        		recog.pred()?;
+		        		}
+		        	}
+
+		        	_ => {}
+		        }
+		        }}
+		    BetweenExpr_T__0  => {
+		        {
+		        recog.base.with_mut_ctx(|ctx| { NotContextExt::copy_from(ctx); });
+		        let _local_ctx_fn = |recog: &Self| -> &'arena NotContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
+		        recog.base.set_state(18);
+		        recog.base.match_token(BetweenExpr_T__0,&mut recog.err_handler)?;
+		        recog.base.set_state(19);
+		        recog.b_rec(3)?;
+		        }}
+			_ => Err(ANTLRError::no_alt(&mut recog.base))?
+		}
+		let tmp = recog.input.lt(-1);
+		recog.base.with_mut_ctx(|ctx| { ctx.set_stop(tmp.map(|t| t as _)); });
+		recog.base.set_state(30);
+		recog.err_handler.sync(&mut recog.base)?;
+		_alt = { let _sdp = recog.base.dfa_predict(3)?; if _sdp == INVALID_ALT { recog.get_interpreter().adaptive_predict(3,&mut recog.base)? } else { _sdp } };
+		while { _alt!=2 && _alt!=INVALID_ALT } {
+			if _alt==1 {
+				recog.trigger_exit_rule_event()?;
+				{
+				recog.base.set_state(28);
+				recog.err_handler.sync(&mut recog.base)?;
+				match { let _sdp = recog.base.dfa_predict(2)?; _sdp } {
+					1 =>{
+						{
+						/*recRuleLabeledAltStartAction*/
+						let tmp = BContextExt::create(recog.get_arena(), _parentctx, _parentState)?;
+						AndContextExt::copy_from(tmp);
+						let _prevctx = recog.push_new_recursion_context(tmp, _startState, RULE_b)?;
+						let _local_ctx_fn = |recog: &Self| -> &'arena AndContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
+
+						recog.base.set_state(22);
+						if !({recog.precpred(None, 2)}) {
+							Err(ANTLRError::failed_predicate(&mut recog.base, Some("recog.precpred(None, 2)".to_owned()), None))?;
+						}
+						recog.base.set_state(23);
+						recog.base.match_token(BetweenExpr_T__1,&mut recog.err_handler)?;
+						recog.base.set_state(24);
+						recog.b_rec(3)?;
+						}
+					}
+				,
+					2 =>{
+						{
+						/*recRuleLabeledAltStartAction*/
+						let tmp = BContextExt::create(recog.get_arena(), _parentctx, _parentState)?;
+						OrContextExt::copy_from(tmp);
+						let _prevctx = recog.push_new_recursion_context(tmp, _startState, RULE_b)?;
+						let _local_ctx_fn = |recog: &Self| -> &'arena OrContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
+
+						recog.base.set_state(25);
+						if !({recog.precpred(None, 1)}) {
+							Err(ANTLRError::failed_predicate(&mut recog.base, Some("recog.precpred(None, 1)".to_owned()), None))?;
+						}
+						recog.base.set_state(26);
+						recog.base.match_token(BetweenExpr_T__2,&mut recog.err_handler)?;
+						recog.base.set_state(27);
+						recog.b_rec(2)?;
+						}
+					}
+
+					_ => {}
+				}
+				} 
+			}
+			recog.base.set_state(32);
+			recog.err_handler.sync(&mut recog.base)?;
+			_alt = { let _sdp = recog.base.dfa_predict(3)?; if _sdp == INVALID_ALT { recog.get_interpreter().adaptive_predict(3,&mut recog.base)? } else { _sdp } };
+		}
+		}
+		})
+	}
+}
+//------------------- pred ----------------
+#[derive(Debug)]
+#[repr(C, u16)]
+pub enum PredContextAll<'input, 'arena, Tok = CommonToken<'input>>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+	BetweenContext(BetweenContext<'input, 'arena, Tok>),
+	CmpContext(CmpContext<'input, 'arena, Tok>),
+    Error(PredContext<'input, 'arena, Tok>)
+}
+
+dbt_antlr_runtime::impl_rule_context! { PredContextAll { } { BetweenContext, CmpContext, Error, } }
+dbt_antlr_runtime::impl_parser_rule_context! { PredContextAll { } { BetweenContext, CmpContext, Error, } }
+dbt_antlr_runtime::impl_tree_trait_delegates! { BetweenExprParserNodeKind::PredContextAll { BetweenContext, CmpContext, Error, } }
+dbt_antlr_runtime::impl_node_inner! { BetweenExprParserNodeKind::PredContext::PredContextAll { BetweenContext, CmpContext, Error, } }
+
+impl<'input, 'arena, Tok> Deref for PredContextAll<'input, 'arena, Tok>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+	type Target = dyn PredContextAttrs<'input, 'arena, Tok> + 'arena;
+	fn deref(&self) -> &Self::Target{
+		use PredContextAll::*;
+		match self{
+			BetweenContext(inner) => inner,
+			CmpContext(inner) => inner,
+            Error(inner) => inner
+		}
+	}
+}
+
+pub type PredContext<'input, 'arena, Tok = CommonToken<'input>> = BaseParserRuleContext<'input, 'arena, PredContextExt<'input, 'arena, Tok>, BetweenExprParserNodeKind, Tok>;
+#[derive(Debug)]
+pub struct PredContextExt<'input: 'arena, 'arena, Tok: Token + 'input = CommonToken<'input>> {
+    ph: PhantomData<(&'arena (), &'input Tok)>,
+}
+
+dbt_antlr_runtime::impl_ctx! { @labeled BetweenExprParserNodeKind::PredContext, PredContextAll, PredContextExt, RULE_pred }
+impl<'input: 'arena, 'arena, Tok: Token + 'input> PredContextExt<'input, 'arena, Tok>{
+	fn create(arena: &'arena Arena, parent: Option<&'arena BetweenExprParserNode<'input, 'arena, Tok>>, invoking_state: i32) -> Result<&'arena mut BetweenExprParserNode<'input, 'arena, Tok>, ANTLRError>
+    {
+        BaseParserRuleContext::create(arena, parent, invoking_state, PredContextExt {
+				ph: PhantomData
+			}
+		)
+	}
+}
+pub trait PredContextAttrs<'input, 'arena, Tok>: ParserRuleContext<'input, 'arena>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+}
+
+impl<'input, 'arena, Tok: Token + 'input> PredContextAttrs<'input, 'arena, Tok> for PredContext<'input, 'arena, Tok>
+where
+    'input: 'arena,
+{
+}
+
+pub type BetweenContext<'input, 'arena, Tok = CommonToken<'input>> = BaseParserRuleContext<'input, 'arena, BetweenContextExt<'input, 'arena, Tok>, BetweenExprParserNodeKind, Tok>;
+
+pub trait BetweenContextAttrs<'input, 'arena, Tok>: ParserRuleContext<'input, 'arena>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+	fn v_all(&self) -> Vec<&'arena VContextAll<'input, 'arena, Tok>>;
+	fn v(&self, i: usize) -> Option<&'arena VContextAll<'input, 'arena, Tok>>;
+}
+
+impl<'input: 'arena, 'arena, Tok: Token + 'input> BetweenContextAttrs<'input, 'arena, Tok> for BetweenContext<'input, 'arena, Tok>
+{
+    fn v_all(&self) -> Vec<&'arena VContextAll<'input, 'arena, Tok>> {
+        self.children_of_type()
+    }
+    fn v(&self, i: usize) -> Option<&'arena VContextAll<'input, 'arena, Tok>> {
+        self.child_of_type(i)
+    }
+}
+#[derive(Debug)]
+pub struct BetweenContextExt<'input: 'arena, 'arena, Tok: Token + 'input = CommonToken<'input>> {
+	base: PredContextExt<'input, 'arena, Tok>,
+    pd: PhantomData<(&'arena (), &'input Tok)>
+}
+
+dbt_antlr_runtime::impl_ctx! { @alt BetweenExprParserNodeKind::PredContext, PredContextAll::BetweenContext, BetweenContextExt, RULE_pred }
+
+impl<'input, 'arena, Tok> PredContextAttrs<'input, 'arena, Tok> for BetweenContext<'input, 'arena, Tok>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+}
+
+impl<'input: 'arena, 'arena, Tok: Token + 'input> BetweenContextExt<'input, 'arena, Tok> {
+	fn new(base: PredContextExt<'input, 'arena, Tok>) -> Self {
+        Self {
+            base,
+            pd: PhantomData
+        }
+    }
+
+	fn copy_from(src: &mut BetweenExprParserNode<'input, 'arena, Tok>) {
+        let invoking_state = src.get_invoking_state();
+        let ctx = {
+            let Some(base_ctx): Option<&mut PredContext<'input, 'arena, Tok>> = src.as_rule_context_mut() else {
+                panic!("invalid node type for copy_from!");
+            };
+            let tmp = unsafe { std::ptr::read(base_ctx) };
+            PredContextAll::BetweenContext(tmp.morph(|ext_src| Self::new(ext_src)))
+        };
+let _old = std::mem::replace(dbt_antlr_runtime::cast_unchecked!(src => mut PredContextAll<'input, 'arena, Tok>), ctx);
+        std::mem::forget(_old);
+        src.set_invoking_state(invoking_state);
+        src.node_tag = <Self as CustomRuleContext<'input, 'arena, Tok>>::node_tag();
+	}
+}
+
+pub type CmpContext<'input, 'arena, Tok = CommonToken<'input>> = BaseParserRuleContext<'input, 'arena, CmpContextExt<'input, 'arena, Tok>, BetweenExprParserNodeKind, Tok>;
+
+pub trait CmpContextAttrs<'input, 'arena, Tok>: ParserRuleContext<'input, 'arena>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+	fn v(&self) -> Option<&'arena VContextAll<'input, 'arena, Tok>>;
+}
+
+impl<'input: 'arena, 'arena, Tok: Token + 'input> CmpContextAttrs<'input, 'arena, Tok> for CmpContext<'input, 'arena, Tok>
+{
+    fn v(&self) -> Option<&'arena VContextAll<'input, 'arena, Tok>> {
+        self.child_of_type(0)
+    }
+}
+#[derive(Debug)]
+pub struct CmpContextExt<'input: 'arena, 'arena, Tok: Token + 'input = CommonToken<'input>> {
+	base: PredContextExt<'input, 'arena, Tok>,
+    pd: PhantomData<(&'arena (), &'input Tok)>
+}
+
+dbt_antlr_runtime::impl_ctx! { @alt BetweenExprParserNodeKind::PredContext, PredContextAll::CmpContext, CmpContextExt, RULE_pred }
+
+impl<'input, 'arena, Tok> PredContextAttrs<'input, 'arena, Tok> for CmpContext<'input, 'arena, Tok>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+}
+
+impl<'input: 'arena, 'arena, Tok: Token + 'input> CmpContextExt<'input, 'arena, Tok> {
+	fn new(base: PredContextExt<'input, 'arena, Tok>) -> Self {
+        Self {
+            base,
+            pd: PhantomData
+        }
+    }
+
+	fn copy_from(src: &mut BetweenExprParserNode<'input, 'arena, Tok>) {
+        let invoking_state = src.get_invoking_state();
+        let ctx = {
+            let Some(base_ctx): Option<&mut PredContext<'input, 'arena, Tok>> = src.as_rule_context_mut() else {
+                panic!("invalid node type for copy_from!");
+            };
+            let tmp = unsafe { std::ptr::read(base_ctx) };
+            PredContextAll::CmpContext(tmp.morph(|ext_src| Self::new(ext_src)))
+        };
+let _old = std::mem::replace(dbt_antlr_runtime::cast_unchecked!(src => mut PredContextAll<'input, 'arena, Tok>), ctx);
+        std::mem::forget(_old);
+        src.set_invoking_state(invoking_state);
+        src.node_tag = <Self as CustomRuleContext<'input, 'arena, Tok>>::node_tag();
+	}
+}
+
+impl<'input, 'arena, Input, TF> BetweenExprParser<'input, 'arena, Input, TF>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    Input: TokenStream<'input, 'arena, TF> + 'arena,
+{
+	pub fn pred(&mut self,) -> Result<&'arena PredContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
+        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, PredContext<TF::Tok>, RULE_pred, 4, |_parentctx| PredContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        let _local_ctx_fn = |recog: &Self| -> &'arena PredContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
+		let mut _la: i32 = -1;
+		recog.base.set_state(43);
+		recog.err_handler.sync(&mut recog.base)?;
+		match recog.base.input.la(1) {
+		    BetweenExpr_T__0 |BetweenExpr_T__3  => {
+		        /*------- Outer Most Alt 1 -------*/
+		        recog.base.with_mut_ctx(|ctx| {
+		            BetweenContextExt::copy_from(ctx);
+		            ctx.set_alt_number(1);
+		        });
+		        let _local_ctx_fn = |recog: &Self| -> &'arena BetweenContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
+		        {
+		        recog.base.set_state(34);
+		        recog.err_handler.sync(&mut recog.base)?;
+		        _la = recog.base.input.la(1);
+		        if _la==BetweenExpr_T__0 {
+		        	{
+		        	recog.base.set_state(33);
+		        	recog.base.match_token(BetweenExpr_T__0,&mut recog.err_handler)?;
+		        	}
+		        }
+
+		        recog.base.set_state(36);
+		        recog.base.match_token(BetweenExpr_T__3,&mut recog.err_handler)?;
+		        recog.base.set_state(37);
+		        recog.v_rec(0)?;
+		        recog.base.set_state(38);
+		        recog.base.match_token(BetweenExpr_T__1,&mut recog.err_handler)?;
+		        recog.base.set_state(39);
+		        recog.v_rec(0)?;
+		        }}
+		    BetweenExpr_T__4 |BetweenExpr_T__5 |BetweenExpr_T__6  => {
+		        /*------- Outer Most Alt 2 -------*/
+		        recog.base.with_mut_ctx(|ctx| {
+		            CmpContextExt::copy_from(ctx);
+		            ctx.set_alt_number(2);
+		        });
+		        let _local_ctx_fn = |recog: &Self| -> &'arena CmpContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
+		        {
+		        recog.base.set_state(41);
+		        _la = recog.base.input.la(1);
+		        if { !((((_la) & !0x3f) == 0 && ((1usize << _la) & 224) != 0)) } {
+		        	recog.err_handler.recover_inline(&mut recog.base)?;
+		        }
+		        else {
+		        	if recog.base.input.la(1)==TOKEN_EOF { recog.base.matched_eof = true };
+		        	recog.err_handler.report_match(&mut recog.base);
+		        	recog.base.consume(&mut recog.err_handler)?;
+		        }
+		        recog.base.set_state(42);
+		        recog.v_rec(0)?;
+		        }}
+			_ => Err(ANTLRError::no_alt(&mut recog.base))?
+		}
+		})
+	}
+}
+//------------------- v ----------------
+pub type VContextAll<'input, 'arena, Tok = CommonToken<'input>> = VContext<'input, 'arena, Tok>;
+
+dbt_antlr_runtime::impl_ctx! { BetweenExprParserNodeKind, VContext, VContextExt, RULE_v }
+
+pub trait VContextAttrs<'input, 'arena, Tok>: ParserRuleContext<'input, 'arena>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+    fn atom(&self) -> Option<&'arena AtomContextAll<'input, 'arena, Tok>>;
+    fn v_all(&self) -> Vec<&'arena VContextAll<'input, 'arena, Tok>>;
+    fn v(&self, i: usize) -> Option<&'arena VContextAll<'input, 'arena, Tok>>;
+}
+
+impl<'input, 'arena, Tok: Token + 'input> VContextAttrs<'input, 'arena, Tok> for VContext<'input, 'arena, Tok>
+where
+    'input: 'arena,
+{
+    fn atom(&self) -> Option<&'arena AtomContextAll<'input, 'arena, Tok>> {
+        self.child_of_type(0)
+    }
+    fn v_all(&self) -> Vec<&'arena VContextAll<'input, 'arena, Tok>> {
+        self.children_of_type()
+    }
+    fn v(&self, i: usize) -> Option<&'arena VContextAll<'input, 'arena, Tok>> {
+        self.child_of_type(i)
+    }
+}
+
+impl<'input, 'arena, Input, TF> BetweenExprParser<'input, 'arena, Input, TF>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    Input: TokenStream<'input, 'arena, TF> + 'arena,
+{
+    #[inline]
+	pub fn  v(&mut self,) -> Result<&'arena VContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
+		self.v_rec(0)
+	}
+
+	fn v_rec(&mut self, _p: i32) -> Result<&'arena VContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
+        dbt_antlr_runtime::parse_rule!(rec recog = self, _parentctx, _parentState, VContext<TF::Tok>, RULE_v, 6, |_parentctx| VContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); _p; {
+        let _local_ctx_fn = |recog: &Self| -> &'arena VContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
+		let _startState = 6;
+		let mut _la: i32 = -1;
+        let mut _alt: i32;
+		/*------- Outer Most Alt 1 -------*/
+		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
+		{
+		{
+		recog.base.set_state(46);
+		recog.atom()?;
+		}
+		let tmp = recog.input.lt(-1);
+		recog.base.with_mut_ctx(|ctx| { ctx.set_stop(tmp.map(|t| t as _)); });
+		recog.base.set_state(56);
+		recog.err_handler.sync(&mut recog.base)?;
+		_alt = { let _sdp = recog.base.dfa_predict(7)?; _sdp };
+		while { _alt!=2 && _alt!=INVALID_ALT } {
+			if _alt==1 {
+				recog.trigger_exit_rule_event()?;
+				{
+				recog.base.set_state(54);
+				recog.err_handler.sync(&mut recog.base)?;
+				match { let _sdp = recog.base.dfa_predict(6)?; _sdp } {
+					1 =>{
+						{
+						/*recRuleAltStartAction*/
+						let tmp = VContextExt::create(recog.get_arena(), _parentctx, _parentState)?;
+						let _prevctx = recog.push_new_recursion_context(tmp.into(), _startState, RULE_v)?;
+
+						recog.base.set_state(48);
+						if !({recog.precpred(None, 3)}) {
+							Err(ANTLRError::failed_predicate(&mut recog.base, Some("recog.precpred(None, 3)".to_owned()), None))?;
+						}
+						recog.base.set_state(49);
+						_la = recog.base.input.la(1);
+						if { !(_la==BetweenExpr_T__7 || _la==BetweenExpr_T__8) } {
+							recog.err_handler.recover_inline(&mut recog.base)?;
+						}
+						else {
+							if recog.base.input.la(1)==TOKEN_EOF { recog.base.matched_eof = true };
+							recog.err_handler.report_match(&mut recog.base);
+							recog.base.consume(&mut recog.err_handler)?;
+						}
+						recog.base.set_state(50);
+						recog.v_rec(4)?;
+						}
+					}
+				,
+					2 =>{
+						{
+						/*recRuleAltStartAction*/
+						let tmp = VContextExt::create(recog.get_arena(), _parentctx, _parentState)?;
+						let _prevctx = recog.push_new_recursion_context(tmp.into(), _startState, RULE_v)?;
+
+						recog.base.set_state(51);
+						if !({recog.precpred(None, 2)}) {
+							Err(ANTLRError::failed_predicate(&mut recog.base, Some("recog.precpred(None, 2)".to_owned()), None))?;
+						}
+						recog.base.set_state(52);
+						_la = recog.base.input.la(1);
+						if { !(_la==BetweenExpr_T__9 || _la==BetweenExpr_T__10) } {
+							recog.err_handler.recover_inline(&mut recog.base)?;
+						}
+						else {
+							if recog.base.input.la(1)==TOKEN_EOF { recog.base.matched_eof = true };
+							recog.err_handler.report_match(&mut recog.base);
+							recog.base.consume(&mut recog.err_handler)?;
+						}
+						recog.base.set_state(53);
+						recog.v_rec(3)?;
+						}
+					}
+
+					_ => {}
+				}
+				} 
+			}
+			recog.base.set_state(58);
+			recog.err_handler.sync(&mut recog.base)?;
+			_alt = { let _sdp = recog.base.dfa_predict(7)?; _sdp };
+		}
+		}
+		})
+	}
+}
+//------------------- atom ----------------
+pub type AtomContextAll<'input, 'arena, Tok = CommonToken<'input>> = AtomContext<'input, 'arena, Tok>;
+
+dbt_antlr_runtime::impl_ctx! { BetweenExprParserNodeKind, AtomContext, AtomContextExt, RULE_atom }
+
+pub trait AtomContextAttrs<'input, 'arena, Tok>: ParserRuleContext<'input, 'arena>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+    /// Retrieves first TerminalNode corresponding to token ID
+    /// Returns `None` if there is no child corresponding to token ID
+    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    /// Retrieves first TerminalNode corresponding to token INT
+    /// Returns `None` if there is no child corresponding to token INT
+    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn b(&self) -> Option<&'arena BContextAll<'input, 'arena, Tok>>;
+}
+
+impl<'input, 'arena, Tok: Token + 'input> AtomContextAttrs<'input, 'arena, Tok> for AtomContext<'input, 'arena, Tok>
+where
+    'input: 'arena,
+{
+    /// Retrieves first TerminalNode corresponding to token ID
+    /// Returns `None` if there is no child corresponding to token ID
+    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
+        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == BetweenExpr_ID)
+    }
+    /// Retrieves first TerminalNode corresponding to token INT
+    /// Returns `None` if there is no child corresponding to token INT
+    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
+        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == BetweenExpr_INT)
+    }
+    fn b(&self) -> Option<&'arena BContextAll<'input, 'arena, Tok>> {
+        self.child_of_type(0)
+    }
+}
+
+impl<'input, 'arena, Input, TF> BetweenExprParser<'input, 'arena, Input, TF>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    Input: TokenStream<'input, 'arena, TF> + 'arena,
+{
+	pub fn atom(&mut self,) -> Result<&'arena AtomContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
+        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, AtomContext<TF::Tok>, RULE_atom, 8, |_parentctx| AtomContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        let _local_ctx_fn = |recog: &Self| -> &'arena AtomContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
+		recog.base.set_state(68);
+		recog.err_handler.sync(&mut recog.base)?;
+		match { let _sdp = recog.base.dfa_predict(8)?; _sdp } {
+			1 =>{
+				/*------- Outer Most Alt 1 -------*/
+				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
+				{
+				recog.base.set_state(59);
+				recog.base.match_token(BetweenExpr_ID,&mut recog.err_handler)?;
+				}
+			}
+		,
+			2 =>{
+				/*------- Outer Most Alt 2 -------*/
+				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
+				{
+				recog.base.set_state(60);
+				recog.base.match_token(BetweenExpr_INT,&mut recog.err_handler)?;
+				}
+			}
+		,
+			3 =>{
+				/*------- Outer Most Alt 3 -------*/
+				unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
+				{
+				recog.base.set_state(61);
+				recog.base.match_token(BetweenExpr_T__11,&mut recog.err_handler)?;
+				recog.base.set_state(62);
+				recog.b_rec(0)?;
+				recog.base.set_state(63);
+				recog.base.match_token(BetweenExpr_T__12,&mut recog.err_handler)?;
+				}
+			}
+		,
+			4 =>{
+				/*------- Outer Most Alt 4 -------*/
+				unsafe { recog.ctx_mut().unwrap().set_alt_number(4); }
+				{
+				recog.base.set_state(65);
+				recog.base.match_token(BetweenExpr_ID,&mut recog.err_handler)?;
+				recog.base.set_state(66);
+				recog.base.match_token(BetweenExpr_T__13,&mut recog.err_handler)?;
+				recog.base.set_state(67);
+				recog.b_rec(0)?;
+				}
+			}
+
+			_ => {}
+		}
+		})
+	}
+}
+
+static ATN_SIMULATOR_MANAGER: LazyLock<ATNSimulatorManager> = LazyLock::new(|| ATNSimulatorManager::new(&_ATN));
+static _ATN: LazyLock<ATN> = LazyLock::new(|| {
+    PackedATNDeserializer::new()
+        .deserialize(&_serializedATN)
+        .expect("invalid packed parser ATN")
+});
+static _serializedATN: [u32; 1492] = [
+    1346458702, 3, 16909060, 29, 17, 71, 76, 3, 3, 9, 5, 29, 497, 526, 380, 
+    906, 15, 921, 6, 939, 9, 948, 5, 953, 5, 1492, 6, 927, 12, 2, 0, 8, 
+    0, 1, 4294967295, 4294967295, 7, 0, 16, 1, 0, 4294967295, 4294967295, 
+    2, 1, 12, 1, 1, 4294967295, 4294967295, 7, 1, 16, 2, 0, 4294967295, 
+    4294967295, 2, 2, 8, 2, 1, 4294967295, 4294967295, 7, 2, 16, 3, 0, 4294967295, 
+    4294967295, 2, 3, 12, 3, 1, 4294967295, 4294967295, 7, 3, 16, 4, 0, 
+    4294967295, 4294967295, 2, 4, 8, 4, 1, 4294967295, 4294967295, 7, 4, 
+    16, 5, 0, 4294967295, 4294967295, 1, 0, 8, 5, 1, 4294967295, 4294967295, 
+    1, 0, 32, 6, 1, 4294967295, 4294967295, 1, 0, 8, 7, 1, 4294967295, 4294967295, 
+    1, 1, 72, 8, 1, 4294967295, 4294967295, 1, 1, 8, 9, 1, 4294967295, 4294967295, 
+    1, 1, 8, 10, 1, 4294967295, 4294967295, 3, 1, 8, 11, 2, 17, 4294967295, 
+    8, 1, 8, 13, 1, 4294967295, 4294967295, 1, 1, 32, 14, 1, 4294967295, 
+    4294967295, 1, 1, 8, 15, 1, 4294967295, 4294967295, 3, 1, 8, 16, 2, 
+    21, 4294967295, 8, 1, 8, 18, 1, 4294967295, 4294967295, 1, 1, 72, 19, 
+    1, 4294967295, 4294967295, 1, 1, 32, 20, 1, 4294967295, 4294967295, 
+    1, 1, 8, 21, 1, 4294967295, 4294967295, 1, 1, 72, 22, 1, 4294967295, 
+    4294967295, 1, 1, 32, 23, 1, 4294967295, 4294967295, 1, 1, 8, 24, 1, 
+    4294967295, 4294967295, 5, 1, 8, 25, 2, 29, 4294967295, 8, 1, 8, 27, 
+    1, 4294967295, 4294967295, 10, 1, 10, 28, 2, 4294967295, 4294967295, 
+    12, 1, 8, 30, 1, 4294967295, 32, 9, 1, 8, 31, 1, 4294967295, 4294967295, 
+    1, 2, 32, 32, 1, 4294967295, 4294967295, 3, 2, 8, 33, 2, 35, 4294967295, 
+    8, 2, 8, 35, 1, 4294967295, 4294967295, 1, 2, 32, 36, 1, 4294967295, 
+    4294967295, 1, 2, 8, 37, 1, 4294967295, 4294967295, 1, 2, 32, 38, 1, 
+    4294967295, 4294967295, 1, 2, 8, 39, 1, 4294967295, 4294967295, 1, 2, 
+    8, 40, 1, 4294967295, 4294967295, 1, 2, 32, 41, 1, 4294967295, 4294967295, 
+    1, 2, 8, 42, 1, 4294967295, 4294967295, 3, 2, 8, 43, 2, 44, 4294967295, 
+    8, 2, 8, 45, 1, 4294967295, 4294967295, 1, 3, 72, 46, 1, 4294967295, 
+    4294967295, 1, 3, 8, 47, 1, 4294967295, 4294967295, 1, 3, 8, 48, 1, 
+    4294967295, 4294967295, 1, 3, 72, 49, 1, 4294967295, 4294967295, 1, 
+    3, 32, 50, 1, 4294967295, 4294967295, 1, 3, 8, 51, 1, 4294967295, 4294967295, 
+    1, 3, 72, 52, 1, 4294967295, 4294967295, 1, 3, 32, 53, 1, 4294967295, 
+    4294967295, 1, 3, 8, 54, 1, 4294967295, 4294967295, 5, 3, 8, 55, 2, 
+    55, 4294967295, 8, 3, 8, 57, 1, 4294967295, 4294967295, 10, 3, 10, 58, 
+    2, 4294967295, 4294967295, 12, 3, 8, 60, 1, 4294967295, 58, 9, 3, 8, 
+    61, 1, 4294967295, 4294967295, 1, 4, 32, 62, 1, 4294967295, 4294967295, 
+    1, 4, 32, 63, 1, 4294967295, 4294967295, 1, 4, 32, 64, 1, 4294967295, 
+    4294967295, 1, 4, 8, 65, 1, 4294967295, 4294967295, 1, 4, 32, 66, 1, 
+    4294967295, 4294967295, 1, 4, 8, 67, 1, 4294967295, 4294967295, 1, 4, 
+    32, 68, 1, 4294967295, 4294967295, 1, 4, 32, 69, 1, 4294967295, 4294967295, 
+    1, 4, 8, 70, 1, 4294967295, 4294967295, 3, 4, 8, 71, 4, 69, 4294967295, 
+    8, 4, 8, 75, 1, 4294967295, 4294967295, 1, 4, 0, 76, 0, 4294967295, 
+    4294967295, 1, 10, 0, 0, 0, 1, 20, 0, 0, 0, 1, 43, 0, 0, 0, 1, 45, 0, 
+    0, 0, 1, 68, 0, 0, 0, 3, 2, 1, 11, 0, 5, 12, 4294967295, 0, 0, 1, 1, 
+    0, 0, 0, 6, 14, 1, 4294967295, 0, 3, 6, 3, 16, 0, 3, 4, 2, 17, 0, 1, 
+    15, 0, 0, 0, 1, 17, 0, 0, 0, 1, 21, 0, 0, 0, 5, 19, 1, 0, 0, 3, 2, 1, 
+    21, 3, 1, 13, 0, 0, 0, 1, 18, 0, 0, 0, 1, 30, 0, 0, 0, 10, 23, 2, 0, 
+    0, 5, 24, 2, 0, 0, 3, 2, 1, 29, 3, 10, 26, 1, 0, 0, 5, 27, 3, 0, 0, 
+    3, 2, 1, 29, 2, 1, 22, 0, 0, 0, 1, 25, 0, 0, 0, 1, 32, 0, 0, 0, 1, 28, 
+    0, 0, 0, 1, 31, 0, 0, 0, 1, 3, 0, 0, 0, 1, 30, 0, 0, 0, 5, 35, 1, 0, 
+    0, 1, 33, 0, 0, 0, 1, 35, 0, 0, 0, 1, 36, 0, 0, 0, 5, 37, 4, 0, 0, 3, 
+    6, 3, 38, 0, 5, 39, 2, 0, 0, 3, 6, 3, 40, 0, 1, 44, 0, 0, 0, 7, 42, 
+    0, 0, 0, 3, 6, 3, 44, 0, 1, 34, 0, 0, 0, 1, 41, 0, 0, 0, 1, 5, 0, 0, 
+    0, 6, 46, 3, 4294967295, 0, 3, 8, 4, 47, 0, 1, 56, 0, 0, 0, 10, 49, 
+    3, 0, 0, 7, 50, 1, 0, 0, 3, 6, 3, 55, 4, 10, 52, 2, 0, 0, 7, 53, 2, 
+    0, 0, 3, 6, 3, 55, 3, 1, 48, 0, 0, 0, 1, 51, 0, 0, 0, 1, 58, 0, 0, 0, 
+    1, 54, 0, 0, 0, 1, 57, 0, 0, 0, 1, 7, 0, 0, 0, 1, 56, 0, 0, 0, 5, 69, 
+    15, 0, 0, 5, 69, 16, 0, 0, 5, 62, 12, 0, 0, 3, 2, 1, 63, 0, 5, 64, 13, 
+    0, 0, 1, 69, 0, 0, 0, 5, 66, 15, 0, 0, 5, 67, 14, 0, 0, 3, 2, 1, 69, 
+    0, 1, 59, 0, 0, 0, 1, 60, 0, 0, 0, 1, 61, 0, 0, 0, 1, 65, 0, 0, 0, 1, 
+    9, 0, 0, 0, 0, 1, 1, 0, 2, 1, 1, 1, 2, 2, 2, 1, 1, 4, 2, 5, 7, 8, 9, 
+    10, 11, 224, 0, 0, 0, 768, 0, 0, 0, 3072, 0, 0, 0, 16, 20, 28, 30, 34, 
+    43, 54, 56, 68, 0, 2, 4, 6, 8, 1, 3, 5, 7, 9, 1396983361, 2, 534, 9, 
+    9, 0, 9, 15, 2, 24, 0, 2, 1, 2, 2, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 
+    2, 2, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 24, 24, 4294967295, 4294967295, 
+    1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 7, 6, 8, 11, 7, 13, 13, 8, 
+    0, 0, 0, 0, 0, 2, 3, 5, 2, 6, 0, 1, 2, 0, 0, 0, 0, 1, 1, 0, 6, 6, 2, 
+    2, 1, 3, 3, 2, 0, 0, 0, 0, 0, 4294967295, 9, 15, 2, 24, 0, 2, 2, 4294967293, 
+    1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 1, 1, 1, 1, 1, 1, 1, 1, 
+    0, 24, 24, 4294967295, 4294967295, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 
+    4, 5, 5, 7, 6, 8, 11, 7, 13, 13, 8, 0, 0, 1, 3, 1, 1, 37, 11, 14, 15, 
+    19, 24, 27, 39, 42, 46, 50, 53, 67, 4294967295, 9, 15, 2, 24, 0, 2, 
+    2, 4294967293, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 1, 1, 1, 
+    1, 1, 1, 1, 1, 0, 24, 24, 4294967295, 4294967295, 1, 1, 1, 2, 2, 2, 
+    3, 3, 3, 4, 4, 4, 5, 5, 7, 6, 8, 11, 7, 13, 13, 8, 0, 0, 1, 3, 1, 1, 
+    37, 11, 14, 15, 19, 24, 27, 39, 42, 46, 50, 53, 67, 4294967295, 1, 1, 
+    1, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 6, 3, 13, 2, 6, 0, 1, 2, 0, 0, 0, 
+    0, 1, 1, 0, 6, 6, 8, 9, 1, 10, 11, 2, 0, 0, 0, 0, 0, 4294967295, 9, 
+    15, 2, 24, 0, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 
+    1, 1, 1, 1, 1, 1, 1, 1, 0, 24, 24, 4294967295, 4294967295, 1, 1, 1, 
+    2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 7, 6, 8, 11, 7, 13, 13, 8, 0, 0, 0, 
+    0, 0, 4294967295, 10, 15, 2, 27, 0, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 
+    2, 2, 2, 2, 2, 2, 2, 2, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 27, 27, 4294967295, 
+    4294967295, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 7, 6, 8, 9, 7, 
+    10, 11, 8, 13, 13, 9, 0, 0, 0, 0, 0, 8, 13, 18, 3, 36, 0, 3, 0, 2, 1, 
+    1, 1, 1, 1, 1, 1, 1, 4, 0, 0, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 
+    2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 9, 9, 36, 12, 12, 1, 15, 15, 2, 
+    16, 16, 3, 4294967295, 4294967295, 4, 1, 1, 5, 2, 2, 6, 3, 3, 7, 4, 
+    4, 8, 5, 7, 9, 8, 11, 10, 13, 13, 11, 14, 14, 12, 0, 0, 0, 0, 0, 2, 
+    3, 2, 1, 2, 2, 3, 4, 7, 2, 2, 3, 6, 7, 4
+];

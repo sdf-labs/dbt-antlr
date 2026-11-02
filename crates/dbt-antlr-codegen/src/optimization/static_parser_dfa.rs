@@ -420,7 +420,7 @@ fn decision_report_text(report: &StaticParserDfaReport) -> String {
         report.decisions.len()
     )];
     lines.push(summary_line(&report.decisions));
-    lines.extend(take_rule_line(&report.decisions));
+    lines.extend(guard_lines(&report.decisions));
     lines.extend(decision_rows(&report.decisions));
     lines.extend(k_summary(&report.decisions));
     finish_block(lines)
@@ -442,28 +442,42 @@ fn summary_line(decisions: &[StaticParserDecisionReport]) -> String {
     text
 }
 
-/// The optional-postfix summary: how many decisions have the shape, how many
-/// take/skip conflicts the take rule resolved, and how many guarded takes the
-/// tables carry.
-fn take_rule_line(decisions: &[StaticParserDecisionReport]) -> Option<String> {
+/// The postfix and guard summary lines: how many decisions have the optional
+/// postfix shape, how many take/skip conflicts the take rule and the guards
+/// resolved, and how many iterate guards the precedence loops carry.
+fn guard_lines(decisions: &[StaticParserDecisionReport]) -> Vec<String> {
+    let mut lines = Vec::new();
     let postfix_decisions = decisions
         .iter()
         .filter(|decision| decision.result.has_postfix_shape)
         .count();
-    if postfix_decisions == 0 {
-        return None;
+    if postfix_decisions > 0 {
+        let fires: usize = decisions
+            .iter()
+            .map(|decision| decision.result.take_rule_fires)
+            .sum();
+        let guarded: usize = decisions
+            .iter()
+            .map(|decision| decision.result.guarded_takes)
+            .sum();
+        lines.push(format!(
+            "take-rule: {postfix_decisions} optional-postfix decisions; fires at {fires} conflict states; guarded takes={guarded}"
+        ));
     }
-    let fires: usize = decisions
+    let guarded_iterates: usize = decisions
         .iter()
-        .map(|decision| decision.result.take_rule_fires)
+        .map(|decision| decision.result.guarded_iterates)
         .sum();
-    let guarded: usize = decisions
+    let iterate_accepts: usize = decisions
         .iter()
-        .map(|decision| decision.result.guarded_takes)
+        .map(|decision| decision.result.iterate_accepts)
         .sum();
-    Some(format!(
-        "take-rule: {postfix_decisions} optional-postfix decisions; fires at {fires} conflict states; guarded takes={guarded}"
-    ))
+    if guarded_iterates > 0 || iterate_accepts > 0 {
+        lines.push(format!(
+            "iterate-guard: {guarded_iterates} conflict states guarded, {iterate_accepts} resolved outright"
+        ));
+    }
+    lines
 }
 
 /// The lookahead-depth summary: the LL(k) histogram and the deepest lookahead
@@ -775,6 +789,16 @@ fn adaptive_reason(result: &DecisionResult) -> String {
             if adaptive > 0 {
                 let classes = precedence.map_or(0, |precedence| precedence.cutoffs.len() + 1);
                 format!("{adaptive} of {classes} precedence classes have no static table")
+            } else if result.guarded_iterates > 0 && result.escapes == 0 {
+                format!(
+                    "{} iterate/exit conflicts are decided by a runtime stack guard, which defers to adaptivePredict when the parse stack reaches a guard root",
+                    result.guarded_iterates
+                )
+            } else if result.guarded_iterates > 0 {
+                format!(
+                    "{} of {} precedence-class states escape to adaptivePredict, and {} iterate/exit conflicts are decided by a runtime stack guard",
+                    result.escapes, result.num_dfa_states, result.guarded_iterates
+                )
             } else {
                 // Every class has a table, but some frontier states still have
                 // to escape to the adaptive simulation.

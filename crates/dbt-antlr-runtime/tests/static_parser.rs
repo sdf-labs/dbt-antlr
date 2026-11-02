@@ -9,6 +9,9 @@
 mod gen {
     // Generated parsers/lexers: lint with the codegen template, not here.
     #![allow(clippy::all, warnings)]
+    pub mod betweenexprlexer;
+    pub mod betweenexprparser;
+    pub mod betweenexprparser_static;
     pub mod fuzzexprlexer;
     pub mod fuzzexprparser;
     pub mod fuzzexprparser_static;
@@ -16,6 +19,9 @@ mod gen {
     pub mod guardexprparser;
     pub mod guardexprparser_static;
     pub mod guardexprparser_static_only;
+    pub mod loopfrontierlexer;
+    pub mod loopfrontierparser;
+    pub mod loopfrontierparser_static;
     pub mod lrdfalexer;
     pub mod lrdfaparser;
     pub mod staticdfalexer;
@@ -823,5 +829,208 @@ fn static_dfa_only_reports_a_syntax_error_after_a_wrong_guess() {
     assert_eq!(
         static_only.1,
         ["line 1:59 mismatched input ';' expecting {'=', 'AND', 'OR', '<', '>', 'IN', ')'}"]
+    );
+}
+
+fn parse_frontier_static(input: &str) -> String {
+    Arena::with(|arena| {
+        let lexer = gen::loopfrontierlexer::LoopFrontierLexer::<_, CommonTokenFactory>::new(
+            arena,
+            InputStream::new(input),
+        );
+        let tokens = CommonTokenStream::new(lexer);
+        let mut parser = gen::loopfrontierparser_static::LoopFrontierParser::new(arena, tokens);
+        match parser.start() {
+            Ok(ctx) => string_tree(ctx, parser.get_rule_names()),
+            Err(error) => format!("ERR {error}"),
+        }
+    })
+}
+
+fn parse_frontier_adaptive(input: &str) -> String {
+    Arena::with(|arena| {
+        let lexer = gen::loopfrontierlexer::LoopFrontierLexer::<_, CommonTokenFactory>::new(
+            arena,
+            InputStream::new(input),
+        );
+        let tokens = CommonTokenStream::new(lexer);
+        let mut parser = gen::loopfrontierparser::LoopFrontierParser::new(arena, tokens);
+        match parser.start() {
+            Ok(ctx) => string_tree(ctx, parser.get_rule_names()),
+            Err(error) => format!("ERR {error}"),
+        }
+    })
+}
+
+/// The guarded-iterate differential: the loop's exit lineage can consume an
+/// operator token in a frame that is not an enclosing invocation of the same
+/// loop, so the iterate/exit conflict needs the parse stack to settle.
+#[test]
+fn guarded_iterates_match_the_adaptive_engine() {
+    // The tables must carry the guards, or the differential below would only
+    // compare the adaptive engine with itself.
+    Arena::with(|arena| {
+        let manager = gen::loopfrontierparser_static::parser_simulator_manager();
+        let simulator = manager.get_simulator(arena);
+        let tables = simulator.atn().static_dfas();
+        let guarded = tables
+            .tables()
+            .iter()
+            .filter(|table| table.has_guards())
+            .count();
+        assert_eq!(
+            guarded, 3,
+            "the three operator precedence classes carry guards"
+        );
+    });
+    let corpus = [
+        "1",
+        "1 + 2",
+        "1 + 2 * 3",
+        "( 1 + 2 ) * 3",
+        "- 1 + 2",
+        "1 || 2",
+        "1 << 2",
+        "1 + 2 || 3 << 4",
+        "1 || 2 + 3",
+        "CAST ( 1 AS int ) + 2",
+        "EXTRACT ( x FROM 1 ) * 2",
+        "CASE WHEN 1 THEN 2 ELSE 3 END + 4",
+        "1 + ( 2 )",
+        "row ( 1 , 2 )",
+        "1 + 2 + 3 + 4",
+        "1 * 2 * 3",
+        "1 << 2 << 3",
+        "1 || 2 || 3",
+        // The foreign caller is on the stack: skip (exit) is the right reading.
+        "set 1 || 2",
+        "set 1 + 2 || 3",
+        "set ( 1 || 2 ) || 3",
+        // The budget-frontier guard: inside `SUBSTRING` without `FROM`, `1`
+        // exits so `- 2` and `- ( 2 )` become the second argument; with `FROM`
+        // or inside parentheses, `1` iterates to absorb the `-`.
+        "SUBSTRING ( 1 - 2 )",
+        "SUBSTRING ( 1 - ( 2 ) )",
+        "SUBSTRING ( 1 - - 2 )",
+        "SUBSTRING ( 1 - 2 FROM 3 )",
+        "SUBSTRING ( 1 - ( 2 ) FROM 3 )",
+        "( 1 - ( 2 ) )",
+        "1 - - 2",
+    ];
+    for input in corpus {
+        assert_eq!(
+            parse_frontier_static(input),
+            parse_frontier_adaptive(input),
+            "tree divergence on {input:?}"
+        );
+    }
+    // Both guard directions are load-bearing for conflict and frontier states.
+    // Inside the foreign callers the exit reading wins.
+    let deferring = parse_frontier_static("set 1 || 2");
+    assert!(
+        deferring.contains("set (expr (operand 1)) || 2"),
+        "the guarded exit must let the `set` tail through: {deferring}"
+    );
+    let frontier_deferring = parse_frontier_static("SUBSTRING ( 1 - ( 2 ) )");
+    assert!(
+        frontier_deferring.contains(
+            "SUBSTRING ( (expr (operand 1)) (expr - (expr (operand ( (expr (operand 2)) )))) )"
+        ),
+        "the frontier guard must defer inside SUBSTRING: {frontier_deferring}"
+    );
+    // Everywhere else the iterate reading wins.
+    let resolving = parse_frontier_static("1 || 2");
+    assert!(
+        resolving.contains("(expr (expr (operand 1)) || (expr (operand 2)))"),
+        "the guarded iterate must absorb the operator: {resolving}"
+    );
+    let frontier_resolving = parse_frontier_static("( 1 - ( 2 ) )");
+    assert!(
+        frontier_resolving.contains(
+            "(operand ( (expr (expr (operand 1)) - (expr (operand ( (expr (operand 2)) )))) ))"
+        ),
+        "the frontier guard must iterate outside SUBSTRING: {frontier_resolving}"
+    );
+}
+
+fn parse_between_static(input: &str) -> Result<String, String> {
+    Arena::with(|arena| {
+        let lexer = gen::betweenexprlexer::BetweenExprLexer::<_, CommonTokenFactory>::new(
+            arena,
+            InputStream::new(input),
+        );
+        let tokens = CommonTokenStream::new(lexer);
+        let mut parser = gen::betweenexprparser_static::BetweenExprParser::new(arena, tokens);
+        parser
+            .s()
+            .map(|ctx| string_tree(ctx, parser.get_rule_names()))
+            .map_err(|error| format!("{error:?}"))
+    })
+}
+
+fn parse_between_adaptive(input: &str) -> Result<String, String> {
+    Arena::with(|arena| {
+        let lexer = gen::betweenexprlexer::BetweenExprLexer::<_, CommonTokenFactory>::new(
+            arena,
+            InputStream::new(input),
+        );
+        let tokens = CommonTokenStream::new(lexer);
+        let mut parser = gen::betweenexprparser::BetweenExprParser::new(arena, tokens);
+        parser
+            .s()
+            .map(|ctx| string_tree(ctx, parser.get_rule_names()))
+            .map_err(|error| format!("{error:?}"))
+    })
+}
+
+#[test]
+fn between_and_collision_matches_the_adaptive_engine() {
+    let corners = [
+        "a BETWEEN 1 AND 2",
+        "a BETWEEN 1 + 1 AND 2 * 3",
+        "a BETWEEN 1 AND 2 AND b",
+        "a BETWEEN 1 AND 2 AND b AND c",
+        "a AND b BETWEEN 1 AND 2",
+        "a = 1 AND b BETWEEN 2 AND 3",
+        "a BETWEEN 1 AND 2 AND b BETWEEN 3 AND 4",
+        "a BETWEEN 1 AND 2 OR b BETWEEN 3 AND 4 AND c",
+        "x BETWEEN a AND b AND c AND d AND e",
+        "a AND b BETWEEN 1 AND 2 AND c AND d BETWEEN 3 AND 4 AND e",
+        "a BETWEEN 1 + 2 AND 3 - 4 AND b BETWEEN 5 * 6 AND 7 / 8",
+        "NOT a BETWEEN 1 AND 2",
+        "a NOT BETWEEN 1 AND 2",
+        "a NOT BETWEEN 1 AND 2 AND b NOT BETWEEN 3 AND 4",
+        "NOT a AND b NOT BETWEEN 1 AND 2",
+        "a = b AND c BETWEEN 1 AND 2",
+        "a < b OR c > d BETWEEN 1 AND 2",
+        "( a BETWEEN 1 AND 2 ) AND b",
+        "a BETWEEN ( x AND y ) AND z",
+        "a BETWEEN ( x ) AND ( y )",
+        "a BETWEEN 1 AND ( 2 ) AND b",
+        "( a AND b ) BETWEEN 1 AND 2",
+        "a BETWEEN ( x AND y ) AND ( p OR q ) AND r",
+        "x BETWEEN y -> a AND b AND c",
+        "x BETWEEN y -> a AND y -> b AND c",
+        "x BETWEEN a AND y -> b AND c",
+        "f -> a BETWEEN 1 AND 2",
+        "f -> a AND b",
+        "f -> a AND b BETWEEN 1 AND 2",
+        "x BETWEEN f -> a AND b",
+        "x BETWEEN f -> a AND b AND c",
+        "( x BETWEEN f -> a AND b ) AND c",
+        "f -> g -> a AND b BETWEEN 1 AND 2 AND c",
+    ];
+    for input in corners {
+        let adaptive = parse_between_adaptive(input).expect(input);
+        let static_tree = parse_between_static(input).expect(input);
+        assert_eq!(static_tree, adaptive, "tree divergence on {input:?}");
+    }
+    assert_eq!(
+        parse_between_static("x BETWEEN y -> a AND b AND c").unwrap(),
+        "(s (b (v (atom x)) (pred BETWEEN (v (atom y -> (b (b (v (atom a))) AND (b (v (atom b)))))) AND (v (atom c)))) <EOF>)"
+    );
+    assert_eq!(
+        parse_between_static("x BETWEEN f -> a AND b").unwrap(),
+        "(s (b (v (atom x)) (pred BETWEEN (v (atom f -> (b (v (atom a))))) AND (v (atom b)))) <EOF>)"
     );
 }

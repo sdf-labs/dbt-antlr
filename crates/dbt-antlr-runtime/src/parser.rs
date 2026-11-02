@@ -560,10 +560,10 @@ where
                 };
             }
             if accept == GUARDED {
-                // Guarded take of an optional-postfix decision: resolve to the
-                // guarded alternative unless the real parse stack's epsilon-pop
-                // chase from the decision's block end can reach a guard root.
-                // The walk stops at the first invoking state whose follow
+                // A guarded conflict (an optional-postfix take or a precedence
+                // loop's iterate) resolves to the guarded alternative unless
+                // the real parse stack's epsilon-pop chase can reach a guard
+                // root. The walk stops at the first invoking state whose follow
                 // region cannot reach its own rule's stop.
                 let mut defers = false;
                 let mut context = self.ctx();

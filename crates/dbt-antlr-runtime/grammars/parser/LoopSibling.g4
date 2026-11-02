@@ -16,7 +16,11 @@
 // - The alternative `tail '?' tail ('-' ID '-' ID '!')?` can continue after
 //   its middle operand: `opt a ? a - a - a !` is `a ? a - a - a !` with `a` in
 //   the middle. The iterate reading `a ? (a - a - a)` then has no `'!'`.
-// The static tables of the four loops must leave these conflicts to adaptive
+// - The lower-precedence alternative `prec '+' prec ':' ID` owes `':' ID` after
+//   its right operand, which the higher-precedence `prec '+' prec` does not
+//   owe: `prec a * a + a : a` is `(a * a) + a : a`. In the precedence class of
+//   `'*'`, the iterate reading `a * (a + a)` has no `':' ID`.
+// The static tables of the five loops must defer these conflicts to adaptive
 // prediction.
 grammar LoopSibling;
 
@@ -26,6 +30,7 @@ start
     | 'with' term EOF
     | 'if' cond EOF
     | 'opt' tail EOF
+    | 'prec' prec EOF
     ;
 
 expr
@@ -56,5 +61,11 @@ tail
     | ID
     ;
 
+prec
+    : prec '+' prec
+    | prec '*' prec
+    | prec '+' prec ':' ID
+    | ID
+    ;
 ID : [a-z]+ ;
 WS : [ \t\r\n]+ -> skip ;
