@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-runtime-v0.6.1...dbt-antlr-runtime-v0.6.2) - 2026-11-02
+
+### Added
+
+- *(codegen)* guarded-iterate escape for precedence-loop decisions (Phase 5.3) ([#46](https://github.com/sdf-labs/dbt-antlr/pull/46))
+
 ## [0.6.1](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-runtime-v0.6.0...dbt-antlr-runtime-v0.6.1) - 2026-11-01
 
 ### Fixed
