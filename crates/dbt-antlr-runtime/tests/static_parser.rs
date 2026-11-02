@@ -22,6 +22,9 @@ mod gen {
     pub mod loopfrontierlexer;
     pub mod loopfrontierparser;
     pub mod loopfrontierparser_static;
+    pub mod loopobligationlexer;
+    pub mod loopobligationparser;
+    pub mod loopobligationparser_static;
     pub mod lrdfalexer;
     pub mod lrdfaparser;
     pub mod staticdfalexer;
@@ -1032,5 +1035,138 @@ fn between_and_collision_matches_the_adaptive_engine() {
     assert_eq!(
         parse_between_static("x BETWEEN f -> a AND b").unwrap(),
         "(s (b (v (atom x)) (pred BETWEEN (v (atom f -> (b (v (atom a))))) AND (v (atom b)))) <EOF>)"
+    );
+}
+
+fn parse_obligation_static(input: &str) -> Result<String, String> {
+    Arena::with(|arena| {
+        let lexer = gen::loopobligationlexer::LoopObligationLexer::<_, CommonTokenFactory>::new(
+            arena,
+            InputStream::new(input),
+        );
+        let tokens = CommonTokenStream::new(lexer);
+        let mut parser = gen::loopobligationparser_static::LoopObligationParser::new(arena, tokens);
+        parser
+            .s()
+            .map(|ctx| string_tree(ctx, parser.get_rule_names()))
+            .map_err(|error| format!("{error:?}"))
+    })
+}
+
+fn parse_obligation_adaptive(input: &str) -> Result<String, String> {
+    Arena::with(|arena| {
+        let lexer = gen::loopobligationlexer::LoopObligationLexer::<_, CommonTokenFactory>::new(
+            arena,
+            InputStream::new(input),
+        );
+        let tokens = CommonTokenStream::new(lexer);
+        let mut parser = gen::loopobligationparser::LoopObligationParser::new(arena, tokens);
+        parser
+            .s()
+            .map(|ctx| string_tree(ctx, parser.get_rule_names()))
+            .map_err(|error| format!("{error:?}"))
+    })
+}
+
+/// The obligation-discharge differential (`LoopObligation.g4`):
+/// - On `. ID` (conflict state), `'prior' p '.' ID` needs the exit reading,
+///   and every other stack takes the iterate reading.
+/// - On `[ ID : p ]` (budget-frontier states), the first argument of
+///   `'trim' '(' p p ')'` needs the exit reading, and every other stack takes
+///   the iterate reading.
+/// - The right operand of `p '+' p` is in `guard_pass`, so the stack walk
+///   continues past `+` and sees an outer `'trim'` or `'prior'` frame.
+/// - The slice-bound `p` of `'[' ID ':' p ']'` is in neither `guard_danger` nor
+///   `guard_pass`, so it seals off any outer `'trim'` or `'prior'` frame.
+#[test]
+fn guarded_obligations_match_the_adaptive_engine() {
+    Arena::with(|arena| {
+        let manager = gen::loopobligationparser_static::parser_simulator_manager();
+        let simulator = manager.get_simulator(arena);
+        let tables = simulator.atn().static_dfas();
+        let guarded: Vec<_> = tables
+            .tables()
+            .iter()
+            .filter(|table| table.has_guards())
+            .collect();
+        assert_eq!(
+            guarded.len(),
+            2,
+            "both hybrid precedence classes carry guards"
+        );
+        for table in guarded {
+            // `prior` (9) and the first `p` of `trim` (15) trip the guard.
+            assert_eq!(table.guard_step(9), Some(true));
+            assert_eq!(table.guard_step(15), Some(true));
+            // The right operand of `p '+' p` (40) is in `guard_pass`.
+            assert_eq!(table.guard_step(40), None);
+            // The slice bound of `'[' ID ':' p ']'` (22, 31) is sealed by `']'`.
+            assert_eq!(table.guard_step(22), Some(false));
+            assert_eq!(table.guard_step(31), Some(false));
+        }
+    });
+
+    let corpus = [
+        // Conflict state (`. ID`): iterate wins outside `prior` and `trim` arg 1.
+        "a . b",
+        "a . b . c",
+        "a . b + c",
+        "a + b . c",
+        // Conflict state (`. ID`): exit wins inside `prior` and `trim` arg 1.
+        "prior a . b",
+        "prior a . b + c",
+        "prior a . b . c",
+        "trim ( a . b c )",
+        "trim ( a + b . c d )",
+        // Conflict state (`. ID`) inside a sealed slice bound: iterate wins.
+        "prior a [ x : b . c ] . d",
+        "trim ( a [ x : b . c ] d )",
+        // Frontier states (`[ ID : p ]`): iterate wins outside `trim` arg 1.
+        "a [ x : y ]",
+        "a [ x : y ] [ z : w ]",
+        "a [ x : [ y : z ] ]",
+        "a [ x : prior b . c ]",
+        "a [ x : trim ( b c ) ]",
+        "a + b [ x : y ]",
+        "prior a [ x : y ] . b",
+        // Frontier states (`[ ID : p ]`): exit wins inside `trim` arg 1.
+        "trim ( a [ x : y ] )",
+        "trim ( a [ x : [ y : z ] ] )",
+        "trim ( a [ x : prior b . c ] )",
+        "trim ( a [ x : trim ( b c ) ] )",
+        "trim ( a + b [ x : y ] )",
+        // Frontier states (`[ ID : p ]`) inside a sealed slice bound: iterate wins.
+        "trim ( a [ x : b [ y : z ] ] c )",
+        "prior a [ x : b [ y : z ] ] . c",
+    ];
+    for input in corpus {
+        let adaptive = parse_obligation_adaptive(input).expect(input);
+        let static_tree = parse_obligation_static(input).expect(input);
+        assert_eq!(static_tree, adaptive, "tree divergence on {input:?}");
+    }
+
+    assert_eq!(
+        parse_obligation_static("a . b").unwrap(),
+        "(s (p (p a) . b) <EOF>)"
+    );
+    assert_eq!(
+        parse_obligation_static("prior a . b").unwrap(),
+        "(s (p prior (p a) . b) <EOF>)"
+    );
+    assert_eq!(
+        parse_obligation_static("a [ x : y ]").unwrap(),
+        "(s (p (p a) [ x : (p y) ]) <EOF>)"
+    );
+    assert_eq!(
+        parse_obligation_static("trim ( a [ x : y ] )").unwrap(),
+        "(s (p trim ( (p a) (p [ x : (p y) ]) )) <EOF>)"
+    );
+    assert_eq!(
+        parse_obligation_static("trim ( a + b [ x : y ] )").unwrap(),
+        "(s (p trim ( (p (p a) + (p b)) (p [ x : (p y) ]) )) <EOF>)"
+    );
+    assert_eq!(
+        parse_obligation_static("prior a [ x : b [ y : z ] ] . c").unwrap(),
+        "(s (p prior (p (p a) [ x : (p (p b) [ y : (p z) ]) ]) . c) <EOF>)"
     );
 }
