@@ -6,44 +6,36 @@
 //! tokens (`0..=2`, the *prefix*) and then calls the same *shared rule* `R`
 //! directly, a table state whose live alternatives are all members does not
 //! have to escape. It accepts with the group's virtual alternative instead. The
-//! generated block parses `R` once with muted listeners, reads the token after
-//! it, and dispatches to the member alternative whose tail starts with that
-//! token. The member then re-descends through its prefix, and its call of `R`
-//! takes the subtree of the first parse.
+//! generated block parses `R` once with muted parse listeners, reads the token
+//! after it, and dispatches to the member alternative whose tail starts with
+//! that token. The member then re-descends through its prefix, and its call of
+//! `R` takes the subtree of the first parse.
 //!
-//! The group accept must be a proof, never a guess:
+//! A group is generated only when the runtime neutral parse **never needs to be
+//! reverted**:
 //!
-//! - A member is one straight path from its start to its `R` call, inside the
-//!   decision rule: the prefix tokens, and no other rule call, predicate,
-//!   decision, or loop. Then skipping the prefix lands on the start of `R` for
-//!   every input of every member, and the re-descent reaches `R` at that same
-//!   position without a prediction of its own.
-//! - Every member calls `R` with the same precedence, so the one parse of `R`
-//!   serves all of them. `R` takes no arguments, and no rule reachable from
-//!   `R` runs an action: a fallback after the first parse parses `R` again.
-//! - The tail dispatch picks a member only when no other member can continue
-//!   with the token (see [`Dispatch`]).
-//! - At the state, the table has read at least the prefix, and every live
-//!   configuration is inside a member's call of `R` or right after it
-//!   ([`DescentPlan::group_for`]). So no member has read `R` with another
-//!   extent than the others.
-//! - The neutral parse runs with the call site of one member. A prediction in
-//!   it that reads the parse stack (full-context prediction, a stack guard)
-//!   could parse `R` differently for another member, so the runtime discards
-//!   such a neutral parse and predicts adaptively.
-//!
-//! The reference analyzer (`SharedDescentAnalyzer` of the k3 tool) checks the
-//! first point only on the first state the prefix reaches and follows nullable
-//! rule calls before the prefix; both let a member reach `R` after another
-//! number of tokens. It also takes one level of `LOOK` as the FOLLOW of the
-//! decision rule, accepts configurations past `R`, and trusts every neutral
-//! parse. This port is stricter in all of these places.
+//! 1. **The shared prefix is the only path forward at the state and
+//!    lookaheads.** A member is one straight path from its start to its `R`
+//!    call inside the decision rule: the prefix tokens, and no other rule call,
+//!    predicate, decision, or loop. Every member calls `R` with the same
+//!    precedence. At a group-accept state, the table has read at least the
+//!    prefix, every live alternative is a member of the group, and every live
+//!    configuration is inside a member's call of `R` or right at its exit
+//!    ([`DescentPlan::group_for`]).
+//! 2. **The member follow sets disambiguate the members at the shared call
+//!    site, and the neutral parse of `R` has no conflict or ambiguity with
+//!    them.** At most one member can complete the decision rule without a
+//!    token, the members' follow sets at the `R` call site are pairwise
+//!    disjoint, and no derivation of `R` can both exit `R` and continue inside
+//!    `R` on any token of those follow sets (see [`DescentAnalyzer::dispatch`]
+//!    and [`DescentAnalyzer::exit_continue_tokens`]).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use dbt_antlr_runtime::analysis::{
     ATN, ATNConfig, ATNStateRef, ATNStateType, BOUNDARY_TAINT, BasicBlockStartState, BitSet, EOF,
-    PlusBlockStartState, PredictionContextRef, RuleTransition, StarBlockStartState, TransitionType,
+    IntervalSet, IntervalSetBuf, NotSetTransition, PlusBlockStartState, PredictionContextRef,
+    RuleTransition, StarBlockStartState, TOKEN_MIN_USER_TOKEN_TYPE, Transition, TransitionType,
     WIDENED_TAINT,
 };
 
@@ -64,9 +56,6 @@ pub(crate) struct TailArm {
     pub(crate) alt: i32,
     /// Sorted token types; `-1` is EOF.
     pub(crate) tokens: Vec<i32>,
-    /// The arm commits only when the token cannot follow the decision rule on
-    /// the real parse stack (a nullable member could take it there).
-    pub(crate) guarded: bool,
 }
 
 /// One shared-descent group of a decision.
@@ -80,32 +69,37 @@ pub(crate) struct DescentGroup {
     pub(crate) alts: Vec<i32>,
     /// The leading tokens of the first member path that formed the group.
     pub(crate) prefix: Vec<i32>,
-    /// A member's call-site state of the shared rule: the neutral parse runs
-    /// with it as the invoking state.
-    pub(crate) call_site: i32,
+    /// The call-site states of the members' calls of the shared rule, ascending.
+    pub(crate) call_sites: Vec<i32>,
     /// The precedence argument of every member's call of the shared rule.
     pub(crate) precedence: i32,
     /// The tail dispatch.
     pub(crate) arms: Vec<TailArm>,
-    /// The member that every token without an arm selects, `0` when such a
-    /// token falls back to full prediction.
+    /// The nullable member that every token without an explicit arm selects, or
+    /// `0` when every member has a mandatory tail token.
     pub(crate) default_alt: i32,
     /// The follow states of the members' calls of the shared rule.
     boundary: BTreeSet<i32>,
     /// The states a member reaches right after the shared rule, before its
     /// tail consumes a token, and never after that.
     ended: BTreeSet<i32>,
-    /// Whether no member's tail can reach the shared rule again. Only then is
-    /// a widened configuration with its bottom segment in the shared rule
-    /// inside the first call.
-    tails_avoid_shared: bool,
 }
 
 impl DescentGroup {
-    /// The member alternative a fallback predicts when the adaptive simulation
-    /// is not available.
+    /// The lowest-numbered member alternative of the group.
     pub(crate) fn min_alt(&self) -> i32 {
         self.alts.first().copied().unwrap_or(1)
+    }
+
+    /// The member alternative that the `_` arm of the runtime tail match
+    /// selects: the nullable member when the group has one, or the minimum
+    /// member when a syntax error follows the shared rule.
+    pub(crate) fn default_or_min_alt(&self) -> i32 {
+        if self.default_alt > 0 {
+            self.default_alt
+        } else {
+            self.min_alt()
+        }
     }
 
     fn covers(&self, live: &BitSet) -> bool {
@@ -118,10 +112,12 @@ impl DescentGroup {
     /// path runs in the shared rule and the frame below it returns into a
     /// member's call site (the boundary).
     ///
-    /// A widening joint drops the frames below a recursive invocation. For a
-    /// `widened` configuration, a path whose bottom segment runs in the shared
-    /// rule also passes when no member's tail can reach the shared rule: the
-    /// closure then reaches the recursion only through a member's call.
+    /// A widening joint drops the frames below a recursive invocation. Because
+    /// the members' follow sets at the shared call site are pairwise disjoint
+    /// and the shared rule cannot continue on any of them where it can exit, no
+    /// two members can both survive a token after the shared rule; a widened
+    /// configuration whose bottom segment runs in the shared rule is therefore
+    /// still inside the first call.
     fn first_consumer_paths(
         &self,
         rule: i32,
@@ -131,7 +127,7 @@ impl DescentGroup {
     ) -> bool {
         let in_shared = usize::try_from(rule).ok() == Some(self.rule);
         if context.is_empty() {
-            return in_shared && widened && self.tails_avoid_shared;
+            return in_shared && widened;
         }
         let key = (
             context.as_ref() as *const _ as *const (),
@@ -144,7 +140,7 @@ impl DescentGroup {
         let passes = (0..context.length()).all(|index| {
             let return_state = context.get_return_state(index);
             if return_state == ATNStateRef::empty_return() {
-                return in_shared && widened && self.tails_avoid_shared;
+                return in_shared && widened;
             }
             if in_shared && self.boundary.contains(&return_state.get_state_number()) {
                 return true;
@@ -227,6 +223,9 @@ pub(super) struct DescentAnalyzer {
     callees: Option<Vec<BTreeSet<usize>>>,
     /// The grammar-wide FOLLOW set of every rule, EOF included.
     follow: Option<Vec<BTreeSet<i32>>>,
+    /// Per rule `R`, the tokens that a derivation of `R` can consume at a
+    /// point where `R` can also exit.
+    exit_continue: HashMap<usize, BTreeSet<i32>>,
     plans: HashMap<usize, Option<DescentPlan>>,
 }
 
@@ -238,6 +237,7 @@ impl DescentAnalyzer {
             shareable: None,
             callees: None,
             follow: None,
+            exit_continue: HashMap::new(),
             plans: HashMap::new(),
         }
     }
@@ -285,7 +285,7 @@ impl DescentAnalyzer {
                 if !self.shareable(rule) {
                     continue;
                 }
-                let Some(path) = uniform_path(transition.get_target(), rule, prefix.len()) else {
+                let Some(path) = uniform_path(transition.get_target(), rule, &prefix) else {
                     continue;
                 };
                 members.entry((rule, prefix)).or_default().push((alt, path));
@@ -304,7 +304,7 @@ impl DescentAnalyzer {
             {
                 continue;
             }
-            let Some(dispatch) = self.dispatch(decision_rule, &members) else {
+            let Some(dispatch) = self.dispatch(decision_rule, rule, &members) else {
                 continue;
             };
             groups.push(DescentGroup {
@@ -312,16 +312,15 @@ impl DescentAnalyzer {
                 rule,
                 alts: members.iter().map(|(alt, _)| *alt).collect(),
                 prefix,
-                call_site: members[0].1.call_sites[0],
+                call_sites: members
+                    .iter()
+                    .flat_map(|(_, path)| path.call_sites.iter().copied())
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect(),
                 precedence,
                 arms: dispatch.arms,
                 default_alt: dispatch.default_alt,
-                tails_avoid_shared: !self.tails_reach(
-                    rule,
-                    members
-                        .iter()
-                        .flat_map(|(_, path)| path.follow_states.iter().copied()),
-                ),
                 ended: ended_states(
                     self.atn,
                     members
@@ -343,18 +342,15 @@ impl DescentAnalyzer {
         Some(DescentPlan { groups })
     }
 
-    /// The tail dispatch of a group, `None` when no token discriminates.
-    ///
-    /// A member's tail is the FIRST set of its continuation after the shared
-    /// rule up to the end of the decision rule; a *nullable* member can reach
-    /// the end, so the decision rule's FOLLOW joins its mandatory tail. With
-    /// at most one nullable member and mandatory tails that are pairwise
-    /// disjoint, each non-nullable member gets its tail as an arm and the
-    /// nullable member takes every other token. Otherwise each member's arm is
-    /// its tail minus every other member's, and an arm commits only when the
-    /// token cannot follow the decision rule on the real stack; every other
-    /// token falls back.
-    fn dispatch(&mut self, decision_rule: i32, members: &[Member]) -> Option<Dispatch> {
+    /// The tail dispatch of a group, `None` when the member follow sets do not
+    /// disambiguate the members or when the shared rule can continue on a token
+    /// of those follow sets at a point where it can exit.
+    fn dispatch(
+        &mut self,
+        decision_rule: i32,
+        shared_rule: usize,
+        members: &[Member],
+    ) -> Option<Dispatch> {
         let mut tails: Vec<(i32, BTreeSet<i32>, bool)> = Vec::with_capacity(members.len());
         for (alt, path) in members {
             let mut tail = BTreeSet::new();
@@ -371,75 +367,61 @@ impl DescentAnalyzer {
             .filter(|(_, tail, nullable)| *nullable || tail.is_empty())
             .map(|(alt, _, _)| *alt)
             .collect();
-
-        if nullable.len() <= 1 {
-            let follow = self.follow(decision_rule);
-            let default_set: BTreeSet<i32> = match nullable.first() {
-                Some(default_alt) => tails
-                    .iter()
-                    .find(|(alt, _, _)| alt == default_alt)
-                    .map(|(_, tail, _)| tail.union(&follow).copied().collect())
-                    .unwrap_or_default(),
-                None => BTreeSet::new(),
-            };
-            let mut claimed: BTreeSet<i32> = BTreeSet::new();
-            let mut disjoint = true;
-            for (alt, tail, _) in &tails {
-                if nullable.contains(alt) {
-                    continue;
-                }
-                if tail
-                    .iter()
-                    .any(|token| claimed.contains(token) || default_set.contains(token))
-                {
-                    disjoint = false;
-                    break;
-                }
-                claimed.extend(tail.iter().copied());
-            }
-            if disjoint {
-                let arms: Vec<TailArm> = tails
-                    .iter()
-                    .filter(|(alt, tail, _)| !nullable.contains(alt) && !tail.is_empty())
-                    .map(|(alt, tail, _)| TailArm {
-                        alt: *alt,
-                        tokens: tail.iter().copied().collect(),
-                        guarded: false,
-                    })
-                    .collect();
-                let default_alt = nullable.first().copied().unwrap_or(0);
-                return (default_alt != 0 || !arms.is_empty())
-                    .then_some(Dispatch { arms, default_alt });
-            }
+        if nullable.len() > 1 {
+            return None;
         }
 
-        // Guarded dispatch: in-decision tails only, minus every other member. An
-        // arm needs the guard when another member is nullable: that member can
-        // take the token after the decision rule.
-        let mut arms = Vec::new();
-        for (alt, tail, _) in &tails {
-            let guarded = nullable.iter().any(|other| other != alt);
-            let tokens: Vec<i32> = tail
+        let follow = self.follow(decision_rule);
+        let default_set: BTreeSet<i32> = match nullable.first() {
+            Some(default_alt) => tails
                 .iter()
-                .copied()
-                .filter(|token| {
-                    tails
-                        .iter()
-                        .all(|(other, other_tail, _)| other == alt || !other_tail.contains(token))
-                })
-                .collect();
-            if !tokens.is_empty() {
-                arms.push(TailArm {
-                    alt: *alt,
-                    tokens,
-                    guarded,
-                });
+                .find(|(alt, _, _)| alt == default_alt)
+                .map(|(_, tail, _)| tail.union(&follow).copied().collect())
+                .unwrap_or_default(),
+            None => BTreeSet::new(),
+        };
+        let mut claimed: BTreeSet<i32> = BTreeSet::new();
+        for (alt, tail, _) in &tails {
+            if nullable.contains(alt) {
+                continue;
             }
+            if tail
+                .iter()
+                .any(|token| claimed.contains(token) || default_set.contains(token))
+            {
+                return None;
+            }
+            claimed.extend(tail.iter().copied());
         }
-        (!arms.is_empty()).then_some(Dispatch {
-            arms,
-            default_alt: 0,
-        })
+
+        let mut call_site_follow = claimed;
+        call_site_follow.extend(default_set);
+        if !self
+            .exit_continue_tokens(shared_rule)
+            .is_disjoint(&call_site_follow)
+        {
+            return None;
+        }
+
+        let arms: Vec<TailArm> = tails
+            .iter()
+            .filter(|(alt, tail, _)| !nullable.contains(alt) && !tail.is_empty())
+            .map(|(alt, tail, _)| TailArm {
+                alt: *alt,
+                tokens: tail.iter().copied().collect(),
+            })
+            .collect();
+        let default_alt = nullable.first().copied().unwrap_or(0);
+        (default_alt != 0 || !arms.is_empty()).then_some(Dispatch { arms, default_alt })
+    }
+
+    /// The tokens that a derivation of `shared_rule` can consume at a point
+    /// where `shared_rule` can also exit.
+    fn exit_continue_tokens(&mut self, shared_rule: usize) -> &BTreeSet<i32> {
+        let atn = self.atn;
+        self.exit_continue
+            .entry(shared_rule)
+            .or_insert_with(|| compute_exit_continue(atn, shared_rule))
     }
 
     /// Whether `rule` can be the shared rule of a group.
@@ -478,74 +460,39 @@ impl DescentAnalyzer {
         })
     }
 
-    /// Whether the tails after `follow_states` can call `shared`, directly or
-    /// through other rules.
-    fn tails_reach(&mut self, shared: usize, follow_states: impl Iterator<Item = i32>) -> bool {
-        let callees = self.callees().to_vec();
-        let mut reaches: Vec<bool> = (0..callees.len()).map(|rule| rule == shared).collect();
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for rule in 0..callees.len() {
-                if !reaches[rule] && callees[rule].iter().any(|callee| reaches[*callee]) {
-                    reaches[rule] = true;
-                    changed = true;
-                }
-            }
-        }
-        let mut seen = BTreeSet::new();
-        let mut work: Vec<ATNStateRef> = follow_states
-            .map(|state| self.atn.make_state_ref(state))
-            .collect();
-        while let Some(state) = work.pop() {
-            if !seen.insert(state.get_state_number())
-                || state.state_type() == ATNStateType::RuleStop
-            {
-                continue;
-            }
-            for transition in state.get_transitions() {
-                if let Some(call) = transition.try_as::<RuleTransition>() {
-                    let callee = usize::try_from(call.get_target().get_rule_index()).ok();
-                    // In a tail of the shared rule itself, any call returns
-                    // into the shared rule.
-                    let caller = usize::try_from(state.get_rule_index()).ok();
-                    if caller == Some(shared)
-                        || callee
-                            .is_some_and(|callee| reaches.get(callee).copied().unwrap_or(false))
-                    {
-                        return true;
-                    }
-                    work.push(call.follow_state);
-                } else {
-                    work.push(transition.get_target());
-                }
-            }
-        }
-        false
-    }
-
     /// A rule is shareable when it takes no arguments and no rule reachable
-    /// from it (itself included) has an action.
+    /// from it (itself included) has an action or a semantic predicate.
     fn compute_shareable(&mut self) -> Vec<bool> {
         let num_rules = self.atn.rule_to_start_state.len();
         let rules = self.rules.clone().unwrap_or_default();
-        let mut acts: Vec<bool> = (0..num_rules)
+        let mut tainted: Vec<bool> = (0..num_rules)
             .map(|rule| rules.has_actions.get(rule).copied().unwrap_or(false))
             .collect();
+        for state in self.atn.iter_states() {
+            let Ok(rule) = usize::try_from(state.get_rule_index()) else {
+                continue;
+            };
+            if rule < num_rules
+                && state.get_transitions().iter().any(|transition| {
+                    matches!(transition.transition_type(), TransitionType::Predicate)
+                })
+            {
+                tainted[rule] = true;
+            }
+        }
         let callees = self.callees().to_vec();
-        // A rule acts when any rule it reaches acts: propagate to a fixpoint.
         let mut changed = true;
         while changed {
             changed = false;
             for rule in 0..num_rules {
-                if !acts[rule] && callees[rule].iter().any(|callee| acts[*callee]) {
-                    acts[rule] = true;
+                if !tainted[rule] && callees[rule].iter().any(|callee| tainted[*callee]) {
+                    tainted[rule] = true;
                     changed = true;
                 }
             }
         }
         (0..num_rules)
-            .map(|rule| !acts[rule] && !rules.has_arguments.get(rule).copied().unwrap_or(false))
+            .map(|rule| !tainted[rule] && !rules.has_arguments.get(rule).copied().unwrap_or(false))
             .collect()
     }
 
@@ -652,11 +599,11 @@ fn candidate_paths(start: ATNStateRef, decision_rule: i32) -> BTreeSet<(usize, V
     out
 }
 
-/// The call of `rule` that the path from `start` reaches after exactly
-/// `prefix_len` tokens, or `None` when the path consumes another number of
-/// tokens first, calls another rule, crosses a predicate, a decision, or a
-/// loop, or leaves the alternative without calling `rule`.
-fn uniform_path(start: ATNStateRef, rule: usize, prefix_len: usize) -> Option<MemberPath> {
+/// The call of `rule` that the path from `start` reaches after the exact
+/// single-token `prefix`, or `None` when the path consumes other tokens,
+/// calls another rule, crosses a predicate, a decision, or a loop, or leaves
+/// the alternative without calling `rule`.
+fn uniform_path(start: ATNStateRef, rule: usize, prefix: &[i32]) -> Option<MemberPath> {
     let mut call_sites = BTreeSet::new();
     let mut follow_states = BTreeSet::new();
     let mut precedence = None;
@@ -684,7 +631,7 @@ fn uniform_path(start: ATNStateRef, rule: usize, prefix_len: usize) -> Option<Me
                 TransitionType::Rule => {
                     let call = transition.try_as::<RuleTransition>()?;
                     let callee = usize::try_from(call.get_target().get_rule_index()).ok();
-                    if consumed != prefix_len || callee != Some(rule) {
+                    if consumed != prefix.len() || callee != Some(rule) {
                         return None;
                     }
                     if *precedence.get_or_insert(call.precedence()) != call.precedence() {
@@ -697,12 +644,15 @@ fn uniform_path(start: ATNStateRef, rule: usize, prefix_len: usize) -> Option<Me
                 TransitionType::Epsilon | TransitionType::Action => {
                     work.push((transition.get_target(), consumed));
                 }
-                _ => {
-                    if consumed >= prefix_len {
+                TransitionType::Atom | TransitionType::Range | TransitionType::Set => {
+                    let expected = *prefix.get(consumed)?;
+                    let label = transition.get_label()?;
+                    if label.length() != 1 || !label.contains(expected) {
                         return None;
                     }
                     work.push((transition.get_target(), consumed + 1));
                 }
+                _ => return None,
             }
         }
     }
@@ -759,6 +709,308 @@ fn first_set(atn: &ATN, state_number: i32) -> (BTreeSet<i32>, bool) {
         first.extend((interval.a..=interval.b).filter(|token| *token != TOKEN_EPSILON));
     }
     (first, tokens.contains(TOKEN_EPSILON))
+}
+
+/// Whether `state` can reach the stop state of its rule without consuming a
+/// token.
+fn nullable_to_stop(atn: &ATN, state: ATNStateRef) -> bool {
+    state.state_type() == ATNStateType::RuleStop
+        || atn
+            .next_tokens::<CommonToken<'static>>(&state)
+            .contains(TOKEN_EPSILON)
+}
+/// Whether `left` and `right` share any token type other than
+/// [`TOKEN_EPSILON`].
+fn intervals_intersect(left: &IntervalSet, right: &IntervalSet) -> bool {
+    let left = left.as_slice();
+    let right = right.as_slice();
+    let mut i = 0;
+    let mut j = 0;
+    while i < left.len() && j < right.len() {
+        let a = left[i].a.max(right[j].a);
+        let b = left[i].b.min(right[j].b);
+        if a <= b && (a != TOKEN_EPSILON || b != TOKEN_EPSILON) {
+            return true;
+        }
+        if left[i].b < right[j].b {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    false
+}
+
+/// Adds the token types of a non-epsilon, non-rule transition into `out`.
+fn add_transition_tokens(atn: &ATN, transition: &Transition, out: &mut IntervalSetBuf) {
+    match transition.transition_type() {
+        TransitionType::NotSet => {
+            if let Some(not_set) = transition.try_as::<NotSetTransition>()
+                && let Some(set) = not_set.get_label()
+            {
+                let comp = set.complement(TOKEN_MIN_USER_TOKEN_TYPE, atn.max_token_type);
+                out.add_set(comp.as_interval_set());
+            }
+        }
+        TransitionType::Wildcard => {
+            out.add_range(TOKEN_MIN_USER_TOKEN_TYPE, atn.max_token_type);
+        }
+        TransitionType::Atom | TransitionType::Range | TransitionType::Set => {
+            if let Some(label) = transition.get_label() {
+                out.add_set(label);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The consuming moves reachable from a state across epsilon transitions,
+/// nullable rule calls, and tail-position rule entries.
+struct StepClosure {
+    reaches_stop: bool,
+    /// Target state number -> union of token labels reaching it.
+    token_moves: BTreeMap<i32, IntervalSetBuf>,
+    /// `(callee_start, follow_state)` of reachable rule transitions.
+    rule_moves: Vec<(ATNStateRef, ATNStateRef)>,
+}
+
+fn step_closure<'a>(
+    atn: &ATN,
+    start: ATNStateRef,
+    cache: &'a mut HashMap<i32, StepClosure>,
+) -> &'a StepClosure {
+    let number = start.get_state_number();
+    cache.entry(number).or_insert_with(|| {
+        let mut token_moves: BTreeMap<i32, IntervalSetBuf> = BTreeMap::new();
+        let mut rule_moves = Vec::new();
+        let mut seen_rules = BTreeSet::new();
+        let mut seen = BTreeSet::new();
+        let mut work = vec![start];
+        while let Some(state) = work.pop() {
+            if !seen.insert(state.get_state_number())
+                || state.state_type() == ATNStateType::RuleStop
+            {
+                continue;
+            }
+            for transition in state.get_transitions() {
+                if let Some(call) = transition.try_as::<RuleTransition>() {
+                    let key = (
+                        call.get_target().get_state_number(),
+                        call.follow_state.get_state_number(),
+                    );
+                    if seen_rules.insert(key) {
+                        rule_moves.push((call.get_target(), call.follow_state));
+                    }
+                    if nullable_to_stop(atn, call.get_target()) {
+                        work.push(call.follow_state);
+                    }
+                } else if transition.is_epsilon() {
+                    work.push(transition.get_target());
+                } else {
+                    add_transition_tokens(
+                        atn,
+                        transition,
+                        token_moves
+                            .entry(transition.get_target().get_state_number())
+                            .or_default(),
+                    );
+                }
+            }
+        }
+        StepClosure {
+            reaches_stop: nullable_to_stop(atn, start),
+            token_moves,
+            rule_moves,
+        }
+    })
+}
+
+/// Computes the tokens that a derivation of `shared_rule` can consume at a
+/// point where `shared_rule` can also exit.
+///
+/// Two patterns produce such a token:
+///
+/// 1. A state in `shared_rule` (or in a rule reachable through tail calls of
+///    `shared_rule`) can reach its rule's stop state without a token, and can
+///    also consume a token (loops `( ... )*`, `( ... )+`, left-recursive
+///    operator loops, and trailing optional blocks `( ... )?`).
+/// 2. Two alternatives of a decision in `shared_rule` (or a tail-called rule)
+///    match a common prefix after which one alternative can exit the rule while
+///    the other continues inside it (`ID '+' ID | ID`, `e 'as' ID | e`).
+fn compute_exit_continue(atn: &ATN, shared_rule: usize) -> BTreeSet<i32> {
+    let mut tail_rules = BTreeSet::from([shared_rule]);
+    let mut work = vec![shared_rule];
+    while let Some(rule) = work.pop() {
+        for state in atn.iter_states() {
+            if usize::try_from(state.get_rule_index()).ok() != Some(rule) {
+                continue;
+            }
+            for transition in state.get_transitions() {
+                let Some(call) = transition.try_as::<RuleTransition>() else {
+                    continue;
+                };
+                if !nullable_to_stop(atn, call.follow_state) {
+                    continue;
+                }
+                if let Ok(callee) = usize::try_from(call.get_target().get_rule_index())
+                    && tail_rules.insert(callee)
+                {
+                    work.push(callee);
+                }
+            }
+        }
+    }
+
+    let mut out = BTreeSet::new();
+    for state in atn.iter_states() {
+        let Ok(rule) = usize::try_from(state.get_rule_index()) else {
+            continue;
+        };
+        if !tail_rules.contains(&rule) {
+            continue;
+        }
+        let state_ref = atn.make_state_ref(state.get_state_number());
+        let tokens = atn.next_tokens::<CommonToken<'static>>(&state_ref);
+        if tokens.contains(TOKEN_EPSILON) {
+            for interval in tokens.as_slice() {
+                out.extend((interval.a..=interval.b).filter(|token| *token != TOKEN_EPSILON));
+            }
+        }
+    }
+
+    let mut closures: HashMap<i32, StepClosure> = HashMap::new();
+    let mut memo: HashMap<(i32, i32), BTreeSet<i32>> = HashMap::new();
+    let mut visiting: BTreeSet<(i32, i32)> = BTreeSet::new();
+    for decision_state in &atn.decision_to_state {
+        let Ok(rule) = usize::try_from(decision_state.get_rule_index()) else {
+            continue;
+        };
+        if !tail_rules.contains(&rule) {
+            continue;
+        }
+        let transitions = decision_state.get_transitions();
+        let nexts: Vec<&IntervalSet> = transitions
+            .iter()
+            .map(|transition| {
+                let target = transition.get_target();
+                atn.next_tokens::<CommonToken<'static>>(&target)
+            })
+            .collect();
+        for (i, left) in transitions.iter().enumerate() {
+            for (j, right) in transitions.iter().enumerate() {
+                if i == j || !intervals_intersect(nexts[i], nexts[j]) {
+                    continue;
+                }
+                for state in co_reachable_on_exit(
+                    atn,
+                    left.get_target(),
+                    right.get_target(),
+                    &mut closures,
+                    &mut memo,
+                    &mut visiting,
+                ) {
+                    let state_ref = atn.make_state_ref(state);
+                    for interval in atn
+                        .next_tokens::<CommonToken<'static>>(&state_ref)
+                        .as_slice()
+                    {
+                        out.extend(
+                            (interval.a..=interval.b).filter(|token| *token != TOKEN_EPSILON),
+                        );
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The states that `start2` can reach over a common prefix on which `start1`
+/// reaches a tail-nullable state of its rule.
+fn co_reachable_on_exit(
+    atn: &ATN,
+    start1: ATNStateRef,
+    start2: ATNStateRef,
+    closures: &mut HashMap<i32, StepClosure>,
+    memo: &mut HashMap<(i32, i32), BTreeSet<i32>>,
+    visiting: &mut BTreeSet<(i32, i32)>,
+) -> BTreeSet<i32> {
+    let key = (start1.get_state_number(), start2.get_state_number());
+    if let Some(cached) = memo.get(&key) {
+        return cached.clone();
+    }
+    if !visiting.insert(key) {
+        return BTreeSet::new();
+    }
+    let mut out = BTreeSet::new();
+    let mut seen: BTreeSet<(i32, i32)> = BTreeSet::new();
+    let mut work = vec![(start1, start2)];
+    while let Some((s1, s2)) = work.pop() {
+        if s1 == s2 || !seen.insert((s1.get_state_number(), s2.get_state_number())) {
+            continue;
+        }
+        let _ = step_closure(atn, s1, closures);
+        let _ = step_closure(atn, s2, closures);
+        let c1 = &closures[&s1.get_state_number()];
+        let c2 = &closures[&s2.get_state_number()];
+        if c1.reaches_stop {
+            out.insert(s2.get_state_number());
+        }
+
+        let next1 = atn.next_tokens::<CommonToken<'static>>(&s1);
+        let next2 = atn.next_tokens::<CommonToken<'static>>(&s2);
+        for (&target1, label1) in &c1.token_moves {
+            for (&target2, label2) in &c2.token_moves {
+                if target1 != target2
+                    && intervals_intersect(label1.as_interval_set(), label2.as_interval_set())
+                {
+                    work.push((atn.make_state_ref(target1), atn.make_state_ref(target2)));
+                }
+            }
+        }
+        let mut non_tail1 = Vec::new();
+        for &(callee1, follow1) in &c1.rule_moves {
+            for &(callee2, follow2) in &c2.rule_moves {
+                if callee1 == callee2 && follow1 != follow2 {
+                    work.push((follow1, follow2));
+                }
+            }
+            let first1 = atn.next_tokens::<CommonToken<'static>>(&callee1);
+            if !intervals_intersect(first1, next2) {
+                continue;
+            }
+            if nullable_to_stop(atn, follow1) {
+                work.push((callee1, s2));
+            } else {
+                non_tail1.push((callee1, follow1));
+            }
+        }
+        let mut non_tail2 = Vec::new();
+        for &(callee2, follow2) in &c2.rule_moves {
+            let first2 = atn.next_tokens::<CommonToken<'static>>(&callee2);
+            if !intervals_intersect(first2, next1) {
+                continue;
+            }
+            if nullable_to_stop(atn, follow2) {
+                work.push((s1, callee2));
+            } else {
+                non_tail2.push((callee2, follow2));
+            }
+        }
+        for (callee1, follow1) in non_tail1 {
+            for after2 in co_reachable_on_exit(atn, callee1, s2, closures, memo, visiting) {
+                work.push((follow1, atn.make_state_ref(after2)));
+            }
+        }
+        for (callee2, follow2) in non_tail2 {
+            for after1 in co_reachable_on_exit(atn, callee2, s1, closures, memo, visiting) {
+                work.push((atn.make_state_ref(after1), follow2));
+            }
+        }
+    }
+    visiting.remove(&key);
+    memo.insert(key, out.clone());
+    out
 }
 
 /// The grammar-wide FOLLOW set of every rule: what the continuations of its

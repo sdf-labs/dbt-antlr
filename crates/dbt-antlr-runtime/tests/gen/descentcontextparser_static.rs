@@ -362,24 +362,7 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena DContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(60);
 		recog.err_handler.sync(&mut recog.base)?;
-		match {
-			let _vap = recog.base.dfa_predict_virtual(4)?;
-			match _vap {
-				65536 => dbt_antlr_runtime::shared_descent!(
-					recog,
-					call_site: 49,
-					prefix: 0,
-					rule: RULE_r,
-					invoke: r(),
-					tails: { DescentContext_T__6  => 1, DescentContext_T__5  => 2, },
-					guarded: { },
-					default: 0,
-					fallback: recog.get_interpreter().adaptive_predict(4,&mut recog.base)?,
-				),
-				INVALID_ALT => recog.get_interpreter().adaptive_predict(4,&mut recog.base)?,
-				_vap => _vap,
-			}
-		} {
+		match { let _sdp = recog.base.dfa_predict(4)?; if _sdp == INVALID_ALT { recog.get_interpreter().adaptive_predict(4,&mut recog.base)? } else { _sdp } } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
 				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
@@ -460,9 +443,6 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn r(&mut self,) -> Result<&'arena RContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-		if let Some(_node) = self.base.resume_take(RULE_r)? {
-		    return Ok(_node.as_rule_context().unwrap());
-		}
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, RContext<TF::Tok>, RULE_r, 4, |_parentctx| RContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena RContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(70);
@@ -563,24 +543,7 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena GContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(83);
 		recog.err_handler.sync(&mut recog.base)?;
-		match {
-			let _vap = recog.base.dfa_predict_virtual(6)?;
-			match _vap {
-				65536 => dbt_antlr_runtime::shared_descent!(
-					recog,
-					call_site: 72,
-					prefix: 0,
-					rule: RULE_h,
-					invoke: h(),
-					tails: { DescentContext_T__4  => 1, DescentContext_T__5  => 2, },
-					guarded: { },
-					default: 0,
-					fallback: recog.get_interpreter().adaptive_predict(6,&mut recog.base)?,
-				),
-				INVALID_ALT => recog.get_interpreter().adaptive_predict(6,&mut recog.base)?,
-				_vap => _vap,
-			}
-		} {
+		match { let _sdp = recog.base.dfa_predict(6)?; if _sdp == INVALID_ALT { recog.get_interpreter().adaptive_predict(6,&mut recog.base)? } else { _sdp } } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
 				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
@@ -667,24 +630,7 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena KContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(95);
 		recog.err_handler.sync(&mut recog.base)?;
-		match {
-			let _vap = recog.base.dfa_predict_virtual(7)?;
-			match _vap {
-				65536 => dbt_antlr_runtime::shared_descent!(
-					recog,
-					call_site: 85,
-					prefix: 0,
-					rule: RULE_h,
-					invoke: h(),
-					tails: { DescentContext_T__4  => 1, DescentContext_T__5  => 2, },
-					guarded: { },
-					default: 0,
-					fallback: recog.get_interpreter().adaptive_predict(7,&mut recog.base)?,
-				),
-				INVALID_ALT => recog.get_interpreter().adaptive_predict(7,&mut recog.base)?,
-				_vap => _vap,
-			}
-		} {
+		match { let _sdp = recog.base.dfa_predict(7)?; if _sdp == INVALID_ALT { recog.get_interpreter().adaptive_predict(7,&mut recog.base)? } else { _sdp } } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
 				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
@@ -761,31 +707,11 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn h(&mut self,) -> Result<&'arena HContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-		if let Some(_node) = self.base.resume_take(RULE_h)? {
-		    return Ok(_node.as_rule_context().unwrap());
-		}
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, HContext<TF::Tok>, RULE_h, 10, |_parentctx| HContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena HContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(106);
 		recog.err_handler.sync(&mut recog.base)?;
-		match {
-			let _vap = recog.base.dfa_predict_virtual(8)?;
-			match _vap {
-				65536 => dbt_antlr_runtime::shared_descent!(
-					recog,
-					call_site: 101,
-					prefix: 0,
-					rule: RULE_e,
-					invoke: e(),
-					tails: { },
-					guarded: { DescentContext_T__4  => 2, },
-					default: 0,
-					fallback: recog.get_interpreter().adaptive_predict(8,&mut recog.base)?,
-				),
-				INVALID_ALT => recog.get_interpreter().adaptive_predict(8,&mut recog.base)?,
-				_vap => _vap,
-			}
-		} {
+		match { let _sdp = recog.base.dfa_predict(8)?; if _sdp == INVALID_ALT { recog.get_interpreter().adaptive_predict(8,&mut recog.base)? } else { _sdp } } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
 				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
@@ -865,9 +791,6 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn e(&mut self,) -> Result<&'arena EContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-		if let Some(_node) = self.base.resume_take(RULE_e)? {
-		    return Ok(_node.as_rule_context().unwrap());
-		}
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, EContext<TF::Tok>, RULE_e, 12, |_parentctx| EContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena EContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
@@ -919,9 +842,9 @@ static _ATN: LazyLock<ATN> = LazyLock::new(|| {
         .deserialize(&_serializedATN)
         .expect("invalid packed parser ATN")
 });
-static _serializedATN: [u32; 2233] = [
+static _serializedATN: [u32; 2469] = [
     1346458702, 3, 16909060, 29, 14, 124, 130, 0, 0, 11, 7, 29, 868, 897, 
-    650, 1547, 0, 1547, 0, 1547, 11, 1558, 7, 1565, 7, 2233, 0, 1547, 0, 
+    650, 1547, 0, 1547, 0, 1547, 11, 1558, 7, 1565, 7, 2469, 0, 1547, 0, 
     2, 0, 8, 0, 1, 4294967295, 4294967295, 7, 0, 16, 1, 0, 4294967295, 4294967295, 
     2, 1, 8, 1, 1, 4294967295, 4294967295, 7, 1, 16, 2, 0, 4294967295, 4294967295, 
     2, 2, 8, 2, 1, 4294967295, 4294967295, 7, 2, 16, 3, 0, 4294967295, 4294967295, 
@@ -1023,40 +946,54 @@ static _serializedATN: [u32; 2233] = [
     0, 0, 0, 1, 119, 0, 0, 0, 1, 115, 0, 0, 0, 1, 109, 0, 0, 0, 1, 122, 
     0, 0, 0, 1, 118, 0, 0, 0, 1, 121, 0, 0, 0, 1, 13, 0, 0, 0, 1, 120, 0, 
     0, 0, 20, 30, 43, 47, 60, 70, 83, 95, 106, 115, 120, 0, 2, 4, 6, 8, 
-    10, 12, 1, 3, 5, 7, 9, 11, 13, 1396983361, 2, 661, 5, 9, 4, 13, 14, 
-    9, 42, 0, 0, 0, 65536, 0, 2, 0, 0, 0, 0, 65536, 1, 4294967295, 0, 0, 
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 3, 5, 6, 7, 8, 3, 3, 
-    3, 0, 6, 12, 18, 18, 24, 27, 30, 36, 42, 8, 8, 1, 12, 12, 2, 8, 8, 3, 
-    12, 12, 4, 6, 6, 5, 7, 7, 6, 7, 7, 7, 9, 9, 8, 12, 12, 9, 12, 12, 10, 
-    6, 6, 5, 7, 7, 11, 6, 6, 12, 7, 7, 11, 0, 1, 12, 0, 2, 53, 1, 4294967295, 
-    0, 57, 2, 4294967295, 0, 0, 0, 0, 5, 12, 14, 5, 33, 0, 1, 0, 3, 3, 0, 
-    3, 0, 2, 4294967295, 2, 2, 0, 0, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 0, 1, 
-    2, 1, 1, 3, 1, 4, 1, 1, 1, 1, 0, 6, 6, 18, 21, 33, 8, 8, 1, 12, 12, 
-    2, 4294967295, 4294967295, 3, 6, 6, 4, 7, 7, 5, 9, 9, 6, 12, 12, 7, 
-    4294967295, 4294967295, 8, 6, 6, 9, 7, 7, 10, 9, 9, 11, 0, 1, 9, 0, 
-    2, 53, 3, 4294967295, 1, 57, 2, 4294967295, 1, 0, 0, 0, 6, 18, 14, 12, 
-    66, 0, 0, 0, 65536, 0, 0, 2, 0, 0, 0, 0, 0, 0, 65536, 1, 65536, 4294967295, 
-    65536, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 
-    3, 4, 5, 3, 6, 7, 8, 9, 10, 11, 3, 3, 3, 3, 3, 0, 6, 12, 21, 21, 30, 
-    33, 36, 39, 45, 48, 54, 66, 8, 8, 1, 12, 12, 2, 8, 8, 3, 12, 12, 4, 
-    5, 5, 5, 6, 6, 6, 10, 10, 7, 5, 5, 8, 9, 9, 9, 10, 10, 10, 12, 12, 11, 
-    12, 12, 12, 12, 12, 13, 5, 5, 14, 6, 6, 6, 12, 12, 15, 5, 5, 14, 6, 
-    6, 16, 5, 5, 5, 6, 6, 6, 10, 10, 7, 11, 11, 17, 0, 1, 16, 0, 2, 76, 
-    1, 4294967295, 0, 80, 2, 4294967295, 0, 0, 0, 0, 7, 18, 14, 12, 66, 
-    0, 0, 0, 65536, 0, 0, 2, 0, 0, 0, 0, 0, 0, 65536, 1, 65536, 4294967295, 
-    65536, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 
-    3, 4, 5, 3, 6, 7, 8, 9, 10, 11, 3, 3, 3, 3, 3, 0, 6, 12, 21, 21, 30, 
-    33, 36, 39, 45, 48, 54, 66, 8, 8, 1, 12, 12, 2, 8, 8, 3, 12, 12, 4, 
-    5, 5, 5, 6, 6, 6, 10, 10, 7, 5, 5, 8, 9, 9, 9, 10, 10, 10, 12, 12, 11, 
-    12, 12, 12, 12, 12, 13, 5, 5, 14, 6, 6, 6, 12, 12, 15, 5, 5, 14, 6, 
-    6, 16, 5, 5, 5, 6, 6, 6, 10, 10, 7, 11, 11, 17, 0, 1, 16, 0, 2, 89, 
-    1, 4294967295, 0, 93, 2, 4294967295, 0, 0, 0, 0, 8, 15, 14, 7, 57, 0, 
-    1, 0, 3, 0, 3, 3, 0, 0, 0, 2, 2, 4294967295, 2, 65536, 0, 0, 3, 3, 3, 
-    3, 3, 0, 2, 3, 2, 2, 2, 2, 0, 0, 1, 2, 1, 3, 1, 1, 4, 5, 6, 1, 1, 1, 
-    1, 1, 0, 6, 6, 21, 24, 27, 39, 57, 8, 8, 1, 12, 12, 2, 4294967295, 4294967295, 
-    3, 5, 5, 4, 6, 6, 5, 9, 9, 6, 10, 10, 7, 12, 12, 8, 12, 12, 9, 4294967295, 
-    4294967295, 10, 5, 5, 11, 6, 6, 12, 9, 9, 13, 4294967295, 4294967295, 
-    3, 5, 5, 4, 6, 6, 5, 9, 9, 6, 10, 10, 7, 11, 11, 14, 0, 1, 12, 0, 4, 
-    76, 3, 4294967295, 1, 80, 2, 4294967295, 1, 89, 3, 4294967295, 1, 93, 
-    2, 4294967295, 1, 0, 0, 0, 0
+    10, 12, 1, 3, 5, 7, 9, 11, 13, 1396983361, 2, 897, 5, 9, 4, 13, 14, 
+    9, 42, 0, 0, 0, 4294967295, 0, 2, 0, 0, 0, 0, 4294967295, 1, 4294967295, 
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 3, 5, 6, 7, 8, 
+    3, 3, 3, 0, 6, 12, 18, 18, 24, 27, 30, 36, 42, 8, 8, 1, 12, 12, 2, 8, 
+    8, 3, 12, 12, 4, 6, 6, 5, 7, 7, 6, 7, 7, 7, 9, 9, 8, 12, 12, 9, 12, 
+    12, 10, 6, 6, 5, 7, 7, 11, 6, 6, 12, 7, 7, 11, 0, 2, 10, 2, 1, 4294967295, 
+    50, 1, 4294967295, 56, 2, 64, 1, 0, 0, 64, 2, 1, 0, 12, 0, 2, 53, 1, 
+    4294967295, 0, 57, 2, 4294967295, 0, 0, 0, 0, 5, 12, 14, 5, 33, 0, 1, 
+    0, 3, 3, 0, 3, 0, 2, 4294967295, 2, 2, 0, 0, 3, 3, 3, 3, 3, 2, 2, 2, 
+    2, 2, 0, 1, 2, 1, 1, 3, 1, 4, 1, 1, 1, 1, 0, 6, 6, 18, 21, 33, 8, 8, 
+    1, 12, 12, 2, 4294967295, 4294967295, 3, 6, 6, 4, 7, 7, 5, 9, 9, 6, 
+    12, 12, 7, 4294967295, 4294967295, 8, 6, 6, 9, 7, 7, 10, 9, 9, 11, 0, 
+    1, 9, 0, 2, 53, 3, 4294967295, 1, 57, 2, 4294967295, 1, 0, 0, 0, 6, 
+    18, 14, 12, 66, 0, 0, 0, 4294967295, 0, 0, 2, 0, 0, 0, 0, 0, 0, 4294967295, 
+    1, 4294967295, 4294967295, 4294967295, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 3, 6, 7, 8, 9, 10, 11, 3, 
+    3, 3, 3, 3, 0, 6, 12, 21, 21, 30, 33, 36, 39, 45, 48, 54, 66, 8, 8, 
+    1, 12, 12, 2, 8, 8, 3, 12, 12, 4, 5, 5, 5, 6, 6, 6, 10, 10, 7, 5, 5, 
+    8, 9, 9, 9, 10, 10, 10, 12, 12, 11, 12, 12, 12, 12, 12, 13, 5, 5, 14, 
+    6, 6, 6, 12, 12, 15, 5, 5, 14, 6, 6, 16, 5, 5, 5, 6, 6, 6, 10, 10, 7, 
+    11, 11, 17, 0, 4, 13, 2, 1, 4294967295, 73, 1, 4294967295, 79, 2, 99, 
+    1, 0, 0, 99, 2, 1, 0, 15, 6, 1, 4294967295, 73, 1, 4294967295, 79, 1, 
+    0, 99, 1, 1, 99, 2, 2, 102, 2, 107, 2, 3, 102, 3, 107, 8, 99, 1, 0, 
+    0, 99, 2, 1, 0, 102, 1, 2, 0, 102, 2, 3, 0, 109, 1, 4, 0, 109, 2, 5, 
+    0, 111, 1, 4, 0, 111, 2, 5, 0, 16, 0, 2, 76, 1, 4294967295, 0, 80, 2, 
+    4294967295, 0, 17, 4, 1, 4294967295, 73, 2, 0, 102, 0, 107, 1, 4294967295, 
+    79, 2, 2, 102, 2, 107, 2, 112, 1, 1, 0, 112, 2, 3, 0, 0, 0, 0, 7, 18, 
+    14, 12, 66, 0, 0, 0, 4294967295, 0, 0, 2, 0, 0, 0, 0, 0, 0, 4294967295, 
+    1, 4294967295, 4294967295, 4294967295, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 3, 6, 7, 8, 9, 10, 11, 3, 
+    3, 3, 3, 3, 0, 6, 12, 21, 21, 30, 33, 36, 39, 45, 48, 54, 66, 8, 8, 
+    1, 12, 12, 2, 8, 8, 3, 12, 12, 4, 5, 5, 5, 6, 6, 6, 10, 10, 7, 5, 5, 
+    8, 9, 9, 9, 10, 10, 10, 12, 12, 11, 12, 12, 12, 12, 12, 13, 5, 5, 14, 
+    6, 6, 6, 12, 12, 15, 5, 5, 14, 6, 6, 16, 5, 5, 5, 6, 6, 6, 10, 10, 7, 
+    11, 11, 17, 0, 4, 13, 2, 1, 4294967295, 86, 1, 4294967295, 92, 2, 99, 
+    1, 0, 0, 99, 2, 1, 0, 15, 6, 1, 4294967295, 86, 1, 4294967295, 92, 1, 
+    0, 99, 1, 1, 99, 2, 2, 102, 2, 107, 2, 3, 102, 3, 107, 8, 99, 1, 0, 
+    0, 99, 2, 1, 0, 102, 1, 2, 0, 102, 2, 3, 0, 109, 1, 4, 0, 109, 2, 5, 
+    0, 111, 1, 4, 0, 111, 2, 5, 0, 16, 0, 2, 89, 1, 4294967295, 0, 93, 2, 
+    4294967295, 0, 17, 4, 1, 4294967295, 86, 2, 0, 102, 0, 107, 1, 4294967295, 
+    92, 2, 2, 102, 2, 107, 2, 112, 1, 1, 0, 112, 2, 3, 0, 0, 0, 0, 8, 15, 
+    14, 7, 57, 0, 1, 0, 3, 0, 3, 3, 0, 0, 0, 2, 2, 4294967295, 2, 4294967295, 
+    0, 0, 3, 3, 3, 3, 3, 0, 2, 3, 2, 2, 2, 2, 0, 0, 1, 2, 1, 3, 1, 1, 4, 
+    5, 6, 1, 1, 1, 1, 1, 0, 6, 6, 21, 24, 27, 39, 57, 8, 8, 1, 12, 12, 2, 
+    4294967295, 4294967295, 3, 5, 5, 4, 6, 6, 5, 9, 9, 6, 10, 10, 7, 12, 
+    12, 8, 12, 12, 9, 4294967295, 4294967295, 10, 5, 5, 11, 6, 6, 12, 9, 
+    9, 13, 4294967295, 4294967295, 3, 5, 5, 4, 6, 6, 5, 9, 9, 6, 10, 10, 
+    7, 11, 11, 14, 0, 2, 12, 0, 4, 76, 3, 4294967295, 1, 80, 2, 4294967295, 
+    1, 89, 3, 4294967295, 1, 93, 2, 4294967295, 1, 14, 2, 1, 4294967295, 
+    102, 1, 4294967295, 107, 2, 112, 2, 0, 0, 112, 3, 1, 0, 0, 0, 0, 0
 ];

@@ -679,12 +679,11 @@ loop {
 	match _vap {
 {% for g in groups %}		{{ g.virtualAlt }} => dbt_antlr_runtime::shared_descent!(
 			{{ self() }},
-			call_site: {{ g.callSite }},
+			call_sites: &[{% for s in g.callSites %}{{ s }}{{ ", " if not loop.last }}{% endfor %}],
 			prefix: {{ g.prefixLen }},
 			rule: RULE_{{ g.ruleName }},
 			invoke: {{ g.invoke }},
 			tails: { {% for t in g.tails %}{{ cases(t.tokens, parser) }} => {{ t.alt }}, {% endfor %}},
-			guarded: { {% for t in g.guardedTails %}{{ cases(t.tokens, parser) }} => {{ t.alt }}, {% endfor %}},
 			default: {{ g.defaultAlt }},
 			fallback: {% if g.staticFallback is not none %}{{ g.staticFallback }}{% else %}{{ self() }}.get_interpreter().adaptive_predict({{ choice.decision }},&mut {{ self() }}.base)?{% endif %},
 		),

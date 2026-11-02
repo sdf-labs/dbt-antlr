@@ -1419,7 +1419,6 @@ fn shared_descent_groups_cure_the_escapes_of_the_fuzz_items() {
     assert_eq!(group.default_alt, 2);
     assert_eq!(group.arms.len(), 1);
     assert_eq!(group.arms[0].alt, 1);
-    assert!(!group.arms[0].guarded);
     assert!(
         item.table
             .as_ref()
@@ -1429,21 +1428,11 @@ fn shared_descent_groups_cure_the_escapes_of_the_fuzz_items() {
             .any(|state| state.accept == group.virtual_alt)
     );
 
-    // `alias`: 'as' can follow the rule, so the arm is guarded and the
-    // nullable member is no default.
+    // `alias`: 'as' can follow the rule, so the member follow sets at the
+    // shared call site overlap on 'as' and the group is rejected.
     let alias = by_rule("alias");
-    let plan = alias.descent.as_ref().expect("alias accepts with a group");
-    let [group] = &plan.groups[..] else {
-        panic!("one group: {plan:?}");
-    };
-    assert_eq!(group.default_alt, 0);
-    assert_eq!(group.arms.len(), 1);
-    assert_eq!(group.arms[0].alt, 1);
-    assert!(
-        group.arms[0].guarded,
-        "alternative 2 can take 'as' after `alias`"
-    );
-
+    assert!(alias.descent.is_none());
+    assert!(alias.escapes > 0);
     // `binding`: the members reach `e` through different rules.
     let binding = by_rule("binding");
     assert!(binding.descent.is_none());
@@ -1457,10 +1446,8 @@ fn shared_descent_groups_share_a_one_token_prefix() {
         .iter()
         .find(|result| result.descent.is_some())
         .expect("the primary block accepts with a group");
-    // A state where a member already returned from `e` while another is still
-    // inside it escapes: the one parse of `e` cannot serve both readings.
-    assert_eq!(primary.descent_group_states, 6);
-    assert_eq!(primary.escapes, 10);
+    assert_eq!(primary.descent_group_states, 8);
+    assert_eq!(primary.escapes, 8);
     let group = &primary.descent.as_ref().unwrap().groups[0];
     assert_eq!(group.alts, [3, 4]);
     assert_eq!(group.prefix.len(), 1);
@@ -1527,6 +1514,16 @@ fn shared_descent_rejects_members_with_another_prefix_length() {
         ),
     );
     assert!(!rule_has_groups(&results, 1));
+    // A multi-token set transition before `y` is not a single-token prefix.
+    let results = classify_source(
+        "DescentSetPrefix",
+        &descent_witness(
+            "DescentSetPrefix",
+            "('[' | ']') y '+' ID | '[' y",
+            "'(' y ')' | ID",
+        ),
+    );
+    assert!(!rule_has_groups(&results, 1));
 }
 
 #[test]
@@ -1563,4 +1560,41 @@ fn shared_descent_rejects_decisions_and_loops_before_the_shared_rule() {
         ),
     );
     assert!(!rule_has_groups(&results, 1));
+}
+
+#[test]
+fn shared_descent_excludes_rules_whose_shared_rule_conflicts_with_member_tails() {
+    // In `DescentContext.g4`, `d`, `g`, and `k` call a shared rule (`r` or
+    // `h`) that can both exit and continue on a token of the member tails
+    // ('+' or 'as'), and `h`'s own members overlap on 'as' in FOLLOW(h).
+    // Condition 2 excludes all of them at compile time.
+    let results = classify(&grammars_dir().join("parser/DescentContext.g4"));
+    assert!(
+        results
+            .iter()
+            .all(|result| result.descent.is_none() && result.descent_group_states == 0),
+        "{results:?}"
+    );
+    // Distinct subrules `a` and `b` inside `r` that match the same input `ID`,
+    // after which `a` exits `r` while `b` continues with `'+' ID`.
+    let results = classify_source(
+        "DescentDistinctSubrules",
+        concat!(
+            "grammar DescentDistinctSubrules;\n",
+            "s : d EOF ;\n",
+            "d : r '+' ID ';' ID | r ';' ID INT ;\n",
+            "r : '(' r ')' | b '+' ID | a ;\n",
+            "a : '[' a ']' | ID ;\n",
+            "b : '[' b ']' | ID ;\n",
+            "ID : [a-z]+ ;\n",
+            "INT : [0-9]+ ;\n",
+            "WS : [ \\t\\n]+ -> skip ;\n",
+        ),
+    );
+    assert!(
+        results
+            .iter()
+            .all(|result| result.descent.is_none() && result.descent_group_states == 0),
+        "{results:?}"
+    );
 }

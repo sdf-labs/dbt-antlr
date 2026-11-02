@@ -435,8 +435,7 @@ impl DecisionResult {
     /// without escapes decides on its own; everything else keeps at least one
     /// adaptive path. A decision that `--static-dfa-only` resolved never falls
     /// back. The arm of a shared-descent group still calls `adaptivePredict`
-    /// after an errorful neutral parse, and for a tail token that no arm
-    /// takes.
+    /// when the group cannot start (for example in the SLL prediction mode).
     pub(crate) fn is_fully_static(&self) -> bool {
         if self.static_only.is_some() {
             return true;

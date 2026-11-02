@@ -18,10 +18,9 @@ use crate::parser_atn_simulator::ParserATNSimulator;
 use crate::prediction_mode::PredictionMode;
 use crate::recognizer::{Actions, Recognizer};
 use crate::rule_context::{states_stack, RuleContext as _};
-use crate::token::{OwningToken, Token, TOKEN_EOF, TOKEN_EPSILON};
+use crate::token::{OwningToken, Token, TOKEN_EOF};
 use crate::token_factory::TokenFactory;
 use crate::token_stream::TokenStream;
-use crate::transition::RuleTransition;
 use crate::tree::{NodeKindType, ParseTreeListener, Tree as _, TreeNode};
 use crate::utils::cell_update;
 use crate::vocabulary::Vocabulary;
@@ -97,11 +96,12 @@ where
 
     fn is_expected_token(&self, symbol: i32) -> bool;
 
-    /// Called when a prediction reads the rule invocation stack: a
-    /// full-context simulation or a stack guard. A shared-descent group
-    /// discards a neutral parse that did, because the stack of the neutral
-    /// parse is the one of a single member.
-    fn note_stack_dependent_prediction(&self) {}
+    /// The `(parent_ctx_ptr, call_sites)` pairs of the active neutral parses,
+    /// outermost first.
+    #[doc(hidden)]
+    fn neutral_call_sites(&self) -> &[(*const (), &'static [i32])] {
+        &[]
+    }
     fn get_precedence(&self) -> i32;
 
     fn get_state(&self) -> i32;
@@ -118,26 +118,14 @@ where
 /// restores (see [`BaseParser::begin_neutral_parse`]).
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct NeutralParse<'input, 'arena, Node, Tok>
-where
-    'input: 'arena,
-    Node: NodeKindType<'arena, Tok>,
-    Tok: Token + 'input,
-{
+pub struct NeutralParse {
     start_index: isize,
     mark: isize,
     /// The stream index where the shared rule starts, after the prefix.
     shared_index: isize,
     state: i32,
-    ctx: Option<&'arena TreeNode<'input, 'arena, Node, Tok>>,
     children: usize,
-    precedence_depth: usize,
-    syntax_errors: i32,
-    /// [`BaseParser::stack_dependent`] of the enclosing neutral parse.
-    outer_stack_dependent: bool,
     matched_eof: bool,
-    #[cfg(feature = "recursion-limit")]
-    recursion_depth: u32,
 }
 
 /// A shared rule parsed by a neutral parse, waiting for the re-descent to call
@@ -212,16 +200,16 @@ where
     parse_listeners: Vec<Box<Node::Listener>>,
     _syntax_errors: Cell<i32>,
     error_listeners: Vec<ErrorListenerDelegate<'input, 'arena, Self, TF::Tok>>,
-    /// Mutes the parse and error listeners while it is above zero. A counter,
-    /// because the neutral parses of nested shared-descent groups nest (see
+    /// Mutes the parse listeners while it is above zero. A counter, because
+    /// the neutral parses of nested shared-descent groups nest (see
     /// [`Self::begin_neutral_parse`]).
     muted: u32,
     /// The pending re-descent of a shared-descent group (see
     /// [`Self::resume_neutral_parse`]).
     resume: Option<Resume<'input, 'arena, Node, TF::Tok>>,
-    /// Whether a prediction of the current neutral parse read the rule
-    /// invocation stack (see [`Parser::note_stack_dependent_prediction`]).
-    stack_dependent: Cell<bool>,
+    /// The `(parent_ctx_ptr, call_sites)` pairs of the active neutral parses,
+    /// outermost first.
+    neutral_call_sites: Vec<(*const (), &'static [i32])>,
 
     pub arena: &'arena Arena,
     ext: Ext,
@@ -450,9 +438,6 @@ where
         err: Option<&ANTLRError>,
     ) {
         cell_update(&self._syntax_errors, |it| it + 1);
-        if self.muted > 0 {
-            return;
-        }
         let offending_token: Option<&_> = match offending_token {
             None => Some(self.get_current_token().borrow()),
             Some(x) => Some(self.input.get(x).borrow()),
@@ -475,27 +460,22 @@ where
     fn get_error_lister_dispatch<'a>(
         &'a self,
     ) -> Box<dyn ErrorListener<'input, 'arena, Self, TF::Tok> + 'a> {
-        // The ambiguity reports of a muted neutral parse are muted too.
-        let delegates: &[_] = if self.muted > 0 {
-            &[]
-        } else {
-            self.error_listeners.borrow()
-        };
-        Box::new(ProxyErrorListener { delegates })
+        Box::new(ProxyErrorListener {
+            delegates: self.error_listeners.borrow(),
+        })
     }
 
     fn is_expected_token(&self, _symbol: i32) -> bool {
         unimplemented!()
     }
 
-    fn note_stack_dependent_prediction(&self) {
-        if self.muted > 0 {
-            self.stack_dependent.set(true);
-        }
-    }
-
     fn get_precedence(&self) -> i32 {
         *self.precedence_stack.last().unwrap_or(&-1)
+    }
+
+    #[inline(always)]
+    fn neutral_call_sites(&self) -> &[(*const (), &'static [i32])] {
+        &self.neutral_call_sites
     }
 
     #[inline(always)]
@@ -584,7 +564,7 @@ where
             )],
             muted: 0,
             resume: None,
-            stack_dependent: Cell::new(false),
+            neutral_call_sites: Vec::new(),
             arena,
             ext,
             pd: PhantomData,
@@ -630,7 +610,6 @@ where
     pub fn dfa_predict_virtual(&mut self, decision: i32) -> Result<i32, ANTLRError> {
         self.dfa_walk(decision)
     }
-
     /// The table walk of [`Self::dfa_predict`] and
     /// [`Self::dfa_predict_virtual`].
     fn dfa_walk(&mut self, decision: i32) -> Result<i32, ANTLRError> {
@@ -662,7 +641,6 @@ where
                 };
             }
             if accept == GUARDED {
-                self.note_stack_dependent_prediction();
                 // A guarded conflict (an optional-postfix take or a precedence
                 // loop's iterate) resolves to the guarded alternative unless
                 // the real parse stack's epsilon-pop chase can reach a guard
@@ -675,13 +653,37 @@ where
                     if invoking_state < 0 {
                         break;
                     }
+                    let parent = node.get_parent();
+                    let parent_ptr =
+                        parent.map_or(std::ptr::null(), |p| p as *const _ as *const ());
+                    if let Some((_, call_sites)) =
+                        self.neutral_call_sites.iter().find(|&&(ptr, sites)| {
+                            ptr == parent_ptr && sites.first() == Some(&invoking_state)
+                        })
+                    {
+                        if call_sites
+                            .iter()
+                            .any(|&site| table.guard_step(site) == Some(true))
+                        {
+                            defers = true;
+                            break;
+                        }
+                        if call_sites
+                            .iter()
+                            .all(|&site| table.guard_step(site) == Some(false))
+                        {
+                            break;
+                        }
+                        context = parent;
+                        continue;
+                    }
                     match table.guard_step(invoking_state) {
                         Some(true) => {
                             defers = true;
                             break;
                         }
                         Some(false) => break,
-                        None => context = node.get_parent(),
+                        None => context = parent,
                     }
                 }
                 self.input.seek(start_index);
@@ -739,55 +741,6 @@ where
         self.input.release(mark);
         result
     }
-
-    /// Whether `token` can follow the current rule on the real parse stack.
-    ///
-    /// Walks the context frames upward. At each frame, the token follows when
-    /// it starts the caller's continuation after the frame's call site; the
-    /// walk goes on to the next frame only while that continuation can
-    /// complete without a token. Above the outermost frame only EOF follows.
-    /// The guarded tail arm of a shared-descent group commits only when this
-    /// is `false`, because the group's nullable member is then dead.
-    pub fn follow_contains(&self, token: i32) -> bool {
-        self.follow_contains_at(self.ctx(), token)
-    }
-
-    /// [`Self::follow_contains`] for the stack whose innermost frame is
-    /// `context`.
-    #[doc(hidden)]
-    pub fn follow_contains_at(
-        &self,
-        mut context: Option<&'arena TreeNode<'input, 'arena, Node, TF::Tok>>,
-        token: i32,
-    ) -> bool {
-        self.note_stack_dependent_prediction();
-        let atn = self.get_interpreter().atn();
-        while let Some(node) = context {
-            let invoking_state = node.get_invoking_state();
-            if invoking_state < 0 {
-                break;
-            }
-            let Some(call) = atn
-                .get_state(invoking_state)
-                .get_transitions()
-                .first()
-                .and_then(|transition| transition.try_as::<RuleTransition>())
-            else {
-                // Not a call site: assume the token can follow.
-                return true;
-            };
-            let continuation = atn.next_tokens::<TF::Tok>(&call.follow_state);
-            if continuation.contains(token) {
-                return true;
-            }
-            if !continuation.contains(TOKEN_EPSILON) {
-                return false;
-            }
-            context = node.get_parent();
-        }
-        token == TOKEN_EOF
-    }
-
     /// Whether a shared-descent group can start a neutral parse here.
     ///
     /// A group cannot start while the re-descent of another group is pending,
@@ -817,20 +770,22 @@ where
     }
 
     /// Starts the neutral parse of a shared-descent group: the generated block
-    /// calls the shared rule once, with every listener muted, to read the
+    /// calls the shared rule once, with parse listeners muted, to read the
     /// token after it.
     ///
     /// Skips the `prefix_len` leading tokens of the group (the table walk read
-    /// them) and sets the call-site state, so the shared rule's context has a
-    /// real invoking state. Finish with [`Self::end_neutral_parse`] to discard
-    /// the parse, or with [`Self::resume_neutral_parse`] to keep its subtree
-    /// for the re-descent.
+    /// them) and records the group's member `call_sites` so the shared rule's
+    /// context has a real invoking state and full-context prediction inside it
+    /// sees every member's follow state. Finish with
+    /// [`Self::resume_neutral_parse`] to keep its subtree for the re-descent,
+    /// or [`Self::abort_neutral_parse`] when the shared rule exits with an
+    /// unrecoverable error.
     #[doc(hidden)]
     pub fn begin_neutral_parse(
         &mut self,
-        call_site: i32,
+        call_sites: &'static [i32],
         prefix_len: usize,
-    ) -> NeutralParse<'input, 'arena, Node, TF::Tok> {
+    ) -> NeutralParse {
         let ctx = self.ctx();
         let start_index = self.input.index();
         let mark = self.input.mark();
@@ -846,54 +801,42 @@ where
             mark,
             shared_index: self.input.index(),
             state: self.state,
-            ctx,
             children: ctx.map_or(0, |ctx| ctx.get_child_count()),
-            precedence_depth: self.precedence_stack.len(),
-            syntax_errors: self._syntax_errors.get(),
-            outer_stack_dependent: self.muted > 0 && self.stack_dependent.get(),
             matched_eof: self.matched_eof,
-            #[cfg(feature = "recursion-limit")]
-            recursion_depth: self.current_recursion_depth,
         };
-        self.stack_dependent.set(false);
+        self.neutral_call_sites.push((self.ctx, call_sites));
         self.muted += 1;
-        self.state = call_site;
+        self.state = call_sites.first().copied().unwrap_or(-1);
         neutral
     }
 
-    /// Whether the subtree of the neutral parse is the one every member would
-    /// parse: the parse reported no syntax error, and no prediction in it read
-    /// the rule invocation stack, which holds the call site of one member only.
+    /// Releases a neutral parse when the shared rule returned an
+    /// unrecoverable error.
     #[doc(hidden)]
-    pub fn neutral_parse_usable(
-        &self,
-        neutral: &NeutralParse<'input, 'arena, Node, TF::Tok>,
-    ) -> bool {
-        self._syntax_errors.get() == neutral.syntax_errors && !self.stack_dependent.get()
-    }
-
-    /// Discards a neutral parse: rewinds the stream to the decision start and
-    /// restores the parser state of [`Self::begin_neutral_parse`].
-    #[doc(hidden)]
-    pub fn end_neutral_parse(&mut self, neutral: NeutralParse<'input, 'arena, Node, TF::Tok>) {
-        self.restore_neutral_state(&neutral);
+    pub fn abort_neutral_parse(&mut self, neutral: NeutralParse) {
+        debug_assert!(self.muted > 0, "no neutral parse is active");
+        self.muted -= 1;
+        self.neutral_call_sites.pop();
         self.input.release(neutral.mark);
     }
 
     /// Finishes a neutral parse and keeps the subtree `node` of the shared rule
     /// `rule` for the re-descent.
     ///
-    /// Rewinds the stream to the decision start like
-    /// [`Self::end_neutral_parse`]. The member alternative then re-descends
-    /// through its prefix to its call of the shared rule, where
-    /// [`Self::resume_take`] returns `node` instead of parsing it again.
+    /// Rewinds the stream to the decision start and detaches `node` from the
+    /// current context so the member alternative can re-descend through its
+    /// prefix to its call of the shared rule, where [`Self::resume_take`]
+    /// grafts `node` back and seeks to the tail.
     #[doc(hidden)]
     pub fn resume_neutral_parse(
         &mut self,
-        neutral: NeutralParse<'input, 'arena, Node, TF::Tok>,
+        neutral: NeutralParse,
         node: &'arena TreeNode<'input, 'arena, Node, TF::Tok>,
         rule: usize,
     ) {
+        debug_assert!(self.muted > 0, "no neutral parse is active");
+        self.muted -= 1;
+        self.neutral_call_sites.pop();
         // The mark stays until the re-descent seeks forward to the tail.
         self.resume = Some(Resume {
             node,
@@ -903,30 +846,12 @@ where
             matched_eof: self.matched_eof,
             mark: neutral.mark,
         });
-        self.restore_neutral_state(&neutral);
-    }
-
-    fn restore_neutral_state(&mut self, neutral: &NeutralParse<'input, 'arena, Node, TF::Tok>) {
-        debug_assert!(self.muted > 0, "no neutral parse is active");
-        self.muted -= 1;
         self.input.seek(neutral.start_index);
-        self.set_current_ctx(neutral.ctx);
-        // Truncate rather than pop: a left-recursive shared rule adds its
-        // context to the parent only when it unrolls, so an error can leave
-        // no child behind.
         if let Some(ctx) = unsafe { self.ctx_mut() } {
             ctx.truncate_children(neutral.children);
         }
-        self.precedence_stack.truncate(neutral.precedence_depth);
         self.state = neutral.state;
         self.matched_eof = neutral.matched_eof;
-        // The predictions of this neutral parse belong to the enclosing one.
-        self.stack_dependent
-            .set(neutral.outer_stack_dependent || self.stack_dependent.get());
-        #[cfg(feature = "recursion-limit")]
-        {
-            self.current_recursion_depth = neutral.recursion_depth;
-        }
     }
 
     /// Returns the subtree that a neutral parse kept for the shared rule

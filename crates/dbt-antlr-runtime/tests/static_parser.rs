@@ -362,10 +362,19 @@ fn parse_fuzz_static(input: &str) -> Result<String, String> {
         );
         let tokens = CommonTokenStream::new(lexer);
         let mut parser = gen::fuzzexprparser_static::FuzzExprParser::new(arena, tokens);
-        parser
+        let listener = CollectingErrorListener::default();
+        let messages = listener.messages.clone();
+        parser.remove_error_listeners();
+        parser.add_error_listener(Box::new(listener));
+        let tree = parser
             .s()
             .map(|ctx| string_tree(ctx, parser.get_rule_names()))
-            .map_err(|e| format!("{e:?}"))
+            .map_err(|e| format!("{e:?}"))?;
+        let errors = messages.borrow().clone();
+        if !errors.is_empty() {
+            return Err(errors.join("; "));
+        }
+        Ok(tree)
     })
 }
 
@@ -377,10 +386,19 @@ fn parse_fuzz_adaptive(input: &str) -> Result<String, String> {
         );
         let tokens = CommonTokenStream::new(lexer);
         let mut parser = gen::fuzzexprparser::FuzzExprParser::new(arena, tokens);
-        parser
+        let listener = CollectingErrorListener::default();
+        let messages = listener.messages.clone();
+        parser.remove_error_listeners();
+        parser.add_error_listener(Box::new(listener));
+        let tree = parser
             .s()
             .map(|ctx| string_tree(ctx, parser.get_rule_names()))
-            .map_err(|e| format!("{e:?}"))
+            .map_err(|e| format!("{e:?}"))?;
+        let errors = messages.borrow().clone();
+        if !errors.is_empty() {
+            return Err(errors.join("; "));
+        }
+        Ok(tree)
     })
 }
 
@@ -517,6 +535,10 @@ fn fuzz_valid_expressions() {
     let mut rng = Rng(0x5EED_0001);
     for _ in 0..400 {
         let input = gen_input(&mut rng);
+        assert!(
+            parse_fuzz_adaptive(&input).is_ok(),
+            "valid input had syntax error: {input:?}"
+        );
         assert_fuzz_equivalent(&input);
     }
 }

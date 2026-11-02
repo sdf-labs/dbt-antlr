@@ -1,7 +1,8 @@
-// Shared-descent groups whose shared rule can parse differently for different
-// members. The neutral parse of the shared rule runs with the call site of one
-// member only, so a prediction in it that reads the parse stack makes the
-// parser discard the neutral parse and predict adaptively.
+// Shared-descent candidates whose shared rule can both exit and continue on a
+// token that disambiguates the members at the shared call site. Condition 2
+// excludes all of `d`, `g`, `k`, and `h` from shared-descent groups at compile
+// time, so the static parser never starts a neutral parse that would need to
+// be reverted.
 grammar DescentContext;
 
 s : 'one' ('prefix' d INT | d) EOF

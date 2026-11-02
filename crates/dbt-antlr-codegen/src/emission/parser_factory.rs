@@ -1718,23 +1718,12 @@ impl RuleWalk<'_, '_> {
             .is_some_and(|tables| tables.atn_fallback() == AtnFallback::Forbidden);
         DescentGroupModel {
             virtual_alt: group.virtual_alt,
-            call_site: group.call_site,
+            call_sites: group.call_sites.clone(),
             prefix_len: group.prefix.len(),
             rule_name: rule.name.clone(),
             invoke,
-            tails: group
-                .arms
-                .iter()
-                .filter(|arm| !arm.guarded)
-                .map(tail)
-                .collect(),
-            guarded_tails: group
-                .arms
-                .iter()
-                .filter(|arm| arm.guarded)
-                .map(tail)
-                .collect(),
-            default_alt: group.default_alt,
+            tails: group.arms.iter().map(tail).collect(),
+            default_alt: group.default_or_min_alt(),
             static_fallback: static_only.then(|| group.min_alt()),
         }
     }

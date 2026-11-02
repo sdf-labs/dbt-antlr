@@ -866,22 +866,13 @@ fn descent_dump_lines(report: &StaticParserDfaReport, plan: Option<&DescentPlan>
                     .iter()
                     .map(|token| token_name(&report.vocabulary, *token))
                     .collect();
-                text.push_str(&format!(
-                    " alt {} on {}{}",
-                    arm.alt,
-                    tokens.join(" "),
-                    if arm.guarded {
-                        " (unless it can follow the rule)"
-                    } else {
-                        ""
-                    }
-                ));
+                text.push_str(&format!(" alt {} on {}", arm.alt, tokens.join(" ")));
                 text.push(';');
             }
             if group.default_alt > 0 {
                 text.push_str(&format!(" otherwise alt {}", group.default_alt));
             } else {
-                text.push_str(" otherwise full prediction");
+                text.push_str(&format!(" default alt {}", group.min_alt()));
             }
             text
         })

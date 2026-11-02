@@ -333,8 +333,8 @@ pub struct ChoiceModel {
 pub struct DescentGroupModel {
     /// The virtual alternative the table accepts with for the group.
     pub virtual_alt: i32,
-    /// The call-site state of the shared rule for the neutral parse.
-    pub call_site: i32,
+    /// The call-site states of the members' calls of the shared rule.
+    pub call_sites: Vec<i32>,
     /// The number of leading tokens before the shared rule.
     pub prefix_len: usize,
     /// The shared rule name, as `RULE_<name>` spells it.
@@ -342,12 +342,9 @@ pub struct DescentGroupModel {
     /// The call of the shared rule: `<name>()`, or `<name>_rec(<p>)` for a
     /// left-recursive rule.
     pub invoke: String,
-    /// The unguarded tail arms.
+    /// The tail arms.
     pub tails: Vec<DescentTailModel>,
-    /// The tail arms that commit only when the token cannot follow the
-    /// decision rule.
-    pub guarded_tails: Vec<DescentTailModel>,
-    /// The alternative of every other token, `0` to fall back.
+    /// The member alternative that every other token selects.
     pub default_alt: i32,
     /// The alternative a fallback predicts under `--static-dfa-only`; `None`
     /// falls back to `adaptivePredict`.

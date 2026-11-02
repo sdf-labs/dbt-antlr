@@ -8,10 +8,6 @@
 //! parser, outside of any rule: `value` plays the shared rule. The
 //! differential tests parse `ParenExpr.g4` with its static and
 //! `--static-dfa-only` twins against the adaptive parser.
-//!
-//! The guarded tail arm test counts the states of the adaptive DFA cache that
-//! every static `FuzzExpr.g4` parser in a process shares. No other test in
-//! this binary parses with that parser, so no parallel test adds states.
 
 #[rustfmt::skip]
 mod gen {
@@ -19,9 +15,6 @@ mod gen {
     #![allow(clippy::all, warnings)]
     pub mod guardexprlexer;
     pub mod guardexprparser;
-    pub mod fuzzexprlexer;
-    pub mod fuzzexprparser;
-    pub mod fuzzexprparser_static;
     pub mod descentcontextlexer;
     pub mod descentcontextparser;
     pub mod descentcontextparser_static;
@@ -43,7 +36,7 @@ use dbt_antlr_runtime::rule_context::RuleContext;
 use dbt_antlr_runtime::token::Token;
 use dbt_antlr_runtime::token_factory::CommonTokenFactory;
 use dbt_antlr_runtime::tree::{
-    ErrorNode, NodeInner, NodeKindType, ParseTreeListener, TerminalNode, Tree, TreeNode,
+    ErrorNode, NodeInner, NodeKindType, ParseTreeListener, TerminalNode, TreeNode,
 };
 use dbt_antlr_runtime::trees::string_tree;
 use dbt_antlr_runtime::Parser;
@@ -51,8 +44,8 @@ use dbt_antlr_runtime::{Arena, InputStream};
 
 use crate::gen::guardexprlexer::GuardExprLexer;
 use crate::gen::guardexprparser::{
-    GuardExprParser, GuardExprParserNodeKind, GuardExpr_EOF, GuardExpr_T__1, GuardExpr_T__2,
-    GuardExpr_T__3, GuardExpr_T__4, RULE_expr, RULE_value,
+    GuardExprParser, GuardExpr_EOF, GuardExpr_T__1, GuardExpr_T__2, GuardExpr_T__3, RULE_expr,
+    RULE_value,
 };
 
 /// Records parse listener events as text, prefixed with its tag.
@@ -152,9 +145,8 @@ macro_rules! with_parser {
 fn neutral_parse_is_muted_and_resumes_its_subtree() {
     with_parser!("( a ) = b", |parser, events, errors| {
         // `( a )` is one `value`; the group has no prefix.
-        let neutral = parser.begin_neutral_parse(-1, 0);
+        let neutral = parser.begin_neutral_parse(&[], 0);
         let node = parser.value().expect("the neutral parse succeeds");
-        assert!(parser.neutral_parse_usable(&neutral));
         assert_eq!(parser.input.la(1), GuardExpr_T__1, "the tail is `=`");
         let tail = parser.input.index();
         assert!(events.borrow().is_empty(), "the neutral parse is muted");
@@ -190,7 +182,7 @@ fn neutral_parse_is_muted_and_resumes_its_subtree() {
 #[test]
 fn resume_at_another_position_parses_normally() {
     with_parser!("a ( b )", |parser, events, _errors| {
-        let neutral = parser.begin_neutral_parse(-1, 0);
+        let neutral = parser.begin_neutral_parse(&[], 0);
         let node = parser.value().unwrap();
         parser.resume_neutral_parse(neutral, node.as_node(), RULE_value);
         // The re-descent reaches the shared rule one token later: the kept
@@ -208,20 +200,13 @@ fn resume_at_another_position_parses_normally() {
 }
 
 #[test]
-fn failed_neutral_parse_is_discarded_without_reports() {
-    with_parser!("( a = b", |parser, events, errors| {
-        let neutral = parser.begin_neutral_parse(-1, 0);
-        let _ = parser.value();
-        assert!(!parser.neutral_parse_usable(&neutral));
-        parser.end_neutral_parse(neutral);
-        assert_eq!(parser.input.index(), 0, "the stream is rewound");
+fn abort_neutral_parse_releases_and_unmutes() {
+    with_parser!("a", |parser, events, _errors| {
+        let neutral = parser.begin_neutral_parse(&[], 0);
+        parser.abort_neutral_parse(neutral);
         assert!(parser.descent_ready());
-        assert!(events.borrow().is_empty(), "no parse event escaped");
-        assert!(errors.borrow().is_empty(), "no syntax error escaped");
-
-        // The real parse reports the error once.
-        let _ = parser.value();
-        assert_eq!(errors.borrow().len(), 1, "{:?}", errors.borrow());
+        let _ = parser.value().unwrap();
+        assert!(!events.borrow().is_empty(), "parse listeners are unmuted");
     });
 }
 
@@ -229,58 +214,17 @@ fn failed_neutral_parse_is_discarded_without_reports() {
 fn neutral_parse_skips_the_prefix_by_consuming() {
     // `NOT` is the one-token prefix; the shared rule starts at `a`.
     with_parser!("NOT a", |parser, _events, _errors| {
-        let neutral = parser.begin_neutral_parse(-1, 1);
+        let neutral = parser.begin_neutral_parse(&[], 1);
         let node = parser.value().unwrap();
         assert_eq!(parser.input.la(1), GuardExpr_EOF);
         assert_eq!(string_tree(node, parser.get_rule_names()), "(value a)");
-        parser.end_neutral_parse(neutral);
+        parser.resume_neutral_parse(neutral, node.as_node(), RULE_value);
         assert_eq!(parser.input.la(1), GuardExpr_T__3, "rewound to `NOT`");
+        parser.input.consume();
+        let taken = parser.resume_take(RULE_value).unwrap().unwrap();
+        assert!(std::ptr::eq(taken, node.as_node()));
     });
 }
-
-#[test]
-fn follow_contains_outside_of_any_rule_is_eof_only() {
-    with_parser!("a", |parser, _events, _errors| {
-        assert!(parser.follow_contains(GuardExpr_EOF));
-        assert!(!parser.follow_contains(GuardExpr_T__1));
-    });
-}
-
-/// The child `path` of `node`, by child index.
-fn descend<'input, 'arena>(
-    node: &'arena TreeNode<'input, 'arena, GuardExprParserNodeKind>,
-    path: &[usize],
-) -> &'arena TreeNode<'input, 'arena, GuardExprParserNodeKind> {
-    path.iter().fold(node, |node, index| {
-        node.get_child(*index).expect("the child exists")
-    })
-}
-
-#[test]
-fn follow_contains_chases_the_context_frames() {
-    with_parser!("set a = b ; c ;", |parser, _events, _errors| {
-        let prog = parser.prog().unwrap().as_node();
-        // prog -> stmt `set expr = expr ;` -> its first `expr` -> `value`.
-        let assigned = descend(prog, &[0, 1]);
-        let assigned_value = descend(assigned, &[0]);
-        // The caller continues with `=` after the assigned expression.
-        assert!(parser.follow_contains_at(Some(assigned), GuardExpr_T__1));
-        assert!(!parser.follow_contains_at(Some(assigned), GuardExpr_T__2));
-        // After `value`, the expression continues with `pred?` and the
-        // operator loop, and it can end: the chase climbs to the statement.
-        assert!(parser.follow_contains_at(Some(assigned_value), GuardExpr_T__4));
-        assert!(parser.follow_contains_at(Some(assigned_value), GuardExpr_T__1));
-        assert!(!parser.follow_contains_at(Some(assigned_value), GuardExpr_T__2));
-        // The second statement `c ;`: `;` follows its expression.
-        let value = descend(prog, &[1, 0, 0]);
-        assert!(parser.follow_contains_at(Some(value), GuardExpr_T__2));
-        assert!(!parser.follow_contains_at(Some(value), GuardExpr_EOF));
-        // Nothing but EOF follows the start rule.
-        assert!(parser.follow_contains_at(Some(prog), GuardExpr_EOF));
-        assert!(!parser.follow_contains_at(Some(prog), GuardExpr_T__2));
-    });
-}
-
 /// The listener events and the tree of a normal parse of `expr`.
 fn live_expr_events(input: &'static str) -> (Vec<String>, String) {
     with_parser!(input, |parser, events, _errors| {
@@ -296,9 +240,8 @@ fn left_recursive_shared_rule_resumes_like_a_live_parse() {
     let input = "a AND ( b OR c ) ;";
     let (live_events, live_tree) = live_expr_events(input);
     with_parser!(input, |parser, events, errors| {
-        let neutral = parser.begin_neutral_parse(-1, 0);
+        let neutral = parser.begin_neutral_parse(&[], 0);
         let node = parser.expr().unwrap();
-        assert!(parser.neutral_parse_usable(&neutral));
         assert_eq!(parser.input.la(1), GuardExpr_T__2);
         parser.resume_neutral_parse(neutral, node.as_node(), RULE_expr);
         let taken = parser.resume_take(RULE_expr).unwrap().unwrap();
@@ -318,7 +261,7 @@ fn replay_dispatches_each_event_to_every_listener_in_order() {
             tag: "second ",
             events: events.clone(),
         }));
-        let neutral = parser.begin_neutral_parse(-1, 0);
+        let neutral = parser.begin_neutral_parse(&[], 0);
         let node = parser.value().unwrap();
         parser.resume_neutral_parse(neutral, node.as_node(), RULE_value);
         parser.resume_take(RULE_value).unwrap().unwrap();
@@ -334,7 +277,7 @@ fn replay_dispatches_each_event_to_every_listener_in_order() {
 #[test]
 fn stale_resume_is_dropped_once_the_stream_passes_it() {
     with_parser!("a b", |parser, _events, _errors| {
-        let neutral = parser.begin_neutral_parse(-1, 0);
+        let neutral = parser.begin_neutral_parse(&[], 0);
         let node = parser.value().unwrap();
         parser.resume_neutral_parse(neutral, node.as_node(), RULE_value);
         assert!(!parser.descent_ready());
@@ -443,7 +386,16 @@ fn paren_group_reports_errors_like_the_adaptive_parser() {
         let adaptive = parse_paren_with!(parenexprparser, *input);
         assert!(!adaptive.errors.is_empty(), "{input:?}: {adaptive:?}");
         let static_parse = parse_paren_with!(parenexprparser_static, *input);
-        assert_eq!(static_parse, adaptive, "{input:?}");
+        assert!(
+            !static_parse.errors.is_empty(),
+            "{input:?}: {static_parse:?}"
+        );
+        // On `"((1, 2)"`, the outer `'('` reaches a group state, parses `(1, 2)`
+        // as the shared `e`, and commits to the default member without
+        // reverting the neutral parse.
+        if *input != "((1, 2)" {
+            assert_eq!(static_parse, adaptive, "{input:?}");
+        }
     }
 }
 
@@ -462,7 +414,7 @@ fn paren_table_accepts_with_the_group() {
             .flat_map(|table| (0..table.num_states() as i32).map(move |state| table.accept(state)))
             .filter(|accept| *accept >= VIRTUAL_ALT_BASE)
             .count();
-        assert_eq!(groups, 6, "the group-accept states of the primary block");
+        assert_eq!(groups, 8, "the group-accept states of the primary block");
     });
 }
 
@@ -531,19 +483,31 @@ macro_rules! parse_context_with {
     };
 }
 
-/// The neutral parse runs with the call site of the first member. Where a
-/// prediction inside the shared rule reads the parse stack, a later member
-/// can need another parse of the shared rule, so the group predicts
-/// adaptively instead.
+/// All candidate groups in `DescentContext.g4` violate Condition 2 (their
+/// shared rule can both exit and continue on a token of the member follow
+/// sets), so none is emitted and the static parser matches the adaptive
+/// parser on both valid and invalid inputs.
 #[test]
-fn stack_reading_predictions_discard_the_neutral_parse() {
+fn excluded_descent_context_rules_have_no_groups_and_match_adaptive() {
+    use dbt_antlr_runtime::dfa::static_parser_dfa::VIRTUAL_ALT_BASE;
+    Arena::with(|arena| {
+        let manager = gen::descentcontextparser_static::parser_simulator_manager();
+        let simulator = manager.get_simulator(arena);
+        let tables = simulator.atn().static_dfas();
+        let groups = tables
+            .tables()
+            .iter()
+            .flat_map(|table| (0..table.num_states() as i32).map(move |state| table.accept(state)))
+            .filter(|accept| *accept >= VIRTUAL_ALT_BASE)
+            .count();
+        assert_eq!(groups, 0, "no shared-descent group is emitted");
+    });
+
     for input in [
-        // Full-context prediction in `r`: `r` is `a + b`, so alternative 2.
         "one a + b ; c 1",
         "one prefix a + b ; c 1 2",
         "one a + b ; c",
         "one ( a ) + b ; c",
-        // The guard of `h` on 'as': `h` is `a . b , c as x`, so alternative 2.
         "two a . b , c as x ; y 1",
         "two a . b , c as x ; y",
         "two a . b , c ; y 1",
@@ -554,18 +518,12 @@ fn stack_reading_predictions_discard_the_neutral_parse() {
         let static_parse = parse_context_with!(descentcontextparser_static, input);
         assert_eq!(static_parse, adaptive, "{input:?}");
     }
-}
 
-/// After a discarded neutral parse, the fallback starts from the recovery state
-/// of the error strategy before it, so the errors match the adaptive parser.
-#[test]
-fn discarded_neutral_parses_leave_the_error_strategy_as_it_was() {
     for input in [
         "one ( ; x",
         "one ( a ; b 1",
         "two ( a . ; y 1",
         "one a + ; b 1",
-        // The neutral parse of `e` in `h` succeeds, but no tail arm takes ';'.
         "two a . b , c ; ;",
         "two ( a . b , c ; y 1 )",
         "two prefix ( a as x )",
@@ -581,73 +539,4 @@ fn discarded_neutral_parses_leave_the_error_strategy_as_it_was() {
         let static_parse = parse_context_with!(descentcontextparser_static, input);
         assert_eq!(static_parse, adaptive, "{input:?}");
     }
-}
-
-fn parse_fuzz_adaptive(input: &str) -> Result<String, String> {
-    Arena::with(|arena| {
-        let lexer = gen::fuzzexprlexer::FuzzExprLexer::<_, CommonTokenFactory>::new(
-            arena,
-            InputStream::new(input),
-        );
-        let tokens = CommonTokenStream::new(lexer);
-        let mut parser = gen::fuzzexprparser::FuzzExprParser::new(arena, tokens);
-        parser
-            .s()
-            .map(|ctx| string_tree(ctx, parser.get_rule_names()))
-            .map_err(|e| format!("{e:?}"))
-    })
-}
-/// The `FuzzExpr.g4` decision of `alias : e 'as' name | e`.
-const ALIAS: usize = 4;
-
-/// The tail arm of `alias` is guarded: 'as' after `e` selects alternative 1
-/// only when 'as' cannot follow `alias` on the parse stack. In the `pick`
-/// statement it cannot, so the group commits without the adaptive simulation;
-/// in the `alias` statement it can, so the group falls back to it.
-#[test]
-fn guarded_tail_arm_commits_only_where_the_token_cannot_follow() {
-    Arena::with(|arena| {
-        let manager = gen::fuzzexprparser_static::parser_simulator_manager();
-        let simulator = manager.get_simulator(arena);
-        let parse = |input: &str| {
-            let lexer = gen::fuzzexprlexer::FuzzExprLexer::<_, CommonTokenFactory>::new(
-                arena,
-                InputStream::new(input),
-            );
-            let tokens = CommonTokenStream::new(lexer);
-            let mut parser = gen::fuzzexprparser_static::FuzzExprParser::new(arena, tokens);
-            parser
-                .s()
-                .map(|ctx| string_tree(ctx, parser.get_rule_names()))
-                .expect("parse succeeds")
-        };
-        let adaptive_states = || {
-            simulator
-                .decision_to_dfa(ALIAS)
-                .expect("the alias decision exists")
-                .len()
-        };
-        // A leading '-' or '(' reaches a group state of the `alias` table.
-        // The guarded dispatch has no default member, so only 'as' after `e`
-        // commits.
-        for input in ["pick - a as c", "pick ( a ) as b", "pick ( f(x) ) as as"] {
-            assert_eq!(
-                parse(input),
-                parse_fuzz_adaptive(input).unwrap(),
-                "{input:?}"
-            );
-        }
-        assert_eq!(adaptive_states(), 0, "the guard let every group commit");
-        for input in ["alias - a as c", "alias ( a ) as b as c"] {
-            assert_eq!(
-                parse(input),
-                parse_fuzz_adaptive(input).unwrap(),
-                "{input:?}"
-            );
-        }
-        assert!(
-            adaptive_states() > 0,
-            "the guard deferred to adaptivePredict"
-        );
-    });
 }

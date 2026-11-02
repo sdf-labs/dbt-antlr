@@ -14,9 +14,9 @@ item
   | e
   ;
 
-// The same group as `item`, but 'as' can also follow `alias` (in the 'alias'
-// statement), so the tail arm of alternative 1 is guarded: it commits only when
-// 'as' cannot follow `alias` on the parse stack.
+// Unlike `item`, 'as' can also follow `alias` (in the 'alias' statement), so
+// the member follow sets at the shared call site overlap on 'as' and no
+// shared-descent group is formed.
 alias
   : e 'as' name
   | e
