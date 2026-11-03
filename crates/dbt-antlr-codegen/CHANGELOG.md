@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-codegen-v0.6.2...dbt-antlr-codegen-v0.7.0) - 2026-11-03
+
+### Added
+
+- *(g4-parser,runtime,codegen)* dogfood static DFA tables on the g4 front-end (Phase 7.1) ([#50](https://github.com/sdf-labs/dbt-antlr/pull/50))
+- *(codegen,runtime)* shared-descent groups for static parser tables (Phase 6) ([#42](https://github.com/sdf-labs/dbt-antlr/pull/42))
+
+### Fixed
+
+- *(runtime)* detect recursive lexer contexts on first recursive rule entry ([#51](https://github.com/sdf-labs/dbt-antlr/pull/51))
+
 ## [0.6.2](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-codegen-v0.6.1...dbt-antlr-codegen-v0.6.2) - 2026-11-02
 
 ### Added
