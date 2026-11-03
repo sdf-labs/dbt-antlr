@@ -1907,6 +1907,8 @@ mod tests {
             "lexer/StartAction.g4",
             "lexer/StartPred.g4",
             "lexer/StartRecurse.g4",
+            "lexer/RecursiveRule.g4",
+            "lexer/SharedComments.g4",
             "CSV.g4",
             "XMLLexer.g4",
         ]
@@ -1939,6 +1941,46 @@ mod tests {
                     "{name}: to_words(from_words(words)) == words"
                 );
             }
+        }
+    }
+
+    /// The accel tag is a `u16`, not a `u8`: a mode with 300 accelerated
+    /// states keeps every payload apart across the codec.
+    #[test]
+    fn accel_tags_beyond_a_u8_round_trip() {
+        const NUM_STATES: usize = 300;
+        let table = StaticLexerDFA {
+            start_state: 0,
+            low: vec![NO_EDGE; NUM_STATES * LOW_ROW],
+            class_of: Vec::new(),
+            hi_rows: Vec::new(),
+            row_of: Vec::new(),
+            num_classes: 0,
+            class_starts: Vec::new(),
+            accept_type: vec![-1; NUM_STATES],
+            accept_actions: vec![(0, 0); NUM_STATES],
+            actions: Vec::new(),
+            accel_tag: (1..=NUM_STATES as u16).collect(),
+            accel_data: (0..NUM_STATES)
+                .map(|state| Accel::Positive(state as u128))
+                .collect(),
+            eof_escape: vec![NO_CONTINUATION; NUM_STATES],
+            escape_off: vec![0; NUM_STATES + 1],
+            escape_ranges: Vec::new(),
+            continuations: Vec::new(),
+        };
+        let words = StaticLexerTables::from_modes(vec![Some(table)]).to_words();
+        let tables = StaticLexerTables::from_words(&words).expect("the words decode");
+        assert_eq!(tables.num_modes(), 1);
+        assert_eq!(tables.to_words(), words, "re-encoding reproduces the words");
+        let decoded = tables.mode(0).expect("mode 0");
+        assert_eq!(decoded.num_states(), NUM_STATES);
+        for state in [0u16, 1, 254, 255, 256, 299] {
+            assert_eq!(decoded.accel_tag(state), state + 1);
+            assert_eq!(
+                decoded.state_accel(state),
+                Some(Accel::Positive(u128::from(state)))
+            );
         }
     }
 

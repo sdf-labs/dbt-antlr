@@ -927,6 +927,35 @@ mod tests {
         }
     }
 
+    /// The checked-in recognizers are generated with the static DFA flags
+    /// (7.1): the lexer walks static tables and keeps its ATN for the
+    /// escaping ACTION rule, and the parser predicts its decisions from
+    /// static parser DFA tables.
+    #[test]
+    fn generated_recognizers_use_static_dfa_tables() {
+        let generated = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
+        let lexer = fs::read_to_string(generated.join("antlrv4lexer.rs"))
+            .expect("the generated lexer is readable");
+        assert!(
+            lexer.contains("static _STATIC_LEXER_TABLE_WORDS: [u32; "),
+            "the lexer embeds static lexer DFA tables"
+        );
+        assert!(
+            lexer.contains("new_with_static_lexer_tables"),
+            "the lexer installs the static tables"
+        );
+        assert!(
+            lexer.contains("static _serializedATN: [i32; "),
+            "the escaping rules keep the ATN for the lazy hand-off"
+        );
+        let parser = fs::read_to_string(generated.join("antlrv4parser.rs"))
+            .expect("the generated parser is readable");
+        assert!(
+            parser.contains(".dfa_predict("),
+            "the parser predicts from static parser DFA tables"
+        );
+    }
+
     #[test]
     fn malformed_bootstrap_inputs_fail_closed() {
         for name in ["BadAlternative.g4", "MissingDelimiter.g4"] {
