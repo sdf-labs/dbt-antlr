@@ -586,7 +586,7 @@ impl WildcardTransition {
     }
 
     fn matches(&self, _symbol: i32, _min_vocab_symbol: i32, _max_vocab_symbol: i32) -> bool {
-        _symbol < _max_vocab_symbol && _symbol > _min_vocab_symbol
+        _symbol >= _min_vocab_symbol && _symbol <= _max_vocab_symbol
     }
 }
 
@@ -712,5 +712,22 @@ impl ConcreteTransition for PrecedencePredicateTransition {
             TransitionType::PrecedencePredicate => Some(unsafe { &t.payload.precedence_predicate }),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::atn_state::ATNStateRef;
+
+    /// The wildcard matches the whole vocabulary range, bounds included (the
+    /// Java reference: `symbol >= min && symbol <= max`).
+    #[test]
+    fn wildcard_matches_the_vocabulary_range_inclusive() {
+        let wildcard = WildcardTransition::create(ATNStateRef::invalid());
+        assert!(wildcard.matches(0, 0, 100));
+        assert!(wildcard.matches(100, 0, 100));
+        assert!(!wildcard.matches(101, 0, 100));
+        assert!(!wildcard.matches(-1, 0, 100));
     }
 }

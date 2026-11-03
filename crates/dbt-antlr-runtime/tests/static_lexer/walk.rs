@@ -54,6 +54,8 @@ enum GrammarKind {
     StartRecurse,
     EofEscape,
     EofChain,
+    RecursiveRule,
+    SharedComments,
 }
 
 impl GrammarKind {
@@ -70,6 +72,8 @@ impl GrammarKind {
             GrammarKind::StartRecurse => "lexer/StartRecurse.g4",
             GrammarKind::EofEscape => "lexer/EofEscape.g4",
             GrammarKind::EofChain => "lexer/EofChain.g4",
+            GrammarKind::RecursiveRule => "lexer/RecursiveRule.g4",
+            GrammarKind::SharedComments => "lexer/SharedComments.g4",
         }
     }
 }
@@ -764,6 +768,134 @@ fn xml_lexer_match_lazy() {
     ];
     let (escapes, _) = run_corpus(&fixture, GrammarKind::Xml, &corpus, &fragments, 0xA11);
     assert!(escapes > 0, "escape edges crossed");
+}
+
+// ======= RecursiveRule: the recursive rule escapes at its first symbol =======
+
+#[test]
+fn recursive_rule_escapes_match_lazy() {
+    let fixture = compile(GrammarKind::RecursiveRule, &StaticLexerDfaBuilder::new());
+    let counts = fixture.build.modes[0].escape_counts;
+    assert_eq!(
+        counts.recursive_context, 3,
+        "two curly-brace edges into NESTED, one `<` edge into DELEGATED"
+    );
+    assert_eq!(
+        counts.budget, 0,
+        "the rules escape on their first recursive entry, so nothing reaches the budget"
+    );
+    let table = fixture.build.modes[0].table.as_ref().expect("table");
+    assert!(
+        table.num_states() < 16,
+        "a recursive rule costs a handful of states, not the budget: {}",
+        table.num_states()
+    );
+
+    let mut deep = String::new();
+    for _ in 0..40 {
+        deep.push('{');
+    }
+    deep.push_str("\"s\"");
+    for _ in 0..40 {
+        deep.push('}');
+    }
+    let corpus = [
+        "",
+        "abc 123",
+        "{}",
+        "{a}",
+        "{{}}",
+        "{{{}}}",
+        "{\"q\"}",
+        "{\"q\" {\"r\"}}",
+        "{ /* c */ }",
+        "{ /* { */ }",
+        "{",
+        "}",
+        "}{",
+        "x{1}y",
+        "x{1}",
+        "x{1}y z",
+        "x y",
+        "/* a /* b */ c */",
+        "{unterminated",
+        "{a}bc",
+        "<>",
+        "<1>",
+        "<1<2>3>",
+        "<1<<2>>3>",
+        "<<>>",
+        "<",
+        "<1",
+        "<1<2>",
+        "x{1}y<2<3>4>",
+    ];
+    let fragments = [
+        "{", "}", "x", "y", "a", " \"", "/*", "*/", " ", "\n", "@", "1", "<", ">", "2",
+    ];
+    let (escapes, _) = run_corpus(
+        &fixture,
+        GrammarKind::RecursiveRule,
+        &corpus,
+        &fragments,
+        0x2EC,
+    );
+    assert!(escapes > 0, "the recursion escapes are crossed");
+    check(&fixture, GrammarKind::RecursiveRule, &deep);
+
+    // `.` matches both ends of the Unicode range: the wildcard transition is
+    // inclusive, like the Java reference.
+    let top = "/**\0\u{10FFFF}*/";
+    let Outcome::Completed(snap) = run(
+        &fixture,
+        GrammarKind::RecursiveRule,
+        top,
+        None,
+        InputStream::new,
+    ) else {
+        panic!("the lazy path completes");
+    };
+    assert!(
+        snap.errors.is_empty(),
+        "the lazy path recognizes the comment: {:?}",
+        snap.errors
+    );
+    assert_eq!(snap.tokens.len(), 2, "one comment token plus EOF");
+    assert_eq!(snap.tokens[0].text, top);
+    check(&fixture, GrammarKind::RecursiveRule, top);
+}
+
+// ======= SharedComments: the context-level recursion escape =======
+
+#[test]
+fn shared_comments_escape_at_the_context_level() {
+    let fixture = compile(GrammarKind::SharedComments, &StaticLexerDfaBuilder::new());
+    let counts = fixture.build.modes[0].escape_counts;
+    assert_eq!(
+        counts.recursive_context, 1,
+        "the mixed config set blocks the strip, so the recursion escapes"
+    );
+    assert_eq!(counts.budget, 0);
+    let corpus = [
+        "",
+        "a b",
+        "/* x */",
+        "/**/",
+        "/* /* */ */",
+        "/* /* /* */ */ */",
+        "/* unterminated",
+        "a/*b*/c",
+        "/* a */ /* b */",
+    ];
+    let fragments = ["/*", "*/", "/", "*", "a", " ", "\n", "@"];
+    let (escapes, _) = run_corpus(
+        &fixture,
+        GrammarKind::SharedComments,
+        &corpus,
+        &fragments,
+        0x5CC,
+    );
+    assert!(escapes > 0, "the recursion escape is crossed");
 }
 
 // ======= Start-closure failures: whole mode falls back to lazy =======

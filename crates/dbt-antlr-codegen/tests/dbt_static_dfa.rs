@@ -273,6 +273,36 @@ fn spike_lexer_warnings_name_the_escape_reasons() {
             .contains("run a position-dependent action")
     );
 
+    let context_output = emit("lexer/SharedComments.g4", true);
+    let context_escapes: Vec<_> = context_output
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == "G4S188")
+        .collect();
+    assert_eq!(
+        context_escapes.len(),
+        1,
+        "one escaped edge in SharedComments.g4: {context_escapes:?}"
+    );
+    let context_escape = context_escapes[0];
+    assert!(
+        context_escape
+            .message()
+            .contains("reach a recursive rule context"),
+        "context escape reason: {}",
+        context_escape.message()
+    );
+    assert!(
+        context_escape.message().contains("rule 'C1'"),
+        "context escape attributes the recursive rule: {}",
+        context_escape.message()
+    );
+    assert_eq!(
+        (context_escape.line(), context_escape.column()),
+        (Some(7), Some(11)),
+        "points to the C1 recursion site"
+    );
+
     let rec_grammar = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/codegen-direct/fixtures/lexer-recursion/LexerRecursion.g4");
     let mut rec_optimization = OptimizationOptions::new();
