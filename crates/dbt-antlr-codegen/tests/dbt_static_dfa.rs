@@ -287,7 +287,7 @@ fn spike_lexer_warnings_name_the_escape_reasons() {
         .collect();
     assert_eq!(
         rec_escapes.len(),
-        2,
+        1,
         "one diagnostic per escaped edge in LexerRecursion.g4: {rec_escapes:?}"
     );
     for rec_escape in rec_escapes {

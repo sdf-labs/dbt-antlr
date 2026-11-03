@@ -462,7 +462,9 @@ fn non_counted_recursion_escapes() {
     check_invariants(&build, &atn);
     let dfa = build.table(0).expect("mode 0");
     let counts = build.modes[0].escape_counts;
-    assert!(counts.recursive_context >= 1, "recursion escape exists");
+    assert_eq!(counts.recursive_context, 1, "recursion escapes at entry");
+    assert_eq!(dfa.num_states(), 2);
+    assert_eq!(dfa.edge_entry(dfa.start_state(), '{' as i32), ESCAPE);
     let kinds: Vec<u32> = (0..dfa.num_continuations() as u32)
         .map(|i| dfa.continuation_kind(i))
         .collect();

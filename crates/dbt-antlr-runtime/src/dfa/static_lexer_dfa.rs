@@ -180,7 +180,7 @@ pub struct StaticLexerDFA {
     pub(crate) actions: Vec<LexerAction<'static>>,
     /// Run-acceleration flavor tag per state: 0 = none, else the index of
     /// the payload in `accel_data` + 1.
-    pub(crate) accel_tag: Vec<u8>,
+    pub(crate) accel_tag: Vec<u16>,
     /// Run-acceleration payloads (see [`Accel`]), accelerated states only.
     pub(crate) accel_data: Vec<Accel>,
     /// Continuation index of the EOF escape edge of each state.
@@ -925,7 +925,7 @@ impl StaticLexerDFA {
     ///
     /// Same unchecked-index safety argument as [`StaticLexerDFA::edge_entry`].
     #[inline]
-    pub(crate) fn accel_tag(&self, s: u16) -> u8 {
+    pub(crate) fn accel_tag(&self, s: u16) -> u16 {
         unsafe { *self.accel_tag.get_unchecked(s as usize) }
     }
 
@@ -934,7 +934,7 @@ impl StaticLexerDFA {
     /// Unchecked-index safety: tags are written only at load, bounded by
     /// the payload table length.
     #[inline]
-    pub(crate) fn accel_payload(&self, tag: u8) -> Accel {
+    pub(crate) fn accel_payload(&self, tag: u16) -> Accel {
         unsafe { *self.accel_data.get_unchecked(tag as usize - 1) }
     }
 
@@ -1587,9 +1587,9 @@ fn read_accel(
     r: &mut Reader,
     mode: usize,
     num_states: usize,
-) -> Result<(Vec<u8>, Vec<Accel>), StaticLexerError> {
+) -> Result<(Vec<u16>, Vec<Accel>), StaticLexerError> {
     let num_ints = r.next()? as usize;
-    let mut accel_tag = vec![0u8; num_states];
+    let mut accel_tag = vec![0u16; num_states];
     let mut accel_data = Vec::new();
     let mut read = 0;
     while read < num_ints {
@@ -1654,14 +1654,14 @@ fn read_accel(
             }
         };
         accel_data.push(payload);
-        // The tag is the payload index + 1 in a u8.
+        // The tag is the payload index + 1 in a u16.
         check_index(
             mode,
             "accel payload",
             accel_data.len() as u32,
-            u8::MAX as usize + 1,
+            u16::MAX as usize + 1,
         )?;
-        accel_tag[s as usize] = accel_data.len() as u8;
+        accel_tag[s as usize] = accel_data.len() as u16;
     }
     if read != num_ints {
         return Err(StaticLexerError::SectionLengthMismatch {

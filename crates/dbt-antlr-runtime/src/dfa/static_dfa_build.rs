@@ -39,8 +39,8 @@
 //! 1. The closure crossed a predicate. Build-time closures evaluate predicates
 //!    as `true` and flag the edge. The edge escapes because the runtime result
 //!    can differ.
-//! 2. A closed config has a recursive context: a repeated return state on the
-//!    context path, or a context deeper than 32 frames.
+//! 2. A closed config has a recursive context: a repeated rule or return state
+//!    on the context path, or a context deeper than 32 frames.
 //! 3. A position-dependent (custom) lexer action appears in the action
 //!    accumulation of a closed config. A later phase can replace this rule
 //!    with the `behind` form of the action trace: serialize the action with a
@@ -647,8 +647,8 @@ fn custom_action_coordinates(action: &LexerAction<'_>) -> Option<(usize, usize)>
 /// `configs` whose prediction context is recursive.
 fn first_recursive_context(configs: &[LexerATNConfig<'_>]) -> Option<(usize, usize, usize)> {
     configs.iter().find_map(|c| {
-        let return_state = recursive_return_state(c.get_context())?;
         let state = c.get_state();
+        let return_state = recursive_return_state(state.get_rule_index(), c.get_context())?;
         Some((
             state.get_rule_index() as usize,
             state.get_state_number() as usize,
@@ -657,10 +657,15 @@ fn first_recursive_context(configs: &[LexerATNConfig<'_>]) -> Option<(usize, usi
     })
 }
 
-/// Returns the repeated or depth-overflowing return state when the context
+/// Returns the recursive or depth-overflowing return state when the context
 /// chain is recursive. Lexer contexts are empty or singleton chains.
-fn recursive_return_state(mut ctx: Option<PredictionContextRef>) -> Option<usize> {
-    let mut seen = HashSet::new();
+fn recursive_return_state(
+    current_rule: i32,
+    mut ctx: Option<PredictionContextRef>,
+) -> Option<usize> {
+    let mut seen_states = HashSet::new();
+    let mut entered_by = HashMap::new();
+    let mut prev_rule = current_rule;
     let mut depth = 0;
     while let Some(c) = ctx {
         if c.is_empty() {
@@ -672,18 +677,27 @@ fn recursive_return_state(mut ctx: Option<PredictionContextRef>) -> Option<usize
             "lexer prediction contexts are singleton chains"
         );
         depth += 1;
-        let return_state = c.get_return_state(0).get_state_number();
-        if depth > MAX_CONTEXT_DEPTH || !seen.insert(return_state) {
-            return Some(return_state as usize);
+        let return_state = c.get_return_state(0);
+        let return_state_num = return_state.get_state_number();
+        let return_rule = return_state.get_rule_index();
+        if prev_rule >= 0 {
+            entered_by.entry(prev_rule).or_insert(return_state_num);
         }
+        if let Some(&entry_return_state) = entered_by.get(&return_rule) {
+            return Some(entry_return_state as usize);
+        }
+        if depth > MAX_CONTEXT_DEPTH || !seen_states.insert(return_state_num) {
+            return Some(return_state_num as usize);
+        }
+        prev_rule = return_rule;
         ctx = c.get_parent(0);
     }
     None
 }
 
 #[cfg(test)]
-fn has_recursive_context(ctx: Option<PredictionContextRef>) -> bool {
-    recursive_return_state(ctx).is_some()
+fn has_recursive_context(current_rule: i32, ctx: Option<PredictionContextRef>) -> bool {
+    recursive_return_state(current_rule, ctx).is_some()
 }
 
 /// The ATN indices of the actions of the executor of a config. Fails on a
@@ -892,20 +906,17 @@ impl<'sc> ModeBuild<'sc> {
             accept_actions.push(*entry);
         }
 
-        // Run acceleration over the structural rows.
-        let mut accel_tag = vec![0u8; num_states];
+        // Run acceleration over the structural rows. One payload per
+        // accelerated state, so the payload index fits a `u16`: the state
+        // count is capped at `MAX_TABLE_STATE_COUNT`.
+        let mut accel_tag = vec![0u16; num_states];
         let mut accel_data = Vec::new();
         for (s, rows) in self.rows.iter().enumerate() {
             let accel = maybe_counted_accel(s as u32, rows, &self.states, &self.recursive_rules)
                 .or_else(|| compute_accel(s as u32, rows));
             if let Some(accel) = accel {
                 accel_data.push(accel);
-                assert!(
-                    accel_data.len() <= u8::MAX as usize,
-                    "a mode has at most {} accel payloads (the tag is a u8)",
-                    u8::MAX
-                );
-                accel_tag[s] = accel_data.len() as u8;
+                accel_tag[s] = accel_data.len() as u16;
             }
         }
 
@@ -1699,20 +1710,21 @@ mod tests {
             .deserialize(&mut lexer.lexer_atn_words.as_ref().expect("lexer words").iter());
         let scratch = bumpalo::Bump::new();
 
-        let a = push_ctx(
-            &scratch,
-            Some(PredictionContextRef::new_empty()),
-            atn.make_state_ref(10),
-        );
-        let b = push_ctx(&scratch, Some(a), atn.make_state_ref(20));
-        assert!(!has_recursive_context(Some(b)));
-        let c = push_ctx(&scratch, Some(b), atn.make_state_ref(10));
-        assert!(has_recursive_context(Some(c)));
+        let s0 = atn.rule_to_start_state[0];
+        let s1 = atn.rule_to_start_state[1];
+        let a = push_ctx(&scratch, Some(PredictionContextRef::new_empty()), s0);
+        assert!(!has_recursive_context(s1.get_rule_index(), Some(a)));
+        assert!(has_recursive_context(s0.get_rule_index(), Some(a)));
+        let b = push_ctx(&scratch, Some(a), s1);
+        assert!(!has_recursive_context(-1, Some(b)));
+        assert!(has_recursive_context(s0.get_rule_index(), Some(b)));
+        let c = push_ctx(&scratch, Some(b), s0);
+        assert!(has_recursive_context(-1, Some(c)));
         let mut deep = PredictionContextRef::new_empty();
         for i in 0..33 {
             deep = push_ctx(&scratch, Some(deep), atn.make_state_ref(100 + i));
         }
-        assert!(has_recursive_context(Some(deep)));
+        assert!(has_recursive_context(-1, Some(deep)));
     }
 
     #[test]
