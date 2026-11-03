@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-g4-parser-v0.6.2...dbt-antlr-g4-parser-v0.7.0) - 2026-11-03
+
+### Added
+
+- *(g4-parser,runtime,codegen)* dogfood static DFA tables on the g4 front-end (Phase 7.1) ([#50](https://github.com/sdf-labs/dbt-antlr/pull/50))
+
 ## [0.6.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-g4-parser-v0.5.0...dbt-antlr-g4-parser-v0.6.0) - 2026-10-30
 
 ### Added
