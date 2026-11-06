@@ -405,13 +405,15 @@ fn build_mode_report(
             let Accel::CountedExclusion { opener, closer, n } = compiled_rule.accel else {
                 return None;
             };
-            let len = usize::from(n);
+            let len = n as usize;
+            let opener = [opener[0] as u8, opener[1] as u8, opener[2] as u8];
+            let closer = [closer[0] as u8, closer[1] as u8, closer[2] as u8];
             Some(StaticLexerSimpleRecursiveRuleReport {
                 rule: rule.name.clone(),
                 source_span: rule.span.clone(),
                 opener: format_ascii_bytes(&opener[..len]),
                 closer: format_ascii_bytes(&closer[..len]),
-                delimiter_bytes: n,
+                delimiter_bytes: n as u8,
             })
         })
         .collect();
@@ -572,7 +574,8 @@ fn build_mode_failure_report(
 
 fn build_accel_kind_report(accel: Accel, hi_all_self_loop: bool) -> StaticLexerAccelKindReport {
     match accel {
-        Accel::Positive(bitmap) => {
+        Accel::Positive(words) => {
+            let bitmap = Accel::bitmap_u128(words);
             let ascii_count = bitmap.count_ones();
             let ascii_intervals = bitmap_intervals(bitmap, true);
             let excluded_ascii = if hi_all_self_loop {
@@ -599,29 +602,31 @@ fn build_accel_kind_report(accel: Accel, hi_all_self_loop: bool) -> StaticLexerA
         }
         Accel::Exclude(n0) => StaticLexerAccelKindReport::Exclusion {
             needle_count: 1,
-            needles: vec![format_symbol(i32::from(n0))],
-            needle_bytes: vec![n0],
+            needles: vec![format_symbol(n0 as i32)],
+            needle_bytes: vec![n0 as u8],
         },
         Accel::Exclude2(n0, n1) => StaticLexerAccelKindReport::Exclusion {
             needle_count: 2,
-            needles: vec![format_symbol(i32::from(n0)), format_symbol(i32::from(n1))],
-            needle_bytes: vec![n0, n1],
+            needles: vec![format_symbol(n0 as i32), format_symbol(n1 as i32)],
+            needle_bytes: vec![n0 as u8, n1 as u8],
         },
         Accel::Exclude3(n0, n1, n2) => StaticLexerAccelKindReport::Exclusion {
             needle_count: 3,
             needles: vec![
-                format_symbol(i32::from(n0)),
-                format_symbol(i32::from(n1)),
-                format_symbol(i32::from(n2)),
+                format_symbol(n0 as i32),
+                format_symbol(n1 as i32),
+                format_symbol(n2 as i32),
             ],
-            needle_bytes: vec![n0, n1, n2],
+            needle_bytes: vec![n0 as u8, n1 as u8, n2 as u8],
         },
         Accel::CountedExclusion { opener, closer, n } => {
-            let len = usize::from(n);
+            let len = n as usize;
+            let opener = [opener[0] as u8, opener[1] as u8, opener[2] as u8];
+            let closer = [closer[0] as u8, closer[1] as u8, closer[2] as u8];
             StaticLexerAccelKindReport::CountedExclusion {
                 opener: format_ascii_bytes(&opener[..len]),
                 closer: format_ascii_bytes(&closer[..len]),
-                delimiter_bytes: n,
+                delimiter_bytes: n as u8,
             }
         }
     }

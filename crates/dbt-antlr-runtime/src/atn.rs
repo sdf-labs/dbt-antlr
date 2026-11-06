@@ -35,7 +35,7 @@ pub struct ATN {
 
     pub grammar_type: ATNType,
 
-    pub lexer_actions: Vec<LexerAction<'static>>,
+    pub lexer_actions: Vec<LexerAction>,
 
     pub max_token_type: i32,
 

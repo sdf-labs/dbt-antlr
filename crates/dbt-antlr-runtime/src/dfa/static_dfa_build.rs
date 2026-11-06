@@ -67,7 +67,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use crate::arena::{is_ref_in_arena, is_slice_in_arena};
+use crate::arena::is_slice_in_arena;
 use crate::atn::ATN;
 use crate::atn_config::LexerATNConfig;
 use crate::atn_config_set::MutableLexerATNConfigSet;
@@ -79,7 +79,7 @@ use crate::dfa::static_lexer_dfa::{
 };
 use crate::dfa::FinalizeStore;
 use crate::int_stream::EOF;
-use crate::lexer_action::{LexerAction, LexerIndexedCustomAction};
+use crate::lexer_action::LexerAction;
 use crate::lexer_action_executor::LexerActionExecutor;
 use crate::lexer_atn_simulator::{reachable_core, start_state_core, LexerClosureEnv, ReachCapture};
 use crate::prediction_context::PredictionContextRef;
@@ -550,8 +550,8 @@ impl<'sc> FinalizeStore<'sc> for BuildStore<'sc> {
     fn alloc_lexer_action_slice(
         &self,
         len: usize,
-        f: impl FnMut(usize) -> LexerAction<'sc>,
-    ) -> &'sc [LexerAction<'sc>] {
+        f: impl FnMut(usize) -> LexerAction,
+    ) -> &'sc [LexerAction] {
         self.arena().alloc_slice_fill_with(len, f)
     }
 
@@ -572,18 +572,6 @@ impl<'sc> FinalizeStore<'sc> for BuildStore<'sc> {
         interned.insert(reference);
         reference
     }
-
-    fn alloc_lexer_indexed_custom_action(
-        &self,
-        f: impl FnOnce() -> LexerIndexedCustomAction<'sc>,
-    ) -> &'sc LexerIndexedCustomAction<'sc> {
-        self.arena().alloc(f())
-    }
-
-    fn contains_lexer_indexed_custom_action(&self, action: &LexerIndexedCustomAction) -> bool {
-        is_ref_in_arena(action, self.arena())
-    }
-
     fn alloc_config_slice<AC, I>(&self, iter: I) -> &'sc [AC]
     where
         I: IntoIterator<Item = AC>,
@@ -632,13 +620,17 @@ fn first_position_dependent_action(configs: &[LexerATNConfig<'_>]) -> Option<(us
     })
 }
 
-fn custom_action_coordinates(action: &LexerAction<'_>) -> Option<(usize, usize)> {
-    match action {
-        &LexerAction::Custom {
+fn custom_action_coordinates(action: &LexerAction) -> Option<(usize, usize)> {
+    match *action {
+        LexerAction::Custom {
             rule_index,
             action_index,
+        }
+        | LexerAction::IndexedCustom {
+            rule_index,
+            action_index,
+            ..
         } => Some((rule_index as usize, action_index as usize)),
-        LexerAction::IndexedCustom(indexed) => custom_action_coordinates(&indexed.action),
         _ => None,
     }
 }
@@ -885,22 +877,22 @@ impl<'sc> ModeBuild<'sc> {
 
         // Accept action tables: `LexerAction` clones from the ATN, the
         // lists deduplicated by content (the loader's invariant).
-        let mut actions: Vec<LexerAction<'static>> = Vec::new();
-        let mut list_ids: HashMap<Vec<LexerAction<'static>>, (u32, u32)> = HashMap::new();
+        let mut actions: Vec<LexerAction> = Vec::new();
+        let mut list_ids: HashMap<Vec<LexerAction>, (u32, u32)> = HashMap::new();
         let mut accept_actions = Vec::with_capacity(num_states);
         for state in &self.states {
             if state.accept_actions.is_empty() {
                 accept_actions.push((0, 0));
                 continue;
             }
-            let list: Vec<LexerAction<'static>> = state
+            let list: Vec<LexerAction> = state
                 .accept_actions
                 .iter()
-                .map(|&index| atn.lexer_actions[index as usize].clone())
+                .map(|&index| atn.lexer_actions[index as usize])
                 .collect();
             let entry = list_ids.entry(list).or_insert_with_key(|list| {
                 let start = actions.len() as u32;
-                actions.extend(list.iter().cloned());
+                actions.extend_from_slice(list);
                 (start, list.len() as u32)
             });
             accept_actions.push(*entry);
@@ -1125,14 +1117,18 @@ fn detect_simple_recursive_rule(atn: &ATN, rule_index: usize) -> Option<SimpleRe
     if closer.len() != opener.len() || closer == opener || !(1..=3).contains(&opener.len()) {
         return None;
     }
-    let mut opener_arr = [0u8; 3];
-    let mut closer_arr = [0u8; 3];
-    opener_arr[..opener.len()].copy_from_slice(&opener);
-    closer_arr[..closer.len()].copy_from_slice(&closer);
+    let mut opener_arr = [0u32; 3];
+    let mut closer_arr = [0u32; 3];
+    for (dst, &src) in opener_arr.iter_mut().zip(&opener) {
+        *dst = u32::from(src);
+    }
+    for (dst, &src) in closer_arr.iter_mut().zip(&closer) {
+        *dst = u32::from(src);
+    }
     let accel = Accel::CountedExclusion {
         opener: opener_arr,
         closer: closer_arr,
-        n: opener.len() as u8,
+        n: opener.len() as u32,
     };
     Some(SimpleRecursiveRule {
         rule_index: rule_index as i32,
@@ -1274,26 +1270,26 @@ fn compute_accel(state: u32, rows: &StateRows) -> Option<Accel> {
     if hi_covered_to == MAX_SYMBOL {
         let mut excluded = !bitmap;
         match excluded.count_ones() {
-            1 => return Some(Accel::Exclude(excluded.trailing_zeros() as u8)),
+            1 => return Some(Accel::Exclude(excluded.trailing_zeros())),
             2 => {
-                let n1 = excluded.trailing_zeros() as u8;
+                let n1 = excluded.trailing_zeros();
                 excluded &= excluded - 1;
-                let n2 = excluded.trailing_zeros() as u8;
+                let n2 = excluded.trailing_zeros();
                 return Some(Accel::Exclude2(n1, n2));
             }
             3 => {
-                let n1 = excluded.trailing_zeros() as u8;
+                let n1 = excluded.trailing_zeros();
                 excluded &= excluded - 1;
-                let n2 = excluded.trailing_zeros() as u8;
+                let n2 = excluded.trailing_zeros();
                 excluded &= excluded - 1;
-                let n3 = excluded.trailing_zeros() as u8;
+                let n3 = excluded.trailing_zeros();
                 return Some(Accel::Exclude3(n1, n2, n3));
             }
             _ => (),
         }
     }
 
-    Some(Accel::Positive(bitmap))
+    Some(Accel::positive(bitmap))
 }
 
 /// Runs move+closure for one edge of a state, finalizes the closed configs
@@ -1790,7 +1786,7 @@ mod tests {
             (i32::from(b'b') + 1, MAX_SYMBOL, EdgeEntry::Target(2)),
         ]);
         let accel = compute_accel(2, &rows).expect("exclusion run");
-        assert_eq!(accel, Accel::Exclude2(b'a', b'b'));
+        assert_eq!(accel, Accel::Exclude2(u32::from(b'a'), u32::from(b'b')));
         assert_eq!(
             accel.to_serialized(2),
             vec![2, ACCEL_EXCLUSION, 2, u32::from(b'a'), u32::from(b'b'), 0]
@@ -1806,9 +1802,10 @@ mod tests {
             EdgeEntry::Target(1),
         )]);
         let accel = compute_accel(1, &rows).expect("positive run");
-        let Accel::Positive(bitmap) = accel else {
+        let Accel::Positive(bitmap_words) = accel else {
             panic!("expected a positive accel, got {accel:?}");
         };
+        let bitmap = Accel::bitmap_u128(bitmap_words);
         assert_eq!(bitmap & (1 << b'\n'), 0);
         assert_eq!(bitmap.count_ones(), 13);
         let words = accel.to_serialized(1);
@@ -1827,7 +1824,7 @@ mod tests {
         let rows = rows(vec![(0, 20, EdgeEntry::Target(3))]);
         assert_eq!(
             compute_accel(3, &rows),
-            Some(Accel::Positive((1u128 << 21) - 1))
+            Some(Accel::positive((1u128 << 21) - 1))
         );
     }
 
@@ -1841,8 +1838,8 @@ mod tests {
     fn counted_exclude_serialization() {
         use crate::dfa::static_lexer_dfa::ACCEL_COUNTED_EXCLUSION;
         let a1 = Accel::CountedExclusion {
-            opener: [b'{', 0, 0],
-            closer: [b'}', 0, 0],
+            opener: [u32::from(b'{'), 0, 0],
+            closer: [u32::from(b'}'), 0, 0],
             n: 1,
         };
         assert_eq!(
@@ -1857,8 +1854,8 @@ mod tests {
             ]
         );
         let a2 = Accel::CountedExclusion {
-            opener: [b'/', b'*', 0],
-            closer: [b'*', b'/', 0],
+            opener: [u32::from(b'/'), u32::from(b'*'), 0],
+            closer: [u32::from(b'*'), u32::from(b'/'), 0],
             n: 2,
         };
         assert_eq!(
@@ -1873,8 +1870,8 @@ mod tests {
             ]
         );
         let a3 = Accel::CountedExclusion {
-            opener: *b"/*-",
-            closer: *b"-*/",
+            opener: [u32::from(b'/'), u32::from(b'*'), u32::from(b'-')],
+            closer: [u32::from(b'-'), u32::from(b'*'), u32::from(b'/')],
             n: 3,
         };
         assert_eq!(
