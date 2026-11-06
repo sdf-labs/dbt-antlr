@@ -126,6 +126,7 @@ impl LexerAction {
     /// The 4-word `#[repr(C, u32)]` image representation of this action, with
     /// unused union payload words zero-filled so the image contains no
     /// uninitialized padding bytes.
+    #[cfg(feature = "static-dfa-build")]
     pub(crate) fn to_image_words(self) -> [u32; 4] {
         match self {
             LexerAction::Channel(channel) => {

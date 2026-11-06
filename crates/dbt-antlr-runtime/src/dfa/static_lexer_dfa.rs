@@ -1,15 +1,13 @@
 //! Runtime side of the static lexer DFA: the packed table image that the
 //! walker in [`crate::lexer_atn_simulator::LexerATNSimulator`] tokenizes
-//! from, and the word-stream codec that carries the tables from the
-//! compile-time builder to generated code.
+//! from.
 //!
 //! The builder (the `static_dfa_build` module, feature `static-dfa-build`)
 //! runs the subset construction and commits each mode to a
 //! `StaticLexerDfaBuild`, whose `finalize` freezes those sections into the
-//! packed image of a [`StaticLexerDFA`]. Every
-//! [`StaticLexerDFA`] accessor is a view over that image: a header of section
-//! offsets, then the sections, all addressed by byte offset from the start of
-//! the image.
+//! packed image of a [`StaticLexerDFA`]. Every [`StaticLexerDFA`] accessor is
+//! a view over that image: a header of section offsets, then the sections, all
+//! addressed by byte offset from the start of the image.
 //!
 //! The image holds no pointers and no `Vec`s. Every section is a table of
 //! `u32` words, a table of `u16` entries packed two per word in little-endian
@@ -20,11 +18,10 @@
 //! compiles the generated code, and a [`StaticLexerDFA`] over such an array
 //! allocates nothing.
 //!
-//! [`StaticLexerTables::to_words`] (same feature) encodes the tables as the
-//! word stream that generated code embeds; [`StaticLexerTables::from_words`]
-//! decodes the stream with full validation. After a successful load the
-//! walker indexes the tables without bounds checks, and `to_words` is the
-//! exact inverse of `from_words`.
+//! Generated code embeds the images, not a serialized form of the tables:
+//! `StaticLexerDfaBuilder::build` only concatenates the images that `finalize`
+//! produced, and [`StaticLexerTables::from_image`] only locates them. There is
+//! nothing left to deserialize at load time.
 //!
 //! # Image layout
 //!
@@ -44,8 +41,8 @@
 //! - `hi_rows`: `num_hi_rows * num_classes` `u16` entries: the hi-edge entry
 //!   of state `s` is the row `row_of[s]`, and rows are deduplicated by
 //!   content.
-//! - `row_of`: `num_states` `u32` entries (zero for every state when the mode
-//!   has no hi edges).
+//! - `row_of`: `num_states` `u32` entries: the hi row of the state, 0 for
+//!   every state when the mode has no hi edges.
 //! - `accept_type`: `num_states` `i32` entries, `-1` for a state that is not
 //!   an accept state.
 //! - `accept_actions`: `num_states` `ActionSpan` records into `actions`,
@@ -71,89 +68,46 @@
 //!   continuations, concatenated.
 //! - `continuation_actions`: the action traces of all configs, concatenated.
 //!
-//! # Word stream format (version 1)
+//! # Image container
 //!
-//! One `i32` value per `u32` word, except where noted. Sizes and indices
-//! are `u32`. Symbols are `i32` values in `0..=0x10FFFF`. All multi-word
-//! sections use the order of this list:
+//! Generated code embeds one container as a `static [u32; N]`:
 //!
-//! - Preamble: `MAGIC`, `STATIC_DFA_FORMAT_VERSION`, the total word count
-//!   of the stream, `num_modes`.
-//! - Per mode: `present` flag (0 or 1). A mode with `present == 0` has no
-//!   more words.
-//! - `num_states`, `start_state`.
-//! - `accept_type[num_states]`: token type per state, `-1` when the state
-//!   is not an accept state.
-//! - `accept_actions[num_states]`: word offset of the accept action list
-//!   of the state in the action-list section, `-1` when empty.
-//! - `eof[num_states]`: the EOF edge entry of each state.
-//! - `low[num_states * 128]`: the edge entries of each state for the
-//!   symbols `0..=127`, in symbol order per state.
-//! - Hi-class section: `num_classes`, then, when `num_classes > 0`,
-//!   `class_starts[num_classes]`, `num_rows`, `num_row_triples`,
-//!   `row_offsets[num_rows + 1]` (in triples), `num_row_triples` times
-//!   `(lo_class, hi_class, target_entry)`, and `row_of[num_states]`.
-//!   Class `i` covers the symbols in `class_starts[i]..class_starts[i + 1]`,
-//!   or up to `0x10FFFF` for the last class. `class_starts[0]` is 128, and
-//!   the bounds are the union of the hi-edge bounds of the mode. The target
-//!   of a state is constant within a class. Rows are deduplicated by
-//!   content. The stream carries no expanded symbol-to-class map: the walker
-//!   takes the class of a symbol by partitioning `class_starts`.
-//! - Action-list section: `num_action_list_ints`, then the concatenated
-//!   lists. A list is `len`, then `len` times the ATN encoding
-//!   `(type, data1, data2)` of one lexer action. Lists are deduplicated by
-//!   content.
-//! - Accel section: `num_accel_ints`, then the run-acceleration entries.
-//!   An entry is `(state, ACCEL_POSITIVE, w0, w1, w2, w3)` for a 128-bit
-//!   bitmap of self-looping ASCII symbols, `(state, ACCEL_EXCLUSION,
-//!   n_needles, needle0, needle1, needle2)` with zero-padded needles, or
-//!   `(state, ACCEL_COUNTED_EXCLUSION, len, opener_le, closer_le, 0)` for a
-//!   counted nested opener/closer scan.
-//! - Escape rows: per state, `eof_escape`, `num_ranges`, then `num_ranges`
-//!   times `(lo_symbol, hi_symbol, continuation_index)`. The ranges are
-//!   the sorted, disjoint symbol intervals whose edge escapes. Edges with a
-//!   plain target and edges that do not exist have no range. `eof_escape`
-//!   is meaningful only when the EOF edge entry is `ESCAPE`. A
-//!   continuation index of `NO_CONTINUATION` marks a budget escape.
-//! - Continuation pool: `num_continuations`, then per continuation `kind`,
-//!   `nctx`, `nctx` times `(ctx_kind, parent_local, return_state)`,
-//!   `nconfigs`, and `nconfigs` times `(state, flags, alt, ctx_local,
-//!   nactions)`, with `nactions` times `(action_index, behind)` after each
-//!   config.
+//! - word 0: [`STATIC_DFA_MAGIC`].
+//! - word 1: [`STATIC_DFA_FORMAT_VERSION`].
+//! - word 2: the word count of the whole container.
+//! - word 3: the mode count.
+//! - then, per mode, two words: the `(offset, len)` span (in words) of the
+//!   mode image in the `data` section that follows the mode directory, or
+//!   `(u32::MAX, u32::MAX)` when the mode has no table.
 //!
-//! Edge entries are `target | ACCEPT_BIT` when the target state is an
-//! accept state, `target` otherwise, `NO_EDGE` when the edge does not
-//! exist, or `ESCAPE` for an escape edge. Escape edges never carry
-//! `ACCEPT_BIT`. State ids stay below `0x7FFE`, so `ACCEPT_BIT | state`
-//! peaks at `0xFFFD`.
+//! A mode image is self-describing: it starts with its own magic and format
+//! version and its header declares its own word count, so
+//! [`StaticLexerTables::from_image`] only has to locate the images.
 //!
-//! In a continuation, `kind` is `CONTINUATION_MOVED_CONFIGS` (0) for the
-//! post-move, pre-closure configs of the escape edge, or
-//! `CONTINUATION_SOURCE_SET` (1) for the source configs of the state. The
-//! context table is topological: local id 0 is the empty context, and
-//! entry `i` has local id `i + 1` with parents that refer to smaller ids.
-//! `ctx_kind` is 0 (singleton); lexer contexts are always empty or
-//! singleton chains. In `flags`, bit 0 is `passed_through_non_greedy`,
-//! bit 1 is `alt_reached_accept` (meaningful for kind 0 only; the resume
-//! recomputes the flag for kind 1), and bit 2 is reserved. `behind` is the
-//! count of consumed symbols between the action and the escape edge, or
-//! `BEHIND_POSITION_INDEPENDENT` for a position-independent action. The
-//! builder only emits `BEHIND_POSITION_INDEPENDENT`.
+//! Loading validates the container, the section offsets of every mode, and
+//! the table entries the walker dereferences unchecked (edge targets, row
+//! indices, continuation indices, action spans). The tables are a
+//! compile-time product that generated code carries as constants, so the
+//! loader does not re-derive the tables: it only proves that reading them is
+//! in bounds.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Formatter;
-use std::mem::{align_of, size_of, size_of_val};
+use std::mem::{align_of, size_of};
 
 use crate::atn::ATN;
 use crate::int_stream::EOF;
-use crate::lexer_action::{LexerAction, LEXER_ACTION_TYPE_CUSTOM};
+use crate::lexer_action::{
+    LexerAction, LEXER_ACTION_TYPE_CHANNEL, LEXER_ACTION_TYPE_MODE, LEXER_ACTION_TYPE_MORE,
+    LEXER_ACTION_TYPE_POP_MODE, LEXER_ACTION_TYPE_PUSH_MODE, LEXER_ACTION_TYPE_SKIP,
+    LEXER_ACTION_TYPE_TYPE,
+};
 
-/// First word of the word stream: ASCII "SDFA".
+/// First word of an image container: ASCII "SDFA".
 pub const STATIC_DFA_MAGIC: u32 = 0x5344_4641;
-/// Version of the word stream format.
-pub const STATIC_DFA_FORMAT_VERSION: u32 = 1;
+/// Version of the packed image format.
+pub const STATIC_DFA_FORMAT_VERSION: u32 = 2;
 /// Edge entry for an edge that does not exist.
 pub const NO_EDGE: u16 = 0xFFFF;
 /// Edge entry for an escape edge.
@@ -170,14 +124,16 @@ pub const CONTINUATION_MOVED_CONFIGS: u32 = 0;
 /// Continuation kind: the source configs of the state. The resume re-runs
 /// the full move step.
 pub const CONTINUATION_SOURCE_SET: u32 = 1;
-/// Accel tag: run over the ASCII symbols of a 128-bit bitmap.
+/// Accel discriminant: run over the ASCII symbols of a 128-bit bitmap.
 pub const ACCEL_POSITIVE: u32 = 1;
-/// Accel tag: run over all input except up to three needle bytes.
-pub const ACCEL_EXCLUSION: u32 = 2;
-/// Accel tag: counted nested run over equal-length 1..=3-byte opener and closer.
-pub const ACCEL_COUNTED_EXCLUSION: u32 = 3;
-/// `behind` value of a position-independent action.
-pub const BEHIND_POSITION_INDEPENDENT: u32 = 0xFFFF;
+/// Accel discriminant: run over all input except one needle byte.
+pub const ACCEL_EXCLUDE: u32 = 2;
+/// Accel discriminant: run over all input except two needle bytes.
+pub const ACCEL_EXCLUDE2: u32 = 3;
+/// Accel discriminant: run over all input except three needle bytes.
+pub const ACCEL_EXCLUDE3: u32 = 4;
+/// Accel discriminant: counted nested run over equal-length 1..=3-byte opener and closer.
+pub const ACCEL_COUNTED_EXCLUSION: u32 = 5;
 
 /// Dense-row width for the symbols 0..=127, which are direct-indexed.
 pub(crate) const ASCII_ROW: usize = 128;
@@ -194,14 +150,16 @@ const MAX_STATE_COUNT: usize = 0x7FFE;
 const IMAGE_MAGIC: u32 = 0x5344_464D;
 /// Version of the packed mode image layout.
 const IMAGE_VERSION: u32 = 1;
+/// Words of one [`LexerAction`] record in the `actions` section.
+const ACTION_WORDS: usize = size_of::<LexerAction>() / 4;
+/// Words of one [`Accel`] record in the `accel_data` section.
+const ACCEL_WORDS: usize = size_of::<Accel>() / 4;
 
-/// All static lexer DFA tables of a grammar, one entry per lexer mode. A
-/// mode that the builder could not compile has no table; the walker runs
-/// the lazy path for it.
-#[derive(Debug)]
-#[cfg_attr(feature = "static-dfa-build", derive(PartialEq))]
+/// Index to all static lexer DFA tables of a grammar, one entry per lexer mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StaticLexerTables {
-    pub(crate) modes: Vec<Option<StaticLexerDFA>>,
+    pub(crate) modes: &'static [[u32; 2]],
+    pub(crate) data: &'static [u32],
 }
 
 /// The table of one lexer mode: a zero-copy view over its packed image.
@@ -210,7 +168,7 @@ pub struct StaticLexerTables {
 /// freezes the sections into: a `Header` of section offsets, then the sections
 /// (see the module documentation).
 /// Generated code embeds those words as a `static [u32; N]`, so a table that
-/// [`StaticLexerTables::from_words`] decodes from such an array borrows it.
+/// [`StaticLexerTables::from_image`] loads from such an array borrows it.
 pub struct StaticLexerDFA {
     data: Cow<'static, [u32]>,
 }
@@ -322,6 +280,7 @@ pub(crate) struct ActionSpan {
     pub(crate) len: u32,
 }
 
+#[cfg(feature = "static-dfa-build")]
 impl ActionSpan {
     /// The span of an empty list.
     pub(crate) const EMPTY: ActionSpan = ActionSpan { off: 0, len: 0 };
@@ -439,8 +398,8 @@ impl<'a> ContinuationView<'a> {
     /// `ATN::lexer_actions`.
     #[inline]
     pub(crate) fn config_actions(&self, config: &ContinuationConfig) -> &'a [u32] {
-        &self.actions
-            [config.actions_off as usize..(config.actions_off + config.actions_len) as usize]
+        let start = config.actions_off as usize;
+        &self.actions[start..start + config.actions_len as usize]
     }
 }
 
@@ -477,6 +436,7 @@ impl PackedU16<'_> {
 }
 
 /// Words of a `u16` table of `entries` entries.
+#[cfg(any(target_endian = "big", feature = "static-dfa-build"))]
 #[inline]
 fn packed_u16_words(entries: usize) -> usize {
     entries.div_ceil(2)
@@ -492,13 +452,13 @@ fn packed_u16_words(entries: usize) -> usize {
 pub enum Accel {
     /// Run over the ASCII bytes set in the 128-bit bitmap (four 32-bit words,
     /// low to high).
-    Positive([u32; 4]) = 1,
+    Positive([u32; 4]) = ACCEL_POSITIVE,
     /// Run over all input until the first occurrence of the needle byte.
-    Exclude(u32) = 2,
+    Exclude(u32) = ACCEL_EXCLUDE,
     /// Run over all input until the first occurrence of either needle byte.
-    Exclude2(u32, u32) = 3,
+    Exclude2(u32, u32) = ACCEL_EXCLUDE2,
     /// Run over all input until the first occurrence of any of the three needle bytes.
-    Exclude3(u32, u32, u32) = 4,
+    Exclude3(u32, u32, u32) = ACCEL_EXCLUDE3,
     /// Counted nested run over equal-length 1..=3-byte opener and closer delimiters.
     CountedExclusion {
         /// ASCII bytes of the opening delimiter (zero-padded).
@@ -507,7 +467,7 @@ pub enum Accel {
         closer: [u32; 3],
         /// Byte length of `opener` and `closer` (`1..=3`).
         n: u32,
-    } = 5,
+    } = ACCEL_COUNTED_EXCLUSION,
 }
 
 impl Accel {
@@ -534,58 +494,35 @@ impl Accel {
     /// The 8-word `#[repr(C, u32)]` image representation of this descriptor,
     /// with unused union payload words zero-filled so the image contains no
     /// uninitialized padding bytes.
-    pub(crate) fn to_image_words(self) -> [u32; 8] {
+    #[cfg(feature = "static-dfa-build")]
+    pub(crate) fn to_image_words(self) -> [u32; ACCEL_WORDS] {
         match self {
-            Accel::Positive([w0, w1, w2, w3]) => [1, w0, w1, w2, w3, 0, 0, 0],
-            Accel::Exclude(n0) => [2, n0, 0, 0, 0, 0, 0, 0],
-            Accel::Exclude2(n0, n1) => [3, n0, n1, 0, 0, 0, 0, 0],
-            Accel::Exclude3(n0, n1, n2) => [4, n0, n1, n2, 0, 0, 0, 0],
+            Accel::Positive([w0, w1, w2, w3]) => [ACCEL_POSITIVE, w0, w1, w2, w3, 0, 0, 0],
+            Accel::Exclude(n0) => [ACCEL_EXCLUDE, n0, 0, 0, 0, 0, 0, 0],
+            Accel::Exclude2(n0, n1) => [ACCEL_EXCLUDE2, n0, n1, 0, 0, 0, 0, 0],
+            Accel::Exclude3(n0, n1, n2) => [ACCEL_EXCLUDE3, n0, n1, n2, 0, 0, 0, 0],
             Accel::CountedExclusion {
                 opener: [o0, o1, o2],
                 closer: [c0, c1, c2],
                 n,
-            } => [5, o0, o1, o2, c0, c1, c2, n],
-        }
-    }
-
-    /// The serialized accel entry of this descriptor for state `s`:
-    /// `(state, tag, payload...)`, in the section layout of the word-stream
-    /// documentation.
-    #[cfg(feature = "static-dfa-build")]
-    pub(crate) fn to_serialized(self, s: u16) -> Vec<u32> {
-        match self {
-            Accel::Positive([w0, w1, w2, w3]) => {
-                vec![u32::from(s), ACCEL_POSITIVE, w0, w1, w2, w3]
-            }
-            Accel::Exclude(n0) => {
-                vec![u32::from(s), ACCEL_EXCLUSION, 1, n0, 0, 0]
-            }
-            Accel::Exclude2(n0, n1) => {
-                vec![u32::from(s), ACCEL_EXCLUSION, 2, n0, n1, 0]
-            }
-            Accel::Exclude3(n0, n1, n2) => {
-                vec![u32::from(s), ACCEL_EXCLUSION, 3, n0, n1, n2]
-            }
-            Accel::CountedExclusion { opener, closer, n } => {
-                vec![
-                    u32::from(s),
-                    ACCEL_COUNTED_EXCLUSION,
-                    n,
-                    u32::from_le_bytes([opener[0] as u8, opener[1] as u8, opener[2] as u8, 0]),
-                    u32::from_le_bytes([closer[0] as u8, closer[1] as u8, closer[2] as u8, 0]),
-                    0,
-                ]
-            }
+            } => [ACCEL_COUNTED_EXCLUSION, o0, o1, o2, c0, c1, c2, n],
         }
     }
 }
 
 impl StaticLexerDFA {
+    /// The packed-image words of this table.
+    #[cfg(feature = "static-dfa-build")]
+    #[inline]
+    pub(crate) fn words(&self) -> &[u32] {
+        &self.data
+    }
+
     #[inline]
     fn header(&self) -> &Header {
         // SAFETY: a `StaticLexerDFA` only ever wraps an image whose first
         // `HEADER_WORDS` words are a header: `finalize` writes one, and
-        // `from_words` refuses shorter images. A `u32` has no invalid bit
+        // `from_image` refuses shorter images. A `u32` has no invalid bit
         // pattern, so every word pattern is a valid header.
         debug_assert!(self.data.len() >= HEADER_WORDS);
         unsafe { &*(self.data.as_ptr() as *const Header) }
@@ -699,16 +636,38 @@ impl StaticLexerDFA {
     }
 
     /// The start and end offsets of the escape ranges of state `s`.
+    ///
+    /// The loader validates that the offsets are monotonic and inside
+    /// `escape_ranges`, so the range is a valid slice index. A state id that
+    /// is out of range (which the walker never forms) yields an empty row.
     #[inline]
     fn escape_row(&self, s: u16) -> std::ops::Range<usize> {
         let off = self.escape_range_offsets();
-        // Unchecked-index safety: `escape_off` has `num_states + 1` entries
-        // and every state id the walker forms is below `num_states`.
-        unsafe {
-            let start = *off.get_unchecked(s as usize) as usize;
-            let end = *off.get_unchecked(s as usize + 1) as usize;
-            start..end
-        }
+        let start = off.get(s as usize).copied().unwrap_or(0) as usize;
+        let end = off.get(s as usize + 1).copied().unwrap_or(0) as usize;
+        start..end
+    }
+
+    /// Panics unless `s` names a table state.
+    #[cfg(feature = "static-dfa-build")]
+    #[inline]
+    fn check_state(&self, s: u16) {
+        assert!(
+            (s as usize) < self.header().num_states as usize,
+            "state {s} outside the {} states of the table",
+            self.header().num_states
+        );
+    }
+
+    /// Panics unless `index` names a continuation of the pool.
+    #[cfg(feature = "static-dfa-build")]
+    #[inline]
+    fn check_continuation_index(&self, index: u32) {
+        assert!(
+            (index as usize) < self.header().continuations_len as usize,
+            "continuation {index} outside the {} continuations of the table",
+            self.header().continuations_len
+        );
     }
 
     /// The state the walk of a token starts in.
@@ -742,17 +701,18 @@ impl StaticLexerDFA {
         if col < LOW_ROW {
             return self.low().get(s as usize * LOW_ROW + col);
         }
-        // Partition `class_starts` for the symbol class, then load the state's
-        // deduplicated hi row. The bounds also cover modes without hi edges
-        // (an empty class-start table) and symbols past MAX_SYMBOL.
+        // A class search over `class_starts`, then two loads: the row of the
+        // state and the entry of the class. The bounds also cover modes
+        // without hi edges (an empty class-start table) and symbols past
+        // MAX_SYMBOL.
         let symbol = t as u32;
         let header = self.header();
         if header.num_classes == 0 || symbol > MAX_SYMBOL {
             return NO_EDGE;
         }
         let class = class_of(self.class_starts(), symbol);
-        // Unchecked-index safety: `row_of` has `num_states` entries and every
-        // state id the walker forms is below `num_states`.
+        // Unchecked-index safety: every state id the walker forms is in
+        // bounds (see above).
         let row = unsafe { *self.row_of().get_unchecked(s as usize) } as usize;
         self.hi_rows()
             .get(row * header.num_classes as usize + class)
@@ -760,9 +720,13 @@ impl StaticLexerDFA {
 
     /// Raw edge entry of state `s` on input symbol `t`: see
     /// [`StaticLexerDFA::edge_entry_impl`].
+    ///
+    /// Panics on a state id outside the table; the walker of a shipped lexer
+    /// uses the unchecked `pub(crate)` form.
     #[cfg(feature = "static-dfa-build")]
     #[inline]
     pub fn edge_entry(&self, s: u16, t: i32) -> u16 {
+        self.check_state(s);
         self.edge_entry_impl(s, t)
     }
 
@@ -776,9 +740,13 @@ impl StaticLexerDFA {
 
     /// Token type produced when accepting in state `s`; -1 = not an accept
     /// state.
+    ///
+    /// Panics on a state id outside the table; the walker of a shipped lexer
+    /// uses the unchecked `pub(crate)` form.
     #[cfg(feature = "static-dfa-build")]
     #[inline]
     pub fn accept_type(&self, s: u16) -> i32 {
+        self.check_state(s);
         unsafe { *self.accept_types().get_unchecked(s as usize) }
     }
 
@@ -801,6 +769,27 @@ impl StaticLexerDFA {
         // and every state id the walker forms is below `num_states`.
         let span = unsafe { *spans.get_unchecked(s as usize) };
         let actions = self.records::<LexerAction>(header.actions, header.actions_len as usize);
+        let start = span.off as usize;
+        &actions[start..start + span.len as usize]
+    }
+
+    /// The position-independent lexer actions to execute when accepting in
+    /// state `s`, with the `'static` lifetime of a borrowed runtime image.
+    #[inline]
+    pub(crate) fn accept_actions_static(&self, s: u16) -> &'static [LexerAction] {
+        let Cow::Borrowed(words) = self.data else {
+            unreachable!("runtime static lexer tables borrow a 'static image")
+        };
+        let header = self.header();
+        let spans = self.records::<ActionSpan>(header.accept_actions, header.num_states as usize);
+        // Unchecked-index safety: `accept_actions` has `num_states` entries
+        // and every state id the walker forms is below `num_states`.
+        let span = unsafe { *spans.get_unchecked(s as usize) };
+        let actions = unsafe {
+            let start =
+                (words.as_ptr() as *const u8).add(header.actions as usize) as *const LexerAction;
+            std::slice::from_raw_parts(start, header.actions_len as usize)
+        };
         let start = span.off as usize;
         &actions[start..start + span.len as usize]
     }
@@ -830,18 +819,22 @@ impl StaticLexerDFA {
         if symbol == EOF {
             return unsafe { *self.eof_escapes().get_unchecked(s as usize) };
         }
-        // Valid tables have a range for every ESCAPE entry (checked at
-        // load); the restart-on-budget-escape path treats a miss as a
-        // budget escape, which stays correct.
+        // A builder table has a range for every non-EOF ESCAPE entry, but
+        // the loader does not enforce coverage: a miss reads as a budget
+        // escape, which stays correct.
         self.escape_range(s, symbol)
             .map_or(NO_CONTINUATION, |r| r.continuation)
     }
 
     /// The continuation index of the escape edge of state `s` on `symbol`:
     /// see [`StaticLexerDFA::escape_continuation_impl`].
+    ///
+    /// Panics on a state id outside the table; the walker of a shipped lexer
+    /// uses the unchecked `pub(crate)` form.
     #[cfg(feature = "static-dfa-build")]
     #[inline]
     pub fn escape_continuation(&self, s: u16, symbol: i32) -> u32 {
+        self.check_state(s);
         self.escape_continuation_impl(s, symbol)
     }
 
@@ -857,7 +850,7 @@ impl StaticLexerDFA {
     /// continuation of the range can be `NO_CONTINUATION` (a budget
     /// escape): coverage and continuation value are separate facts.
     fn escape_range(&self, s: u16, symbol: i32) -> Option<&EscapeRange> {
-        let row = unsafe { self.escape_ranges_of().get_unchecked(self.escape_row(s)) };
+        let row = self.escape_ranges_of().get(self.escape_row(s))?;
         let found = row.binary_search_by(|r| {
             if symbol < r.lo {
                 std::cmp::Ordering::Greater
@@ -895,14 +888,56 @@ impl StaticLexerDFA {
             header.continuation_actions,
             header.continuation_actions_len as usize,
         );
+        let ctxs_end = continuation.ctxs_off as usize + continuation.ctxs_len as usize;
+        let configs_end = continuation.configs_off as usize + continuation.configs_len as usize;
         ContinuationView {
             kind: continuation.kind,
-            ctxs: &ctxs[continuation.ctxs_off as usize
-                ..(continuation.ctxs_off + continuation.ctxs_len) as usize],
-            configs: &configs[continuation.configs_off as usize
-                ..(continuation.configs_off + continuation.configs_len) as usize],
+            ctxs: &ctxs[continuation.ctxs_off as usize..ctxs_end],
+            configs: &configs[continuation.configs_off as usize..configs_end],
             actions,
         }
+    }
+}
+
+/// `true` when `words` is the canonical 4-word `#[repr(C, u32)]` image
+/// representation of a position-independent [`LexerAction`], so casting the
+/// `actions` section to `&[LexerAction]` is sound.
+fn action_words_are_valid(words: &[u32; ACTION_WORDS]) -> bool {
+    let [tag, w1, w2, w3] = *words;
+    match tag as i32 {
+        LEXER_ACTION_TYPE_CHANNEL
+        | LEXER_ACTION_TYPE_MODE
+        | LEXER_ACTION_TYPE_PUSH_MODE
+        | LEXER_ACTION_TYPE_TYPE => w2 == 0 && w3 == 0,
+        LEXER_ACTION_TYPE_MORE | LEXER_ACTION_TYPE_POP_MODE | LEXER_ACTION_TYPE_SKIP => {
+            w1 == 0 && w2 == 0 && w3 == 0
+        }
+        _ => false,
+    }
+}
+
+/// `true` when `words` is a valid, canonical 8-word `#[repr(C, u32)]` image
+/// representation of an [`Accel`] descriptor, so casting the `accel_data`
+/// section to `&[Accel]` and running `run_scan` on it is sound.
+fn accel_words_are_valid(words: &[u32; ACCEL_WORDS]) -> bool {
+    let [tag, w0, w1, w2, w3, w4, w5, w6] = *words;
+    match tag {
+        ACCEL_POSITIVE => w4 == 0 && w5 == 0 && w6 == 0,
+        ACCEL_EXCLUDE => w0 < 0x80 && [w1, w2, w3, w4, w5, w6] == [0; 6],
+        ACCEL_EXCLUDE2 => w0 < 0x80 && w1 < 0x80 && [w2, w3, w4, w5, w6] == [0; 5],
+        ACCEL_EXCLUDE3 => w0 < 0x80 && w1 < 0x80 && w2 < 0x80 && [w3, w4, w5, w6] == [0; 4],
+        ACCEL_COUNTED_EXCLUSION => {
+            let opener = [w0, w1, w2];
+            let closer = [w3, w4, w5];
+            let n = w6 as usize;
+            (1..=3).contains(&w6)
+                && opener != closer
+                && opener[..n].iter().all(|&byte| byte < 0x80)
+                && closer[..n].iter().all(|&byte| byte < 0x80)
+                && opener[n..].iter().all(|&byte| byte == 0)
+                && closer[n..].iter().all(|&byte| byte == 0)
+        }
+        _ => false,
     }
 }
 
@@ -919,6 +954,7 @@ fn class_of(class_starts: &[u32], symbol: u32) -> usize {
 ///
 /// The builder fills these sections directly; `finalize` lays them out in image
 /// order, and every runtime accessor reads the image, not the sections.
+#[cfg(feature = "static-dfa-build")]
 #[derive(Debug)]
 pub(crate) struct StaticLexerDfaBuild {
     /// The state the walk of a token starts in.
@@ -973,6 +1009,7 @@ pub(crate) struct StaticLexerDfaBuild {
     pub(crate) continuation_actions: Vec<u32>,
 }
 
+#[cfg(feature = "static-dfa-build")]
 impl StaticLexerDfaBuild {
     /// The number of distinct hi-edge rows of the sections.
     fn num_hi_rows(&self) -> usize {
@@ -1082,18 +1119,19 @@ impl StaticLexerDfaBuild {
         let table = StaticLexerDFA {
             data: Cow::Owned(words),
         };
-        debug_assert_eq!(
-            table.records::<LexerAction>(header.actions, self.actions.len()),
-            self.actions.as_slice()
-        );
-        debug_assert_eq!(
-            table.records::<Accel>(header.accel_data, self.accel_data.len()),
-            self.accel_data.as_slice()
-        );
+        // The sections are the only source of the tables, so an image that
+        // the loader would reject is a builder bug, not a runtime condition.
+        // (The mode index only numbers the error payload.)
+        table
+            .header()
+            .validate(0, table.data.len())
+            .and_then(|()| table.validate_entries(0))
+            .expect("the builder sections form a valid image");
         table
     }
 }
 
+#[cfg(feature = "static-dfa-build")]
 impl Header {
     /// Writes the header into the first words of `words`.
     fn write(&self, words: &mut [u32]) {
@@ -1105,12 +1143,14 @@ impl Header {
 }
 
 /// Byte offset of the next section of `words`, which are whole words so far.
+#[cfg(feature = "static-dfa-build")]
 #[inline]
 fn image_offset(words: &[u32]) -> u32 {
     (words.len() * 4) as u32
 }
 
 /// Appends a `u16` table, two entries per word.
+#[cfg(feature = "static-dfa-build")]
 fn push_packed_u16(words: &mut Vec<u32>, values: &[u16]) {
     let start = words.len();
     words.resize(start + packed_u16_words(values.len()), 0);
@@ -1120,7 +1160,10 @@ fn push_packed_u16(words: &mut Vec<u32>, values: &[u16]) {
 }
 
 /// Appends a `#[repr(C)]` table of 4-byte words.
+#[cfg(feature = "static-dfa-build")]
 fn push_records<T: Copy>(words: &mut Vec<u32>, records: &[T]) {
+    use std::mem::size_of_val;
+
     debug_assert_eq!(size_of::<T>() % 4, 0, "records pack into whole words");
     debug_assert!(align_of::<T>() <= 4, "records pack into words");
     let byte_len = size_of_val(records);
@@ -1140,207 +1183,67 @@ fn push_records<T: Copy>(words: &mut Vec<u32>, records: &[T]) {
     }
 }
 
-/// Failure while decoding a static lexer DFA word stream.
+/// Failure while loading a packed static lexer DFA image.
+///
+/// The tables are a compile-time product that generated code carries as
+/// constants, so these are format errors of the image itself, not conditions
+/// a correct build can produce.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StaticLexerError {
-    /// Word 0 is not the static DFA magic value.
+    /// Word 0 of the image is not the static DFA magic value.
     BadMagic {
         /// The value found in word 0.
         found: u32,
     },
-    /// The total length word does not match the stream length.
+    /// A mode image does not start with the image magic.
+    BadModeMagic {
+        /// The mode index.
+        mode: usize,
+        /// The value found in word 0 of the mode image.
+        found: u32,
+    },
+    /// The word count of the image does not match the image length.
     TotalLengthMismatch {
-        /// The declared total word count.
+        /// The declared word count.
         declared: usize,
-        /// The actual stream word count.
+        /// The actual image length, in words.
         actual: usize,
     },
-    /// The stream ends before the declared data.
-    TruncatedStream {
-        /// The word count the stream must have at least.
+    /// The image ends before the container preamble declares data.
+    TruncatedImage {
+        /// The word count the image must have at least.
         expected_at_least: usize,
-        /// The actual stream word count.
+        /// The actual image length, in words.
         actual: usize,
     },
-    /// The mode sections end before the declared stream end.
-    TrailingWords {
-        /// The number of words the sections consumed.
-        consumed: usize,
-        /// The declared total word count.
-        actual: usize,
-    },
-    /// A mode `present` flag is not 0 or 1.
-    InvalidModeFlag {
+    /// A mode image, or a section of it, leaves the image it belongs to.
+    OutOfBounds {
         /// The mode index.
         mode: usize,
-        /// The flag word value.
-        value: u32,
-    },
-    /// A mode state count is 0 or past the table limit.
-    InvalidStateCount {
-        /// The mode index.
-        mode: usize,
-        /// The declared state count.
-        count: usize,
-    },
-    /// An index points outside its table.
-    IndexOutOfBounds {
-        /// The mode index.
-        mode: usize,
-        /// What the index addresses.
+        /// What leaves its image.
         what: &'static str,
-        /// The index value.
-        index: u32,
+        /// The end offset of the data, in bytes.
+        end: usize,
+        /// The length of the image, in bytes.
+        total: usize,
+    },
+    /// A table of the image breaks an invariant of the format.
+    Malformed {
+        /// The mode index.
+        mode: usize,
+        /// What is malformed.
+        what: &'static str,
+    },
+    /// A table entry points outside the table it addresses.
+    InvalidReference {
+        /// The mode index.
+        mode: usize,
+        /// What the entry addresses.
+        what: &'static str,
+        /// The value of the entry.
+        value: u32,
         /// The number of valid entries.
         count: usize,
-    },
-    /// An edge entry is neither sentinel nor a valid target state, or the
-    /// word does not fit a u16 edge entry.
-    InvalidEdgeTarget {
-        /// The mode index.
-        mode: usize,
-        /// The raw word value.
-        entry: u32,
-    },
-    /// The accept bit of a non-sentinel edge entry does not match the
-    /// accept type of the target state.
-    InconsistentAcceptBit {
-        /// The mode index.
-        mode: usize,
-        /// The raw entry value.
-        entry: u16,
-    },
-    /// An accept token type is below -1.
-    InvalidAcceptType {
-        /// The mode index.
-        mode: usize,
-        /// The state index.
-        state: usize,
-        /// The token type value.
-        value: i32,
-    },
-    /// The class starts do not begin at 128, are not strictly increasing,
-    /// or exceed `MAX_SYMBOL`.
-    InvalidClassStarts {
-        /// The mode index.
-        mode: usize,
-    },
-    /// The row offsets do not start at 0, are not monotonic, or do not end
-    /// at the declared triple count.
-    InvalidRowOffsets {
-        /// The mode index.
-        mode: usize,
-    },
-    /// A class run has `lo > hi`, leaves the class range, or overlaps the
-    /// previous run of its row.
-    InvalidClassRange {
-        /// The mode index.
-        mode: usize,
-        /// The row index.
-        row: usize,
-    },
-    /// An accept action list offset does not point at a complete list in
-    /// the action-list section.
-    InvalidActionList {
-        /// The mode index.
-        mode: usize,
-        /// The state index.
-        state: usize,
-    },
-    /// An accept action list holds an unknown or position-dependent action
-    /// type.
-    InvalidActionType {
-        /// The mode index.
-        mode: usize,
-        /// The state index.
-        state: usize,
-        /// The action type value.
-        value: i32,
-    },
-    /// A section word count does not match the data read for the section.
-    SectionLengthMismatch {
-        /// The mode index.
-        mode: usize,
-        /// The section name.
-        section: &'static str,
-        /// The declared section word count.
-        expected: usize,
-        /// The number of words read for the section.
-        found: usize,
-    },
-    /// An accel flavor tag is not a known value.
-    InvalidAccelTag {
-        /// The mode index.
-        mode: usize,
-        /// The tag value.
-        value: u32,
-    },
-    /// An exclusion accel entry has a needle count outside `1..=3` or a
-    /// needle byte past 127.
-    InvalidAccelNeedles {
-        /// The mode index.
-        mode: usize,
-    },
-    /// An escape row is not sorted and disjoint, or a range leaves the
-    /// symbol range.
-    InvalidEscapeRow {
-        /// The mode index.
-        mode: usize,
-        /// The state index.
-        state: usize,
-    },
-    /// An escape range endpoint has no ESCAPE edge entry, or an ESCAPE
-    /// entry has no covering escape range.
-    InconsistentEscapeRow {
-        /// The mode index.
-        mode: usize,
-        /// The state index.
-        state: usize,
-        /// The symbol (EOF = -1).
-        symbol: i32,
-    },
-    /// A continuation kind is not a known value.
-    UnknownContinuationKind {
-        /// The mode index.
-        mode: usize,
-        /// The continuation index.
-        index: usize,
-        /// The kind value.
-        kind: u32,
-    },
-    /// A context-table entry kind is not 0 (singleton).
-    InvalidContextKind {
-        /// The mode index.
-        mode: usize,
-        /// The continuation index.
-        index: usize,
-        /// The kind value.
-        value: u32,
-    },
-    /// A context-table parent refers to an entry that is not smaller.
-    NonTopologicalContext {
-        /// The mode index.
-        mode: usize,
-        /// The continuation index.
-        index: usize,
-    },
-    /// A continuation config has reserved flag bits set, an alt below 1, or
-    /// a context id past the context table.
-    InvalidContinuationConfig {
-        /// The mode index.
-        mode: usize,
-        /// The continuation index.
-        index: usize,
-    },
-    /// A serialized action has a `behind` value other than
-    /// [`BEHIND_POSITION_INDEPENDENT`].
-    InvalidBehind {
-        /// The mode index.
-        mode: usize,
-        /// The continuation index.
-        index: usize,
-        /// The `behind` value.
-        value: u32,
     },
 }
 
@@ -1353,134 +1256,48 @@ impl fmt::Display for StaticLexerError {
                     "bad magic 0x{found:08x}; expected 0x{STATIC_DFA_MAGIC:08x}"
                 )
             }
+            StaticLexerError::BadModeMagic { mode, found } => {
+                write!(
+                    f,
+                    "mode {mode}: bad image magic 0x{found:08x}; expected 0x{IMAGE_MAGIC:08x}"
+                )
+            }
             StaticLexerError::TotalLengthMismatch { declared, actual } => {
                 write!(
                     f,
-                    "declared total length {declared} does not match stream length {actual}"
+                    "declared total length {declared} does not match image length {actual}"
                 )
             }
-            StaticLexerError::TruncatedStream {
+            StaticLexerError::TruncatedImage {
                 expected_at_least,
                 actual,
             } => {
                 write!(
                     f,
-                    "stream has {actual} words; expected at least {expected_at_least}"
+                    "image has {actual} words; expected at least {expected_at_least}"
                 )
             }
-            StaticLexerError::TrailingWords { consumed, actual } => {
-                write!(
-                    f,
-                    "mode sections consumed {consumed} words of the declared {actual}"
-                )
-            }
-            StaticLexerError::InvalidModeFlag { mode, value } => {
-                write!(f, "mode {mode} present flag is {value}; expected 0 or 1")
-            }
-            StaticLexerError::InvalidStateCount { mode, count } => {
-                write!(
-                    f,
-                    "mode {mode} has {count} states; expected 1..={MAX_STATE_COUNT}"
-                )
-            }
-            StaticLexerError::IndexOutOfBounds {
+            StaticLexerError::OutOfBounds {
                 mode,
                 what,
-                index,
+                end,
+                total,
+            } => {
+                write!(
+                    f,
+                    "mode {mode}: {what} ends at byte {end} of a {total}-byte image"
+                )
+            }
+            StaticLexerError::Malformed { mode, what } => {
+                write!(f, "mode {mode}: {what} is malformed")
+            }
+            StaticLexerError::InvalidReference {
+                mode,
+                what,
+                value,
                 count,
             } => {
-                write!(f, "mode {mode}: {what} index {index} outside 0..{count}")
-            }
-            StaticLexerError::InvalidEdgeTarget { mode, entry } => {
-                write!(f, "mode {mode}: invalid edge entry 0x{entry:04x}")
-            }
-            StaticLexerError::InconsistentAcceptBit { mode, entry } => {
-                write!(
-                    f,
-                    "mode {mode}: edge entry 0x{entry:04x} accept bit does not match \
-                     the target state's accept type"
-                )
-            }
-            StaticLexerError::InvalidAcceptType { mode, state, value } => {
-                write!(
-                    f,
-                    "mode {mode} state {state}: accept type {value}; expected -1 or a token type"
-                )
-            }
-            StaticLexerError::InvalidClassStarts { mode } => {
-                write!(f, "mode {mode}: invalid class starts")
-            }
-            StaticLexerError::InvalidRowOffsets { mode } => {
-                write!(f, "mode {mode}: invalid class row offsets")
-            }
-            StaticLexerError::InvalidClassRange { mode, row } => {
-                write!(f, "mode {mode} hi row {row}: invalid class range")
-            }
-            StaticLexerError::InvalidActionList { mode, state } => {
-                write!(
-                    f,
-                    "mode {mode} state {state}: accept action list is not decodable"
-                )
-            }
-            StaticLexerError::InvalidActionType { mode, state, value } => {
-                write!(
-                    f,
-                    "mode {mode} state {state}: invalid or position-dependent action type {value}"
-                )
-            }
-            StaticLexerError::SectionLengthMismatch {
-                mode,
-                section,
-                expected,
-                found,
-            } => {
-                write!(
-                    f,
-                    "mode {mode}: {section} section declared {expected} words; read {found}"
-                )
-            }
-            StaticLexerError::InvalidAccelTag { mode, value } => {
-                write!(f, "mode {mode}: unknown accel tag {value}")
-            }
-            StaticLexerError::InvalidAccelNeedles { mode } => {
-                write!(f, "mode {mode}: invalid exclusion accel needles")
-            }
-            StaticLexerError::InvalidEscapeRow { mode, state } => {
-                write!(f, "mode {mode} state {state}: invalid escape row")
-            }
-            StaticLexerError::InconsistentEscapeRow {
-                mode,
-                state,
-                symbol,
-            } => {
-                write!(
-                    f,
-                    "mode {mode} state {state}: escape row does not match the edge entry at symbol {symbol}"
-                )
-            }
-            StaticLexerError::UnknownContinuationKind { mode, index, kind } => {
-                write!(f, "mode {mode} continuation {index}: unknown kind {kind}")
-            }
-            StaticLexerError::InvalidContextKind { mode, index, value } => {
-                write!(
-                    f,
-                    "mode {mode} continuation {index}: context kind {value}; expected 0 (singleton)"
-                )
-            }
-            StaticLexerError::NonTopologicalContext { mode, index } => {
-                write!(
-                    f,
-                    "mode {mode} continuation {index}: context table is not topological"
-                )
-            }
-            StaticLexerError::InvalidContinuationConfig { mode, index } => {
-                write!(f, "mode {mode} continuation {index}: invalid config")
-            }
-            StaticLexerError::InvalidBehind { mode, index, value } => {
-                write!(
-                    f,
-                    "mode {mode} continuation {index}: behind value {value}; expected {BEHIND_POSITION_INDEPENDENT}"
-                )
+                write!(f, "mode {mode}: {what} {value} outside 0..{count}")
             }
         }
     }
@@ -1490,6 +1307,7 @@ impl std::error::Error for StaticLexerError {}
 
 /// The concatenated continuation sections of one mode: the context tables,
 /// the configs, and the action traces of all continuations, in pool order.
+#[cfg(feature = "static-dfa-build")]
 #[derive(Debug, Default)]
 pub(crate) struct ContinuationPools {
     pub(crate) ctxs: Vec<ContinuationContext>,
@@ -1497,6 +1315,7 @@ pub(crate) struct ContinuationPools {
     pub(crate) actions: Vec<u32>,
 }
 
+#[cfg(feature = "static-dfa-build")]
 impl ContinuationPools {
     /// Appends the context table, the configs, and the actions of one
     /// continuation and returns its pool entry.
@@ -1515,10 +1334,10 @@ impl ContinuationPools {
         let configs_len = self.configs.len() as u32 - configs_off;
         let actions_off = self.actions.len() as u32;
         self.actions.extend(actions);
-        // The configs name their actions by offset into this section, so
-        // patch them up as they land.
-        let configs = &mut self.configs[configs_off as usize..];
-        for config in configs.iter_mut() {
+        // The configs name their actions by offset into this pool, so patch
+        // them up as they land. A config without actions always names the
+        // empty span.
+        for config in &mut self.configs[configs_off as usize..] {
             if config.actions_len == 0 {
                 config.actions_off = 0;
             } else {
@@ -1536,104 +1355,112 @@ impl ContinuationPools {
 }
 
 impl StaticLexerTables {
-    /// Decodes a static lexer DFA word stream, with full validation: magic,
-    /// total length, section lengths, every edge target below the state
-    /// count or a sentinel, row indices in bounds, continuation indices in
-    /// bounds, and decodable action triples. After a successful load the
-    /// walker indexes the tables without bounds checks.
+    /// Wraps the packed image that generated code embeds: a zero-copy view
+    /// over the `static` words of the lexer.
     ///
-    /// Panics on a format-version mismatch: the words are generated
-    /// together with the code that embeds them, so a version mismatch is a
-    /// build inconsistency, not a runtime condition. Regenerate the tables
-    /// with the matching tool version.
-    pub fn from_words(words: &[u32]) -> Result<Self, StaticLexerError> {
-        let mut r = Reader { words, pos: 0 };
-        if words.len() < 4 {
-            return Err(StaticLexerError::TruncatedStream {
-                expected_at_least: 4,
-                actual: words.len(),
+    /// The container is validated against its preamble, and the sections and
+    /// dereferenced entries of every mode image are validated against their
+    /// tables. The tables themselves are not re-derived: they are the exact
+    /// bytes the builder produced.
+    ///
+    /// Panics on a format-version mismatch: the words are generated together
+    /// with the code that embeds them, so a version mismatch is a build
+    /// inconsistency, not a runtime condition. Regenerate the lexer with the
+    /// matching tool version.
+    pub fn from_image(image: &'static [u32]) -> Result<Self, StaticLexerError> {
+        const PREAMBLE_WORDS: usize = 4;
+        const MODE_WORDS: usize = 2;
+        if image.len() < PREAMBLE_WORDS {
+            return Err(StaticLexerError::TruncatedImage {
+                expected_at_least: PREAMBLE_WORDS,
+                actual: image.len(),
             });
         }
-        let magic = r.next()?;
-        if magic != STATIC_DFA_MAGIC {
-            return Err(StaticLexerError::BadMagic { found: magic });
+        if image[0] != STATIC_DFA_MAGIC {
+            return Err(StaticLexerError::BadMagic { found: image[0] });
         }
-        let version = r.next()?;
+        let version = image[1];
         assert_eq!(
             version, STATIC_DFA_FORMAT_VERSION,
             "static lexer DFA table format version mismatch (found {version}, expected \
              {STATIC_DFA_FORMAT_VERSION}): the table was generated with a different tool \
              version; regenerate the lexer tables"
         );
-        let total = r.next()? as usize;
-        if total != words.len() {
+        let total = image[2] as usize;
+        if total != image.len() {
             return Err(StaticLexerError::TotalLengthMismatch {
                 declared: total,
-                actual: words.len(),
+                actual: image.len(),
             });
         }
-        let num_modes = r.next()? as usize;
-        let mut modes = Vec::with_capacity(num_modes);
-        for mode in 0..num_modes {
-            modes.push(read_mode(&mut r, mode)?);
+        let num_modes = image[3] as usize;
+        let modes_end = num_modes
+            .checked_mul(MODE_WORDS)
+            .and_then(|words| words.checked_add(PREAMBLE_WORDS))
+            .filter(|&end| end <= image.len());
+        let Some(modes_end) = modes_end else {
+            return Err(StaticLexerError::OutOfBounds {
+                mode: 0,
+                what: "the mode table",
+                end: num_modes
+                    .saturating_mul(MODE_WORDS)
+                    .saturating_add(PREAMBLE_WORDS)
+                    .saturating_mul(4),
+                total: image.len() * 4,
+            });
+        };
+        let modes = image[PREAMBLE_WORDS..modes_end].as_chunks::<MODE_WORDS>().0;
+        let data = &image[modes_end..];
+        // The mode images sit back to back in `data` and together cover it,
+        // so a container has exactly one encoding.
+        let mut next_offset = 0usize;
+        for (mode, &[offset, len]) in modes.iter().enumerate() {
+            if offset == u32::MAX {
+                if len != u32::MAX {
+                    return Err(StaticLexerError::Malformed {
+                        mode,
+                        what: "the mode table entry of an absent mode",
+                    });
+                }
+                continue;
+            }
+            if offset as usize != next_offset {
+                return Err(StaticLexerError::Malformed {
+                    mode,
+                    what: "the mode table entry",
+                });
+            }
+            validate_mode_image(data, mode, offset, len)?;
+            next_offset += len as usize;
         }
-        if r.pos != words.len() {
-            return Err(StaticLexerError::TrailingWords {
-                consumed: r.pos,
-                actual: words.len(),
+        if next_offset != data.len() {
+            return Err(StaticLexerError::TotalLengthMismatch {
+                declared: modes_end + next_offset,
+                actual: image.len(),
             });
         }
-        Ok(StaticLexerTables { modes })
+        Ok(StaticLexerTables { modes, data })
     }
 
     /// The table for lexer mode `m`, if the builder compiled one.
     #[inline]
-    pub fn mode(&self, m: usize) -> Option<&StaticLexerDFA> {
-        self.modes.get(m).and_then(Option::as_ref)
+    pub fn mode(&self, m: usize) -> Option<StaticLexerDFA> {
+        self.modes.get(m).and_then(|&[offset, len]| {
+            if offset == u32::MAX {
+                None
+            } else {
+                let start = offset as usize;
+                Some(StaticLexerDFA {
+                    data: Cow::Borrowed(&self.data[start..start + len as usize]),
+                })
+            }
+        })
     }
 
-    /// Number of lexer modes in the stream, including modes without a
+    /// Number of lexer modes in the container, including modes without a
     /// table.
     pub fn num_modes(&self) -> usize {
         self.modes.len()
-    }
-
-    /// Assembles the tables from per-mode build results: the builder side
-    /// of the type ([`Self::from_words`] is the wire side).
-    #[cfg(feature = "static-dfa-build")]
-    pub(crate) fn from_modes(modes: Vec<Option<StaticLexerDFA>>) -> Self {
-        StaticLexerTables { modes }
-    }
-
-    /// The inverse of `from_modes`: unpacks into the per-mode tables.
-    #[cfg(feature = "static-dfa-build")]
-    pub(crate) fn into_modes(self) -> Vec<Option<StaticLexerDFA>> {
-        self.modes
-    }
-
-    /// Encodes the tables as a word stream: the exact inverse of
-    /// [`Self::from_words`]. Generated code embeds the words.
-    ///
-    /// (Feature `static-dfa-build`: only the builder produces tables.)
-    #[cfg(feature = "static-dfa-build")]
-    pub fn to_words(&self) -> Vec<u32> {
-        let mut out = vec![
-            STATIC_DFA_MAGIC,
-            STATIC_DFA_FORMAT_VERSION,
-            0,
-            self.modes.len() as u32,
-        ];
-        for mode in &self.modes {
-            match mode {
-                None => out.push(0),
-                Some(dfa) => {
-                    out.push(1);
-                    dfa.write_mode(&mut out);
-                }
-            }
-        }
-        out[2] = out.len() as u32;
-        out
     }
 
     /// Checks the ATN-relative references of the continuation pool against
@@ -1645,8 +1472,8 @@ impl StaticLexerTables {
     pub(crate) fn validate_for_atn(&self, atn: &ATN) {
         let states = atn.states_count();
         let actions = atn.lexer_actions.len();
-        for (m, mode) in self.modes.iter().enumerate() {
-            let Some(mode) = mode else { continue };
+        for m in 0..self.num_modes() {
+            let Some(mode) = self.mode(m) else { continue };
             for index in 0..mode.header().continuations_len {
                 let continuation = mode.continuation(index);
                 for ctx in continuation.ctxs() {
@@ -1700,17 +1527,20 @@ impl StaticLexerDFA {
     /// The kind of continuation `index`: `CONTINUATION_MOVED_CONFIGS` or
     /// `CONTINUATION_SOURCE_SET`.
     pub fn continuation_kind(&self, index: u32) -> u32 {
+        self.check_continuation_index(index);
         self.continuation(index).kind()
     }
 
     /// The number of configs of continuation `index`.
     pub fn continuation_num_configs(&self, index: u32) -> usize {
+        self.check_continuation_index(index);
         self.continuation(index).configs().len()
     }
 
     /// The accept action list of state `s` as ATN `(type, data1, data2)`
     /// triples, in order.
     pub fn accept_action_triples(&self, s: u16) -> Vec<(i32, i32, i32)> {
+        self.check_state(s);
         self.accept_actions(s)
             .iter()
             .map(LexerAction::to_serialized)
@@ -1720,12 +1550,17 @@ impl StaticLexerDFA {
     /// The escape ranges of state `s` as `(lo, hi, continuation)` triples,
     /// sorted and disjoint (`NO_CONTINUATION` marks a budget escape).
     pub fn escape_ranges(&self, s: u16) -> Vec<(i32, i32, u32)> {
-        let row = &self.escape_ranges_of()[self.escape_row(s)];
+        self.check_state(s);
+        let row = self
+            .escape_ranges_of()
+            .get(self.escape_row(s))
+            .unwrap_or_default();
         row.iter().map(|r| (r.lo, r.hi, r.continuation)).collect()
     }
 
     /// Run-acceleration descriptor of state `s`, if any.
     pub fn state_accel(&self, s: u16) -> Option<Accel> {
+        self.check_state(s);
         let tag = self.accel_tag(s);
         (tag != 0).then(|| self.accel_payload(tag))
     }
@@ -1750,11 +1585,13 @@ impl StaticLexerDFA {
 
     /// Number of singleton context nodes in continuation `index`.
     pub fn continuation_num_contexts(&self, index: u32) -> usize {
+        self.check_continuation_index(index);
         self.continuation(index).ctxs().len()
     }
 
     /// Number of non-greedy configs in continuation `index`.
     pub fn continuation_num_non_greedy_configs(&self, index: u32) -> usize {
+        self.check_continuation_index(index);
         self.continuation(index)
             .configs()
             .iter()
@@ -1764,6 +1601,7 @@ impl StaticLexerDFA {
 
     /// ATN state numbers of the configs in continuation `index`, in config order.
     pub fn continuation_config_states(&self, index: u32) -> Vec<usize> {
+        self.check_continuation_index(index);
         self.continuation(index)
             .configs()
             .iter()
@@ -1772,170 +1610,9 @@ impl StaticLexerDFA {
     }
 }
 
-/// The encode side of the word-stream codec: [`StaticLexerTables::to_words`]
-/// and its per-section writers. The section order is the one of the module
-/// documentation; the output is the exact inverse of
-/// [`StaticLexerTables::from_words`].
-#[cfg(feature = "static-dfa-build")]
-impl StaticLexerDFA {
-    /// Writes one present mode section.
-    fn write_mode(&self, out: &mut Vec<u32>) {
-        let num_states = self.num_states();
-        out.push(num_states as u32);
-        out.push(u32::from(self.start_state()));
-        for s in 0..num_states {
-            out.push(self.accept_type(s as u16) as u32);
-        }
-
-        // Accept action lists, deduplicated by content in state order.
-        let mut action_lists: Vec<u32> = Vec::new();
-        let mut list_ids: HashMap<&[LexerAction], u32> = HashMap::new();
-        let mut offsets = Vec::with_capacity(num_states);
-        for s in 0..num_states {
-            let list = self.accept_actions(s as u16);
-            if list.is_empty() {
-                offsets.push(-1i32);
-                continue;
-            }
-            let offset = match list_ids.get(list) {
-                Some(&offset) => offset,
-                None => {
-                    let offset = action_lists.len() as u32;
-                    action_lists.push(list.len() as u32);
-                    for action in list {
-                        let (ty, d1, d2) = action.to_serialized();
-                        action_lists.extend([ty as u32, d1 as u32, d2 as u32]);
-                    }
-                    list_ids.insert(list, offset);
-                    offset
-                }
-            };
-            offsets.push(offset as i32);
-        }
-        out.extend(offsets.iter().map(|&o| o as u32));
-
-        let low = self.low();
-        for s in 0..num_states {
-            out.push(u32::from(low.get(s * LOW_ROW)));
-        }
-        for s in 0..num_states {
-            for col in 1..LOW_ROW {
-                out.push(u32::from(low.get(s * LOW_ROW + col)));
-            }
-        }
-
-        self.write_hi_classes(out);
-
-        out.push(action_lists.len() as u32);
-        out.extend(action_lists);
-
-        let mut accel = Vec::new();
-        for s in 0..num_states as u16 {
-            let tag = self.accel_tag(s);
-            if tag != 0 {
-                accel.extend(self.accel_payload(tag).to_serialized(s));
-            }
-        }
-        out.push(accel.len() as u32);
-        out.extend(accel);
-
-        let eof_escapes = self.eof_escapes();
-        let escape_ranges = self.escape_ranges_of();
-        for s in 0..num_states {
-            out.push(eof_escapes[s]);
-            let row = &escape_ranges[self.escape_row(s as u16)];
-            out.push(row.len() as u32);
-            for range in row {
-                out.extend([range.lo as u32, range.hi as u32, range.continuation]);
-            }
-        }
-
-        let num_continuations = self.num_continuations() as u32;
-        out.push(num_continuations);
-        for index in 0..num_continuations {
-            let continuation = self.continuation(index);
-            out.push(continuation.kind());
-            out.push(continuation.ctxs().len() as u32);
-            for ctx in continuation.ctxs() {
-                out.extend([0, ctx.parent, ctx.return_state as u32]);
-            }
-            out.push(continuation.configs().len() as u32);
-            for config in continuation.configs() {
-                let actions = continuation.config_actions(config);
-                out.extend([
-                    config.state as u32,
-                    config.flags,
-                    config.alt as u32,
-                    config.ctx,
-                    actions.len() as u32,
-                ]);
-                for &action in actions {
-                    out.extend([action, BEHIND_POSITION_INDEPENDENT]);
-                }
-            }
-        }
-    }
-
-    /// Writes the class-compressed hi-edge section: the deduplicated dense
-    /// rows are re-expressed as `(lo_class, hi_class, target)` runs.
-    fn write_hi_classes(&self, out: &mut Vec<u32>) {
-        let num_classes = self.num_classes();
-        out.push(num_classes as u32);
-        if num_classes == 0 {
-            return;
-        }
-        out.extend(self.class_starts().iter().copied());
-        let num_rows = self.num_distinct_hi_rows();
-        let hi_rows = self.hi_rows();
-        let row_runs: Vec<Vec<(u32, u32, u16)>> = (0..num_rows)
-            .map(|row| {
-                let dense: Vec<u16> = (0..num_classes)
-                    .map(|class| hi_rows.get(row * num_classes + class))
-                    .collect();
-                dense_row_runs(&dense)
-            })
-            .collect();
-        out.push(num_rows as u32);
-        out.push(row_runs.iter().map(Vec::len).sum::<usize>() as u32);
-        let mut offset = 0;
-        for runs in &row_runs {
-            out.push(offset);
-            offset += runs.len() as u32;
-        }
-        out.push(offset);
-        for runs in &row_runs {
-            for &(lo, hi, entry) in runs {
-                out.extend([lo, hi, u32::from(entry)]);
-            }
-        }
-        out.extend(self.row_of().iter().copied());
-    }
-}
-
-/// The `(lo_class, hi_class, entry)` runs of a dense class row: maximal
-/// spans of equal entries; `NO_EDGE` gaps have no run.
-#[cfg(feature = "static-dfa-build")]
-fn dense_row_runs(dense: &[u16]) -> Vec<(u32, u32, u16)> {
-    let mut runs = Vec::new();
-    let mut c = 0;
-    while c < dense.len() {
-        let entry = dense[c];
-        if entry == NO_EDGE {
-            c += 1;
-            continue;
-        }
-        let start = c;
-        c += 1;
-        while c < dense.len() && dense[c] == entry {
-            c += 1;
-        }
-        runs.push((start as u32, (c - 1) as u32, entry));
-    }
-    runs
-}
-
 /// Expands per-row `(lo_class, hi_class, target)` runs into dense
 /// `num_classes`-wide rows, `NO_EDGE`-filled.
+#[cfg(feature = "static-dfa-build")]
 pub(crate) fn dense_hi_rows(row_runs: &[Vec<(u32, u32, u16)>], num_classes: usize) -> Vec<u16> {
     let mut hi_rows = vec![NO_EDGE; row_runs.len() * num_classes];
     for (row, runs) in row_runs.iter().enumerate() {
@@ -1946,589 +1623,415 @@ pub(crate) fn dense_hi_rows(row_runs: &[Vec<(u32, u32, u16)>], num_classes: usiz
     hi_rows
 }
 
-/// Cursor over the word stream with bounds-checked reads.
-struct Reader<'a> {
-    words: &'a [u32],
-    pos: usize,
-}
-
-impl Reader<'_> {
-    fn next(&mut self) -> Result<u32, StaticLexerError> {
-        let w = self
-            .words
-            .get(self.pos)
-            .ok_or(StaticLexerError::TruncatedStream {
-                expected_at_least: self.pos + 1,
-                actual: self.words.len(),
-            })?;
-        self.pos += 1;
-        Ok(*w)
-    }
-}
-
-fn check_index(
+/// Validates the image of one mode in `data` at `(offset, len)` words.
+fn validate_mode_image(
+    data: &'static [u32],
     mode: usize,
-    what: &'static str,
-    index: u32,
-    count: usize,
+    offset: u32,
+    len: u32,
 ) -> Result<(), StaticLexerError> {
-    if index as usize >= count {
-        return Err(StaticLexerError::IndexOutOfBounds {
+    let offset = offset as usize;
+    let len = len as usize;
+    let words = offset
+        .checked_add(len)
+        .and_then(|end| data.get(offset..end))
+        .ok_or(StaticLexerError::OutOfBounds {
             mode,
-            what,
-            index,
-            count,
-        });
-    }
-    Ok(())
-}
-
-/// Validates one raw edge entry word and passes the entry through: the
-/// word must fit a u16, a non-sentinel target must be a valid state id,
-/// and the entry's accept bit must match the target's accept type.
-fn check_edge(
-    mode: usize,
-    word: u32,
-    num_states: usize,
-    accept_type: &[i32],
-) -> Result<u16, StaticLexerError> {
-    if word > u16::MAX as u32 {
-        return Err(StaticLexerError::InvalidEdgeTarget { mode, entry: word });
-    }
-    let entry = word as u16;
-    if entry == NO_EDGE || entry == ESCAPE {
-        return Ok(entry);
-    }
-    let target = (entry & STATE_MASK) as usize;
-    if target >= num_states {
-        return Err(StaticLexerError::InvalidEdgeTarget { mode, entry: word });
-    }
-    if (entry & ACCEPT_BIT != 0) != (accept_type[target] >= 0) {
-        return Err(StaticLexerError::InconsistentAcceptBit { mode, entry });
-    }
-    Ok(entry)
-}
-
-/// Reads and validates one mode section; `None` when the mode has no table.
-fn read_mode(r: &mut Reader, mode: usize) -> Result<Option<StaticLexerDFA>, StaticLexerError> {
-    let present = r.next()?;
-    if present == 0 {
-        return Ok(None);
-    }
-    if present != 1 {
-        return Err(StaticLexerError::InvalidModeFlag {
-            mode,
-            value: present,
-        });
-    }
-    let num_states = r.next()? as usize;
-    if num_states == 0 || num_states > MAX_STATE_COUNT {
-        return Err(StaticLexerError::InvalidStateCount {
-            mode,
-            count: num_states,
-        });
-    }
-    let start_state = r.next()?;
-    check_index(mode, "start state", start_state, num_states)?;
-    let mut accept_type = Vec::with_capacity(num_states);
-    for s in 0..num_states {
-        let value = r.next()? as i32;
-        if value < -1 {
-            return Err(StaticLexerError::InvalidAcceptType {
+            what: "the mode image",
+            end: offset.saturating_add(len).saturating_mul(4),
+            total: data.len().saturating_mul(4),
+        })?;
+    match words.first() {
+        Some(&magic) if magic == IMAGE_MAGIC => {}
+        Some(&found) => return Err(StaticLexerError::BadModeMagic { mode, found }),
+        None => {
+            return Err(StaticLexerError::OutOfBounds {
                 mode,
-                state: s,
-                value,
+                what: "the mode header",
+                end: offset.saturating_add(HEADER_WORDS).saturating_mul(4),
+                total: data.len().saturating_mul(4),
             });
         }
-        accept_type.push(value);
     }
-    let mut accept_action_offsets = Vec::with_capacity(num_states);
-    for _ in 0..num_states {
-        accept_action_offsets.push(r.next()? as i32);
+    if len < HEADER_WORDS {
+        return Err(StaticLexerError::OutOfBounds {
+            mode,
+            what: "the mode header",
+            end: offset.saturating_add(HEADER_WORDS).saturating_mul(4),
+            total: data.len().saturating_mul(4),
+        });
     }
-    let mut low = vec![NO_EDGE; num_states * LOW_ROW];
-    for s in 0..num_states {
-        low[s * LOW_ROW] = check_edge(mode, r.next()?, num_states, &accept_type)?;
-    }
-    for s in 0..num_states {
-        for c in 1..LOW_ROW {
-            low[s * LOW_ROW + c] = check_edge(mode, r.next()?, num_states, &accept_type)?;
-        }
-    }
-    let hi = read_hi_classes(r, mode, num_states, &accept_type)?;
-    let action_lists = read_action_lists(r, mode, &accept_action_offsets)?;
-    let (accel_tag, accel_data) = read_accel(r, mode, num_states)?;
-    let (eof_escape, escape_off, escape_ranges) = read_escape_rows(r, mode, num_states)?;
-    let mut pools = ContinuationPools::default();
-    let continuations = read_continuations(r, mode, &mut pools)?;
-
-    let build = StaticLexerDfaBuild {
-        start_state: start_state as u16,
-        low,
-        hi_rows: hi.hi_rows,
-        row_of: hi.row_of,
-        num_classes: hi.num_classes,
-        class_starts: hi.class_starts,
-        accept_type,
-        accept_actions: action_lists.accept_actions,
-        actions: action_lists.actions,
-        accel_tag,
-        accel_data,
-        eof_escape,
-        escape_off,
-        escape_ranges,
-        continuations,
-        continuation_ctxs: pools.ctxs,
-        continuation_configs: pools.configs,
-        continuation_actions: pools.actions,
+    let table = StaticLexerDFA {
+        data: Cow::Borrowed(words),
     };
-    let table = build.finalize();
-    table.validate_escapes(mode)?;
-    Ok(Some(table))
+    table.header().validate(mode, words.len())?;
+    table.validate_entries(mode)
 }
 
-/// The expanded hi-edge data of one mode.
-struct HiClasses {
-    class_starts: Vec<u32>,
-    hi_rows: Vec<u16>,
-    row_of: Vec<u32>,
-    num_classes: usize,
-}
-
-/// The decoded action-list section of one mode.
-struct ActionLists {
-    actions: Vec<LexerAction>,
-    accept_actions: Vec<ActionSpan>,
-}
-
-/// Reads the class-compressed hi-edge section of one mode: the class
-/// starts, then the deduplicated class rows (as `(lo_class, hi_class,
-/// target)` runs) and the per-state row index. Expands the dense class rows.
-fn read_hi_classes(
-    r: &mut Reader,
-    mode: usize,
-    num_states: usize,
-    accept_type: &[i32],
-) -> Result<HiClasses, StaticLexerError> {
-    let num_classes = r.next()? as usize;
-    if num_classes == 0 {
-        return Ok(HiClasses {
-            class_starts: Vec::new(),
-            hi_rows: Vec::new(),
-            row_of: vec![0; num_states],
-            num_classes: 0,
-        });
-    }
-    let mut class_starts = Vec::with_capacity(num_classes);
-    for _ in 0..num_classes {
-        class_starts.push(r.next()?);
-    }
-    if class_starts[0] != ASCII_ROW as u32
-        || !class_starts.windows(2).all(|w| w[0] < w[1])
-        || *class_starts.last().unwrap() > MAX_SYMBOL
-    {
-        return Err(StaticLexerError::InvalidClassStarts { mode });
-    }
-
-    let num_rows = r.next()? as usize;
-    let num_row_triples = r.next()? as usize;
-    let mut row_offsets = Vec::with_capacity(num_rows + 1);
-    for _ in 0..=num_rows {
-        row_offsets.push(r.next()? as usize);
-    }
-    if row_offsets[0] != 0
-        || row_offsets[num_rows] != num_row_triples
-        || !row_offsets.windows(2).all(|w| w[0] <= w[1])
-    {
-        return Err(StaticLexerError::InvalidRowOffsets { mode });
-    }
-    let mut row_runs = Vec::with_capacity(num_rows);
-    for row in 0..num_rows {
-        let mut runs = Vec::with_capacity(row_offsets[row + 1] - row_offsets[row]);
-        let mut prev_hi = None;
-        for _ in row_offsets[row]..row_offsets[row + 1] {
-            let lo = r.next()?;
-            let hi = r.next()?;
-            let target = r.next()?;
-            if lo > hi || hi as usize >= num_classes || prev_hi.is_some_and(|p: u32| lo <= p) {
-                return Err(StaticLexerError::InvalidClassRange { mode, row });
-            }
-            prev_hi = Some(hi);
-            runs.push((lo, hi, check_edge(mode, target, num_states, accept_type)?));
+impl Header {
+    /// Checks the image version, the declared length, and that every section
+    /// is inside the `words` the table borrows.
+    fn validate(&self, mode: usize, words: usize) -> Result<(), StaticLexerError> {
+        assert_eq!(
+            self.version, IMAGE_VERSION,
+            "static lexer DFA image version mismatch (found {}, expected {IMAGE_VERSION}): \
+             the table was generated with a different tool version; regenerate the lexer tables",
+            self.version
+        );
+        if self.total_words as usize != words {
+            return Err(StaticLexerError::TotalLengthMismatch {
+                declared: self.total_words as usize,
+                actual: words,
+            });
         }
-        row_runs.push(runs);
+        self.check_sections(mode, words)
     }
-    let hi_rows = dense_hi_rows(&row_runs, num_classes);
-    let mut row_of = Vec::with_capacity(num_states);
-    for _ in 0..num_states {
-        let row = r.next()?;
-        check_index(mode, "hi row", row, num_rows)?;
-        row_of.push(row);
-    }
-    Ok(HiClasses {
-        class_starts,
-        hi_rows,
-        row_of,
-        num_classes,
-    })
-}
 
-/// Reads the action-list section of one mode and decodes the accept action
-/// list of every state into the flat `actions` table, deduplicated by
-/// content (the same invariant the build-time commit produces). Position-
-/// dependent actions cannot appear in accept lists (the accept execution
-/// has no match offset for them), so a custom action is a format error
-/// here.
-fn read_action_lists(
-    r: &mut Reader,
-    mode: usize,
-    accept_action_offsets: &[i32],
-) -> Result<ActionLists, StaticLexerError> {
-    let num_ints = r.next()? as usize;
-    let mut words = Vec::with_capacity(num_ints);
-    for _ in 0..num_ints {
-        words.push(r.next()?);
-    }
-    let mut actions = Vec::new();
-    let mut list_ids: HashMap<&[u32], ActionSpan> = HashMap::new();
-    let mut lists = Vec::with_capacity(accept_action_offsets.len());
-    for (s, &offset) in accept_action_offsets.iter().enumerate() {
-        if offset < 0 {
-            lists.push(ActionSpan::EMPTY);
-            continue;
-        }
-        let offset = offset as usize;
-        let Some(&len) = words.get(offset) else {
-            return Err(StaticLexerError::InvalidActionList { mode, state: s });
-        };
-        let len = len as usize;
-        let triples = len
-            .checked_mul(3)
-            .and_then(|n| words.get(offset + 1..offset + 1 + n))
-            .ok_or(StaticLexerError::InvalidActionList { mode, state: s })?;
-        if let Some(&list) = list_ids.get(triples) {
-            lists.push(list);
-            continue;
-        }
-        let span = ActionSpan {
-            off: actions.len() as u32,
-            len: len as u32,
-        };
-        for &[ty, d1, d2] in triples.as_chunks::<3>().0 {
-            let (ty, d1, d2) = (ty as i32, d1 as i32, d2 as i32);
-            if !(0..=7).contains(&ty) || ty == LEXER_ACTION_TYPE_CUSTOM {
-                return Err(StaticLexerError::InvalidActionType {
+    /// Checks that every section of the image is in bounds and word aligned.
+    fn check_sections(&self, mode: usize, words: usize) -> Result<(), StaticLexerError> {
+        // The borrowed length is what the checks compare against, so a
+        // section that does not fit is rejected before any accessor slices
+        // it.
+        let total = words as u64 * 4;
+        let bytes = |entries: u64, size: u64| entries.checked_mul(size);
+        let num_states = u64::from(self.num_states);
+        let num_classes = u64::from(self.num_classes);
+        let num_hi_rows = u64::from(self.num_hi_rows);
+        let packed = |entries: u64| entries.div_ceil(2).checked_mul(4);
+        let sections: [(&'static str, u32, Option<u64>); 16] = [
+            ("low", self.low, packed(num_states * 129)),
+            ("class_starts", self.class_starts, bytes(num_classes, 4)),
+            ("hi_rows", self.hi_rows, packed(num_hi_rows * num_classes)),
+            ("row_of", self.row_of, bytes(num_states, 4)),
+            ("accept_type", self.accept_type, bytes(num_states, 4)),
+            (
+                "accept_actions",
+                self.accept_actions,
+                bytes(num_states, size_of::<ActionSpan>() as u64),
+            ),
+            (
+                "actions",
+                self.actions,
+                bytes(u64::from(self.actions_len), size_of::<LexerAction>() as u64),
+            ),
+            ("accel_tag", self.accel_tag, packed(num_states)),
+            (
+                "accel_data",
+                self.accel_data,
+                bytes(u64::from(self.accel_data_len), size_of::<Accel>() as u64),
+            ),
+            ("eof_escape", self.eof_escape, bytes(num_states, 4)),
+            ("escape_off", self.escape_off, bytes(num_states + 1, 4)),
+            (
+                "escape_ranges",
+                self.escape_ranges,
+                bytes(
+                    u64::from(self.escape_ranges_len),
+                    size_of::<EscapeRange>() as u64,
+                ),
+            ),
+            (
+                "continuations",
+                self.continuations,
+                bytes(
+                    u64::from(self.continuations_len),
+                    size_of::<LexerContinuation>() as u64,
+                ),
+            ),
+            (
+                "continuation_ctxs",
+                self.continuation_ctxs,
+                bytes(
+                    u64::from(self.continuation_ctxs_len),
+                    size_of::<ContinuationContext>() as u64,
+                ),
+            ),
+            (
+                "continuation_configs",
+                self.continuation_configs,
+                bytes(
+                    u64::from(self.continuation_configs_len),
+                    size_of::<ContinuationConfig>() as u64,
+                ),
+            ),
+            (
+                "continuation_actions",
+                self.continuation_actions,
+                bytes(u64::from(self.continuation_actions_len), 4),
+            ),
+        ];
+        for (what, offset, len) in sections {
+            let start = u64::from(offset);
+            let in_bounds = len
+                .and_then(|len| start.checked_add(len))
+                .is_some_and(|end| end <= total);
+            if start % 4 != 0 || !in_bounds {
+                return Err(StaticLexerError::OutOfBounds {
                     mode,
-                    state: s,
-                    value: ty,
+                    what,
+                    end: usize::try_from(start.saturating_add(len.unwrap_or(u64::MAX)))
+                        .unwrap_or(usize::MAX),
+                    total: usize::try_from(total).unwrap_or(usize::MAX),
                 });
             }
-            actions.push(LexerAction::from_serialized(ty, d1, d2));
         }
-        list_ids.insert(triples, span);
-        lists.push(span);
+        Ok(())
     }
-    Ok(ActionLists {
-        actions,
-        accept_actions: lists,
-    })
-}
-
-/// Reads the run-acceleration section of one mode: a flattened list of
-/// fixed-stride entries, `(state, ACCEL_POSITIVE, w0..w3)`, `(state,
-/// ACCEL_EXCLUSION, n_needles, n0..n2)`, or `(state, ACCEL_COUNTED_EXCLUSION,
-/// len, opener_le, closer_le, 0)`, expanded into one descriptor per state.
-fn read_accel(
-    r: &mut Reader,
-    mode: usize,
-    num_states: usize,
-) -> Result<(Vec<u16>, Vec<Accel>), StaticLexerError> {
-    let num_ints = r.next()? as usize;
-    let mut accel_tag = vec![0u16; num_states];
-    let mut accel_data = Vec::new();
-    let mut read = 0;
-    while read < num_ints {
-        let s = r.next()?;
-        check_index(mode, "accel state", s, num_states)?;
-        let payload = match r.next()? {
-            ACCEL_POSITIVE => {
-                let words = [r.next()?, r.next()?, r.next()?, r.next()?];
-                read += 6;
-                Accel::Positive(words)
-            }
-            ACCEL_EXCLUSION => {
-                let n = r.next()?;
-                let mut needle_words = [0; 3];
-                for slot in needle_words.iter_mut() {
-                    *slot = r.next()?;
-                }
-                if !(1..=3).contains(&n) || needle_words[..n as usize].iter().any(|&w| w >= 0x80) {
-                    return Err(StaticLexerError::InvalidAccelNeedles { mode });
-                }
-                read += 6;
-                match n {
-                    1 => Accel::Exclude(needle_words[0]),
-                    2 => Accel::Exclude2(needle_words[0], needle_words[1]),
-                    3 => Accel::Exclude3(needle_words[0], needle_words[1], needle_words[2]),
-                    _ => unreachable!(),
-                }
-            }
-            ACCEL_COUNTED_EXCLUSION => {
-                let n = r.next()?;
-                let opener_word = r.next()?;
-                let closer_word = r.next()?;
-                let reserved = r.next()?;
-                let opener_bytes = opener_word.to_le_bytes();
-                let closer_bytes = closer_word.to_le_bytes();
-                if !(1..=3).contains(&n)
-                    || reserved != 0
-                    || opener_word == closer_word
-                    || opener_bytes[..n as usize].iter().any(|&b| b >= 0x80)
-                    || closer_bytes[..n as usize].iter().any(|&b| b >= 0x80)
-                    || opener_bytes[n as usize..].iter().any(|&b| b != 0)
-                    || closer_bytes[n as usize..].iter().any(|&b| b != 0)
-                {
-                    return Err(StaticLexerError::InvalidAccelNeedles { mode });
-                }
-                read += 6;
-                Accel::CountedExclusion {
-                    opener: [
-                        u32::from(opener_bytes[0]),
-                        u32::from(opener_bytes[1]),
-                        u32::from(opener_bytes[2]),
-                    ],
-                    closer: [
-                        u32::from(closer_bytes[0]),
-                        u32::from(closer_bytes[1]),
-                        u32::from(closer_bytes[2]),
-                    ],
-                    n,
-                }
-            }
-            value => {
-                return Err(StaticLexerError::InvalidAccelTag { mode, value });
-            }
-        };
-        accel_data.push(payload);
-        // The tag is the payload index + 1 in a u16.
-        check_index(
-            mode,
-            "accel payload",
-            accel_data.len() as u32,
-            u16::MAX as usize + 1,
-        )?;
-        accel_tag[s as usize] = accel_data.len() as u16;
-    }
-    if read != num_ints {
-        return Err(StaticLexerError::SectionLengthMismatch {
-            mode,
-            section: "accel",
-            expected: num_ints,
-            found: read,
-        });
-    }
-    Ok((accel_tag, accel_data))
-}
-
-/// Reads the escape rows of one mode: per state, the EOF escape index,
-/// then the sorted, disjoint symbol ranges whose edges escape.
-#[allow(clippy::type_complexity)]
-fn read_escape_rows(
-    r: &mut Reader,
-    mode: usize,
-    num_states: usize,
-) -> Result<(Vec<u32>, Vec<u32>, Vec<EscapeRange>), StaticLexerError> {
-    let mut eof_escape = Vec::with_capacity(num_states);
-    let mut escape_off = Vec::with_capacity(num_states + 1);
-    let mut escape_ranges = Vec::new();
-    escape_off.push(0u32);
-    for s in 0..num_states {
-        eof_escape.push(r.next()?);
-        let num_ranges = r.next()? as usize;
-        let mut prev_hi: i32 = -1;
-        for _ in 0..num_ranges {
-            let lo = r.next()? as i32;
-            let hi = r.next()? as i32;
-            let continuation = r.next()?;
-            if lo < 0 || lo > hi || hi > MAX_SYMBOL as i32 || lo <= prev_hi {
-                return Err(StaticLexerError::InvalidEscapeRow { mode, state: s });
-            }
-            prev_hi = hi;
-            escape_ranges.push(EscapeRange {
-                lo,
-                hi,
-                continuation,
-            });
-        }
-        escape_off.push(escape_ranges.len() as u32);
-    }
-    Ok((eof_escape, escape_off, escape_ranges))
-}
-
-/// Reads the continuation pool of one mode into the shared pools.
-fn read_continuations(
-    r: &mut Reader,
-    mode: usize,
-    pools: &mut ContinuationPools,
-) -> Result<Vec<LexerContinuation>, StaticLexerError> {
-    let num_continuations = r.next()? as usize;
-    let mut continuations = Vec::with_capacity(num_continuations);
-    for index in 0..num_continuations {
-        let kind = r.next()?;
-        if kind != CONTINUATION_MOVED_CONFIGS && kind != CONTINUATION_SOURCE_SET {
-            return Err(StaticLexerError::UnknownContinuationKind { mode, index, kind });
-        }
-        let nctx = r.next()? as usize;
-        let mut ctxs = Vec::with_capacity(nctx);
-        for i in 0..nctx {
-            let ctx_kind = r.next()?;
-            if ctx_kind != 0 {
-                return Err(StaticLexerError::InvalidContextKind {
-                    mode,
-                    index,
-                    value: ctx_kind,
-                });
-            }
-            let parent = r.next()?;
-            // Entry i has local id i + 1; parents refer to smaller ids.
-            if parent as usize > i {
-                return Err(StaticLexerError::NonTopologicalContext { mode, index });
-            }
-            let return_state = r.next()?;
-            if return_state > i32::MAX as u32 {
-                return Err(StaticLexerError::NonTopologicalContext { mode, index });
-            }
-            ctxs.push(ContinuationContext {
-                parent,
-                return_state: return_state as i32,
-            });
-        }
-        let nconfigs = r.next()? as usize;
-        let mut configs = Vec::with_capacity(nconfigs);
-        let mut actions = Vec::new();
-        for _ in 0..nconfigs {
-            let state = r.next()?;
-            let flags = r.next()?;
-            let alt = r.next()?;
-            let ctx_local = r.next()?;
-            if state > i32::MAX as u32
-                || flags & !0b11 != 0
-                || alt == 0
-                || alt > i32::MAX as u32
-                || ctx_local as usize > nctx
-            {
-                return Err(StaticLexerError::InvalidContinuationConfig { mode, index });
-            }
-            let nactions = r.next()? as usize;
-            let actions_off = actions.len() as u32;
-            for _ in 0..nactions {
-                let action = r.next()?;
-                if action > i32::MAX as u32 {
-                    return Err(StaticLexerError::InvalidContinuationConfig { mode, index });
-                }
-                let behind = r.next()?;
-                if behind != BEHIND_POSITION_INDEPENDENT {
-                    return Err(StaticLexerError::InvalidBehind {
-                        mode,
-                        index,
-                        value: behind,
-                    });
-                }
-                actions.push(action);
-            }
-            configs.push(ContinuationConfig {
-                state: state as i32,
-                alt: alt as i32,
-                ctx: ctx_local,
-                flags,
-                actions_off,
-                actions_len: nactions as u32,
-            });
-        }
-        continuations.push(pools.push(kind, ctxs, configs, actions));
-    }
-    Ok(continuations)
 }
 
 impl StaticLexerDFA {
-    /// Cross-checks the escape rows against the edge entries: continuation
-    /// indices in bounds, range endpoints on ESCAPE entries, every ESCAPE
-    /// entry covered by a range (the EOF escape index covers the EOF edge),
-    /// and the EOF escape index meaningful only on an ESCAPE EOF edge.
-    fn validate_escapes(&self, mode: usize) -> Result<(), StaticLexerError> {
-        let num_states = self.header().num_states as usize;
-        let num_continuations = self.header().continuations_len as usize;
-        let check_continuation = |index: u32| {
-            if index != NO_CONTINUATION {
-                check_index(mode, "continuation", index, num_continuations)?;
+    /// Checks the table entries that the walker dereferences without bounds
+    /// checks: edge targets stay below the state count, row indices below the
+    /// row count, and continuation, action, and escape indices below their
+    /// tables.
+    fn validate_entries(&self, mode: usize) -> Result<(), StaticLexerError> {
+        let header = self.header();
+        let num_states = header.num_states as usize;
+        if num_states == 0 || num_states > MAX_STATE_COUNT {
+            return Err(StaticLexerError::InvalidReference {
+                mode,
+                what: "the state count",
+                value: header.num_states,
+                count: MAX_STATE_COUNT,
+            });
+        }
+        if header.start_state as usize >= num_states {
+            return Err(StaticLexerError::InvalidReference {
+                mode,
+                what: "the start state",
+                value: header.start_state,
+                count: num_states,
+            });
+        }
+        // `class_of` subtracts one from the partition point, so class 0 must
+        // start at the first hi symbol and the bounds must be sorted.
+        let class_starts = self.class_starts();
+        if !class_starts.is_empty()
+            && (class_starts[0] != ASCII_ROW as u32
+                || !class_starts.windows(2).all(|pair| pair[0] < pair[1])
+                || class_starts[class_starts.len() - 1] > MAX_SYMBOL)
+        {
+            return Err(StaticLexerError::Malformed {
+                mode,
+                what: "the class starts",
+            });
+        }
+        self.validate_states(mode, num_states)?;
+        self.validate_escape_indices(mode)?;
+        self.validate_continuations(mode)
+    }
+
+    /// Checks the edge entries and the hi-row index of every state.
+    fn validate_states(&self, mode: usize, num_states: usize) -> Result<(), StaticLexerError> {
+        let header = self.header();
+        let accept_type = self.accept_types();
+        let check_entry = |entry: u16| -> Result<(), StaticLexerError> {
+            if entry == NO_EDGE || entry == ESCAPE {
+                return Ok(());
+            }
+            let target = (entry & STATE_MASK) as usize;
+            if target >= num_states {
+                return Err(StaticLexerError::InvalidReference {
+                    mode,
+                    what: "an edge target",
+                    value: u32::from(entry & STATE_MASK),
+                    count: num_states,
+                });
+            }
+            if (entry & ACCEPT_BIT != 0) != (accept_type[target] >= 0) {
+                return Err(StaticLexerError::InvalidReference {
+                    mode,
+                    what: "the accept bit of edge entry",
+                    value: u32::from(entry),
+                    count: num_states,
+                });
             }
             Ok(())
         };
-        let eof_escapes = self.eof_escapes();
-        for (s, &eof_escape) in eof_escapes.iter().enumerate() {
-            check_continuation(eof_escape)?;
-            if eof_escape != NO_CONTINUATION && self.edge_entry(s as u16, EOF) != ESCAPE {
-                return Err(StaticLexerError::InconsistentEscapeRow {
+        let low = self.low();
+        for index in 0..num_states * LOW_ROW {
+            check_entry(low.get(index))?;
+        }
+        let hi_rows = self.hi_rows();
+        let num_hi_rows = header.num_hi_rows as usize;
+        let num_classes = header.num_classes as usize;
+        for index in 0..num_hi_rows * num_classes {
+            check_entry(hi_rows.get(index))?;
+        }
+        for &row in self.row_of() {
+            if num_classes > 0 && row as usize >= num_hi_rows {
+                return Err(StaticLexerError::InvalidReference {
                     mode,
-                    state: s,
-                    symbol: EOF,
+                    what: "a hi row index",
+                    value: row,
+                    count: num_hi_rows,
                 });
             }
+        }
+        Ok(())
+    }
+
+    /// Checks the escape rows, the accept action spans, and the accel tags.
+    fn validate_escape_indices(&self, mode: usize) -> Result<(), StaticLexerError> {
+        let header = self.header();
+        let num_states = header.num_states as usize;
+        let num_continuations = header.continuations_len as usize;
+        let check_continuation = |value: u32| -> Result<(), StaticLexerError> {
+            if value != NO_CONTINUATION && value as usize >= num_continuations {
+                return Err(StaticLexerError::InvalidReference {
+                    mode,
+                    what: "a continuation index",
+                    value,
+                    count: num_continuations,
+                });
+            }
+            Ok(())
+        };
+        for &value in self.eof_escapes() {
+            check_continuation(value)?;
         }
         for range in self.escape_ranges_of() {
             check_continuation(range.continuation)?;
         }
-        let escape_ranges = self.escape_ranges_of();
-        let low = self.low();
-        let hi_rows = self.hi_rows();
-        let row_of = self.row_of();
-        let class_starts = self.class_starts();
-        let num_classes = class_starts.len();
-        for s in 0..num_states {
-            for range in &escape_ranges[self.escape_row(s as u16)] {
-                for bound in [range.lo, range.hi] {
-                    if self.edge_entry(s as u16, bound) != ESCAPE {
-                        return Err(StaticLexerError::InconsistentEscapeRow {
-                            mode,
-                            state: s,
-                            symbol: bound,
-                        });
-                    }
-                }
+        let mut previous = 0u32;
+        for &offset in self.escape_range_offsets() {
+            if offset < previous || offset as usize > header.escape_ranges_len as usize {
+                return Err(StaticLexerError::InvalidReference {
+                    mode,
+                    what: "an escape range offset",
+                    value: offset,
+                    count: header.escape_ranges_len as usize,
+                });
             }
-            // Every ESCAPE entry needs a covering range. The range's
-            // continuation can be NO_CONTINUATION (a budget escape), so
-            // check coverage, not the continuation value.
-            for col in 1..LOW_ROW {
-                let symbol = col as i32 - 1;
-                if low.get(s * LOW_ROW + col) == ESCAPE
-                    && self.escape_range(s as u16, symbol).is_none()
-                {
-                    return Err(StaticLexerError::InconsistentEscapeRow {
+            previous = offset;
+        }
+        let spans = self.records::<ActionSpan>(header.accept_actions, num_states);
+        for span in spans {
+            let end = (span.off as usize).checked_add(span.len as usize);
+            if end.is_none_or(|end| end > header.actions_len as usize) {
+                return Err(StaticLexerError::InvalidReference {
+                    mode,
+                    what: "an accept action span",
+                    value: span.off,
+                    count: header.actions_len as usize,
+                });
+            }
+        }
+        let accel_tags = self.accel_tags();
+        for state in 0..num_states {
+            let tag = accel_tags.get(state);
+            if tag as usize > header.accel_data_len as usize {
+                return Err(StaticLexerError::InvalidReference {
+                    mode,
+                    what: "an accel tag",
+                    value: u32::from(tag),
+                    count: header.accel_data_len as usize,
+                });
+            }
+        }
+        for words in
+            self.records::<[u32; ACTION_WORDS]>(header.actions, header.actions_len as usize)
+        {
+            if !action_words_are_valid(words) {
+                return Err(StaticLexerError::Malformed {
+                    mode,
+                    what: "an accept action",
+                });
+            }
+        }
+        for words in
+            self.records::<[u32; ACCEL_WORDS]>(header.accel_data, header.accel_data_len as usize)
+        {
+            if !accel_words_are_valid(words) {
+                return Err(StaticLexerError::Malformed {
+                    mode,
+                    what: "an accel payload",
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Checks the continuation pool: kinds, spans, and action traces.
+    fn validate_continuations(&self, mode: usize) -> Result<(), StaticLexerError> {
+        let header = self.header();
+        let num_continuations = header.continuations_len as usize;
+        let pool = self.records::<LexerContinuation>(header.continuations, num_continuations);
+        for continuation in pool {
+            if continuation.kind != CONTINUATION_MOVED_CONFIGS
+                && continuation.kind != CONTINUATION_SOURCE_SET
+            {
+                return Err(StaticLexerError::Malformed {
+                    mode,
+                    what: "a continuation kind",
+                });
+            }
+            let ctxs_end = (continuation.ctxs_off as usize)
+                .checked_add(continuation.ctxs_len as usize)
+                .filter(|&end| end <= header.continuation_ctxs_len as usize);
+            if ctxs_end.is_none() {
+                return Err(StaticLexerError::InvalidReference {
+                    mode,
+                    what: "a continuation context span",
+                    value: continuation.ctxs_off,
+                    count: header.continuation_ctxs_len as usize,
+                });
+            }
+            let configs_end = (continuation.configs_off as usize)
+                .checked_add(continuation.configs_len as usize)
+                .filter(|&end| end <= header.continuation_configs_len as usize);
+            if configs_end.is_none() {
+                return Err(StaticLexerError::InvalidReference {
+                    mode,
+                    what: "a continuation config span",
+                    value: continuation.configs_off,
+                    count: header.continuation_configs_len as usize,
+                });
+            }
+            let ctxs = &self.records::<ContinuationContext>(
+                header.continuation_ctxs,
+                header.continuation_ctxs_len as usize,
+            )[continuation.ctxs_off as usize..ctxs_end.unwrap()];
+            for (index, ctx) in ctxs.iter().enumerate() {
+                // Entry `i` has local id `i + 1`; parents refer to smaller ids.
+                if ctx.parent as usize > index {
+                    return Err(StaticLexerError::InvalidReference {
                         mode,
-                        state: s,
-                        symbol,
+                        what: "a continuation context parent",
+                        value: ctx.parent,
+                        count: index + 1,
                     });
                 }
             }
-            if num_classes > 0 {
-                let row = row_of[s] as usize;
-                for (class, &start) in class_starts.iter().enumerate() {
-                    if hi_rows.get(row * num_classes + class) == ESCAPE
-                        && self.escape_range(s as u16, start as i32).is_none()
-                    {
-                        return Err(StaticLexerError::InconsistentEscapeRow {
-                            mode,
-                            state: s,
-                            symbol: start as i32,
-                        });
-                    }
+            let configs = &self.records::<ContinuationConfig>(
+                header.continuation_configs,
+                header.continuation_configs_len as usize,
+            )[continuation.configs_off as usize..configs_end.unwrap()];
+            for config in configs {
+                if config.ctx as usize > continuation.ctxs_len as usize {
+                    return Err(StaticLexerError::InvalidReference {
+                        mode,
+                        what: "a continuation config context",
+                        value: config.ctx,
+                        count: continuation.ctxs_len as usize + 1,
+                    });
+                }
+                let actions_end =
+                    (config.actions_off as usize).checked_add(config.actions_len as usize);
+                if actions_end.is_none_or(|end| end > header.continuation_actions_len as usize) {
+                    return Err(StaticLexerError::InvalidReference {
+                        mode,
+                        what: "a continuation config action span",
+                        value: config.actions_off,
+                        count: header.continuation_actions_len as usize,
+                    });
                 }
             }
         }
         Ok(())
     }
 }
+
 #[cfg(all(test, feature = "static-dfa-build"))]
 mod tests {
     use std::path::{Path, PathBuf};
@@ -2552,12 +2055,11 @@ mod tests {
         ATNDeserializer::new(None).deserialize(&mut words.iter())
     }
 
-    /// The word-stream codec round-trips over every fixture grammar plus
-    /// the generated-code witnesses (CSV, XMLLexer): decoding
-    /// the encoded tables gives the tables back, and re-encoding a decoded
-    /// stream reproduces it word for word.
+    /// The builder's words are the image that generated code embeds, so they
+    /// can back a borrowed table: loading them gives the committed tables
+    /// back.
     #[test]
-    fn word_stream_round_trip() {
+    fn image_round_trip() {
         let grammars: Vec<PathBuf> = [
             "lexer/CustomAction.g4",
             "lexer/EofChain.g4",
@@ -2586,27 +2088,23 @@ mod tests {
             ] {
                 let build = builder.build(&atn);
                 let name = path.display();
-                let decoded = StaticLexerTables::from_words(&build.words)
-                    .unwrap_or_else(|e| panic!("{name}: the builder's words decode: {e}"));
+                let image: &'static [u32] = Box::leak(build.words.clone().into_boxed_slice());
+                let decoded = StaticLexerTables::from_image(image)
+                    .unwrap_or_else(|e| panic!("{name}: the builder's image loads: {e}"));
                 assert_eq!(decoded.num_modes(), build.modes.len(), "{name}: mode count");
                 for m in 0..build.modes.len() {
                     assert_eq!(
-                        decoded.mode(m),
+                        decoded.mode(m).as_ref(),
                         build.table(m),
-                        "{name}: from_words(to_words(tables)) == tables (mode {m})"
+                        "{name}: the loaded image is the committed table (mode {m})"
                     );
                 }
-                assert_eq!(
-                    decoded.to_words(),
-                    build.words,
-                    "{name}: to_words(from_words(words)) == words"
-                );
             }
         }
     }
 
     /// The accel tag is a `u16`, not a `u8`: a mode with 300 accelerated
-    /// states keeps every payload apart across the codec.
+    /// states keeps every payload apart across the image.
     #[test]
     fn accel_tags_beyond_a_u8_round_trip() {
         const NUM_STATES: usize = 300;
@@ -2633,10 +2131,18 @@ mod tests {
             continuation_actions: Vec::new(),
         }
         .finalize();
-        let words = StaticLexerTables::from_modes(vec![Some(table)]).to_words();
-        let tables = StaticLexerTables::from_words(&words).expect("the words decode");
+        let mut words = vec![
+            STATIC_DFA_MAGIC,
+            STATIC_DFA_FORMAT_VERSION,
+            6 + table.words().len() as u32,
+            1,
+            0,
+            table.words().len() as u32,
+        ];
+        words.extend_from_slice(table.words());
+        let image: &'static [u32] = Box::leak(words.into_boxed_slice());
+        let tables = StaticLexerTables::from_image(image).expect("the image loads");
         assert_eq!(tables.num_modes(), 1);
-        assert_eq!(tables.to_words(), words, "re-encoding reproduces the words");
         let decoded = tables.mode(0).expect("mode 0");
         assert_eq!(decoded.num_states(), NUM_STATES);
         for state in [0u16, 1, 254, 255, 256, 299] {
@@ -2648,39 +2154,71 @@ mod tests {
         }
     }
 
-    /// The two producers of [`StaticLexerDFA`] agree: the committed tables
-    /// and the decoded tables resolve every edge, accept, and escape the
-    /// same way.
+    /// The loader validates what the accessors assume: a table entry that
+    /// points outside its table is a load error, not a walker concern.
     #[test]
-    fn commit_and_decode_agree() {
-        for name in ["lexer/Spike.g4", "XMLLexer.g4", "lexer/EofEscape.g4"] {
-            let atn = compile_tables(&fixture(name));
-            let build = StaticLexerDfaBuilder::new().build(&atn);
-            let decoded = StaticLexerTables::from_words(&build.words).expect("decode");
-            for m in 0..build.modes.len() {
-                let (Some(committed), Some(decoded)) = (build.table(m), decoded.mode(m)) else {
-                    continue;
-                };
-                for s in 0..committed.num_states() as u16 {
-                    for symbol in [EOF, 0, b'a' as i32, 127, 128, 0x1000, 0x10FFFF] {
-                        assert_eq!(
-                            committed.edge_entry(s, symbol),
-                            decoded.edge_entry(s, symbol),
-                            "{name} mode {m} state {s} symbol {symbol}"
-                        );
-                        assert_eq!(
-                            committed.escape_continuation(s, symbol),
-                            decoded.escape_continuation(s, symbol),
-                            "{name} mode {m} state {s} symbol {symbol}"
-                        );
-                    }
-                    assert_eq!(committed.accept_type(s), decoded.accept_type(s));
-                    assert_eq!(
-                        committed.accept_action_triples(s),
-                        decoded.accept_action_triples(s)
-                    );
-                }
-            }
-        }
+    fn out_of_range_entries_are_load_errors() {
+        let path = fixture("CSV.g4");
+        let atn = compile_tables(&path);
+        let build = StaticLexerDfaBuilder::new().build(&atn);
+        let image: Vec<u32> = build.words.clone();
+
+        // The mode table sits right after the 4-word preamble.
+        let mode = 6 + image[4] as usize;
+        let num_states = image[mode + 3] as usize;
+        let low = image[mode + 7] as usize / 4;
+        let accept_bit = u32::from(ACCEPT_BIT);
+
+        // An edge target past the state count.
+        let mut words = image.clone();
+        words[mode + low + 1] = accept_bit | num_states as u32;
+        let leaked: &'static [u32] = Box::leak(words.into_boxed_slice());
+        assert!(matches!(
+            StaticLexerTables::from_image(leaked),
+            Err(StaticLexerError::InvalidReference { .. })
+        ));
+
+        // An edge entry whose accept bit disagrees with the target.
+        let mut words = image.clone();
+        let low_words = (num_states * LOW_ROW).div_ceil(2);
+        let index = (mode + low..mode + low + low_words)
+            .find(|&index| {
+                let entry = words[index] as u16;
+                entry != NO_EDGE && entry != ESCAPE && entry & ACCEPT_BIT != 0
+            })
+            .expect("CSV has accept edge entries");
+        words[index] ^= accept_bit;
+        let leaked: &'static [u32] = Box::leak(words.into_boxed_slice());
+        assert!(matches!(
+            StaticLexerTables::from_image(leaked),
+            Err(StaticLexerError::InvalidReference {
+                what: "the accept bit of edge entry",
+                ..
+            })
+        ));
+
+        // Class starts that do not begin at the first hi symbol.
+        let mut words = image.clone();
+        let num_classes = image[mode + 4] as usize;
+        assert!(num_classes > 0, "CSV has hi classes");
+        let class_starts = image[mode + 8] as usize / 4;
+        words[mode + class_starts] = 129;
+        let leaked: &'static [u32] = Box::leak(words.into_boxed_slice());
+        assert!(matches!(
+            StaticLexerTables::from_image(leaked),
+            Err(StaticLexerError::Malformed { .. })
+        ));
+
+        // An invalid `Accel` discriminant in `accel_data`.
+        let mut words = image.clone();
+        let accel_data_len = image[mode + 17] as usize;
+        assert!(accel_data_len > 0, "CSV has accelerated states");
+        let accel_data = image[mode + 16] as usize / 4;
+        words[mode + accel_data] = 99;
+        let leaked: &'static [u32] = Box::leak(words.into_boxed_slice());
+        assert!(matches!(
+            StaticLexerTables::from_image(leaked),
+            Err(StaticLexerError::Malformed { .. })
+        ));
     }
 }

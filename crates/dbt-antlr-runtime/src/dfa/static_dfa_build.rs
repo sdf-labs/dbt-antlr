@@ -5,8 +5,8 @@
 //! drives the move and closure code of the simulator itself, so maximal munch,
 //! rule priority, non-greedy loops, and action accumulation match the lazy
 //! path by construction. The result is one [`StaticLexerDFA`] table per lexer
-//! mode plus the `Vec<u32>` word stream that generated code embeds
-//! ([`StaticLexerTables::to_words`]). The static table walker tokenizes
+//! mode plus the packed image that generated code embeds
+//! ([`StaticLexerDfaBuilder::build`]). The static table walker tokenizes
 //! from the tables without ATN simulation.
 //!
 //! # Build structure
@@ -19,13 +19,15 @@
 //! [`BuildStore`] (one per mode; its arena backs both the scratch and the
 //! finalized configs), so contexts are hash-consed and executors and
 //! semantic contexts interned.
-//! [`ModeBuild::finalize`] then lays out the walker's own [`StaticLexerDFA`]:
+//! [`ModeBuild::finalize`] then fills the sections of a `StaticLexerDfaBuild`:
 //! `u16` packing with the `NO_EDGE`/`ESCAPE`/`ACCEPT_BIT` sentinels, the
 //! dense 129-wide low rows, the hi-class compression, the deduplicated
 //! accept action tables, the accel classification, the escape ranges, and
-//! the continuation pool. The word-stream encoding of the tables lives with
-//! the decoder: `StaticLexerTables::to_words` in [`crate::dfa::static_lexer_dfa`],
-//! whose module documentation is the authoritative wire-format contract.
+//! the continuation pool. The build's `finalize` freezes them into the packed
+//! image of the walker's own [`StaticLexerDFA`]. The container that generated
+//! code embeds is assembled by [`StaticLexerDfaBuilder::build`]; the module
+//! documentation of [`crate::dfa::static_lexer_dfa`] is the authoritative
+//! format contract.
 //!
 //! # Escape edges
 //!
@@ -75,8 +77,8 @@ use crate::atn_state::{ATNStateRef, ATNStateType, StarLoopEntryState};
 use crate::dfa::static_lexer_dfa::{
     config_flags, dense_hi_rows, Accel, ActionSpan, ContinuationConfig, ContinuationContext,
     ContinuationPools, EscapeRange, LexerContinuation, StaticLexerDFA, StaticLexerDfaBuild,
-    StaticLexerTables, ACCEPT_BIT, CONTINUATION_MOVED_CONFIGS, CONTINUATION_SOURCE_SET, ESCAPE,
-    LOW_ROW, NO_CONTINUATION, NO_EDGE,
+    ACCEPT_BIT, CONTINUATION_MOVED_CONFIGS, CONTINUATION_SOURCE_SET, ESCAPE, LOW_ROW,
+    NO_CONTINUATION, NO_EDGE, STATIC_DFA_FORMAT_VERSION, STATIC_DFA_MAGIC,
 };
 use crate::dfa::FinalizeStore;
 use crate::int_stream::EOF;
@@ -103,9 +105,8 @@ const MAX_CONTEXT_DEPTH: u32 = 32;
 /// its committed table).
 #[derive(Debug)]
 pub struct StaticLexerDfaBuildOutput {
-    /// The word-stream encoding of the tables of `modes`
-    /// (`StaticLexerTables::to_words`), in the format of the
-    /// [`crate::dfa::static_lexer_dfa`] module documentation.
+    /// The packed image container of the tables of `modes`, in the format of
+    /// the [`crate::dfa::static_lexer_dfa`] module documentation.
     pub words: Vec<u32>,
     /// Per-mode build outcomes, in mode order.
     pub modes: Vec<ModeBuildOutcome>,
@@ -281,21 +282,35 @@ impl StaticLexerDfaBuilder {
 
     /// Builds the tables of every lexer mode of `atn`.
     pub fn build(&self, atn: &ATN) -> StaticLexerDfaBuildOutput {
+        const PREAMBLE_WORDS: usize = 4;
+        const MODE_WORDS: usize = 2;
+
         let num_modes = atn.mode_to_start_state.len();
         let mut modes = Vec::with_capacity(num_modes);
         for mode in 0..num_modes {
             modes.push(self.build_mode(atn, mode));
         }
-        let tables = StaticLexerTables::from_modes(
-            modes
-                .iter_mut()
-                .map(|outcome| outcome.table.take())
-                .collect(),
-        );
-        let words = tables.to_words();
-        for (outcome, table) in modes.iter_mut().zip(tables.into_modes()) {
-            outcome.table = table;
+
+        let modes_end = PREAMBLE_WORDS + num_modes * MODE_WORDS;
+        let mut words = vec![
+            STATIC_DFA_MAGIC,
+            STATIC_DFA_FORMAT_VERSION,
+            0,
+            num_modes as u32,
+        ];
+        words.resize(modes_end, u32::MAX);
+        for (mode, outcome) in modes.iter().enumerate() {
+            let Some(table) = &outcome.table else {
+                continue;
+            };
+            let offset = (words.len() - modes_end) as u32;
+            let len = table.words().len() as u32;
+            words.extend_from_slice(table.words());
+            words[PREAMBLE_WORDS + mode * MODE_WORDS] = offset;
+            words[PREAMBLE_WORDS + mode * MODE_WORDS + 1] = len;
         }
+        words[2] = words.len() as u32;
+
         StaticLexerDfaBuildOutput { words, modes }
     }
 
@@ -1700,7 +1715,7 @@ mod tests {
     use super::*;
     use crate::atn_deserializer::ATNDeserializer;
     use crate::atn_state::ATNStateRef;
-    use crate::dfa::static_lexer_dfa::{ACCEL_EXCLUSION, ACCEL_POSITIVE};
+    use crate::dfa::static_lexer_dfa::ACCEL_POSITIVE;
     use crate::prediction_context::PredictionContext;
 
     fn push_ctx<'a>(
@@ -1807,8 +1822,8 @@ mod tests {
         let accel = compute_accel(2, &rows).expect("exclusion run");
         assert_eq!(accel, Accel::Exclude2(u32::from(b'a'), u32::from(b'b')));
         assert_eq!(
-            accel.to_serialized(2),
-            vec![2, ACCEL_EXCLUSION, 2, u32::from(b'a'), u32::from(b'b'), 0]
+            accel.to_image_words(),
+            [3, u32::from(b'a'), u32::from(b'b'), 0, 0, 0, 0, 0]
         );
     }
 
@@ -1827,13 +1842,12 @@ mod tests {
         let bitmap = Accel::bitmap_u128(bitmap_words);
         assert_eq!(bitmap & (1 << b'\n'), 0);
         assert_eq!(bitmap.count_ones(), 13);
-        let words = accel.to_serialized(1);
-        assert_eq!(words.len(), 6);
-        assert_eq!(words[0], 1);
-        assert_eq!(words[1], ACCEL_POSITIVE);
+        let words = accel.to_image_words();
+        assert_eq!(words.len(), 8);
+        assert_eq!(words[0], ACCEL_POSITIVE);
         let mut round_trip = 0u128;
         for i in 0..4 {
-            round_trip |= u128::from(words[2 + i]) << (i * 32);
+            round_trip |= u128::from(words[1 + i]) << (i * 32);
         }
         assert_eq!(round_trip, bitmap);
     }
@@ -1854,23 +1868,59 @@ mod tests {
     }
 
     #[test]
+    fn accel_and_action_image_words_overlay_round_trip() {
+        let descriptors = [
+            Accel::positive(0x0123_4567_89AB_CDEF_0011_2233_4455_6677),
+            Accel::Exclude(u32::from(b'\n')),
+            Accel::Exclude2(u32::from(b'a'), u32::from(b'b')),
+            Accel::Exclude3(u32::from(b'"'), u32::from(b'\r'), u32::from(b'\n')),
+            Accel::CountedExclusion {
+                opener: [u32::from(b'/'), u32::from(b'*'), u32::from(b'-')],
+                closer: [u32::from(b'-'), u32::from(b'*'), u32::from(b'/')],
+                n: 3,
+            },
+        ];
+        for accel in descriptors {
+            let words = accel.to_image_words();
+            let overlaid = unsafe { *(words.as_ptr() as *const Accel) };
+            assert_eq!(overlaid, accel);
+        }
+
+        let actions = [
+            LexerAction::Channel(2),
+            LexerAction::Custom {
+                rule_index: 3,
+                action_index: 5,
+            },
+            LexerAction::Mode(1),
+            LexerAction::More,
+            LexerAction::PopMode,
+            LexerAction::PushMode(4),
+            LexerAction::Skip,
+            LexerAction::Type(7),
+            LexerAction::IndexedCustom {
+                offset: 9,
+                rule_index: 3,
+                action_index: 5,
+            },
+        ];
+        for action in actions {
+            let words = action.to_image_words();
+            let overlaid = unsafe { *(words.as_ptr() as *const LexerAction) };
+            assert_eq!(overlaid, action);
+        }
+    }
+
+    #[test]
     fn counted_exclude_serialization() {
-        use crate::dfa::static_lexer_dfa::ACCEL_COUNTED_EXCLUSION;
         let a1 = Accel::CountedExclusion {
             opener: [u32::from(b'{'), 0, 0],
             closer: [u32::from(b'}'), 0, 0],
             n: 1,
         };
         assert_eq!(
-            a1.to_serialized(4),
-            vec![
-                4,
-                ACCEL_COUNTED_EXCLUSION,
-                1,
-                u32::from(b'{'),
-                u32::from(b'}'),
-                0
-            ]
+            a1.to_image_words(),
+            [5, u32::from(b'{'), 0, 0, u32::from(b'}'), 0, 0, 1]
         );
         let a2 = Accel::CountedExclusion {
             opener: [u32::from(b'/'), u32::from(b'*'), 0],
@@ -1878,14 +1928,16 @@ mod tests {
             n: 2,
         };
         assert_eq!(
-            a2.to_serialized(5),
-            vec![
+            a2.to_image_words(),
+            [
                 5,
-                ACCEL_COUNTED_EXCLUSION,
-                2,
-                u32::from_le_bytes([b'/', b'*', 0, 0]),
-                u32::from_le_bytes([b'*', b'/', 0, 0]),
+                u32::from(b'/'),
+                u32::from(b'*'),
                 0,
+                u32::from(b'*'),
+                u32::from(b'/'),
+                0,
+                2,
             ]
         );
         let a3 = Accel::CountedExclusion {
@@ -1894,14 +1946,16 @@ mod tests {
             n: 3,
         };
         assert_eq!(
-            a3.to_serialized(6),
-            vec![
-                6,
-                ACCEL_COUNTED_EXCLUSION,
+            a3.to_image_words(),
+            [
+                5,
+                u32::from(b'/'),
+                u32::from(b'*'),
+                u32::from(b'-'),
+                u32::from(b'-'),
+                u32::from(b'*'),
+                u32::from(b'/'),
                 3,
-                u32::from_le_bytes([b'/', b'*', b'-', 0]),
-                u32::from_le_bytes([b'-', b'*', b'/', 0]),
-                0,
             ]
         );
     }

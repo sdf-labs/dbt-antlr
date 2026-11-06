@@ -89,9 +89,9 @@ impl<'sim> ILexerATNSimulator<'sim> for LexerATNSimulator<'sim> {
             if let Some(tables) = self.static_tables {
                 if let Some(table) = tables.mode(mode) {
                     return if lexer.input().has_item_at() {
-                        self.match_static_random_access(table, lexer, &scratch)
+                        self.match_static_random_access(&table, lexer, &scratch)
                     } else {
-                        self.match_static_cursor(table, lexer, &scratch)
+                        self.match_static_cursor(&table, lexer, &scratch)
                     };
                 }
             }
@@ -183,7 +183,7 @@ impl<'sim> LexerATNSimulator<'sim> {
     /// random-access input stream.
     fn match_static_random_access<'scratch, 'input, 'arena, Input, TF>(
         &mut self,
-        table: &'static StaticLexerDFA,
+        table: &StaticLexerDFA,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
         scratch: &'scratch bumpalo::Bump,
     ) -> Result<i32, ANTLRError>
@@ -260,7 +260,7 @@ impl<'sim> LexerATNSimulator<'sim> {
     /// input stream.
     fn match_static_cursor<'scratch, 'input, 'arena, Input, TF>(
         &mut self,
-        table: &'static StaticLexerDFA,
+        table: &StaticLexerDFA,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
         scratch: &'scratch bumpalo::Bump,
     ) -> Result<i32, ANTLRError>
@@ -336,7 +336,7 @@ impl<'sim> LexerATNSimulator<'sim> {
     #[inline]
     fn finish_static<'input, 'arena, Input, TF>(
         &self,
-        table: &'static StaticLexerDFA,
+        table: &StaticLexerDFA,
         prev_accept: Option<(isize, u16)>,
         symbol: i32,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
@@ -374,7 +374,7 @@ impl<'sim> LexerATNSimulator<'sim> {
     #[allow(clippy::too_many_arguments)]
     fn static_escape<'scratch, 'input, 'arena, Input, TF>(
         &mut self,
-        table: &'static StaticLexerDFA,
+        table: &StaticLexerDFA,
         state: u16,
         symbol: i32,
         cursor: isize,
@@ -390,7 +390,7 @@ impl<'sim> LexerATNSimulator<'sim> {
         self.escape_count += 1;
         lexer.input().seek(cursor);
         self.prev_accept = prev_accept.map(|(index, state)| {
-            let actions = table.accept_actions(state);
+            let actions = table.accept_actions_static(state);
             ResolvedAccept {
                 index,
                 prediction: table.accept_type(state),
@@ -435,7 +435,7 @@ impl<'sim> LexerATNSimulator<'sim> {
     /// the hand-off is exact.
     fn match_token_from_continuation<'scratch, 'input, 'arena, Input, TF>(
         &mut self,
-        continuation: ContinuationView<'static>,
+        continuation: ContinuationView<'_>,
         escape_symbol: i32,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
         scratch: &'scratch bumpalo::Bump,

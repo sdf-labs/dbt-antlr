@@ -23,10 +23,7 @@ use dbt_antlr_runtime::atn_deserializer::ATNDeserializer;
 use dbt_antlr_runtime::atn_simulator::LexerATNSimulatorManager;
 use dbt_antlr_runtime::char_stream::CharStream;
 use dbt_antlr_runtime::dfa::static_dfa_build::{StaticLexerDfaBuildOutput, StaticLexerDfaBuilder};
-use dbt_antlr_runtime::dfa::static_lexer_dfa::{
-    StaticLexerError, StaticLexerTables, ACCEL_COUNTED_EXCLUSION, ACCEL_EXCLUSION, ACCEL_POSITIVE,
-    ACCEPT_BIT, ESCAPE, NO_CONTINUATION, NO_EDGE, STATIC_DFA_FORMAT_VERSION, STATIC_DFA_MAGIC,
-};
+use dbt_antlr_runtime::dfa::static_lexer_dfa::{StaticLexerError, StaticLexerTables};
 use dbt_antlr_runtime::error_listener::ErrorListener;
 use dbt_antlr_runtime::errors::ANTLRError;
 use dbt_antlr_runtime::input_stream::InputStream;
@@ -102,7 +99,8 @@ fn compile(kind: GrammarKind, builder: &StaticLexerDfaBuilder) -> Fixture {
         .deserialize(&mut words.iter())
         .into_static();
     let build = builder.build(atn);
-    let tables = StaticLexerTables::from_words(&build.words).expect("tables decode");
+    let image: &'static [u32] = Box::leak(build.words.clone().into_boxed_slice());
+    let tables = StaticLexerTables::from_image(image).expect("tables load");
     Fixture {
         atn_manager_truth: Box::leak(Box::new(LexerATNSimulatorManager::new(atn))),
         atn_manager_static: Box::leak(Box::new(LexerATNSimulatorManager::new(atn))),
@@ -1002,9 +1000,10 @@ fn budget_escape_restarts_match_lazy() {
     assert!(restarts > 0, "budget escapes restarted tokens");
 }
 
-// ======= Negative tests: corrupted streams =======
+// ======= Negative tests: corrupted images =======
 
-fn csv_words() -> Vec<u32> {
+/// The CSV image, mutable so a test can corrupt one word of it.
+fn csv_image() -> &'static mut [u32] {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("grammars")
         .join("CSV.g4");
@@ -1015,262 +1014,136 @@ fn csv_words() -> Vec<u32> {
         .find_map(|u| u.lexer_atn_words.clone())
         .expect("lexer unit");
     let atn = ATNDeserializer::new(None).deserialize(&mut words.iter());
-    StaticLexerDfaBuilder::new().build(&atn).words
+    let words = StaticLexerDfaBuilder::new().build(&atn).words;
+    Box::leak(words.into_boxed_slice())
 }
 
 #[test]
 fn bad_magic_is_a_clean_error() {
-    let mut words = csv_words();
+    let words = csv_image();
     words[0] = 0xDEAD_BEEF;
-    let err = StaticLexerTables::from_words(&words).err().unwrap();
+    let err = StaticLexerTables::from_image(words).err().unwrap();
     assert_eq!(err, StaticLexerError::BadMagic { found: 0xDEAD_BEEF });
 }
 
 #[test]
 fn length_mismatch_is_a_clean_error() {
-    let mut words = csv_words();
-    words.pop();
+    let words = csv_image();
+    let len = words.len() as u32;
+    words[2] = len + 1;
     assert!(matches!(
-        StaticLexerTables::from_words(&words),
+        StaticLexerTables::from_image(words),
         Err(StaticLexerError::TotalLengthMismatch { .. })
     ));
 }
 
 #[test]
-fn truncated_section_is_a_clean_error() {
-    let mut words = csv_words();
-    words.pop();
-    let len = words.len() as u32;
-    words[2] = len; // fix the declared total, so the read overruns a section
+fn truncated_image_is_a_clean_error() {
+    let words = csv_image();
     assert!(matches!(
-        StaticLexerTables::from_words(&words),
-        Err(StaticLexerError::TruncatedStream { .. })
+        StaticLexerTables::from_image(&words[..2]),
+        Err(StaticLexerError::TruncatedImage { .. })
     ));
 }
 
+#[test]
+fn mode_table_outside_the_image_is_a_clean_error() {
+    let words = csv_image();
+    let mode_count = words[3] as usize;
+    words[3] = (mode_count + 1024) as u32;
+    assert!(matches!(
+        StaticLexerTables::from_image(words),
+        Err(StaticLexerError::OutOfBounds { .. })
+    ));
+}
+
+#[test]
+fn mode_image_outside_the_image_is_a_clean_error() {
+    let words = csv_image();
+    words[5] = u32::MAX - 3; // the length of mode 0
+    assert!(matches!(
+        StaticLexerTables::from_image(words),
+        Err(StaticLexerError::OutOfBounds { .. })
+    ));
+}
+
+#[test]
+fn non_contiguous_or_half_absent_mode_entry_is_a_clean_error() {
+    let words = csv_image();
+    words[4] = 4; // mode 0 offset != 0
+    assert!(matches!(
+        StaticLexerTables::from_image(words),
+        Err(StaticLexerError::Malformed { .. })
+    ));
+
+    let words = csv_image();
+    words[4] = u32::MAX; // absent offset, but len is still non-MAX
+    assert!(matches!(
+        StaticLexerTables::from_image(words),
+        Err(StaticLexerError::Malformed { .. })
+    ));
+}
+
+#[test]
+fn mode_image_with_a_bad_magic_is_a_clean_error() {
+    let words = csv_image();
+    let offset = 6 + words[4] as usize;
+    words[offset] = 0xDEAD_BEEF;
+    assert!(matches!(
+        StaticLexerTables::from_image(words),
+        Err(StaticLexerError::BadModeMagic { .. })
+    ));
+}
+
+#[test]
+fn mode_image_shorter_than_its_header_is_a_clean_error() {
+    let words = csv_image();
+    words[5] = 8; // the declared word count of mode 0
+    assert!(matches!(
+        StaticLexerTables::from_image(words),
+        Err(StaticLexerError::OutOfBounds { .. })
+    ));
+}
+
+#[test]
+fn section_outside_the_image_is_a_clean_error() {
+    let words = csv_image();
+    let offset = 6 + words[4] as usize;
+    words[offset + 7] = u32::MAX - 3; // the byte offset of the low rows
+    assert!(matches!(
+        StaticLexerTables::from_image(words),
+        Err(StaticLexerError::OutOfBounds { .. })
+    ));
+}
+
+#[test]
+fn misaligned_section_is_a_clean_error() {
+    let words = csv_image();
+    let offset = 6 + words[4] as usize;
+    words[offset + 7] += 2; // the byte offset of the low rows
+    assert!(matches!(
+        StaticLexerTables::from_image(words),
+        Err(StaticLexerError::OutOfBounds { .. })
+    ));
+}
 #[test]
 fn trailing_words_are_a_clean_error() {
-    let mut words = csv_words();
-    words.push(0);
+    let words = csv_image();
     let len = words.len() as u32;
-    words[2] = len;
+    let mut extended = words.to_vec();
+    extended.push(0);
+    extended[2] = len + 1;
+    let image: &'static [u32] = Box::leak(extended.into_boxed_slice());
     assert!(matches!(
-        StaticLexerTables::from_words(&words),
-        Err(StaticLexerError::TrailingWords { .. })
-    ));
-}
-
-#[test]
-fn invalid_mode_flag_is_a_clean_error() {
-    let mut words = csv_words();
-    words[4] = 7; // the present flag of mode 0
-    let err = StaticLexerTables::from_words(&words).err().unwrap();
-    assert_eq!(err, StaticLexerError::InvalidModeFlag { mode: 0, value: 7 });
-}
-
-#[test]
-fn invalid_edge_target_is_a_clean_error() {
-    let mut words = csv_words();
-    let num_states = words[5] as usize;
-    // Mode 0 layout: present at 4, num_states at 5, start at 6,
-    // accept_type at 7..7+n, accept_actions at 7+n..7+2n, eof at
-    // 7+2n..7+3n; the low rows follow.
-    let first_low = 7 + 3 * num_states;
-    words[first_low] = 0x8000 | num_states as u32; // target == num_states
-    assert!(matches!(
-        StaticLexerTables::from_words(&words),
-        Err(StaticLexerError::InvalidEdgeTarget { .. })
-    ));
-}
-
-#[test]
-fn flipped_accept_bit_is_a_clean_error() {
-    let mut words = csv_words();
-    let num_states = words[5] as usize;
-    // Low rows: EOF column at 7+2n..7+3n, then 128 symbol words per state.
-    let low_start = 7 + 2 * num_states;
-    let low_end = low_start + 129 * num_states;
-    let i = (low_start..low_end)
-        .find(|&i| words[i] != NO_EDGE as u32 && words[i] != ESCAPE as u32)
-        .expect("CSV has edges");
-    words[i] ^= ACCEPT_BIT as u32;
-    assert!(matches!(
-        StaticLexerTables::from_words(&words),
-        Err(StaticLexerError::InconsistentAcceptBit { .. })
-    ));
-}
-
-#[test]
-fn low_row_word_with_upper_bits_is_a_clean_error() {
-    let mut words = csv_words();
-    let num_states = words[5] as usize;
-    words[7 + 3 * num_states] |= 0xBEEF_0000; // first symbol row word
-    assert!(matches!(
-        StaticLexerTables::from_words(&words),
-        Err(StaticLexerError::InvalidEdgeTarget { .. })
-    ));
-}
-
-#[test]
-fn hi_row_target_word_with_upper_bits_is_a_clean_error() {
-    let mut words = csv_words();
-    let num_states = words[5] as usize;
-    // Hi section: num_classes, class starts, num_rows, num_row_triples,
-    // row offsets (num_rows + 1), then the (lo, hi, target) triples.
-    let hi = 7 + 131 * num_states;
-    let num_classes = words[hi] as usize;
-    assert!(num_classes > 0, "CSV has hi classes");
-    let num_rows = words[hi + 1 + num_classes] as usize;
-    let num_triples = words[hi + 2 + num_classes] as usize;
-    assert!(num_triples > 0, "CSV has hi row runs");
-    let triples = hi + 3 + num_classes + num_rows + 1;
-    words[triples + 2] |= 0xBEEF_0000; // the target of the first triple
-    assert!(matches!(
-        StaticLexerTables::from_words(&words),
-        Err(StaticLexerError::InvalidEdgeTarget { .. })
-    ));
-}
-
-/// A minimal one-state, one-mode word stream with the given accel section
-/// (count word included). The loader validates accel descriptors without
-/// cross-checking them against the edges, so the all-`NO_EDGE` table
-/// stays valid.
-fn accel_stream(accel_section: &[u32]) -> Vec<u32> {
-    let mut words = vec![
-        STATIC_DFA_MAGIC,
-        STATIC_DFA_FORMAT_VERSION,
-        0,              // total word count, patched below
-        1,              // one mode
-        1,              // present
-        1,              // num_states
-        0,              // start state
-        -1i32 as u32,   // accept_type: not an accept state
-        -1i32 as u32,   // no accept actions
-        NO_EDGE as u32, // EOF edge
-    ];
-    words.extend(std::iter::repeat_n(NO_EDGE as u32, 128));
-    words.push(0); // no hi classes
-    words.push(0); // no action lists
-    words.extend(accel_section);
-    words.extend([NO_CONTINUATION, 0]); // no EOF escape, no escape ranges
-    words.push(0); // no continuations
-    words[2] = words.len() as u32;
-    words
-}
-
-fn exclusion_accel_stream(needles: &[u32]) -> Vec<u32> {
-    let mut padded = needles.to_vec();
-    padded.resize(3, 0);
-    let mut accel = vec![6, 0, ACCEL_EXCLUSION, needles.len() as u32];
-    accel.extend(padded);
-    accel_stream(&accel)
-}
-
-fn positive_accel_stream(bitmap: u128) -> Vec<u32> {
-    let mut accel = vec![6, 0, ACCEL_POSITIVE];
-    accel.extend((0..4).map(|limb| (bitmap >> (limb * 32)) as u32));
-    accel_stream(&accel)
-}
-
-#[test]
-fn exclusion_accel_decodes() {
-    let words = exclusion_accel_stream(&[u32::from(b'"'), u32::from(b'\r')]);
-    assert!(StaticLexerTables::from_words(&words).is_ok());
-}
-
-#[test]
-fn exclusion_accel_empty_needles_is_a_clean_error() {
-    let words = exclusion_accel_stream(&[]);
-    let err = StaticLexerTables::from_words(&words).err().unwrap();
-    assert_eq!(err, StaticLexerError::InvalidAccelNeedles { mode: 0 });
-}
-
-#[test]
-fn exclusion_accel_needle_past_127_is_a_clean_error() {
-    let words = exclusion_accel_stream(&[u32::from(b'\n'), 0x80]);
-    let err = StaticLexerTables::from_words(&words).err().unwrap();
-    assert_eq!(err, StaticLexerError::InvalidAccelNeedles { mode: 0 });
-}
-
-#[test]
-fn positive_accel_bitmap_decodes() {
-    let words = positive_accel_stream((1u128 << b'a') | (1u128 << b'z') | (1u128 << b'\n'));
-    assert!(StaticLexerTables::from_words(&words).is_ok());
-}
-
-#[test]
-fn counted_exclusion_accel_decodes_and_validates() {
-    let valid_1 = accel_stream(&[
-        6,
-        0,
-        ACCEL_COUNTED_EXCLUSION,
-        1,
-        u32::from(b'{'),
-        u32::from(b'}'),
-        0,
-    ]);
-    assert!(StaticLexerTables::from_words(&valid_1).is_ok());
-
-    let valid_2 = accel_stream(&[
-        6,
-        0,
-        ACCEL_COUNTED_EXCLUSION,
-        2,
-        u32::from_le_bytes([b'/', b'*', 0, 0]),
-        u32::from_le_bytes([b'*', b'/', 0, 0]),
-        0,
-    ]);
-    assert!(StaticLexerTables::from_words(&valid_2).is_ok());
-
-    let valid_3 = accel_stream(&[
-        6,
-        0,
-        ACCEL_COUNTED_EXCLUSION,
-        3,
-        u32::from_le_bytes([b'/', b'*', b'-', 0]),
-        u32::from_le_bytes([b'-', b'*', b'/', 0]),
-        0,
-    ]);
-    assert!(StaticLexerTables::from_words(&valid_3).is_ok());
-
-    // Equal opener and closer is rejected.
-    let same = accel_stream(&[
-        6,
-        0,
-        ACCEL_COUNTED_EXCLUSION,
-        2,
-        u32::from_le_bytes([b'/', b'*', 0, 0]),
-        u32::from_le_bytes([b'/', b'*', 0, 0]),
-        0,
-    ]);
-    assert_eq!(
-        StaticLexerTables::from_words(&same).err(),
-        Some(StaticLexerError::InvalidAccelNeedles { mode: 0 })
-    );
-
-    // Non-ASCII byte in opener is rejected.
-    let non_ascii = accel_stream(&[6, 0, ACCEL_COUNTED_EXCLUSION, 1, 0x80, u32::from(b'}'), 0]);
-    assert_eq!(
-        StaticLexerTables::from_words(&non_ascii).err(),
-        Some(StaticLexerError::InvalidAccelNeedles { mode: 0 })
-    );
-}
-
-#[test]
-fn invalid_action_list_offset_is_a_clean_error() {
-    let mut words = csv_words();
-    let num_states = words[5] as usize;
-    words[7 + num_states] = 0x7000_0000; // accept_actions[0] out of bounds
-    assert!(matches!(
-        StaticLexerTables::from_words(&words),
-        Err(StaticLexerError::InvalidActionList { .. })
+        StaticLexerTables::from_image(image),
+        Err(StaticLexerError::TotalLengthMismatch { .. })
     ));
 }
 
 #[test]
 #[should_panic(expected = "regenerate")]
 fn version_mismatch_panics_with_regenerate_message() {
-    let mut words = csv_words();
+    let words = csv_image();
     words[1] = 99;
-    let _ = StaticLexerTables::from_words(&words);
+    let _ = StaticLexerTables::from_image(words);
 }

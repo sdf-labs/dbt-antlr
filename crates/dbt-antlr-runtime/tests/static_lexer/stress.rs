@@ -163,8 +163,9 @@ fn compile_fixture(grammar: &Path) -> (StaticLexerDfaBuildOutput, Fixture) {
         .deserialize(&mut words.iter())
         .into_static();
     let build = StaticLexerDfaBuilder::new().build(atn);
+    let image: &'static [u32] = Box::leak(build.words.clone().into_boxed_slice());
     let tables: &'static StaticLexerTables = Box::leak(Box::new(
-        StaticLexerTables::from_words(&build.words).expect("tables decode"),
+        StaticLexerTables::from_image(image).expect("tables load"),
     ));
     let fixture = Fixture {
         atn_manager_truth: Box::leak(Box::new(LexerATNSimulatorManager::new(atn))),

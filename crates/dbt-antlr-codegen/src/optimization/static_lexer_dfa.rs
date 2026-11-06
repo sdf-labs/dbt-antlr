@@ -6,15 +6,15 @@
 //! built and runs the runtime static lexer DFA builder (`static-dfa-build`
 //! feature). The builder drives the reference `LexerATNSimulator` move and
 //! closure code exhaustively. As a result, the tables match the lazy path by
-//! construction, and the build is deterministic: one grammar produces one word
-//! stream.
+//! construction, and the build is deterministic: one grammar produces one
+//! packed image.
 //!
 //! The build result becomes the `StaticLexerTables` of the lexer output
 //! model. Modes that the builder cannot compile, and edges that escape to the
 //! lazy simulator, produce compiler warnings (`G4S188` and `G4S189`). Under
 //! `--static-dfa-only`, these diagnostics are errors. When every mode compiles
 //! and no edge escapes, the generated lexer runs on the tables alone: its ATN
-//! statics are elided and its word stream is never serialized. The
+//! statics are elided and its tables are never materialized at load time. The
 //! `StaticLexerDfaReport` of each lexer is appended to the
 //! [`OptimizationReport`](super::report::OptimizationReport), which renders the
 //! `static-lexer-dfa` manifest entry.
@@ -109,7 +109,8 @@ impl StaticLexerDfa {
 /// The static lexer DFA tables of one lexer build.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StaticLexerTables {
-    /// Word stream of the `static_dfa_build` format (version 1).
+    /// Packed image of the `static_dfa_build` format, one container word
+    /// stream per lexer.
     pub(crate) words: Vec<u32>,
     /// Whether the generated lexer needs no ATN at runtime.
     pub(crate) omit_atn: bool,
