@@ -73,9 +73,10 @@ use crate::atn_config::LexerATNConfig;
 use crate::atn_config_set::MutableLexerATNConfigSet;
 use crate::atn_state::{ATNStateRef, ATNStateType, StarLoopEntryState};
 use crate::dfa::static_lexer_dfa::{
-    class_map, dense_hi_rows, Accel, ContinuationConfig, EscapeRange, LexerContinuation,
-    StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, CONTINUATION_MOVED_CONFIGS,
-    CONTINUATION_SOURCE_SET, ESCAPE, LOW_ROW, NO_CONTINUATION, NO_EDGE,
+    config_flags, dense_hi_rows, Accel, ActionSpan, ContinuationConfig, ContinuationContext,
+    ContinuationPools, EscapeRange, LexerContinuation, StaticLexerDFA, StaticLexerDfaBuild,
+    StaticLexerTables, ACCEPT_BIT, CONTINUATION_MOVED_CONFIGS, CONTINUATION_SOURCE_SET, ESCAPE,
+    LOW_ROW, NO_CONTINUATION, NO_EDGE,
 };
 use crate::dfa::FinalizeStore;
 use crate::int_stream::EOF;
@@ -101,7 +102,7 @@ const MAX_CONTEXT_DEPTH: u32 = 32;
 /// of the committed tables, and the per-mode build outcomes (each carrying
 /// its committed table).
 #[derive(Debug)]
-pub struct StaticLexerDfaBuild {
+pub struct StaticLexerDfaBuildOutput {
     /// The word-stream encoding of the tables of `modes`
     /// (`StaticLexerTables::to_words`), in the format of the
     /// [`crate::dfa::static_lexer_dfa`] module documentation.
@@ -110,7 +111,7 @@ pub struct StaticLexerDfaBuild {
     pub modes: Vec<ModeBuildOutcome>,
 }
 
-impl StaticLexerDfaBuild {
+impl StaticLexerDfaBuildOutput {
     /// The committed table of one mode, when the mode has one.
     pub fn table(&self, mode: usize) -> Option<&StaticLexerDFA> {
         self.modes.get(mode)?.table.as_ref()
@@ -279,7 +280,7 @@ impl StaticLexerDfaBuilder {
     }
 
     /// Builds the tables of every lexer mode of `atn`.
-    pub fn build(&self, atn: &ATN) -> StaticLexerDfaBuild {
+    pub fn build(&self, atn: &ATN) -> StaticLexerDfaBuildOutput {
         let num_modes = atn.mode_to_start_state.len();
         let mut modes = Vec::with_capacity(num_modes);
         for mode in 0..num_modes {
@@ -295,7 +296,7 @@ impl StaticLexerDfaBuilder {
         for (outcome, table) in modes.iter_mut().zip(tables.into_modes()) {
             outcome.table = table;
         }
-        StaticLexerDfaBuild { words, modes }
+        StaticLexerDfaBuildOutput { words, modes }
     }
 
     fn build_mode(&self, atn: &ATN, mode_index: usize) -> ModeBuildOutcome {
@@ -377,7 +378,7 @@ impl StaticLexerDfaBuilder {
             })
             .collect();
         let mut states = build_state_summaries(&mode.states, &mode.rows);
-        let table = mode.finalize(atn);
+        let table = mode.finalize(atn).finalize();
         for (index, state) in states.iter_mut().enumerate() {
             state.accel = table.state_accel(index as u16);
         }
@@ -829,8 +830,9 @@ impl<'sc> ModeBuild<'sc> {
         id
     }
 
-    /// Converts the structural build into a final [`StaticLexerDFA`].
-    fn finalize(self, atn: &ATN) -> StaticLexerDFA {
+    /// Converts the structural build into the sections of a
+    /// [`StaticLexerDfaBuild`], ready for its `finalize`.
+    fn finalize(self, atn: &ATN) -> StaticLexerDfaBuild {
         let num_states = self.states.len();
         let accept_type: Vec<i32> = self.states.iter().map(|s| s.accept_type).collect();
 
@@ -850,27 +852,26 @@ impl<'sc> ModeBuild<'sc> {
         }
 
         // Hi-class compression: the class bounds are the union of the
-        // hi-edge bounds of the mode; rows dedupe by content; `class_of`
-        // derives from the class starts (the loader's invariant).
+        // hi-edge bounds of the mode; rows dedupe by content; the symbol to
+        // class map derives from the class starts.
         let class_bounds = collect_class_starts(&self.rows);
         let num_classes = class_bounds.len();
         let mut class_starts = Vec::new();
-        let mut class_of = Vec::new();
         let mut hi_rows = Vec::new();
-        let mut row_of = Vec::new();
+        // Every state names a row, so the section has `num_states` entries
+        // even for a mode without hi edges: the image has no section whose
+        // length the header cannot state.
+        let mut row_of = vec![0u32; num_states];
         if num_classes > 0 {
             class_starts = class_bounds.iter().map(|&s| s as u32).collect();
-            class_of = class_map(&class_starts);
             let mut rows: Vec<Vec<(u32, u32, u16)>> = Vec::new();
             let mut row_ids: HashMap<Vec<(u32, u32, u16)>, u32> = HashMap::new();
-            row_of = Vec::with_capacity(num_states);
-            for state_rows in &self.rows {
+            for (state, state_rows) in self.rows.iter().enumerate() {
                 let runs = class_runs(&class_bounds, &hi_clipped(&accept_type, state_rows));
-                let id = *row_ids.entry(runs).or_insert_with_key(|runs| {
+                row_of[state] = *row_ids.entry(runs).or_insert_with_key(|runs| {
                     rows.push(runs.clone());
                     (rows.len() - 1) as u32
                 });
-                row_of.push(id);
             }
             hi_rows = dense_hi_rows(&rows, num_classes);
         }
@@ -878,11 +879,11 @@ impl<'sc> ModeBuild<'sc> {
         // Accept action tables: `LexerAction` clones from the ATN, the
         // lists deduplicated by content (the loader's invariant).
         let mut actions: Vec<LexerAction> = Vec::new();
-        let mut list_ids: HashMap<Vec<LexerAction>, (u32, u32)> = HashMap::new();
+        let mut list_ids: HashMap<Vec<LexerAction>, ActionSpan> = HashMap::new();
         let mut accept_actions = Vec::with_capacity(num_states);
         for state in &self.states {
             if state.accept_actions.is_empty() {
-                accept_actions.push((0, 0));
+                accept_actions.push(ActionSpan::EMPTY);
                 continue;
             }
             let list: Vec<LexerAction> = state
@@ -891,9 +892,12 @@ impl<'sc> ModeBuild<'sc> {
                 .map(|&index| atn.lexer_actions[index as usize])
                 .collect();
             let entry = list_ids.entry(list).or_insert_with_key(|list| {
-                let start = actions.len() as u32;
+                let span = ActionSpan {
+                    off: actions.len() as u32,
+                    len: list.len() as u32,
+                };
                 actions.extend_from_slice(list);
-                (start, list.len() as u32)
+                span
             });
             accept_actions.push(*entry);
         }
@@ -931,16 +935,16 @@ impl<'sc> ModeBuild<'sc> {
             escape_off.push(escape_ranges.len() as u32);
         }
 
+        let mut pools = ContinuationPools::default();
         let continuations = self
             .continuations
             .iter()
-            .map(|cont| commit_continuation(atn, cont))
+            .map(|cont| commit_continuation(atn, cont, &mut pools))
             .collect();
 
-        StaticLexerDFA {
+        StaticLexerDfaBuild {
             start_state: 0,
             low,
-            class_of,
             hi_rows,
             row_of,
             num_classes,
@@ -954,6 +958,9 @@ impl<'sc> ModeBuild<'sc> {
             escape_off,
             escape_ranges,
             continuations,
+            continuation_ctxs: pools.ctxs,
+            continuation_configs: pools.configs,
+            continuation_actions: pools.actions,
         }
     }
 }
@@ -1624,13 +1631,19 @@ fn class_runs(class_starts: &[i32], hi: &[(i32, i32, u16)]) -> Vec<(u32, u32, u1
 
 /// Converts a structural continuation to the walker's pool entry: the
 /// continuation-local topological context table and the [`ContinuationConfig`]
-/// structs. Local id 0 is the empty context. Entry `i` has local id `i + 1`,
-/// and parents refer to smaller ids. `(parent_local, return_state)` keys the
-/// local dedup map: after finalization the pair names a context node exactly.
-fn commit_continuation(atn: &ATN, cont: &PendingContinuation) -> LexerContinuation {
+/// structs, appended to the shared pools of the mode. Local id 0 is the empty
+/// context. Entry `i` has local id `i + 1`, and parents refer to smaller ids.
+/// `(parent_local, return_state)` keys the local dedup map: after finalization
+/// the pair names a context node exactly.
+fn commit_continuation(
+    atn: &ATN,
+    cont: &PendingContinuation,
+    pools: &mut ContinuationPools,
+) -> LexerContinuation {
     let mut ctxs: Vec<(u32, i32)> = Vec::new();
     let mut local_ids: HashMap<(u32, i32), u32> = HashMap::new();
     let mut configs = Vec::with_capacity(cont.configs.len());
+    let mut flat_actions = Vec::new();
     for (config, alt_reached_accept) in &cont.configs {
         let mut chain = Vec::new();
         let mut cur = config.get_context();
@@ -1664,16 +1677,22 @@ fn commit_continuation(atn: &ATN, cont: &PendingContinuation) -> LexerContinuati
             state: config.get_state().get_state_number(),
             alt: config.get_alt(),
             ctx: parent_local,
-            non_greedy: config.has_passed_through_non_greedy_decision(),
-            alt_reached_accept: *alt_reached_accept,
-            actions,
+            flags: config_flags(
+                config.has_passed_through_non_greedy_decision(),
+                *alt_reached_accept,
+            ),
+            actions_off: flat_actions.len() as u32,
+            actions_len: actions.len() as u32,
         });
+        flat_actions.extend(actions);
     }
-    LexerContinuation {
-        kind: cont.kind.tag(),
-        ctxs,
-        configs,
-    }
+    let ctxs = ctxs
+        .into_iter()
+        .map(|(parent, return_state)| ContinuationContext {
+            parent,
+            return_state,
+        });
+    pools.push(cont.kind.tag(), ctxs, configs, flat_actions)
 }
 
 #[cfg(test)]

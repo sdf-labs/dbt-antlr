@@ -122,4 +122,35 @@ impl LexerAction {
             LexerAction::Type(ty) => lexer.set_type(ty),
         }
     }
+
+    /// The 4-word `#[repr(C, u32)]` image representation of this action, with
+    /// unused union payload words zero-filled so the image contains no
+    /// uninitialized padding bytes.
+    pub(crate) fn to_image_words(self) -> [u32; 4] {
+        match self {
+            LexerAction::Channel(channel) => {
+                [LEXER_ACTION_TYPE_CHANNEL as u32, channel as u32, 0, 0]
+            }
+            LexerAction::Custom {
+                rule_index,
+                action_index,
+            } => [
+                LEXER_ACTION_TYPE_CUSTOM as u32,
+                rule_index as u32,
+                action_index as u32,
+                0,
+            ],
+            LexerAction::Mode(mode) => [LEXER_ACTION_TYPE_MODE as u32, mode as u32, 0, 0],
+            LexerAction::More => [LEXER_ACTION_TYPE_MORE as u32, 0, 0, 0],
+            LexerAction::PopMode => [LEXER_ACTION_TYPE_POP_MODE as u32, 0, 0, 0],
+            LexerAction::PushMode(mode) => [LEXER_ACTION_TYPE_PUSH_MODE as u32, mode as u32, 0, 0],
+            LexerAction::Skip => [LEXER_ACTION_TYPE_SKIP as u32, 0, 0, 0],
+            LexerAction::Type(ttype) => [LEXER_ACTION_TYPE_TYPE as u32, ttype as u32, 0, 0],
+            LexerAction::IndexedCustom {
+                offset,
+                rule_index,
+                action_index,
+            } => [8, offset as u32, rule_index as u32, action_index as u32],
+        }
+    }
 }

@@ -6,7 +6,7 @@ use crate::atn_simulator::{BaseATNSimulator, IATNSimulator};
 use crate::atn_state::{ATNState, ATNStateRef, ATNStateType};
 use crate::char_stream::CharStream;
 use crate::dfa::static_lexer_dfa::{
-    Accel, LexerContinuation, StaticLexerDFA, StaticLexerTables, ACCEPT_BIT,
+    Accel, ContinuationView, StaticLexerDFA, StaticLexerTables, ACCEPT_BIT,
     CONTINUATION_MOVED_CONFIGS, CONTINUATION_SOURCE_SET, ESCAPE, NO_CONTINUATION, NO_EDGE,
     STATE_MASK,
 };
@@ -435,7 +435,7 @@ impl<'sim> LexerATNSimulator<'sim> {
     /// the hand-off is exact.
     fn match_token_from_continuation<'scratch, 'input, 'arena, Input, TF>(
         &mut self,
-        continuation: &'static LexerContinuation,
+        continuation: ContinuationView<'static>,
         escape_symbol: i32,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
         scratch: &'scratch bumpalo::Bump,
@@ -451,18 +451,18 @@ impl<'sim> LexerATNSimulator<'sim> {
         // Rebuild the singleton context chains bottom-up: local id 0 is the
         // empty context, entry i has local id i + 1 with parents that refer
         // to smaller ids.
-        let mut contexts = Vec::with_capacity(continuation.ctxs.len() + 1);
+        let mut contexts = Vec::with_capacity(continuation.ctxs().len() + 1);
         contexts.push(PredictionContextRef::new_empty());
-        for &(parent, return_state) in &continuation.ctxs {
+        for ctx in continuation.ctxs() {
             let ctx = PredictionContext::new_singleton(
-                Some(contexts[parent as usize]),
-                atn.make_state_ref(return_state),
+                Some(contexts[ctx.parent as usize]),
+                atn.make_state_ref(ctx.return_state),
             );
             contexts.push(PredictionContextRef::from(scratch.alloc(ctx)));
         }
 
         let configs: Vec<LexerATNConfig> = continuation
-            .configs
+            .configs()
             .iter()
             .map(|c| {
                 let mut config = LexerATNConfig::new(
@@ -470,9 +470,9 @@ impl<'sim> LexerATNSimulator<'sim> {
                     c.alt,
                     contexts[c.ctx as usize],
                 );
-                config.set_passed_through_non_greedy_decision(c.non_greedy);
+                config.set_passed_through_non_greedy_decision(c.non_greedy());
                 let mut executor = None;
-                for &action_index in &c.actions {
+                for &action_index in continuation.config_actions(c) {
                     let action: crate::lexer_action::LexerAction =
                         atn.lexer_actions[action_index as usize];
                     executor = Some(&*scratch.alloc(LexerActionExecutor::new_copy_append(
@@ -484,18 +484,18 @@ impl<'sim> LexerATNSimulator<'sim> {
             .collect();
 
         let mut reach = MutableLexerATNConfigSet::new(scratch);
-        match continuation.kind {
+        match continuation.kind() {
             CONTINUATION_MOVED_CONFIGS => {
                 // The configs are post-move, pre-closure: replay the
                 // closure of each with its serialized
                 // alt_reached_accept flag.
                 let mut env = LazyClosureEnv::new(self, lexer);
-                for (config, serialized) in configs.iter().zip(continuation.configs.iter()) {
+                for (config, serialized) in configs.iter().zip(continuation.configs()) {
                     closure_core(
                         atn,
                         config.clone(),
                         &mut reach,
-                        serialized.alt_reached_accept,
+                        serialized.alt_reached_accept(),
                         true,
                         escape_symbol == EOF,
                         &mut env,

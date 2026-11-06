@@ -21,7 +21,7 @@
 
 use dbt_antlr_runtime::dfa::static_dfa_build::{
     DEFAULT_MAX_STATES_PER_MODE, EscapeCounts, EscapeReason, EscapedEdge, ModeBuildOutcome,
-    ModeFailure, StaticLexerDfaBuild, StaticLexerDfaBuilder,
+    ModeFailure, StaticLexerDfaBuildOutput, StaticLexerDfaBuilder,
 };
 use dbt_antlr_runtime::dfa::static_lexer_dfa::{Accel, CONTINUATION_MOVED_CONFIGS, StaticLexerDFA};
 use dbt_antlr_runtime::int_stream::EOF;
@@ -275,7 +275,7 @@ pub(crate) struct StaticLexerModeReport {
 
 fn build_lexer_report(
     compiled: &CompiledLexer,
-    build: &StaticLexerDfaBuild,
+    build: &StaticLexerDfaBuildOutput,
     omit_atn: bool,
 ) -> StaticLexerDfaReport {
     let unit = &compiled.semantic.unit;

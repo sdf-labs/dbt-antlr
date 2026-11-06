@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use dbt_antlr_runtime::atn::ATN;
 use dbt_antlr_runtime::atn_deserializer::ATNDeserializer;
 use dbt_antlr_runtime::dfa::static_dfa_build::{
-    ModeFailure, StaticLexerDfaBuild, StaticLexerDfaBuilder,
+    ModeFailure, StaticLexerDfaBuildOutput, StaticLexerDfaBuilder,
 };
 use dbt_antlr_runtime::dfa::static_lexer_dfa::{
     StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, BEHIND_POSITION_INDEPENDENT,
@@ -27,7 +27,7 @@ fn grammar_path(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn build_with(grammar: &str, builder: &StaticLexerDfaBuilder) -> (ATN, StaticLexerDfaBuild) {
+fn build_with(grammar: &str, builder: &StaticLexerDfaBuilder) -> (ATN, StaticLexerDfaBuildOutput) {
     let units = dbt_antlr_codegen::atn_export::compile_atn_data(&grammar_path(grammar), &[])
         .expect("grammar compiles");
     let words = units
@@ -39,7 +39,7 @@ fn build_with(grammar: &str, builder: &StaticLexerDfaBuilder) -> (ATN, StaticLex
     (atn, build)
 }
 
-fn build(grammar: &str) -> (ATN, StaticLexerDfaBuild) {
+fn build(grammar: &str) -> (ATN, StaticLexerDfaBuildOutput) {
     build_with(grammar, &StaticLexerDfaBuilder::new())
 }
 
@@ -274,7 +274,7 @@ impl DecodedMode {
 /// decoder and re-encodes word for word, and the test-only decoder below
 /// checks the structural invariants of every section against the build
 /// diagnostics and the committed tables.
-fn check_invariants(build: &StaticLexerDfaBuild, atn: &ATN) {
+fn check_invariants(build: &StaticLexerDfaBuildOutput, atn: &ATN) {
     let decoded = StaticLexerTables::from_words(&build.words).expect("builder words decode");
     assert_eq!(decoded.to_words(), build.words, "word stream round-trips");
 

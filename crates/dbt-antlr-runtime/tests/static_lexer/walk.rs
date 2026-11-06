@@ -22,7 +22,7 @@ use dbt_antlr_runtime::atn::ATN;
 use dbt_antlr_runtime::atn_deserializer::ATNDeserializer;
 use dbt_antlr_runtime::atn_simulator::LexerATNSimulatorManager;
 use dbt_antlr_runtime::char_stream::CharStream;
-use dbt_antlr_runtime::dfa::static_dfa_build::{StaticLexerDfaBuild, StaticLexerDfaBuilder};
+use dbt_antlr_runtime::dfa::static_dfa_build::{StaticLexerDfaBuildOutput, StaticLexerDfaBuilder};
 use dbt_antlr_runtime::dfa::static_lexer_dfa::{
     StaticLexerError, StaticLexerTables, ACCEL_COUNTED_EXCLUSION, ACCEL_EXCLUSION, ACCEL_POSITIVE,
     ACCEPT_BIT, ESCAPE, NO_CONTINUATION, NO_EDGE, STATIC_DFA_FORMAT_VERSION, STATIC_DFA_MAGIC,
@@ -85,7 +85,7 @@ struct Fixture {
     atn_manager_truth: &'static LexerATNSimulatorManager,
     atn_manager_static: &'static LexerATNSimulatorManager,
     tables: &'static StaticLexerTables,
-    build: StaticLexerDfaBuild,
+    build: StaticLexerDfaBuildOutput,
 }
 
 fn compile(kind: GrammarKind, builder: &StaticLexerDfaBuilder) -> Fixture {
