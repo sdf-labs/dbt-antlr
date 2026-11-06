@@ -1,6 +1,5 @@
 ---
 source: crates/dbt-antlr-codegen/tests/dbt_antlr_cli/transforms.rs
-assertion_line: 922
 expression: manifest
 ---
 {
@@ -215,8 +214,8 @@ expression: manifest
                             "line": 1,
                         },
                     },
-                    "tableBytes": 1188,
-                    "tableWords": 297,
+                    "tableBytes": 812,
+                    "tableWords": 203,
                     "targetEdges": 2,
                     "totalEdges": 3,
                     "totalStates": 2,
@@ -234,8 +233,8 @@ expression: manifest
                 "lexers": 1,
                 "modes": 1,
                 "states": 2,
-                "tableBytes": 1188,
-                "tableWords": 297,
+                "tableBytes": 812,
+                "tableWords": 203,
                 "targetEdges": 2,
             },
             "name": "static-lexer-dfa",
