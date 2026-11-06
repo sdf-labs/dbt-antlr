@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-codegen-v0.7.0...dbt-antlr-codegen-v0.7.1) - 2026-11-06
+
+### Other
+
+- *(runtime)* make LexerAction and Accel word-shaped #[repr(C, u32)] enums ([#53](https://github.com/sdf-labs/dbt-antlr/pull/53))
+
 ## [0.7.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-codegen-v0.6.2...dbt-antlr-codegen-v0.7.0) - 2026-11-03
 
 ### Added
