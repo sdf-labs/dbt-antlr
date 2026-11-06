@@ -126,7 +126,7 @@ struct LexerFactory<'a> {
     provenance: &'a mut ProvenanceIndex,
     current_rule: Option<(&'a Rule, usize)>,
     mode_starts: Vec<BuildStateId>,
-    lexer_actions: Vec<LexerAction<'static>>,
+    lexer_actions: Vec<LexerAction>,
     epsilon_closures: Vec<(RuleId, BuildStateId, BuildStateId)>,
     diagnostics: Vec<Diagnostic>,
 }
@@ -775,7 +775,7 @@ impl<'a> LexerFactory<'a> {
         })
     }
 
-    fn lexer_action_index(&mut self, action: LexerAction<'static>) -> usize {
+    fn lexer_action_index(&mut self, action: LexerAction) -> usize {
         if let Some(index) = self
             .lexer_actions
             .iter()
@@ -1078,7 +1078,7 @@ impl<'a> LexerFactory<'a> {
     }
 }
 
-fn command_action(command: ResolvedLexerCommand) -> LexerAction<'static> {
+fn command_action(command: ResolvedLexerCommand) -> LexerAction {
     match command {
         ResolvedLexerCommand::Skip => LexerAction::Skip,
         ResolvedLexerCommand::More => LexerAction::More,
@@ -1115,7 +1115,7 @@ fn build_atn(
     grammar: &SemanticGrammar,
     graph: &FinalizedAtnGraph,
     mode_starts: &[BuildStateId],
-    lexer_actions: Vec<LexerAction<'static>>,
+    lexer_actions: Vec<LexerAction>,
 ) -> ATN {
     let mut atn = ATN::new(ATNType::Lexer, graph.max_token_type);
     runtime_build::build_states(&mut atn, graph);
@@ -1784,7 +1784,7 @@ fn runtime_set_index(sets: &[&IntervalSet], set: &IntervalSet) -> i32 {
     )
 }
 
-fn serialize_lexer_actions(data: &mut Vec<i32>, actions: &[LexerAction<'static>]) {
+fn serialize_lexer_actions(data: &mut Vec<i32>, actions: &[LexerAction]) {
     data.push(usize_to_i32(actions.len()));
     for action in actions {
         data.extend(<[i32; 3]>::from(action.to_serialized()));

@@ -177,7 +177,7 @@ pub struct StaticLexerDFA {
     /// deduplicated by content. Only position-independent actions appear
     /// here, so the walker can run them with plain `LexerAction::execute`
     /// calls.
-    pub(crate) actions: Vec<LexerAction<'static>>,
+    pub(crate) actions: Vec<LexerAction>,
     /// Run-acceleration flavor tag per state: 0 = none, else the index of
     /// the payload in `accel_data` + 1.
     pub(crate) accel_tag: Vec<u16>,
@@ -241,74 +241,75 @@ pub(crate) struct ContinuationConfig {
 /// When a run of consecutive input bytes loops back to the same state, the
 /// walker consumes the run with one scan. A run ends on the first byte that
 /// does not loop, and the normal table walk resumes from that byte.
+#[repr(C, u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Accel {
-    /// Run over the ASCII bytes set in the bitmap.
-    Positive(u128),
+    /// Run over the ASCII bytes set in the 128-bit bitmap (four 32-bit words,
+    /// low to high).
+    Positive([u32; 4]),
     /// Run over all input until the first occurrence of the needle byte.
-    Exclude(u8),
+    Exclude(u32),
     /// Run over all input until the first occurrence of either needle byte.
-    Exclude2(u8, u8),
+    Exclude2(u32, u32),
     /// Run over all input until the first occurrence of any of the three needle bytes.
-    Exclude3(u8, u8, u8),
+    Exclude3(u32, u32, u32),
     /// Counted nested run over equal-length 1..=3-byte opener and closer delimiters.
     CountedExclusion {
         /// ASCII bytes of the opening delimiter (zero-padded).
-        opener: [u8; 3],
+        opener: [u32; 3],
         /// ASCII bytes of the closing delimiter (zero-padded).
-        closer: [u8; 3],
+        closer: [u32; 3],
         /// Byte length of `opener` and `closer` (`1..=3`).
-        n: u8,
+        n: u32,
     },
 }
 
 impl Accel {
+    /// Builds a [`Self::Positive`] descriptor from a 128-bit ASCII bitmap.
+    #[inline]
+    pub const fn positive(bitmap: u128) -> Self {
+        Self::Positive([
+            bitmap as u32,
+            (bitmap >> 32) as u32,
+            (bitmap >> 64) as u32,
+            (bitmap >> 96) as u32,
+        ])
+    }
+
+    /// Reconstructs the 128-bit ASCII bitmap of a [`Self::Positive`] descriptor.
+    #[inline]
+    pub const fn bitmap_u128(words: [u32; 4]) -> u128 {
+        (words[0] as u128)
+            | ((words[1] as u128) << 32)
+            | ((words[2] as u128) << 64)
+            | ((words[3] as u128) << 96)
+    }
+
     /// The serialized accel entry of this descriptor for state `s`:
     /// `(state, tag, payload...)`, in the section layout of the word-stream
     /// documentation.
     #[cfg(feature = "static-dfa-build")]
     pub(crate) fn to_serialized(self, s: u16) -> Vec<u32> {
         match self {
-            Accel::Positive(bitmap) => {
-                vec![
-                    u32::from(s),
-                    ACCEL_POSITIVE,
-                    bitmap as u32,
-                    (bitmap >> 32) as u32,
-                    (bitmap >> 64) as u32,
-                    (bitmap >> 96) as u32,
-                ]
+            Accel::Positive([w0, w1, w2, w3]) => {
+                vec![u32::from(s), ACCEL_POSITIVE, w0, w1, w2, w3]
             }
             Accel::Exclude(n0) => {
-                vec![u32::from(s), ACCEL_EXCLUSION, 1, u32::from(n0), 0, 0]
+                vec![u32::from(s), ACCEL_EXCLUSION, 1, n0, 0, 0]
             }
             Accel::Exclude2(n0, n1) => {
-                vec![
-                    u32::from(s),
-                    ACCEL_EXCLUSION,
-                    2,
-                    u32::from(n0),
-                    u32::from(n1),
-                    0,
-                ]
+                vec![u32::from(s), ACCEL_EXCLUSION, 2, n0, n1, 0]
             }
             Accel::Exclude3(n0, n1, n2) => {
-                vec![
-                    u32::from(s),
-                    ACCEL_EXCLUSION,
-                    3,
-                    u32::from(n0),
-                    u32::from(n1),
-                    u32::from(n2),
-                ]
+                vec![u32::from(s), ACCEL_EXCLUSION, 3, n0, n1, n2]
             }
             Accel::CountedExclusion { opener, closer, n } => {
                 vec![
                     u32::from(s),
                     ACCEL_COUNTED_EXCLUSION,
-                    u32::from(n),
-                    u32::from_le_bytes([opener[0], opener[1], opener[2], 0]),
-                    u32::from_le_bytes([closer[0], closer[1], closer[2], 0]),
+                    n,
+                    u32::from_le_bytes([opener[0] as u8, opener[1] as u8, opener[2] as u8, 0]),
+                    u32::from_le_bytes([closer[0] as u8, closer[1] as u8, closer[2] as u8, 0]),
                     0,
                 ]
             }
@@ -915,7 +916,7 @@ impl StaticLexerDFA {
     ///
     /// Same unchecked-index safety argument as [`StaticLexerDFA::edge_entry`].
     #[inline]
-    pub(crate) fn accept_actions(&self, s: u16) -> &[LexerAction<'static>] {
+    pub(crate) fn accept_actions(&self, s: u16) -> &[LexerAction] {
         let (off, len) = unsafe { *self.accept_actions.get_unchecked(s as usize) };
         &self.actions[off as usize..(off + len) as usize]
     }
@@ -1434,7 +1435,7 @@ struct HiClasses {
 
 /// The decoded action-list section of one mode.
 struct ActionLists {
-    actions: Vec<LexerAction<'static>>,
+    actions: Vec<LexerAction>,
     accept_actions: Vec<(u32, u32)>,
 }
 
@@ -1597,12 +1598,9 @@ fn read_accel(
         check_index(mode, "accel state", s, num_states)?;
         let payload = match r.next()? {
             ACCEL_POSITIVE => {
-                let mut bitmap = 0u128;
-                for limb in 0..4 {
-                    bitmap |= (r.next()? as u128) << (limb * 32);
-                }
+                let words = [r.next()?, r.next()?, r.next()?, r.next()?];
                 read += 6;
-                Accel::Positive(bitmap)
+                Accel::Positive(words)
             }
             ACCEL_EXCLUSION => {
                 let n = r.next()?;
@@ -1615,13 +1613,9 @@ fn read_accel(
                 }
                 read += 6;
                 match n {
-                    1 => Accel::Exclude(needle_words[0] as u8),
-                    2 => Accel::Exclude2(needle_words[0] as u8, needle_words[1] as u8),
-                    3 => Accel::Exclude3(
-                        needle_words[0] as u8,
-                        needle_words[1] as u8,
-                        needle_words[2] as u8,
-                    ),
+                    1 => Accel::Exclude(needle_words[0]),
+                    2 => Accel::Exclude2(needle_words[0], needle_words[1]),
+                    3 => Accel::Exclude3(needle_words[0], needle_words[1], needle_words[2]),
                     _ => unreachable!(),
                 }
             }
@@ -1644,9 +1638,17 @@ fn read_accel(
                 }
                 read += 6;
                 Accel::CountedExclusion {
-                    opener: [opener_bytes[0], opener_bytes[1], opener_bytes[2]],
-                    closer: [closer_bytes[0], closer_bytes[1], closer_bytes[2]],
-                    n: n as u8,
+                    opener: [
+                        u32::from(opener_bytes[0]),
+                        u32::from(opener_bytes[1]),
+                        u32::from(opener_bytes[2]),
+                    ],
+                    closer: [
+                        u32::from(closer_bytes[0]),
+                        u32::from(closer_bytes[1]),
+                        u32::from(closer_bytes[2]),
+                    ],
+                    n,
                 }
             }
             value => {
@@ -1962,7 +1964,7 @@ mod tests {
             actions: Vec::new(),
             accel_tag: (1..=NUM_STATES as u16).collect(),
             accel_data: (0..NUM_STATES)
-                .map(|state| Accel::Positive(state as u128))
+                .map(|state| Accel::positive(state as u128))
                 .collect(),
             eof_escape: vec![NO_CONTINUATION; NUM_STATES],
             escape_off: vec![0; NUM_STATES + 1],
@@ -1979,7 +1981,7 @@ mod tests {
             assert_eq!(decoded.accel_tag(state), state + 1);
             assert_eq!(
                 decoded.state_accel(state),
-                Some(Accel::Positive(u128::from(state)))
+                Some(Accel::positive(u128::from(state)))
             );
         }
     }

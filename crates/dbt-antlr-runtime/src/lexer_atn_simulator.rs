@@ -309,6 +309,8 @@ impl<'sim> LexerATNSimulator<'sim> {
             let tag = table.accel_tag(s);
             if tag != 0 {
                 if let Accel::CountedExclusion { opener, closer, n } = table.accel_payload(tag) {
+                    let opener = [opener[0] as u8, opener[1] as u8, opener[2] as u8];
+                    let closer = [closer[0] as u8, closer[1] as u8, closer[2] as u8];
                     let input = lexer.input();
                     let start = input.index() as usize;
                     let c = {
@@ -472,7 +474,7 @@ impl<'sim> LexerATNSimulator<'sim> {
                 let mut executor = None;
                 for &action_index in &c.actions {
                     let action: crate::lexer_action::LexerAction =
-                        atn.lexer_actions[action_index as usize].clone();
+                        atn.lexer_actions[action_index as usize];
                     executor = Some(&*scratch.alloc(LexerActionExecutor::new_copy_append(
                         scratch, executor, action,
                     )));
@@ -878,7 +880,7 @@ pub(crate) enum AcceptExecutor<'sim> {
     /// The executor of a lazy DFA accept state.
     Lazy(&'sim LexerActionExecutor<'sim>),
     /// The position-independent action list of a static table accept state.
-    Static(&'static [crate::lexer_action::LexerAction<'static>]),
+    Static(&'static [crate::lexer_action::LexerAction]),
 }
 
 /// Consume a maximal run of self-looping bytes of an accelerated state,
@@ -887,7 +889,8 @@ pub(crate) enum AcceptExecutor<'sim> {
 #[inline(never)]
 fn run_scan(hay: &[u8], mut c: usize, accel: Accel, scratch: &bumpalo::Bump) -> usize {
     match accel {
-        Accel::Positive(bitmap) => {
+        Accel::Positive(words) => {
+            let bitmap = Accel::bitmap_u128(words);
             while c < hay.len() {
                 let b = hay[c];
                 if b < 0x80 && (bitmap >> b) & 1 != 0 {
@@ -897,25 +900,25 @@ fn run_scan(hay: &[u8], mut c: usize, accel: Accel, scratch: &bumpalo::Bump) -> 
                 }
             }
         }
-        Accel::Exclude(needle) => match memchr::memchr(needle, &hay[c..]) {
+        Accel::Exclude(needle) => match memchr::memchr(needle as u8, &hay[c..]) {
             None => c = hay.len(),
             Some(i) => c += i,
         },
-        Accel::Exclude2(needle1, needle2) => match memchr::memchr2(needle1, needle2, &hay[c..]) {
-            None => c = hay.len(),
-            Some(i) => c += i,
-        },
-        Accel::Exclude3(needle1, needle2, needle3) => {
-            match memchr::memchr3(needle1, needle2, needle3, &hay[c..]) {
+        Accel::Exclude2(needle1, needle2) => {
+            match memchr::memchr2(needle1 as u8, needle2 as u8, &hay[c..]) {
                 None => c = hay.len(),
                 Some(i) => c += i,
             }
         }
-        Accel::CountedExclusion {
-            ref opener,
-            ref closer,
-            n,
-        } => {
+        Accel::Exclude3(needle1, needle2, needle3) => {
+            match memchr::memchr3(needle1 as u8, needle2 as u8, needle3 as u8, &hay[c..]) {
+                None => c = hay.len(),
+                Some(i) => c += i,
+            }
+        }
+        Accel::CountedExclusion { opener, closer, n } => {
+            let opener = [opener[0] as u8, opener[1] as u8, opener[2] as u8];
+            let closer = [closer[0] as u8, closer[1] as u8, closer[2] as u8];
             c = run_scan_counted(
                 hay,
                 c,
@@ -1346,7 +1349,7 @@ fn epsilon_target_core<'scratch>(
                 let tr = _trans
                     .try_as::<crate::transition::ActionTransition>()
                     .unwrap();
-                let lexer_action = atn.lexer_actions[tr.action_index() as usize].clone();
+                let lexer_action = atn.lexer_actions[tr.action_index() as usize];
                 //dbg!(&lexer_action);
                 let lexer_action_executor = LexerActionExecutor::new_copy_append(
                     scratch,

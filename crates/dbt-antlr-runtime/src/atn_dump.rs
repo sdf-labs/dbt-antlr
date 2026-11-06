@@ -77,7 +77,7 @@ pub fn dump_atn(atn: &ATN) -> String {
             LexerAction::PushMode(d) => ("PUSH_MODE", *d, -1),
             LexerAction::Skip => ("SKIP", -1, -1),
             LexerAction::Type(d) => ("TYPE", *d, -1),
-            LexerAction::IndexedCustom(a) => ("INDEXED_CUSTOM", a.offset as i32, -1),
+            LexerAction::IndexedCustom { offset, .. } => ("INDEXED_CUSTOM", *offset, -1),
         };
         writeln!(
             out,

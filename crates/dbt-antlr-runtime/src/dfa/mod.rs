@@ -16,7 +16,7 @@ use crate::atn_config_set::{
 use crate::atn_simulator::IATNSimulator;
 use crate::atn_state::{ATNStateRef, ATNStateType, StarLoopEntryState};
 use crate::dfa::dfa_state::{LexerDFAState, ParserDFAState};
-use crate::lexer_action::{LexerAction, LexerIndexedCustomAction};
+use crate::lexer_action::LexerAction;
 use crate::lexer_action_executor::LexerActionExecutor;
 use crate::prediction_context::NoopHasherBuilder;
 use crate::semantic_context::SemanticContext;
@@ -678,8 +678,8 @@ pub(crate) trait FinalizeStore<'sim> {
     fn alloc_lexer_action_slice(
         &self,
         len: usize,
-        f: impl FnMut(usize) -> LexerAction<'sim>,
-    ) -> &'sim [LexerAction<'sim>];
+        f: impl FnMut(usize) -> LexerAction,
+    ) -> &'sim [LexerAction];
 
     fn contains_lexer_action_slice(&self, slice: &[LexerAction]) -> bool;
 
@@ -687,14 +687,6 @@ pub(crate) trait FinalizeStore<'sim> {
         &self,
         f: impl FnOnce() -> LexerActionExecutor<'sim>,
     ) -> &'sim LexerActionExecutor<'sim>;
-
-    fn alloc_lexer_indexed_custom_action(
-        &self,
-        f: impl FnOnce() -> LexerIndexedCustomAction<'sim>,
-    ) -> &'sim LexerIndexedCustomAction<'sim>;
-
-    fn contains_lexer_indexed_custom_action(&self, action: &LexerIndexedCustomAction) -> bool;
-
     fn alloc_config_slice<AC, I>(&self, iter: I) -> &'sim [AC]
     where
         I: IntoIterator<Item = AC>,
@@ -841,8 +833,8 @@ where
     pub(crate) fn alloc_lexer_action_slice(
         &self,
         len: usize,
-        f: impl FnMut(usize) -> LexerAction<'sim>,
-    ) -> &'sim [LexerAction<'sim>] {
+        f: impl FnMut(usize) -> LexerAction,
+    ) -> &'sim [LexerAction] {
         self.lexer_store().alloc_slice_fill_with(len, f)
     }
 
@@ -856,25 +848,6 @@ where
     ) -> &'sim LexerActionExecutor<'sim> {
         self.lexer_store().alloc_with(f)
     }
-
-    // pub(crate) fn contains_lexer_action_executor(&self, executor: &LexerActionExecutor) -> bool {
-    //     is_ref_in_arena(executor, self.lexer_store())
-    // }
-
-    pub(crate) fn alloc_lexer_indexed_custom_action(
-        &self,
-        f: impl FnOnce() -> LexerIndexedCustomAction<'sim>,
-    ) -> &'sim LexerIndexedCustomAction<'sim> {
-        self.lexer_store().alloc_with(f)
-    }
-
-    pub(crate) fn contains_lexer_indexed_custom_action(
-        &self,
-        action: &LexerIndexedCustomAction,
-    ) -> bool {
-        is_ref_in_arena(action, self.lexer_store())
-    }
-
     pub(crate) fn alloc_pred_prediction_slice<I>(&self, iter: I) -> &'sim [PredPrediction<'sim>]
     where
         I: IntoIterator<Item = PredPrediction<'sim>>,
@@ -920,8 +893,8 @@ where
     fn alloc_lexer_action_slice(
         &self,
         len: usize,
-        f: impl FnMut(usize) -> LexerAction<'sim>,
-    ) -> &'sim [LexerAction<'sim>] {
+        f: impl FnMut(usize) -> LexerAction,
+    ) -> &'sim [LexerAction] {
         DFAStateStore::alloc_lexer_action_slice(self, len, f)
     }
 
@@ -935,18 +908,6 @@ where
     ) -> &'sim LexerActionExecutor<'sim> {
         DFAStateStore::alloc_lexer_action_executor(self, f)
     }
-
-    fn alloc_lexer_indexed_custom_action(
-        &self,
-        f: impl FnOnce() -> LexerIndexedCustomAction<'sim>,
-    ) -> &'sim LexerIndexedCustomAction<'sim> {
-        DFAStateStore::alloc_lexer_indexed_custom_action(self, f)
-    }
-
-    fn contains_lexer_indexed_custom_action(&self, action: &LexerIndexedCustomAction) -> bool {
-        DFAStateStore::contains_lexer_indexed_custom_action(self, action)
-    }
-
     fn alloc_config_slice<AC, I>(&self, iter: I) -> &'sim [AC]
     where
         I: IntoIterator<Item = AC>,

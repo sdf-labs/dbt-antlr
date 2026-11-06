@@ -5,13 +5,13 @@ use fxhash::{hash64, FxHasher64};
 use crate::char_stream::CharStream;
 use crate::dfa::FinalizeStore;
 use crate::lexer::Lexer;
-use crate::lexer_action::{LexerAction, LexerIndexedCustomAction};
+use crate::lexer_action::LexerAction;
 use crate::token_factory::TokenFactory;
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct LexerActionExecutor<'ephemeral> {
     cached_hash: u64,
-    lexer_actions: &'ephemeral [LexerAction<'ephemeral>],
+    lexer_actions: &'ephemeral [LexerAction],
 }
 
 impl Hash for LexerActionExecutor<'_> {
@@ -24,7 +24,7 @@ impl<'ephemeral> LexerActionExecutor<'ephemeral> {
     pub(crate) fn new_copy_append(
         scratch: &'ephemeral bumpalo::Bump,
         old: Option<&Self>,
-        lexer_action: LexerAction<'ephemeral>,
+        lexer_action: LexerAction,
     ) -> LexerActionExecutor<'ephemeral> {
         if let Some(LexerActionExecutor {
             lexer_actions,
@@ -39,9 +39,9 @@ impl<'ephemeral> LexerActionExecutor<'ephemeral> {
             };
             let new_actions = scratch.alloc_slice_fill_with(lexer_actions.len() + 1, |i| {
                 if i < lexer_actions.len() {
-                    lexer_actions[i].clone()
+                    lexer_actions[i]
                 } else {
-                    lexer_action.clone()
+                    lexer_action
                 }
             });
 
@@ -58,7 +58,7 @@ impl<'ephemeral> LexerActionExecutor<'ephemeral> {
     }
 
     #[cfg(feature = "static-dfa-build")]
-    pub(crate) fn actions(&self) -> &'ephemeral [LexerAction<'ephemeral>] {
+    pub(crate) fn actions(&self) -> &'ephemeral [LexerAction] {
         self.lexer_actions
     }
 
@@ -67,14 +67,18 @@ impl<'ephemeral> LexerActionExecutor<'ephemeral> {
         arena: &'ephemeral bumpalo::Bump,
         offset: isize,
     ) -> LexerActionExecutor<'ephemeral> {
+        let offset = i32::try_from(offset).expect("lexer action offset fits in i32");
         let fixed_actions = arena.alloc_slice_fill_with(self.lexer_actions.len(), |i| {
-            let action = self.lexer_actions[i].clone();
-            if let LexerAction::IndexedCustom(..) = action {
-                action
-            } else if action.is_position_dependent() {
-                LexerAction::IndexedCustom(arena.alloc(LexerIndexedCustomAction { offset, action }))
-            } else {
-                action
+            match self.lexer_actions[i] {
+                LexerAction::Custom {
+                    rule_index,
+                    action_index,
+                } => LexerAction::IndexedCustom {
+                    offset,
+                    rule_index,
+                    action_index,
+                },
+                action => action,
             }
         });
         LexerActionExecutor {
@@ -95,8 +99,8 @@ impl<'ephemeral> LexerActionExecutor<'ephemeral> {
         let mut requires_seek = false;
         let stop_index = lexer.input().index();
         for action in self.lexer_actions.iter() {
-            //println!("executing action {:?}",action);
-            if let LexerAction::IndexedCustom(LexerIndexedCustomAction { offset, .. }) = action {
+            if let LexerAction::IndexedCustom { offset, .. } = *action {
+                let offset = offset as isize;
                 lexer.input().seek(start_index + offset);
                 requires_seek = start_index + offset != stop_index;
             } else if action.is_position_dependent() {
@@ -120,9 +124,8 @@ impl<'ephemeral> LexerActionExecutor<'ephemeral> {
             return unsafe { std::mem::transmute::<Self, LexerActionExecutor<'sim>>(self.clone()) };
         }
 
-        let promoted_actions = store.alloc_lexer_action_slice(self.lexer_actions.len(), |i| {
-            self.lexer_actions[i].promote(store)
-        });
+        let promoted_actions =
+            store.alloc_lexer_action_slice(self.lexer_actions.len(), |i| self.lexer_actions[i]);
         LexerActionExecutor {
             lexer_actions: promoted_actions,
             cached_hash: self.cached_hash,
