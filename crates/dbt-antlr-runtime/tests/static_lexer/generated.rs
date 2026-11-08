@@ -116,8 +116,8 @@ macro_rules! run_lexer {
                     break;
                 }
             }
-            let escapes = lexer.get_interpreter().expect("interpreter").escape_count;
-            let restarts = lexer.get_interpreter().expect("interpreter").restart_count;
+            let escapes = lexer.get_interpreter().escape_count.get();
+            let restarts = lexer.get_interpreter().restart_count.get();
             let errors = messages.borrow().clone();
             let snap = Snap {
                 tokens,

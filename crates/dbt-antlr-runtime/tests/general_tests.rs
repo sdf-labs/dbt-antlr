@@ -113,14 +113,7 @@ if (x < x && a > 0) then duh
             }
         }
         println!("{}", string);
-        println!(
-            "{}",
-            _lexer
-                .get_interpreter()
-                .unwrap()
-                .get_dfa()
-                .to_lexer_string()
-        );
+        println!("{}", _lexer.get_interpreter().get_dfa().to_lexer_string());
     });
     Ok(())
 }

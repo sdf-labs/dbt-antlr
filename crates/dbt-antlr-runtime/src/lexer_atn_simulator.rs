@@ -1,4 +1,6 @@
 //! Implementation of lexer automata(DFA)
+use std::cell::Cell;
+
 use crate::atn::ATN;
 use crate::atn_config::LexerATNConfig;
 use crate::atn_config_set::{LexerATNConfigSet, MutableLexerATNConfigSet};
@@ -25,9 +27,10 @@ use crate::transition::{Transition, TransitionType};
 // todo rewrite this to be actually usable
 #[doc(hidden)]
 pub trait ILexerATNSimulator<'sim>: IATNSimulator<'sim, LexerATNConfigSet<'sim>> {
-    fn reset(&mut self);
+    fn reset(&self);
+
     fn match_token<'input, 'arena, Input, TF>(
-        &mut self,
+        &self,
         mode: usize,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
     ) -> Result<i32, ANTLRError>
@@ -35,9 +38,11 @@ pub trait ILexerATNSimulator<'sim>: IATNSimulator<'sim, LexerATNConfigSet<'sim>>
         'input: 'arena,
         Input: CharStream<'input>,
         TF: TokenFactory<'input, 'arena> + 'arena;
+
     fn consume<T: IntStream + ?Sized>(&self, input: &mut T);
+
     #[cold]
-    fn recover(&mut self, _re: ANTLRError, input: &mut impl IntStream) {
+    fn recover(&self, _re: ANTLRError, input: &mut impl IntStream) {
         if input.la(1) != EOF {
             self.consume(input)
         }
@@ -49,25 +54,25 @@ pub trait ILexerATNSimulator<'sim>: IATNSimulator<'sim, LexerATNConfigSet<'sim>>
 pub struct LexerATNSimulator<'sim> {
     base: BaseATNSimulator<'sim, LexerATNConfigSet<'sim>>,
 
-    start_index: isize,
-    mode: usize,
-    prev_accept: Option<ResolvedAccept<'sim>>,
+    start_index: Cell<isize>,
+    mode: Cell<usize>,
+    prev_accept: Cell<Option<ResolvedAccept<'sim>>>,
     static_tables: Option<&'static StaticLexerTables>,
     /// Number of escape edges the table walker handed to the lazy path.
     #[doc(hidden)]
-    pub escape_count: usize,
+    pub escape_count: Cell<usize>,
     /// Number of tokens the table walker restarted on the lazy path.
     #[doc(hidden)]
-    pub restart_count: usize,
+    pub restart_count: Cell<usize>,
 }
 
 impl<'sim> ILexerATNSimulator<'sim> for LexerATNSimulator<'sim> {
-    fn reset(&mut self) {
-        self.prev_accept = None
+    fn reset(&self) {
+        self.prev_accept.set(None);
     }
 
     fn match_token<'input, 'arena, Input, TF>(
-        &mut self,
+        &self,
         mode: usize,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
     ) -> Result<i32, ANTLRError>
@@ -78,23 +83,24 @@ impl<'sim> ILexerATNSimulator<'sim> for LexerATNSimulator<'sim> {
     {
         let scratch = bumpalo::Bump::new();
 
-        self.mode = mode;
         let mark = lexer.input().mark();
         let result = (|| {
-            self.start_index = lexer.input().index();
-            self.prev_accept = None;
+            let start_index = lexer.input().index();
             // Table-driven fast path: modes the builder compiled have a
             // static DFA table. Escape edges inside the walk hand the token
             // back to the lazy path.
             if let Some(tables) = self.static_tables {
                 if let Some(table) = tables.mode(mode) {
                     return if lexer.input().has_item_at() {
-                        self.match_static_random_access(table, lexer, &scratch)
+                        self.match_static_random_access(table, mode, start_index, lexer, &scratch)
                     } else {
-                        self.match_static_cursor(table, lexer, &scratch)
+                        self.match_static_cursor(table, mode, start_index, lexer, &scratch)
                     };
                 }
             }
+            self.mode.set(mode);
+            self.start_index.set(start_index);
+            self.prev_accept.set(None);
             self.match_token_lazy(lexer, &scratch)
         })();
         lexer.input().release(mark);
@@ -134,11 +140,11 @@ impl<'sim> LexerATNSimulator<'sim> {
             // Note: already validated by the manager at construction:
             static_tables: base.static_lexer_tables,
             base,
-            start_index: 0,
-            mode: 0,
-            prev_accept: None,
-            escape_count: 0,
-            restart_count: 0,
+            start_index: Cell::new(0),
+            mode: Cell::new(0),
+            prev_accept: Cell::new(None),
+            escape_count: Cell::new(0),
+            restart_count: Cell::new(0),
         }
     }
 
@@ -160,7 +166,7 @@ impl<'sim> LexerATNSimulator<'sim> {
     /// The lazy `match_token` path: ATN simulation with the lazily built
     /// DFA cache.
     fn match_token_lazy<'scratch, 'input, 'arena, Input, TF>(
-        &mut self,
+        &self,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
         scratch: &'scratch bumpalo::Bump,
     ) -> Result<i32, ANTLRError>
@@ -170,7 +176,7 @@ impl<'sim> LexerATNSimulator<'sim> {
         TF: TokenFactory<'input, 'arena> + 'arena,
     {
         let dfa = self
-            .decision_to_dfa(self.mode)
+            .decision_to_dfa(self.mode.get())
             .ok_or_else(|| ANTLRError::illegal_state("invalid mode".into()))?;
 
         match dfa.s0() {
@@ -182,8 +188,10 @@ impl<'sim> LexerATNSimulator<'sim> {
     /// Token matching with a precomputed [`StaticLexerDFA`] over a
     /// random-access input stream.
     fn match_static_random_access<'scratch, 'input, 'arena, Input, TF>(
-        &mut self,
+        &self,
         table: &'static StaticLexerDFA,
+        mode: usize,
+        start_index: isize,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
         scratch: &'scratch bumpalo::Bump,
     ) -> Result<i32, ANTLRError>
@@ -192,7 +200,6 @@ impl<'sim> LexerATNSimulator<'sim> {
         Input: CharStream<'input>,
         TF: TokenFactory<'input, 'arena> + 'arena,
     {
-        let start_index = self.start_index;
         let mut s = table.start_state();
         // Accept states have accept_type >= 0. A rule with a `more` or
         // `type(...)` command accepts with token type 0.
@@ -212,7 +219,17 @@ impl<'sim> LexerATNSimulator<'sim> {
                 break;
             }
             if entry == ESCAPE {
-                return self.static_escape(table, s, symbol, cursor, prev_accept, lexer, scratch);
+                return self.static_escape(
+                    table,
+                    mode,
+                    start_index,
+                    s,
+                    symbol,
+                    cursor,
+                    prev_accept,
+                    lexer,
+                    scratch,
+                );
             }
             let target = entry & STATE_MASK;
             if symbol != EOF {
@@ -253,14 +270,16 @@ impl<'sim> LexerATNSimulator<'sim> {
             }
         }
         input.seek(cursor);
-        self.finish_static(table, prev_accept, symbol, lexer)
+        self.finish_static(table, start_index, prev_accept, symbol, lexer)
     }
 
     /// Token matching with a precomputed [`StaticLexerDFA`] over a cursor-only
     /// input stream.
     fn match_static_cursor<'scratch, 'input, 'arena, Input, TF>(
-        &mut self,
+        &self,
         table: &'static StaticLexerDFA,
+        mode: usize,
+        start_index: isize,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
         scratch: &'scratch bumpalo::Bump,
     ) -> Result<i32, ANTLRError>
@@ -269,7 +288,6 @@ impl<'sim> LexerATNSimulator<'sim> {
         Input: CharStream<'input>,
         TF: TokenFactory<'input, 'arena> + 'arena,
     {
-        let start_index = self.start_index;
         let mut s = table.start_state();
         let mut prev_accept: Option<(isize, u16)> = if table.accept_type(s) >= 0 {
             Some((start_index, s))
@@ -286,6 +304,8 @@ impl<'sim> LexerATNSimulator<'sim> {
             if entry == ESCAPE {
                 return self.static_escape(
                     table,
+                    mode,
+                    start_index,
                     s,
                     symbol,
                     lexer.input().index(),
@@ -330,13 +350,14 @@ impl<'sim> LexerATNSimulator<'sim> {
                 }
             }
         }
-        self.finish_static(table, prev_accept, symbol, lexer)
+        self.finish_static(table, start_index, prev_accept, symbol, lexer)
     }
 
     #[inline]
     fn finish_static<'input, 'arena, Input, TF>(
         &self,
         table: &'static StaticLexerDFA,
+        start_index: isize,
         prev_accept: Option<(isize, u16)>,
         symbol: i32,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
@@ -355,10 +376,10 @@ impl<'sim> LexerATNSimulator<'sim> {
                 Ok(table.accept_type(state))
             }
             None => {
-                if symbol == EOF && lexer.input().index() == self.start_index {
+                if symbol == EOF && lexer.input().index() == start_index {
                     return Ok(TOKEN_EOF);
                 }
-                Err(ANTLRError::lexer_no_alt(self.start_index))
+                Err(ANTLRError::lexer_no_alt(start_index))
             }
         }
     }
@@ -373,8 +394,10 @@ impl<'sim> LexerATNSimulator<'sim> {
     #[cold]
     #[allow(clippy::too_many_arguments)]
     fn static_escape<'scratch, 'input, 'arena, Input, TF>(
-        &mut self,
+        &self,
         table: &'static StaticLexerDFA,
+        mode: usize,
+        start_index: isize,
         state: u16,
         symbol: i32,
         cursor: isize,
@@ -387,9 +410,11 @@ impl<'sim> LexerATNSimulator<'sim> {
         Input: CharStream<'input>,
         TF: TokenFactory<'input, 'arena> + 'arena,
     {
-        self.escape_count += 1;
+        self.escape_count.set(self.escape_count.get() + 1);
+        self.mode.set(mode);
+        self.start_index.set(start_index);
         lexer.input().seek(cursor);
-        self.prev_accept = prev_accept.map(|(index, state)| {
+        self.prev_accept.set(prev_accept.map(|(index, state)| {
             let actions = table.accept_actions(state);
             ResolvedAccept {
                 index,
@@ -400,7 +425,7 @@ impl<'sim> LexerATNSimulator<'sim> {
                     Some(AcceptExecutor::Static(actions))
                 },
             }
-        });
+        }));
         let continuation = table.escape_continuation(state, symbol);
         if continuation == NO_CONTINUATION {
             return self.restart_token_lazy(lexer, scratch);
@@ -412,7 +437,7 @@ impl<'sim> LexerATNSimulator<'sim> {
     /// Used for budget escapes (no continuation).
     #[cold]
     fn restart_token_lazy<'scratch, 'input, 'arena, Input, TF>(
-        &mut self,
+        &self,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
         scratch: &'scratch bumpalo::Bump,
     ) -> Result<i32, ANTLRError>
@@ -421,9 +446,9 @@ impl<'sim> LexerATNSimulator<'sim> {
         Input: CharStream<'input>,
         TF: TokenFactory<'input, 'arena> + 'arena,
     {
-        self.restart_count += 1;
-        lexer.input().seek(self.start_index);
-        self.prev_accept = None;
+        self.restart_count.set(self.restart_count.get() + 1);
+        lexer.input().seek(self.start_index.get());
+        self.prev_accept.set(None);
         self.match_token_lazy(lexer, scratch)
     }
     /// Resumes the lazy simulation at an escape edge. Rebuilds the
@@ -434,7 +459,7 @@ impl<'sim> LexerATNSimulator<'sim> {
     /// table walk is already in `self.prev_accept`, so maximal munch across
     /// the hand-off is exact.
     fn match_token_from_continuation<'scratch, 'input, 'arena, Input, TF>(
-        &mut self,
+        &self,
         continuation: &'static LexerContinuation,
         escape_symbol: i32,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
@@ -446,8 +471,7 @@ impl<'sim> LexerATNSimulator<'sim> {
         TF: TokenFactory<'input, 'arena> + 'arena,
     {
         let atn = self.atn();
-        let start_index = self.start_index;
-
+        let start_index = self.start_index.get();
         // Rebuild the singleton context chains bottom-up: local id 0 is the
         // empty context, entry i has local id i + 1 with parents that refer
         // to smaller ids.
@@ -547,7 +571,7 @@ impl<'sim> LexerATNSimulator<'sim> {
 
     #[cold]
     fn match_atn<'scratch, 'input, 'arena, Input, TF>(
-        &mut self,
+        &self,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
         dfa: &'sim DFA<LexerATNConfigSet<'sim>>,
         scratch: &'scratch bumpalo::Bump,
@@ -557,14 +581,12 @@ impl<'sim> LexerATNSimulator<'sim> {
         Input: CharStream<'input>,
         TF: TokenFactory<'input, 'arena> + 'arena,
     {
-        //        let start_state = self.atn().mode_to_start_state.get(self.mode as usize).ok_or(ANTLRError::IllegalStateError("invalid mode".into()))?;
         let atn = self.atn();
         let start_state = *atn
             .mode_to_start_state
-            .get(self.mode)
+            .get(self.mode.get())
             .ok_or_else(|| ANTLRError::illegal_state("invalid mode".into()))?;
 
-        let _old_mode = self.mode;
         let mut s0_closure = self.compute_start_state(start_state.as_ref(), lexer, scratch);
         let _supress_edge = s0_closure.has_semantic_context();
         s0_closure.set_has_semantic_context(false);
@@ -578,8 +600,7 @@ impl<'sim> LexerATNSimulator<'sim> {
     }
 
     fn exec_atn<'scratch, 'input, 'arena, Input, TF>(
-        &mut self,
-        //        input: &'a mut dyn CharStream,
+        &self,
         ds0: &'sim DFAState<'sim, LexerATNConfigSet<'sim>>,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
         dfa: &'sim DFA<LexerATNConfigSet<'sim>>,
@@ -590,9 +611,7 @@ impl<'sim> LexerATNSimulator<'sim> {
         Input: CharStream<'input>,
         TF: TokenFactory<'input, 'arena> + 'arena,
     {
-        //        if self.get_dfa().states.read().unwrap().get(ds0).unwrap().is_accept_state{
         self.capture_sim_state(lexer.input(), ds0);
-        //        }
 
         let symbol = lexer.input().la(1);
         self.exec_atn_loop(ds0, symbol, lexer, dfa, scratch)
@@ -602,7 +621,7 @@ impl<'sim> LexerATNSimulator<'sim> {
     /// (unconsumed) lookahead. Also the tail of the continuation resume
     /// path, which has already consumed the escape symbol.
     fn exec_atn_loop<'scratch, 'input, 'arena, Input, TF>(
-        &mut self,
+        &self,
         mut s: &'sim DFAState<'sim, LexerATNConfigSet<'sim>>,
         mut symbol: i32,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
@@ -698,7 +717,7 @@ impl<'sim> LexerATNSimulator<'sim> {
     {
         reachable_core(
             self.atn(),
-            self.start_index,
+            self.start_index.get(),
             _closure.get_items(),
             _reach,
             _t,
@@ -716,7 +735,7 @@ impl<'sim> LexerATNSimulator<'sim> {
     //    }
 
     fn fail_or_accept<'input, 'arena, Input, TF>(
-        &mut self,
+        &self,
         _t: i32,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
     ) -> Result<i32, ANTLRError>
@@ -725,12 +744,12 @@ impl<'sim> LexerATNSimulator<'sim> {
         Input: CharStream<'input>,
         TF: TokenFactory<'input, 'arena> + 'arena,
     {
-        //        println!("fail_or_accept");
+        let start_index = self.start_index.get();
         if let Some(accept) = self.prev_accept.take() {
             lexer.input().seek(accept.index);
 
             match accept.executor {
-                Some(AcceptExecutor::Lazy(x)) => x.execute(lexer, self.start_index),
+                Some(AcceptExecutor::Lazy(x)) => x.execute(lexer, start_index),
                 // Position-independent actions only: no match offset is
                 // needed, so plain `execute` matches
                 // `LexerActionExecutor::execute` here.
@@ -744,10 +763,10 @@ impl<'sim> LexerATNSimulator<'sim> {
 
             Ok(accept.prediction)
         } else {
-            if _t == EOF && lexer.input().index() == self.start_index {
+            if _t == EOF && lexer.input().index() == start_index {
                 return Ok(TOKEN_EOF);
             }
-            Err(ANTLRError::lexer_no_alt(self.start_index))
+            Err(ANTLRError::lexer_no_alt(start_index))
         }
     }
 
@@ -799,7 +818,7 @@ impl<'sim> LexerATNSimulator<'sim> {
     }
 
     fn capture_sim_state(
-        &mut self,
+        &self,
         input: &impl IntStream,
         dfa_state: &'sim DFAState<'sim, LexerATNConfigSet<'sim>>,
     ) -> bool {
@@ -807,11 +826,11 @@ impl<'sim> LexerATNSimulator<'sim> {
             // Resolve the DFAState into a ResolvedAccept here, so the
             // accept slot has one form for lazy states and for the table
             // accepts the static walker carries.
-            self.prev_accept = Some(ResolvedAccept {
+            self.prev_accept.set(Some(ResolvedAccept {
                 index: input.index(),
                 prediction: dfa_state.prediction(),
                 executor: dfa_state.lexer_action_executor().map(AcceptExecutor::Lazy),
-            });
+            }));
             return true;
         }
         false
@@ -846,7 +865,7 @@ impl<'sim> LexerATNSimulator<'sim> {
 
     /// Returns current DFA that is currently used.
     pub fn get_dfa(&self) -> &'sim DFA<'sim, LexerATNConfigSet<'sim>> {
-        self.decision_to_dfa(self.mode)
+        self.decision_to_dfa(self.mode.get())
             .expect("self.mode should be valid")
     }
 

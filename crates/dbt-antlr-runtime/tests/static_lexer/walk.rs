@@ -378,9 +378,8 @@ where
                     break;
                 }
             }
-            let interpreter = lexer.interpreter.as_ref().unwrap();
-            let escapes = interpreter.escape_count;
-            let restarts = interpreter.restart_count;
+            let escapes = lexer.interpreter.escape_count.get();
+            let restarts = lexer.interpreter.restart_count.get();
             let errors = messages.borrow().clone();
             let log = log_out.borrow().clone();
             Snap {
