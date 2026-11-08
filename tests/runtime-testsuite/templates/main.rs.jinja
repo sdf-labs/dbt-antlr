@@ -1,0 +1,84 @@
+{#-
+  Per-case `src/main.rs` driver for the runtime conformance sweep.
+
+  Hand port of the upstream runtime-testsuite helper template
+  `helpers/src/main.rs.stg`. Attribute defaults mirror upstream
+  `RuntimeTests.test` and `RuntimeRunner.writeRecognizerFile`:
+
+  - Parser tests import `<G>Lexer`, `<G>Parser`, the listener, and the visitor.
+  - Prediction mode is `LL` unless a descriptor flag overrides it.
+  - Parse trees are on unless `notBuildParseTree` is set.
+
+  Context: `grammar_name`, `lexer_name`, `lexer_mod`, `grammar_mod`,
+  `parser_name` and `parser_mod` (parser tests only), `start_rule`,
+  `prediction_mode`, `show_diagnostic_errors`, `build_parse_tree`, `show_dfa`.
+-#}
+#![allow(unused_imports)]
+use std::env;
+use dbt_antlr_runtime::Arena;
+use dbt_antlr_runtime::{InputStream, Lexer, Parser};
+use dbt_antlr_runtime::common_token_stream::CommonTokenStream;
+use dbt_antlr_runtime::error_listener::DiagnosticErrorListener;
+use dbt_antlr_runtime::int_stream::IntStream;
+use dbt_antlr_runtime::lexer::LEXER_DEFAULT_MODE;
+use dbt_antlr_runtime::PredictionMode;
+use dbt_antlr_runtime::token::Token;
+use dbt_antlr_runtime::token_stream::TokenStream;
+use dbt_antlr_runtime::tree::{IsError, NoError, ParseTreeListener, ParseTreeWalker, TerminalNode};
+use dbt_antlr_runtime::trees::string_tree;
+mod {{ lexer_mod }};
+use {{ lexer_mod }}::{{ lexer_name }};
+{% if parser_name %}
+mod {{ parser_mod }};
+use {{ parser_mod }}::{{ parser_name }};
+use {{ parser_mod }}::{{ grammar_name }}ParserNodeKind;
+use dbt_antlr_runtime::errors::ANTLRError;
+mod {{ grammar_mod }}listener;
+use {{ grammar_mod }}listener::{{ grammar_name }}Listener;
+mod {{ grammar_mod }}visitor;
+use {{ grammar_mod }}visitor::{{ grammar_name }}Visitor;
+{% endif %}
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+    let string = &args[1];
+    let result = std::fs::read_to_string(string);
+    let data = result.unwrap();
+    let input = InputStream::new(data.as_str());
+
+    Arena::with(|arena| {
+        let lex = {{ lexer_name }}::<_>::new(arena, input);
+        let mut tokens = CommonTokenStream::new(lex);
+{% if parser_name %}
+        let mut parser = {{ parser_name }}::new(arena, tokens);
+{% if show_diagnostic_errors %}
+        parser.add_error_listener(Box::new(DiagnosticErrorListener::new(true)));
+{% endif %}
+        parser.get_interpreter().set_prediction_mode(PredictionMode::{{ prediction_mode }});
+{% if not build_parse_tree %}
+        parser.build_parse_trees = false;
+{% endif %}
+        let tree = parser.{{ start_rule }}();
+        //ParseTreeWalker::walk(Box::new(TreeShapeListener::new()), &tree);
+{% else %}
+        //tokens.fill();
+        for t in tokens.iter() {
+        }
+        for idx in 0..tokens.size() {
+            let mut x1 = tokens.get(idx);
+            println!("{}", x1);
+        }
+{% if show_dfa %}
+        print!("{}", tokens.get_dfa_string());
+{% endif %}
+{% endif %}
+    });
+}
+{% if parser_name %}
+
+struct TreeShapeListener {
+}
+
+impl<'arena, Tok: Token + 'arena> ParseTreeListener<'arena, {{ grammar_name }}ParserNodeKind, Tok> for TreeShapeListener {
+}
+{% endif %}

@@ -4,7 +4,6 @@
 
 use std::env;
 use std::ffi::OsStr;
-use std::fmt::Write as _;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -1010,19 +1009,20 @@ fn generate_rust(
 fn write_main_rs(case_dir: &Path, descriptor: &Descriptor) -> Result<(), Failure> {
     let src_dir = case_dir.join("src");
     fs::create_dir_all(&src_dir).map_err(harness_io("src dir create"))?;
-    fs::write(src_dir.join("main.rs"), render_main_rs(descriptor))
+    fs::write(src_dir.join("main.rs"), render_main_rs(descriptor)?)
         .map_err(harness_io("main.rs write"))
 }
 
-/// Renders the per-case `src/main.rs`, a hand port of the upstream
-/// `runtime-testsuite/resources/org/antlr/v4/test/runtime/helpers/src/main.rs.stg`
-/// with the attributes set the way `RuntimeTests.test` and
-/// `RuntimeRunner.writeRecognizerFile` set them: parser tests get
-/// `<G>Lexer`/`<G>Parser` plus listener/visitor modules, `useListener =
-/// useVisitor = true`, `traceATN = profile = false`, prediction mode `LL`
-/// unless the descriptor flags override it, and parse trees on unless
-/// `notBuildParseTree` is flagged.
-fn render_main_rs(descriptor: &Descriptor) -> String {
+/// Per-case `src/main.rs` driver, a hand port of the upstream
+/// `runtime-testsuite/resources/org/antlr/v4/test/runtime/helpers/src/main.rs.stg`.
+/// The template documents the attributes it consumes.
+const MAIN_RS_TEMPLATE: &str = include_str!("../templates/main.rs.jinja");
+
+/// Renders the per-case `src/main.rs` through [`MAIN_RS_TEMPLATE`].
+///
+/// The template is re-parsed on every call. The template is small, so the
+/// parse cost is negligible next to the `rustc` invocation that follows.
+fn render_main_rs(descriptor: &Descriptor) -> Result<String, Failure> {
     let grammar_name = descriptor.grammar_name.as_str();
     let is_parser = descriptor.is_parser();
     let lexer_name = if is_parser {
@@ -1033,88 +1033,39 @@ fn render_main_rs(descriptor: &Descriptor) -> String {
     let parser_name = is_parser.then(|| format!("{grammar_name}Parser"));
     let lexer_mod = lexer_name.to_lowercase();
     let grammar_mod = grammar_name.to_lowercase();
+    let parser_mod = parser_name.as_ref().map(|name| name.to_lowercase());
 
-    let mut out = String::new();
-    out.push_str(
-        "#![allow(unused_imports)]\n\
-         use std::env;\n\
-         use dbt_antlr_runtime::Arena;\n\
-         use dbt_antlr_runtime::{InputStream, Lexer, Parser};\n\
-         use dbt_antlr_runtime::common_token_stream::CommonTokenStream;\n\
-         use dbt_antlr_runtime::error_listener::DiagnosticErrorListener;\n\
-         use dbt_antlr_runtime::int_stream::IntStream;\n\
-         use dbt_antlr_runtime::lexer::LEXER_DEFAULT_MODE;\n\
-         use dbt_antlr_runtime::PredictionMode;\n\
-         use dbt_antlr_runtime::token::Token;\n\
-         use dbt_antlr_runtime::token_stream::TokenStream;\n\
-         use dbt_antlr_runtime::tree::{IsError, NoError, ParseTreeListener, ParseTreeWalker, TerminalNode};\n\
-         use dbt_antlr_runtime::trees::string_tree;\n",
-    );
-    let _ = write!(out, "mod {lexer_mod};\nuse {lexer_mod}::{lexer_name};\n");
-    if let Some(parser_name) = &parser_name {
-        let parser_mod = parser_name.to_lowercase();
-        let _ = write!(
-            out,
-            "mod {parser_mod};\nuse {parser_mod}::{parser_name};\nuse {parser_mod}::{grammar_name}ParserNodeKind;\nuse dbt_antlr_runtime::errors::ANTLRError;\n"
-        );
-        let _ = write!(
-            out,
-            "mod {grammar_mod}listener;\nuse {grammar_mod}listener::{grammar_name}Listener;\n"
-        );
-        let _ = write!(
-            out,
-            "mod {grammar_mod}visitor;\nuse {grammar_mod}visitor::{grammar_name}Visitor;\n"
-        );
-    }
-    out.push_str(
-        "\nfn main() {\n\
-         \tlet args: Vec<String> = env::args().collect();\n\
-         \tlet string = &args[1];\n\
-         \tlet result = std::fs::read_to_string(string);\n\
-         \tlet data = result.unwrap();\n\
-         \tlet input = InputStream::new(data.as_str());\n\n\
-         \x20   Arena::with(|arena| {\n\n",
-    );
-    let _ = write!(
-        out,
-        "    let lex = {lexer_name}::<_>::new(arena, input);\n  \tlet mut tokens = CommonTokenStream::new(lex);\n"
-    );
-    if let Some(parser_name) = &parser_name {
-        let _ = writeln!(out, "\tlet mut parser = {parser_name}::new(arena, tokens);");
-        if descriptor.show_diagnostic_errors() {
-            out.push_str(
-                "  \tparser.add_error_listener(Box::new(DiagnosticErrorListener::new(true)));\n",
-            );
-        }
-        let _ = writeln!(
-            out,
-            "\tparser.get_interpreter().set_prediction_mode(PredictionMode::{});",
-            descriptor.prediction_mode()
-        );
-        if !descriptor.build_parse_tree() {
-            out.push_str("  \tparser.build_parse_trees = false;\n");
-        }
-        let _ = write!(
-            out,
-            "  \tlet tree = parser.{}();\n  \t//ParseTreeWalker::walk(Box::new(TreeShapeListener::new()), &tree);\n",
-            descriptor.start_rule
-        );
-    } else {
-        out.push_str(
-            "  \t//tokens.fill();\n  \tfor t in tokens.iter() {\n\t}\n\tfor idx in 0..tokens.size() {\n\t\tlet mut x1 = tokens.get(idx);\n\t\tprintln!(\"{}\", x1);\n\t}\n",
-        );
-        if descriptor.show_dfa() {
-            out.push_str("  \tprint!(\"{}\", tokens.get_dfa_string());\n");
-        }
-    }
-    out.push_str("    });\n}\n");
-    if let Some(_parser_name) = &parser_name {
-        let _ = write!(
-            out,
-            "\nstruct TreeShapeListener {{\n}}\n\nimpl<'arena, Tok: Token + 'arena> ParseTreeListener<'arena, {grammar_name}ParserNodeKind, Tok> for TreeShapeListener {{\n}}\n"
-        );
-    }
-    out
+    let mut env = minijinja::Environment::new();
+    env.set_trim_blocks(true);
+    env.set_lstrip_blocks(true);
+    env.set_keep_trailing_newline(true);
+    env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
+    let template = env.template_from_str(MAIN_RS_TEMPLATE).map_err(|error| {
+        Failure::new(
+            Category::CompileFail,
+            format!("embedded main.rs template: {error}"),
+        )
+    })?;
+    template
+        .render(minijinja::context! {
+            grammar_name,
+            lexer_name,
+            lexer_mod,
+            grammar_mod,
+            parser_name,
+            parser_mod,
+            start_rule => descriptor.start_rule.as_str(),
+            prediction_mode => descriptor.prediction_mode(),
+            show_diagnostic_errors => descriptor.show_diagnostic_errors(),
+            build_parse_tree => descriptor.build_parse_tree(),
+            show_dfa => descriptor.show_dfa(),
+        })
+        .map_err(|error| {
+            Failure::new(
+                Category::CompileFail,
+                format!("main.rs template render: {error}"),
+            )
+        })
 }
 
 /// Compiles the case crate exactly like the fork's `RustRunner.compile`:
@@ -1371,11 +1322,53 @@ mod tests {
     }
 
     #[test]
+    fn every_case_renders_a_clean_main_rs() {
+        let corpus = corpus_cases()
+            .into_iter()
+            .map(|(group, name, text)| {
+                parse_descriptor(group.clone(), name.clone(), &text)
+                    .unwrap_or_else(|error| panic!("{group}/{name}: {error}"))
+            })
+            .collect::<Vec<_>>();
+        for descriptor in corpus
+            .iter()
+            .chain(super::custom_descriptors::custom_descriptors().iter())
+        {
+            let main_rs = render_main_rs(descriptor)
+                .unwrap_or_else(|failure| panic!("{}: {}", descriptor.id(), failure.detail));
+            assert!(
+                main_rs.contains("fn main() {"),
+                "{}: no main function",
+                descriptor.id()
+            );
+            assert!(
+                !["{{", "}}", "{%", "%}", "{#", "#}"]
+                    .iter()
+                    .any(|marker| main_rs.contains(marker)),
+                "{}: template marker left in the output",
+                descriptor.id()
+            );
+            assert!(
+                main_rs.contains(&descriptor.grammar_name),
+                "{}: recognizer name missing",
+                descriptor.id()
+            );
+            if descriptor.is_parser() {
+                assert!(
+                    main_rs.contains(&format!("let tree = parser.{}();", descriptor.start_rule)),
+                    "{}: start rule call missing",
+                    descriptor.id()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn lexer_main_rs_mirrors_stg_shape_and_show_dfa() {
         let descriptor = parse(
             "[type]\nLexer\n\n[grammar]\nlexer grammar L;\nA:'a';\n\n[input]\na\n\n[output]\nx\n\n[flags]\nshowDFA\n",
         );
-        let main_rs = render_main_rs(&descriptor);
+        let main_rs = render_main_rs(&descriptor).expect("main.rs render");
         assert!(main_rs.contains("mod l;\nuse l::L;\n"));
         // No parser modules, start-rule call, or tree-shape listener.
         assert!(!main_rs.contains("LParser"));
@@ -1393,7 +1386,7 @@ mod tests {
         assert!(!descriptor.build_parse_tree());
         assert!(descriptor.show_diagnostic_errors());
         assert_eq!(descriptor.prediction_mode(), "SLL");
-        let main_rs = render_main_rs(&descriptor);
+        let main_rs = render_main_rs(&descriptor).expect("main.rs render");
         assert!(main_rs.contains("mod tlexer;\nuse tlexer::TLexer;\n"));
         assert!(
             main_rs
@@ -1419,7 +1412,7 @@ mod tests {
         );
         assert!(descriptor.build_parse_tree());
         assert_eq!(descriptor.prediction_mode(), "LL");
-        let main_rs = render_main_rs(&descriptor);
+        let main_rs = render_main_rs(&descriptor).expect("main.rs render");
         assert!(main_rs.contains("set_prediction_mode(PredictionMode::LL);"));
         assert!(!main_rs.contains("build_parse_trees = false"));
         assert!(!main_rs.contains("DiagnosticErrorListener::new"));
