@@ -1,0 +1,35 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/SemPredEvalParser/PredsInGlobalFOLLOW.txt
+# Grammar sections are rendered Rust: edit them here.
+[notes]
+During a global follow operation, we still collect semantic
+predicates as long as they are not dependent on local context
+
+[type]
+Parser
+
+[grammar]
+grammar T;
+@parser::members {
+pub fn pred(&self,v:bool)-> bool {
+	println!("eval={}",v);
+	return v;
+}
+}
+s : e {recog.pred(true)}? {println!("{}", "parse" );} '!' ;
+t : e {recog.pred(false)}? ID ;
+e : ID | ; // non-LL(1) so we use ATN
+ID : 'a'..'z'+ ;
+INT : '0'..'9'+;
+WS : (' '|'\n') -> skip ;
+
+[start]
+s
+
+[input]
+a!
+
+[output]
+eval=true
+parse
+

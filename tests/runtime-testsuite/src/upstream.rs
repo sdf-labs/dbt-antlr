@@ -1,10 +1,11 @@
 //! Fetches and verifies the pinned upstream `dbt-antlr4` 2.0.0 release
 //! artifacts (tool jar and runtime-testsuite resources) from GitHub.
 //!
-//! Both artifacts are cached under `<workspace>/target/dbt-antlr-runtime-testsuite-cache`
-//! and verified against
+//! Only `--export-corpus` uses these artifacts: the sweep reads the vendored
+//! corpus. Both are cached under
+//! `<workspace>/target/dbt-antlr-runtime-testsuite-cache` and verified against
 //! the recorded SHA-256 checksums before use. Explicit `--antlr-jar` /
-//! `--descriptors` flags or the `ANTLR4_JAR` / `ANTLR4_RUNTIME_TESTSUITE`
+//! `--export-source` flags or the `ANTLR4_JAR` / `ANTLR4_RUNTIME_TESTSUITE`
 //! environment variables bypass this module entirely.
 
 use std::fs;
@@ -23,6 +24,10 @@ const SOURCE_ZIP_SHA256: &str = "62583dc78e0d7f698bfe16331efd7f1e33f86df59d5bef7
 /// Subtree of the source zip carrying the test descriptors and the target
 /// action templates (`Rust.test.stg`).
 const SOURCE_ZIP_PREFIX: &str = "antlr4-dbt-antlr4-2.0.0/runtime-testsuite/";
+
+/// Release tag of the pinned upstream artifacts, recorded in the provenance
+/// header of every vendored corpus file.
+pub(crate) const RELEASE_TAG: &str = "dbt-antlr4-2.0.0";
 
 /// Returns the cached, checksum-verified ANTLR tool jar, downloading it from
 /// the pinned GitHub release on first use.

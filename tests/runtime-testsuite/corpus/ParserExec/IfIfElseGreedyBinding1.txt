@@ -1,0 +1,26 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserExec/IfIfElseGreedyBinding1.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+start : statement+ ;
+statement : 'x' | ifStatement;
+ifStatement : 'if' 'y' statement ('else' statement)? {
+println!("{}", $text );
+};
+ID : 'a'..'z'+ ;
+WS : (' '|'\n') -> channel(HIDDEN);
+
+[start]
+start
+
+[input]
+if y if y x else x
+
+[output]
+if y x else x
+if y if y x else x
+

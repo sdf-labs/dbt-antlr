@@ -1,0 +1,24 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/SemPredEvalLexer/PredicatedKeywords.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Lexer
+
+[grammar]
+lexer grammar L;
+ENUM : [a-z]+ { recog.get_text() == "enum" }? { println!("{}", "enum!" ); } ;
+ID   : [a-z]+ { println!("{}", "ID ".to_owned() + &recog.get_text() ); } ;
+WS   : [ \n] -> skip ;
+
+[input]
+enum enu a
+
+[output]
+enum!
+ID enu
+ID a
+[@0,0:3='enum',<1>,1:0]
+[@1,5:7='enu',<2>,1:5]
+[@2,9:9='a',<2>,1:9]
+[@3,10:9='<EOF>',<-1>,1:10]
+

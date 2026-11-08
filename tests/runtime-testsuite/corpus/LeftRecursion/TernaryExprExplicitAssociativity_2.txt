@@ -1,0 +1,32 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/LeftRecursion/TernaryExprExplicitAssociativity_2.txt
+# Grammar sections are rendered Rust: edit them here.
+[notes]
+This is a regression test for antlr/antlr4#542 "First alternative cannot
+be right-associative".  https://github.com/antlr/antlr4/issues/542
+
+[type]
+Parser
+
+[grammar]
+grammar T;
+s @after {println!("{}", $ctx.to_string_tree(recog.base.get_rule_names()) );} : e EOF; // must indicate EOF can follow or 'a<EOF>' won't match
+e :<assoc=right> e '*' e
+  |<assoc=right> e '+' e
+  |<assoc=right> e '?' e ':' e
+  |<assoc=right> e '=' e
+  | ID
+  ;
+ID : 'a'..'z'+ ;
+WS : (' '|'\n') -> skip ;
+
+[start]
+s
+
+[input]
+a+b
+
+[output]
+"""(s (e (e a) + (e b)) <EOF>)
+"""
+

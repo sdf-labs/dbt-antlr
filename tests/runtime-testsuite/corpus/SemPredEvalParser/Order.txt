@@ -1,0 +1,28 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/SemPredEvalParser/Order.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+s : a {} a; // do 2x: once in ATN, next in DFA;
+// action blocks lookahead from falling off of 'a'
+// and looking into 2nd 'a' ref. !ctx dependent pred
+a : ID {println!("{}", "alt 1" );}
+  | {true}?  ID {println!("{}", "alt 2" );}
+  ;
+ID : 'a'..'z'+ ;
+INT : '0'..'9'+;
+WS : (' '|'\n') -> skip ;
+
+[start]
+s
+
+[input]
+x y
+
+[output]
+alt 1
+alt 1
+

@@ -1,0 +1,19 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/LexerExec/EOFSuffixInFirstRule_2.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Lexer
+
+[grammar]
+lexer grammar L;
+A : 'a' EOF ;
+B : 'a';
+C : 'c';
+
+[input]
+a
+
+[output]
+[@0,0:0='a',<1>,1:0]
+[@1,1:0='<EOF>',<-1>,1:1]
+

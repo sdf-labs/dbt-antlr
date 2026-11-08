@@ -1,0 +1,28 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/LeftRecursion/ReturnValueAndActions_4.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+s : e {println!("{}", $e.v );};
+e returns [int v, Vec<String> ignored]
+  : a=e '*' b=e {$v = $a.v * $b.v;}
+  | a=e '+' b=e {$v = $a.v + $b.v;}
+  | INT {$v = $INT.int;}
+  | '(' x=e ')' {$v = $x.v;}
+  ;
+INT : '0'..'9'+ ;
+WS : (' '|'\n') -> skip ;
+
+[start]
+s
+
+[input]
+(1+2)*3
+
+[output]
+"""9
+"""
+

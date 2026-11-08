@@ -1,0 +1,40 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/FullContextParsing/FullContextIF_THEN_ELSEParse_5.txt
+# Grammar sections are rendered Rust: edit them here.
+# Local deltas: runtime-crate-name
+[type]
+Parser
+
+[grammar]
+grammar T;
+s
+@init {recog.get_interpreter().set_prediction_mode(dbt_antlr_runtime::PredictionMode::LL_EXACT_AMBIG_DETECTION);}
+@after {recog.dump_dfa();}
+   : '{' stat* '}' ;
+stat: 'if' ID 'then' stat ('else' ID)?
+       | 'return'
+       ;
+ID : 'a'..'z'+ ;
+WS : (' '|'\t'|'\n')+ -> skip ;
+
+[start]
+s
+
+[input]
+{ if x then return else foo
+if x then if y then return else foo }
+
+[output]
+Decision 1:
+s0-'}'->:s2=>2
+s0-'else'->:s1^=>1
+
+[errors]
+line 1:19 reportAttemptingFullContext d=1 (stat), input='else'
+line 1:19 reportContextSensitivity d=1 (stat), input='else'
+line 2:27 reportAttemptingFullContext d=1 (stat), input='else'
+line 2:36 reportAmbiguity d=1 (stat): ambigAlts={1, 2}, input='elsefoo}'
+
+[flags]
+showDiagnosticErrors
+

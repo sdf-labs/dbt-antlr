@@ -1,0 +1,37 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/LeftRecursion/ReturnValueAndActionsList1_2.txt
+# Grammar sections are rendered Rust: edit them here.
+[notes]
+This is a regression test for antlr/antlr4#677 "labels not working in grammar
+file".  https://github.com/antlr/antlr4/issues/677
+This test treats `,` and `>>` as part of a single compound operator (similar
+to a ternary operator).
+
+[type]
+Parser
+
+[grammar]
+grammar T;
+s @after {println!("{}", $ctx.to_string_tree(recog.base.get_rule_names()) );} : expr EOF;
+expr:
+    a=expr '*' a=expr #Factor
+    | b+=expr (',' b+=expr)* '>>' c=expr #Send
+    | ID #JustId //semantic check on modifiers
+;
+
+ID  : ('a'..'z'|'A'..'Z'|'_')
+      ('a'..'z'|'A'..'Z'|'0'..'9'|'_')*
+;
+
+WS : [ \t\n]+ -> skip ;
+
+[start]
+s
+
+[input]
+a,c>>x
+
+[output]
+"""(s (expr (expr a) , (expr c) >> (expr x)) <EOF>)
+"""
+

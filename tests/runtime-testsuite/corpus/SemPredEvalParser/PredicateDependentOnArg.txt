@@ -1,0 +1,36 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/SemPredEvalParser/PredicateDependentOnArg.txt
+# Grammar sections are rendered Rust: edit them here.
+[notes]
+In this case, we're passing a parameter into a rule that uses that
+information to predict the alternatives. This is the special case
+where we know exactly which context we are in. The context stack
+is empty and we have not dipped into the outer context to make a decision.
+
+[type]
+Parser
+
+[grammar]
+grammar T;
+@parser::members {}
+@parser::fields {i: isize,}
+@parser::init   {i: 0,}
+s : a[2] a[1];
+a[int i]
+  : {$i == 1}? ID {println!("{}", "alt 1" );}
+  | {$i == 2}? ID {println!("{}", "alt 2" );}
+  ;
+ID : 'a'..'z'+ ;
+INT : '0'..'9'+;
+WS : (' '|'\n') -> skip ;
+
+[start]
+s
+
+[input]
+a b
+
+[output]
+alt 2
+alt 1
+

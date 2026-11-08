@@ -1,0 +1,39 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/LeftRecursion/MultipleAlternativesWithCommonLabel_4.txt
+# Grammar sections are rendered Rust: edit them here.
+[notes]
+This is a regression test for antlr/antlr4#433 "Not all context accessor
+methods are generated when an alternative rule label is used for multiple
+alternatives".  https://github.com/antlr/antlr4/issues/433
+
+[type]
+Parser
+
+[grammar]
+grammar T;
+s : e {println!("{}", $e.v );};
+e returns [int v]
+  : e '*' e     {$v = $ctx .e(0).unwrap().get_v() * $ctx .e(1).unwrap().get_v();}  # binary
+  | e '+' e     {$v = $ctx .e(0).unwrap().get_v() + $ctx .e(1).unwrap().get_v();}  # binary
+  | INT{$v = $INT.int;} # anInt
+  | '(' e ')'   {$v = $e.v;}     # parens
+  | left=e INC  {$v = $left.v + 1;}      # unary
+  | left=e DEC  {$v = $left.v - 1;}      # unary
+  | ID {$v = 3;}        # anID
+  ;
+ID : 'a'..'z'+ ;
+INT : '0'..'9'+ ;
+INC : '++' ;
+DEC : '--' ;
+WS : (' '|'\n') -> skip;
+
+[start]
+s
+
+[input]
+i++*3
+
+[output]
+"""12
+"""
+

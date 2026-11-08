@@ -1,0 +1,22 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserExec/Optional_2.txt
+# Grammar sections are rendered Rust: edit them here.
+[notes]
+This test is meant to detect regressions of bug antlr/antlr4#41.
+https://github.com/antlr/antlr4/issues/41
+
+[type]
+Parser
+
+[grammar]
+grammar T;
+stat : ifstat | 'x';
+ifstat : 'if' stat ('else' stat)?;
+WS : [ \n\t]+ -> skip ;
+
+[start]
+stat
+
+[input]
+if x
+

@@ -1,0 +1,28 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/LeftRecursion/DirectCallToLeftRecursiveRule_3.txt
+# Grammar sections are rendered Rust: edit them here.
+[notes]
+This is a regression test for "Support direct calls to left-recursive
+rules".  https://github.com/antlr/antlr4/issues/161
+
+[type]
+Parser
+
+[grammar]
+grammar T;
+a @after {println!("{}", $ctx.to_string_tree(recog.base.get_rule_names()) );} : a ID
+  | ID
+  ;
+ID : 'a'..'z'+ ;
+WS : (' '|'\n') -> skip ;
+
+[start]
+a
+
+[input]
+x y z
+
+[output]
+"""(a (a (a x) y) z)
+"""
+

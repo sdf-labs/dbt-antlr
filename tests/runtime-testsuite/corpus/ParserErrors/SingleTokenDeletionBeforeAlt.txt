@@ -1,0 +1,23 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserErrors/SingleTokenDeletionBeforeAlt.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+a : ('b' | 'c')
+;
+q : 'a'
+;
+
+[start]
+a
+
+[input]
+ac
+
+[errors]
+"""line 1:0 extraneous input 'a' expecting {'b', 'c'}
+"""
+

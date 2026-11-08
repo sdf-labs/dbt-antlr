@@ -1,0 +1,32 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/CompositeParsers/DelegatorRuleOverridesLookaheadInDelegate.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+CompositeParser
+
+[grammar]
+grammar M;
+import S;
+prog : decl ;
+type_ : 'int' | 'float' ;
+ID  : 'a'..'z'+ ;
+INT : '0'..'9'+ ;
+WS : (' '|'\n') -> skip;
+
+[slaveGrammar]
+parser grammar S;
+type_ : 'int' ;
+decl : type_ ID ';'
+    | type_ ID init_ ';' {println!("{}", "JavaDecl: ".to_string() + &($text) );};
+init_ : '=' INT;
+
+[start]
+prog
+
+[input]
+float x = 3;
+
+[output]
+"""JavaDecl: floatx=3;
+"""
+

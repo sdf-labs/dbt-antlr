@@ -1,0 +1,24 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/Sets/CharSetLiteral.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+a : (A {println!("{}", $A.text );})+ ;
+A : [AaBb] ;
+WS : (' '|'\n')+ -> skip ;
+
+[start]
+a
+
+[input]
+A a B b
+
+[output]
+A
+a
+B
+b
+

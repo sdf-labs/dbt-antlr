@@ -1,0 +1,25 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserErrors/SingleSetInsertionConsumption.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+myset: ('b'|'c') ;
+a: 'a' myset 'd' {println!("{}", format!("{}{}","", $myset.stop.unwrap()) );} ; 
+
+[start]
+a
+
+[input]
+ad
+
+[output]
+"""[@0,0:0='a',<3>,1:0]
+"""
+
+[errors]
+"""line 1:1 missing {'b', 'c'} at 'd'
+"""
+

@@ -1,0 +1,25 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserExec/Basic.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+a : ID INT {
+println!("{}", $text );
+};
+ID : 'a'..'z'+ ;
+INT : '0'..'9'+;
+WS : (' '|'\n') -> skip;
+
+[start]
+a
+
+[input]
+abc 34
+
+[output]
+"""abc34
+"""
+

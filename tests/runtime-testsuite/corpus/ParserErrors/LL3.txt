@@ -1,0 +1,23 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserErrors/LL3.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+a : 'a' 'b'* 'c'
+  | 'a' 'b' 'd'
+;
+q : 'e' ;
+
+[start]
+a
+
+[input]
+abe
+
+[errors]
+"""line 1:2 no viable alternative at input 'abe'
+"""
+

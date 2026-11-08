@@ -1,0 +1,24 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserExec/AorAStar_1.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+a : (ID|ID)* {
+println!("{}", $text );
+};
+ID : 'a'..'z'+;
+WS : (' '|'\n') -> skip;
+
+[start]
+a
+
+[input]
+
+
+[output]
+"""
+"""
+

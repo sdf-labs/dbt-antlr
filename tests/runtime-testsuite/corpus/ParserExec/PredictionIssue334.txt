@@ -1,0 +1,36 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserExec/PredictionIssue334.txt
+# Grammar sections are rendered Rust: edit them here.
+# Local deltas: runtime-crate-name
+[notes]
+This is a regression test for antlr/antlr4#334 "BailErrorStrategy: bails
+on proper input".  https://github.com/antlr/antlr4/issues/334
+
+[type]
+Parser
+
+[grammar]
+grammar T;
+file_ @init{
+recog.set_error_strategy(Box::new(dbt_antlr_runtime::error_strategy::BailErrorStrategy::new()));
+}
+@after {
+println!("{}", $ctx.to_string_tree(recog.base.get_rule_names()) );
+}
+  :   item (SEMICOLON item)* SEMICOLON? EOF ;
+item : A B?;
+SEMICOLON: ';';
+A : 'a'|'A';
+B : 'b'|'B';
+WS      : [ \r\t\n]+ -> skip;
+
+[start]
+file_
+
+[input]
+a
+
+[output]
+"""(file_ (item a) <EOF>)
+"""
+

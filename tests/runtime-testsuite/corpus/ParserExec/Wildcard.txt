@@ -1,0 +1,29 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserExec/Wildcard.txt
+# Grammar sections are rendered Rust: edit them here.
+[notes]
+Match assignments, ignore other tokens with wildcard.
+
+[type]
+Parser
+
+[grammar]
+grammar T;
+a : (assign|.)+ EOF ;
+assign : ID '=' INT ';' {
+println!("{}", $text );
+} ;
+ID : 'a'..'z'+ ;
+INT : '0'..'9'+;
+WS : (' '|'\n') -> skip;
+
+[start]
+a
+
+[input]
+x=10; abc;;;; y=99;
+
+[output]
+x=10;
+y=99;
+

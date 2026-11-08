@@ -1,0 +1,24 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/LexerExec/Slashes.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Lexer
+
+[grammar]
+lexer grammar L;
+Backslash : '\\';
+Slash : '/';
+Vee : '\\/';
+Wedge : '/\\';
+WS : [ \t] -> skip;
+
+[input]
+\ / \/ /\
+
+[output]
+[@0,0:0='\',<1>,1:0]
+[@1,2:2='/',<2>,1:2]
+[@2,4:5='\/',<3>,1:4]
+[@3,7:8='/\',<4>,1:7]
+[@4,9:8='<EOF>',<-1>,1:9]
+

@@ -1,0 +1,59 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/Listeners/RuleGetters_1.txt
+# Grammar sections are rendered Rust: edit them here.
+# Local deltas: runtime-crate-name
+[type]
+Parser
+
+[grammar]
+grammar T;
+
+@parser::definitions {
+
+use dbt_antlr_runtime::tree::Tree;
+struct TestListener;
+
+impl<'arena, Tok: Token + 'arena> TListener<'arena, Tok> for TestListener
+{
+	fn exit_a<'input: 'arena>(&mut self, node: &AContext<'input, 'arena, Tok>) -> Result<(), ANTLRError> {
+		if node.get_child_count() == 2 {
+			println!("{} {} {}",
+				node.b(0).unwrap().start().get_text(),
+				node.b(1).unwrap().start().get_text(),
+				node.b_all()[0].start().get_text(),
+			)
+		} else{
+			println!("{}",node.b(0).unwrap().start().get_text());
+		}
+        Ok(())
+	}
+}
+impl<'arena, Tok: Token + 'arena> ParseTreeListener<'arena, TParserNodeKind, Tok> for TestListener{}
+}
+
+s
+@after {
+println!("{}", $ctx.r.as_ref().unwrap().to_string_tree(recog.base.get_rule_names()) );
+TTreeWalker::walk(Box::new(TestListener), $ctx.r.as_ref().unwrap().deref());
+}
+  : r=a ;
+a : b b        // forces list
+  | b      // a list still
+  ;
+b : ID | INT;
+MULT: '*' ;
+ADD : '+' ;
+INT : [0-9]+ ;
+ID  : [a-z]+ ;
+WS : [ \t\n]+ -> skip ;
+
+[start]
+s
+
+[input]
+1 2
+
+[output]
+(a (b 1) (b 2))
+1 2 1
+

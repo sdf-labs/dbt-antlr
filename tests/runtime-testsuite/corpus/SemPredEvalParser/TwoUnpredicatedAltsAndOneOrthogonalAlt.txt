@@ -1,0 +1,39 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/SemPredEvalParser/TwoUnpredicatedAltsAndOneOrthogonalAlt.txt
+# Grammar sections are rendered Rust: edit them here.
+# Local deltas: runtime-crate-name
+[type]
+Parser
+
+[grammar]
+grammar T;
+s : {recog.get_interpreter().set_prediction_mode(dbt_antlr_runtime::PredictionMode::LL_EXACT_AMBIG_DETECTION);} a ';' a ';' a;
+a : INT {println!("{}", "alt 1" );}
+  | ID {println!("{}", "alt 2" );} // must pick this one for ID since pred is false
+  | ID {println!("{}", "alt 3" );}
+  | {false}? ID {println!("{}", "alt 4" );}
+  ;
+ID : 'a'..'z'+ ;
+INT : '0'..'9'+;
+WS : (' '|'\n') -> skip ;
+
+[start]
+s
+
+[input]
+34; x; y
+
+[output]
+alt 1
+alt 2
+alt 2
+
+[errors]
+line 1:4 reportAttemptingFullContext d=0 (a), input='x'
+line 1:4 reportAmbiguity d=0 (a): ambigAlts={2, 3}, input='x'
+line 1:7 reportAttemptingFullContext d=0 (a), input='y'
+line 1:7 reportAmbiguity d=0 (a): ambigAlts={2, 3}, input='y'
+
+[flags]
+showDiagnosticErrors
+

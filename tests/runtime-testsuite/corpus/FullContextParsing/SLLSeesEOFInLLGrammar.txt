@@ -1,0 +1,35 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/FullContextParsing/SLLSeesEOFInLLGrammar.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+s @after {recog.dump_dfa();}
+  : a;
+a : e ID ;
+b : e INT ID ;
+e : INT | ;
+ID : 'a'..'z'+ ;
+INT : '0'..'9'+ ;
+WS : (' '|'\t'|'\n')+ -> skip ;
+
+[start]
+s
+
+[input]
+34 abc
+
+[output]
+Decision 0:
+s0-INT->s1
+s1-ID->:s2^=>1
+
+[errors]
+line 1:3 reportAttemptingFullContext d=0 (e), input='34abc'
+line 1:0 reportContextSensitivity d=0 (e), input='34'
+
+[flags]
+showDiagnosticErrors
+

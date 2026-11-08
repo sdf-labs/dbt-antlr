@@ -1,0 +1,20 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/Sets/PlusSet.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+a : ('a'|'b')+ 'c' {println!("{}", recog.base.input.get_all_text() );} ;
+
+[start]
+a
+
+[input]
+abaac
+
+[output]
+"""abaac
+"""
+

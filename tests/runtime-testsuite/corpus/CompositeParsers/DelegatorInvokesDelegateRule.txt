@@ -1,0 +1,27 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/CompositeParsers/DelegatorInvokesDelegateRule.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+CompositeParser
+
+[grammar]
+grammar M;
+import S;
+s : a ;
+B : 'b' ; // defines B from inherited token space
+WS : (' '|'\n') -> skip ;
+
+[slaveGrammar]
+parser grammar S;
+a : B {println!("{}", "S.a" );};
+
+[start]
+s
+
+[input]
+b
+
+[output]
+"""S.a
+"""
+

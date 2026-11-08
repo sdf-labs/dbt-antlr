@@ -1,0 +1,22 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserExec/Keyword_3.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+
+program : action*{println!("{}", $text );} EOF ;
+action: 'break;' | 'continue;' | 'return;' ;
+
+[start]
+program
+
+[input]
+break;continue;return;
+
+[output]
+"""break;continue;return;
+"""
+

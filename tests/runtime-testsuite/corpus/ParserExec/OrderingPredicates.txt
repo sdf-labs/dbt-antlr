@@ -1,0 +1,36 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserExec/OrderingPredicates.txt
+# Grammar sections are rendered Rust: edit them here.
+[notes]
+This is a regression test for antlr/antlr4#2301.
+
+[type]
+Parser
+
+[grammar]
+grammar Issue2301;
+
+SPACES: [ \t\r\n]+ -> skip;
+
+AT: 'AT';
+X : 'X';
+Y : 'Y';
+
+ID: [A-Z]+;
+
+constant
+: 'DUMMY'
+;
+
+expr
+: ID constant?
+| expr AT X
+| expr AT Y
+;
+
+[start]
+expr
+
+[input]
+POINT AT X
+

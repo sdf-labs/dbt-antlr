@@ -1,0 +1,18 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/LexerErrors/EnforcedGreedyNestedBraces_1.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Lexer
+
+[grammar]
+lexer grammar L;
+ACTION : '{' (ACTION | ~[{}])* '}';
+WS : [ \r\n\t]+ -> skip;
+
+[input]
+{ { } }
+
+[output]
+[@0,0:6='{ { } }',<1>,1:0]
+[@1,7:6='<EOF>',<-1>,1:7]
+

@@ -1,0 +1,19 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserErrors/DuplicatedLeftRecursiveCall_3.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+start : expr EOF;
+expr : 'x'
+     | expr expr
+     ;
+
+[start]
+start
+
+[input]
+xxx
+
