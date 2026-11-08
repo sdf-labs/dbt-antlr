@@ -31,14 +31,14 @@ fn lexer_descriptor(name: &str, grammar: String, input: String, output: String) 
         name: name.to_owned(),
         test_type: "Lexer".to_owned(),
         grammar_name: "L".to_owned(),
-        grammar_template: grammar,
+        grammar,
         start_rule: String::new(),
         input,
         output,
         errors: String::new(),
         flags: String::new(),
         skip_targets: Vec::new(),
-        slave_grammar_templates: Vec::new(),
+        slave_grammars: Vec::new(),
     }
 }
 
@@ -185,13 +185,13 @@ fn multi_token_alternative() -> Descriptor {
         name: "MultiTokenAlternative".to_owned(),
         test_type: "Parser".to_owned(),
         grammar_name: "P".to_owned(),
-        grammar_template: grammar,
+        grammar,
         start_rule: "r".to_owned(),
         input,
         output,
         errors: String::new(),
         flags: String::new(),
         skip_targets: Vec::new(),
-        slave_grammar_templates: Vec::new(),
+        slave_grammars: Vec::new(),
     }
 }

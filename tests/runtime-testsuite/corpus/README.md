@@ -23,9 +23,17 @@ provenance; the parser ignores text before the first section.
 | Renderer | StringTemplate 4.3.4 as bundled in `dbt-antlr4-2.0.0-complete.jar` |
 | Import command | `cargo run -p runtime-testsuite -- --export-corpus tests/runtime-testsuite/corpus` |
 
-The importer renders with a JVM and the pinned artifacts. The upstream corpus
-and template are frozen, and `sdf-labs/antlr4` receives no updates, so a
-re-import is only needed when this corpus is refreshed from another source.
+Those artifacts and the StringTemplate renderer no longer live in the harness;
+the one-off importer (`--export-corpus`) was removed once this tree landed. To
+re-import, restore it from the commit that added this tree:
+
+```sh
+git log --diff-filter=A --oneline -- tests/runtime-testsuite/corpus/README.md
+```
+
+The upstream corpus and template are frozen, and `sdf-labs/antlr4` receives no
+updates, so a re-import is only needed when this corpus is refreshed from
+another source.
 
 ## What the import changed
 

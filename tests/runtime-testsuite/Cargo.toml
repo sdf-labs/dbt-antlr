@@ -14,8 +14,6 @@ name = "runtime-testsuite"
 path = "src/main.rs"
 
 [dependencies]
-sha2 = "0.10"
-zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [lints]
 workspace = true
