@@ -1,0 +1,25 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/CompositeLexers/LexerDelegatorRuleOverridesDelegate.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+CompositeLexer
+
+[grammar]
+lexer grammar M;
+import S;
+A : 'a' B {println!("{}", "M.A" );} ;
+WS : (' '|'\n') -> skip ;
+
+[slaveGrammar]
+lexer grammar S;
+A : 'a' {println!("{}", "S.A" );} ;
+B : 'b' {println!("{}", "S.B" );} ;
+
+[input]
+ab
+
+[output]
+M.A
+[@0,0:1='ab',<1>,1:0]
+[@1,2:1='<EOF>',<-1>,1:2]
+

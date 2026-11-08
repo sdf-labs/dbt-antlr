@@ -1,0 +1,31 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParseTrees/RuleRef.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+s
+@init {
+recog.build_parse_trees = true;
+}
+@after {
+println!("{}", $r.ctx.to_string_tree(recog.base.get_rule_names()) );
+}
+  : r=a ;
+a : b 'x'
+  ;
+b : 'y'
+  ;
+
+[start]
+s
+
+[input]
+yx
+
+[output]
+"""(a (b y) x)
+"""
+

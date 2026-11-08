@@ -1,0 +1,20 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserErrors/SingleSetInsertion.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+a : 'a' ('b'|'c') 'd' ;
+
+[start]
+a
+
+[input]
+ad
+
+[errors]
+"""line 1:1 missing {'b', 'c'} at 'd'
+"""
+

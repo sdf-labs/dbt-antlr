@@ -1,0 +1,32 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserErrors/ContextListGetters.txt
+# Grammar sections are rendered Rust: edit them here.
+[notes]
+Regression test for "Getter for context is not a list when it should be".
+https://github.com/antlr/antlr4/issues/19
+
+[type]
+Parser
+
+[grammar]
+grammar T;
+@parser::members{
+fn foo() {
+  #[allow(deref_nullptr)]
+  let s: &SContext = unsafe { &*std::ptr::null() }; // placeholder
+  let a: Vec<&AContextAll> = s.a_all();
+  let b: Vec<&BContextAll> = s.b_all();
+}
+}
+s : (a | b)+;
+a : 'a' {print!("{}", "a" );};
+b : 'b' {print!("{}", "b" );};
+
+[start]
+s
+
+[input]
+abab
+
+[output]
+"""abab"""

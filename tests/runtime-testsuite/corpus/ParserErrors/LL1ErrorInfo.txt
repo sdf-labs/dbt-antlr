@@ -1,0 +1,32 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserErrors/LL1ErrorInfo.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+start : animal (AND acClass)? service EOF;
+animal : (DOG | CAT );
+service : (HARDWARE | SOFTWARE) ;
+AND : 'and';
+DOG : 'dog';
+CAT : 'cat';
+HARDWARE: 'hardware';
+SOFTWARE: 'software';
+WS : ' ' -> skip ;
+acClass
+@init
+{println!("{}", recog.base.get_expected_tokens().to_token_string(recog.get_vocabulary()) );}
+  : ;
+
+[start]
+start
+
+[input]
+dog and software
+
+[output]
+"""{'hardware', 'software'}
+"""
+

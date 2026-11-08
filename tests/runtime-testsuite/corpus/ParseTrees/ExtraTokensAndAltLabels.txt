@@ -1,0 +1,49 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParseTrees/ExtraTokensAndAltLabels.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+
+s
+@init {
+recog.build_parse_trees = true;
+}
+@after {
+println!("{}", $ctx.to_string_tree(recog.base.get_rule_names()) );
+}
+  : '${' v '}'
+  ;
+
+v : A #altA
+  | B #altB
+  ;
+
+A : 'a' ;
+B : 'b' ;
+
+WHITESPACE : [ \n\t\r]+ -> channel(HIDDEN) ;
+
+ERROR : . ;
+
+[start]
+s
+
+[input]
+${ ? a ?}
+
+[output]
+"""(s ${ (v ? a) ? })
+"""
+
+[errors]
+line 1:3 extraneous input '?' expecting {'a', 'b'}
+line 1:7 extraneous input '?' expecting '}'
+
+[skip]
+Cpp
+Go
+PHP
+

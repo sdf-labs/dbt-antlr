@@ -1,0 +1,26 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserErrors/InvalidATNStateRemoval.txt
+# Grammar sections are rendered Rust: edit them here.
+[notes]
+This is a regression test for #45 "NullPointerException in ATNConfig.hashCode".
+https://github.com/antlr/antlr4/issues/45
+The original cause of this issue was an error in the tool's ATN state optimization,
+which is now detected early in {@link ATNSerializer} by ensuring that all
+serialized transitions point to states which were not removed.
+
+[type]
+Parser
+
+[grammar]
+grammar T;
+start : ID ':' expr;
+expr : primary expr? {/* do nothing */} | expr '->' ID;
+primary : ID;
+ID : [a-z]+;
+
+[start]
+start
+
+[input]
+x:x
+

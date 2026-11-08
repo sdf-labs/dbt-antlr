@@ -1,0 +1,25 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserExec/ListLabelsOnSet.txt
+# Grammar sections are rendered Rust: edit them here.
+[notes]
+This is a regression test for #270 "Fix operator += applied to a set of
+tokens".  https://github.com/antlr/antlr4/issues/270
+
+[type]
+Parser
+
+[grammar]
+grammar T;
+a : b b* ';' ;
+b : ID val+=(INT | FLOAT)*;
+ID : 'a'..'z'+ ;
+INT : '0'..'9'+;
+FLOAT : [0-9]+ '.' [0-9]+;
+WS : (' '|'\n') -> skip ;
+
+[start]
+a
+
+[input]
+abc 34;
+

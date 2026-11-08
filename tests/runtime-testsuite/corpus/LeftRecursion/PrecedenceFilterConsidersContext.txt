@@ -1,0 +1,28 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/LeftRecursion/PrecedenceFilterConsidersContext.txt
+# Grammar sections are rendered Rust: edit them here.
+[notes]
+This is a regression test for antlr/antlr4#509 "Incorrect rule chosen in
+unambiguous grammar".  https://github.com/antlr/antlr4/issues/509
+
+[type]
+Parser
+
+[grammar]
+grammar T;
+prog
+@after {println!("{}", $ctx.to_string_tree(recog.base.get_rule_names()) );}
+: statement* EOF {};
+statement: letterA | statement letterA 'b' ;
+letterA: 'a';
+
+[start]
+prog
+
+[input]
+aa
+
+[output]
+"""(prog (statement (letterA a)) (statement (letterA a)) <EOF>)
+"""
+

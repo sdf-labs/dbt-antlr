@@ -1,0 +1,36 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/LeftRecursion/AmbigLR_5.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar Expr;
+prog:   stat ;
+stat:   expr NEWLINE       # printExpr
+    |   ID '=' expr NEWLINE# assign
+    |   NEWLINE   # blank
+    ;
+expr:   expr ('*'|'/') expr      # MulDiv
+    |   expr ('+'|'-') expr      # AddSub
+    |   INT    # int
+    |   ID     # id
+    |   '(' expr ')'    # parens
+    ;
+
+MUL :   '*' ; // assigns token name to '*' used above in grammar
+DIV :   '/' ;
+ADD :   '+' ;
+SUB :   '-' ;
+ID  :   [a-zA-Z]+ ;      // match identifiers
+INT :   [0-9]+ ;// match integers
+NEWLINE:'\r'? '\n' ;     // return newlines to parser (is end-statement signal)
+WS  :   [ \t]+ -> skip ; // toss out whitespace
+
+[start]
+prog
+
+[input]
+"""(1+2)*3
+"""
+

@@ -1,0 +1,36 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/SemPredEvalParser/PredicateDependentOnArg2.txt
+# Grammar sections are rendered Rust: edit them here.
+[notes]
+In this case, we have to ensure that the predicates are not tested
+during the closure after recognizing the 1st ID. The closure will
+fall off the end of 'a' 1st time and reach into the a[1] rule
+invocation. It should not execute predicates because it does not know
+what the parameter is. The context stack will not be empty and so
+they should be ignored. It will not affect recognition, however. We
+are really making sure the ATN simulation doesn't crash with context
+object issues when it encounters preds during FOLLOW.
+
+[type]
+Parser
+
+[grammar]
+grammar T;
+@parser::members {}
+@parser::fields {i: isize,}
+@parser::init   {i: 0,}
+s : a[2] a[1];
+a[int i]
+  : {$i == 1}? ID
+  | {$i == 2}? ID
+  ;
+ID : 'a'..'z'+ ;
+INT : '0'..'9'+;
+WS : (' '|'\n') -> skip ;
+
+[start]
+s
+
+[input]
+a b
+

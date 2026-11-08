@@ -1,0 +1,25 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserErrors/InvalidEmptyInput.txt
+# Grammar sections are rendered Rust: edit them here.
+[notes]
+This is a regression test for #6 "NullPointerException in getMissingSymbol".
+https://github.com/antlr/antlr4/issues/6
+
+[type]
+Parser
+
+[grammar]
+grammar T;
+start : ID+;
+ID : [a-z]+;
+
+[start]
+start
+
+[input]
+
+
+[errors]
+"""line 1:0 mismatched input '<EOF>' expecting ID
+"""
+

@@ -1,0 +1,30 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/SemPredEvalParser/UnpredicatedPathsInAlt.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+s : a {println!("{}", "alt 1" );}
+  | b {println!("{}", "alt 2" );}
+  ;
+a : {false}? ID INT
+  | ID INT
+  ;
+b : ID ID
+  ;
+ID : 'a'..'z'+ ;
+INT : '0'..'9'+;
+WS : (' '|'\n') -> skip ;
+
+[start]
+s
+
+[input]
+x 4
+
+[output]
+"""alt 1
+"""
+

@@ -1,0 +1,40 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/FullContextParsing/AmbiguityNoLoop.txt
+# Grammar sections are rendered Rust: edit them here.
+# Local deltas: runtime-crate-name
+[type]
+Parser
+
+[grammar]
+grammar T;
+prog
+@init {recog.get_interpreter().set_prediction_mode(dbt_antlr_runtime::PredictionMode::LL_EXACT_AMBIG_DETECTION);}
+   : expr expr {println!("{}", "alt 1" );}
+   | expr
+   ;
+expr: '@'
+   | ID '@'
+   | ID
+   ;
+ID  : [a-z]+ ;
+WS  : [ \r\n\t]+ -> skip ;
+
+[start]
+prog
+
+[input]
+a@
+
+[output]
+"""alt 1
+"""
+
+[errors]
+line 1:2 reportAttemptingFullContext d=0 (prog), input='a@'
+line 1:2 reportAmbiguity d=0 (prog): ambigAlts={1, 2}, input='a@'
+line 1:2 reportAttemptingFullContext d=1 (expr), input='a@'
+line 1:2 reportContextSensitivity d=1 (expr), input='a@'
+
+[flags]
+showDiagnosticErrors
+

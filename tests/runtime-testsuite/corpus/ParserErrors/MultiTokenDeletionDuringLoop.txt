@@ -1,0 +1,20 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserErrors/MultiTokenDeletionDuringLoop.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+a : 'a' 'b'* 'c' ;
+
+[start]
+a
+
+[input]
+abaaababc
+
+[errors]
+line 1:2 extraneous input 'a' expecting {'b', 'c'}
+line 1:6 extraneous input 'a' expecting {'b', 'c'}
+

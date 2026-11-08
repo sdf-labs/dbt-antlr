@@ -1,0 +1,47 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/SemPredEvalParser/PredFromAltTestedInLoopBack_1.txt
+# Grammar sections are rendered Rust: edit them here.
+[notes]
+Loopback doesn't eval predicate at start of alt
+
+[type]
+Parser
+
+[grammar]
+grammar T;
+file_
+@after {println!("{}", $ctx.to_string_tree(recog.base.get_rule_names()) );}
+  : para para EOF ;
+para: paraContent NL NL ;
+paraContent : ('s'|'x'|{recog.input.la(2) != T_NL}? NL)+ ;
+NL : '\n' ;
+s : 's' ;
+X : 'x' ;
+
+[start]
+file_
+
+[input]
+"""s
+
+
+x
+"""
+
+[output]
+"""(file_ (para (paraContent s) \n \n) (para (paraContent \n x \n)) <EOF>)
+"""
+
+[errors]
+"""line 5:0 mismatched input '<EOF>' expecting {'s', '\n', 'x'}
+"""
+
+[skip]
+Cpp
+CSharp
+Dart
+Go
+JavaScript
+TypeScript
+PHP
+Python3

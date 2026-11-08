@@ -1,0 +1,47 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/Listeners/Basic.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+
+@parser::definitions {
+struct TestListener;
+
+impl<'arena, Tok: Token + 'arena> ParseTreeListener<'arena, TParserNodeKind, Tok> for TestListener{
+	fn visit_terminal(&mut self, node: &TerminalNode<'_, 'arena, Tok> ) -> Result<(), ANTLRError> {
+		println!("{}", node.symbol.get_text());
+		Ok(())
+	}
+}
+impl<'arena, Tok: Token + 'arena> TListener<'arena, Tok> for TestListener {}
+}
+
+s
+@after {
+println!("{}", $ctx.r.as_ref().unwrap().to_string_tree(recog.base.get_rule_names()) );
+TTreeWalker::walk(Box::new(TestListener), $ctx.r.as_ref().unwrap().deref());
+}
+  : r=a ;
+a : INT INT
+  | ID
+  ;
+MULT: '*' ;
+ADD : '+' ;
+INT : [0-9]+ ;
+ID  : [a-z]+ ;
+WS : [ \t\n]+ -> skip ;
+
+[start]
+s
+
+[input]
+1 2
+
+[output]
+(a 1 2)
+1
+2
+

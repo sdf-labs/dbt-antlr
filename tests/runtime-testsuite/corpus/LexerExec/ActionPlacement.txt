@@ -1,0 +1,27 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/LexerExec/ActionPlacement.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Lexer
+
+[grammar]
+lexer grammar L;
+I : ({println!("{}", "stuff fail: ".to_owned() + &recog.get_text() );} 'a'
+| {println!("{}", "stuff0:".to_owned() + &recog.get_text() );}
+       'a' {println!("{}", "stuff1: ".to_owned() + &recog.get_text() );}
+       'b' {println!("{}", "stuff2: ".to_owned() + &recog.get_text() );})
+       {println!("{}", recog.get_text() );} ;
+WS : (' '|'\n') -> skip ;
+J : .;
+
+[input]
+ab
+
+[output]
+stuff0:
+stuff1: a
+stuff2: ab
+ab
+[@0,0:1='ab',<1>,1:0]
+[@1,2:1='<EOF>',<-1>,1:2]
+

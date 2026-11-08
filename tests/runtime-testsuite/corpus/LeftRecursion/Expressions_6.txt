@@ -1,0 +1,31 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/LeftRecursion/Expressions_6.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+s @after {println!("{}", $ctx.to_string_tree(recog.base.get_rule_names()) );} : e EOF ; // must indicate EOF can follow
+e : e '.' ID
+  | e '.' 'this'
+  | '-' e
+  | e '*' e
+  | e ('+'|'-') e
+  | INT
+  | ID
+  ;
+ID : 'a'..'z'+ ;
+INT : '0'..'9'+ ;
+WS : (' '|'\n') -> skip ;
+
+[start]
+s
+
+[input]
+-a
+
+[output]
+"""(s (e - (e a)) <EOF>)
+"""
+

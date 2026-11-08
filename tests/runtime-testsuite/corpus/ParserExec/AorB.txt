@@ -1,0 +1,27 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserExec/AorB.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+a : ID {
+println!("{}", "alt 1" );
+} | INT {
+println!("{}", "alt 2" );
+};
+ID : 'a'..'z'+ ;
+INT : '0'..'9'+;
+WS : (' '|'\n') -> skip ;
+
+[start]
+a
+
+[input]
+34
+
+[output]
+"""alt 2
+"""
+

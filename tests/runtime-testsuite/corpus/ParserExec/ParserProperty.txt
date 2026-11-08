@@ -1,0 +1,32 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserExec/ParserProperty.txt
+# Grammar sections are rendered Rust: edit them here.
+[notes]
+This is a regression test for antlr/antlr4#561 "Issue with parser
+generation in 4.2.2" https://github.com/antlr/antlr4/issues/561
+
+[type]
+Parser
+
+[grammar]
+grammar T;
+@members {
+fn Property(&self) -> bool {
+	return true;
+}
+}
+a : {recog.Property()}? ID {println!("{}", "valid" );}
+  ;
+ID : 'a'..'z'+ ;
+WS : (' '|'\n') -> skip ;
+
+[start]
+a
+
+[input]
+abc
+
+[output]
+"""valid
+"""
+

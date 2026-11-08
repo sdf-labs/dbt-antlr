@@ -1,0 +1,28 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/LeftRecursion/PrefixOpWithActionAndLabel_2.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+s : e {println!("{}", $e.result );} ;
+e returns [String result]
+    :   ID '=' e1=e    {$result = "(".to_string() + &($ID.text.to_string() + &("=".to_string() + &($e1.result.to_string() + &(")"))));}
+    |   ID    {$result = $ID.text;}
+    |   e1=e '+' e2=e  {$result = "(".to_string() + &($e1.result.to_string() + &("+".to_string() + &($e2.result.to_string() + &(")"))));}
+    ;
+ID : 'a'..'z'+ ;
+INT : '0'..'9'+ ;
+WS : (' '|'\n') -> skip ;
+
+[start]
+s
+
+[input]
+a+b
+
+[output]
+"""(a+b)
+"""
+

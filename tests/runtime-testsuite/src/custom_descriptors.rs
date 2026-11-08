@@ -174,7 +174,7 @@ fn multi_token_alternative() -> Descriptor {
 
     let grammar = format!(
         "grammar P;\n\
-         r: (r1 | T{tokens_count})+ EOF {{<writeln(\"$text\")>}};\n\
+         r: (r1 | T{tokens_count})+ EOF {{println!(\"{{}}\", $text );}};\n\
          {alts}\n\
          {tokens}\n\
          WS: [ ]+ -> skip;"

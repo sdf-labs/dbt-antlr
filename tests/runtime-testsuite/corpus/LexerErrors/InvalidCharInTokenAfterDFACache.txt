@@ -1,0 +1,21 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/LexerErrors/InvalidCharInTokenAfterDFACache.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Lexer
+
+[grammar]
+lexer grammar L;
+A : 'a' 'b' ;
+
+[input]
+abax
+
+[output]
+[@0,0:1='ab',<1>,1:0]
+[@1,4:3='<EOF>',<-1>,1:4]
+
+[errors]
+"""line 1:2 token recognition error at: 'ax'
+"""
+

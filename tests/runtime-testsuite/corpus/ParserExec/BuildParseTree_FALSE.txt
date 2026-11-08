@@ -1,0 +1,34 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserExec/BuildParseTree_FALSE.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+
+r
+   : a b {println!("{}", $ctx.to_string_tree(recog.base.get_rule_names()) );}
+   ;
+a
+   : A
+   ;
+b
+   : B
+   ;
+A  : 'A';
+B  : 'B';
+WS  : [ \r\n\t]+ -> skip ;
+
+[start]
+r
+
+[input]
+A B
+
+[output]
+"""r
+"""
+
+[flags]
+notBuildParseTree

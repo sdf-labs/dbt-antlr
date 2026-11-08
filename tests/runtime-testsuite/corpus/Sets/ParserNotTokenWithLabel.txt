@@ -1,0 +1,20 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/Sets/ParserNotTokenWithLabel.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+a : t=~'x' 'z' {println!("{}", $t.text );} ;
+
+[start]
+a
+
+[input]
+zz
+
+[output]
+"""z
+"""
+

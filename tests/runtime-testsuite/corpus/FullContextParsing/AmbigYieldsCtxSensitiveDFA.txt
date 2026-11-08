@@ -1,0 +1,30 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/FullContextParsing/AmbigYieldsCtxSensitiveDFA.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Parser
+
+[grammar]
+grammar T;
+s @after {recog.dump_dfa();}
+   : ID | ID {} ;
+ID : 'a'..'z'+;
+WS : (' '|'\t'|'\n')+ -> skip ;
+
+[start]
+s
+
+[input]
+abc
+
+[output]
+Decision 0:
+s0-ID->:s1^=>1
+
+[errors]
+"""line 1:0 reportAttemptingFullContext d=0 (s), input='abc'
+"""
+
+[flags]
+showDiagnosticErrors
+

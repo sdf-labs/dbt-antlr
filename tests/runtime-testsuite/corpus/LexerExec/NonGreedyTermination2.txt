@@ -1,0 +1,17 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/LexerExec/NonGreedyTermination2.txt
+# Grammar sections are rendered Rust: edit them here.
+[type]
+Lexer
+
+[grammar]
+lexer grammar L;
+STRING : '!' ('!!' | .)+? '!';
+
+[input]
+!!!mom!
+
+[output]
+[@0,0:6='!!!mom!',<1>,1:0]
+[@1,7:6='<EOF>',<-1>,1:7]
+

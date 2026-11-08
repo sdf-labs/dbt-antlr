@@ -1,0 +1,57 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/Listeners/LRWithLabels.txt
+# Grammar sections are rendered Rust: edit them here.
+# Local deltas: runtime-crate-name
+[type]
+Parser
+
+[grammar]
+grammar T;
+
+@parser::definitions {
+use dbt_antlr_runtime::tree::Tree;
+
+struct TestListener;
+
+impl<'arena, Tok: Token + 'arena> ParseTreeListener<'arena, TParserNodeKind, Tok> for TestListener{}
+impl<'arena, Tok: Token + 'arena> TListener<'arena, Tok> for TestListener {
+	fn exit_Call<'input: 'arena>(&mut self, ctx: &CallContext<'input,'arena, Tok>) -> Result<(), ANTLRError> {
+		println!("{} {}",ctx.e().unwrap().start().get_text(),ctx.eList().unwrap().to_string(None,None));
+        Ok(())
+	}
+	fn exit_Int<'input: 'arena>(&mut self, ctx: &IntContext<'input,'arena, Tok>) -> Result<(), ANTLRError> {
+		println!("{}",ctx.INT().unwrap().symbol.get_text());
+        Ok(())
+	}
+}
+}
+
+s
+@after {
+println!("{}", $ctx.r.as_ref().unwrap().to_string_tree(recog.base.get_rule_names()) );
+TTreeWalker::walk(Box::new(TestListener), $ctx.r.as_ref().unwrap().deref());
+}
+  : r=e ;
+e : e '(' eList ')' # Call
+  | INT    # Int
+  ;
+eList : e (',' e)* ;
+MULT: '*' ;
+ADD : '+' ;
+INT : [0-9]+ ;
+ID  : [a-z]+ ;
+WS : [ \t\n]+ -> skip ;
+
+[start]
+s
+
+[input]
+1(2,3)
+
+[output]
+(e (e 1) ( (eList (e 2) , (e 3)) ))
+1
+2
+3
+1 [13 6]
+

@@ -1,0 +1,23 @@
+# Vendored conformance corpus file; see corpus/README.md.
+# Source: dbt-antlr4-2.0.0 descriptors/ParserExec/uStartingCharDoesNotCauseIllegalUnicodeEscape.txt
+# Grammar sections are rendered Rust: edit them here.
+[notes]
+Test for https://github.com/antlr/antlr4/issues/4128
+
+[type]
+Parser
+
+[grammar]
+grammar u;
+u : 'u' {println!("{}", $text );};
+
+[start]
+u
+
+[input]
+u
+
+[output]
+"""u
+"""
+
