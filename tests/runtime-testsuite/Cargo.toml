@@ -14,6 +14,7 @@ name = "runtime-testsuite"
 path = "src/main.rs"
 
 [dependencies]
+minijinja = { workspace = true }
 
 [lints]
 workspace = true

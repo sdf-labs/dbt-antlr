@@ -769,6 +769,9 @@ dependencies = [
 [[package]]
 name = "runtime-testsuite"
 version = "0.7.0"
+dependencies = [
+ "minijinja",
+]
 
 [[package]]
 name = "rustc-demangle"
