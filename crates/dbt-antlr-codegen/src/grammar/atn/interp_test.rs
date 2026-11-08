@@ -2163,13 +2163,10 @@ mod tests {
                         token_names.push("EOF".to_owned());
                         break;
                     }
-                    let at_eof = lexer.input.as_mut().expect("lexer input").la(1)
-                        == dbt_antlr_runtime::int_stream::EOF;
+                    let at_eof = lexer.input().la(1) == dbt_antlr_runtime::int_stream::EOF;
                     lexer.token_type = TOKEN_INVALID_TYPE;
                     let mode = lexer.mode;
-                    let mut interpreter = lexer.interpreter.take().expect("lexer interpreter");
-                    let result = interpreter.match_token(mode, &mut *lexer);
-                    lexer.interpreter = Some(interpreter);
+                    let result = lexer.get_interpreter().match_token(mode, &mut *lexer);
                     let ttype = result.unwrap_or_else(|error| {
                         panic!("lexer match failed for {input:?}: {error:?}")
                     });

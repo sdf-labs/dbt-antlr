@@ -352,7 +352,7 @@ fn drain(
         }
         if tables.is_some() {
             assert_eq!(
-                lexer.interpreter.as_ref().unwrap().escape_count,
+                lexer.interpreter.escape_count.get(),
                 0,
                 "ClickHouseLexer is fully static; an escape means the walker fell back \
                  to the lazy path"

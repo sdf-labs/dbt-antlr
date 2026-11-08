@@ -1085,13 +1085,29 @@ fn render_grammar_through_stg(
     // runtime crate by its historical name (`dbt_antlr4`) and eager lexer
     // position fields/setters inside embedded Rust actions; retarget them to
     // the current `dbt_antlr_runtime` API.
+    //
+    // `BaseLexer` no longer keeps `input` and `interpreter` in `Option`s, so
+    // the `PositionAdjustingLexerDef` take/restore pattern becomes an in-place
+    // borrow of both fields. The simulator method `consume` takes `&self`, so
+    // the two borrows do not conflict. The pattern also changes
+    // `resetAcceptPosition` to take `&self`.
     Ok(rendered
         .replace("dbt_antlr4", "dbt_antlr_runtime")
         .replace("recog.token_start_column", "recog.get_token_start_column()")
         .replace("this.token_start_column", "0")
         .replace("this.token_start_line", "0")
         .replace("self.set_line(line);", "")
-        .replace("self.set_char_position_in_line(charPositionInLine);", ""))
+        .replace("self.set_char_position_in_line(charPositionInLine);", "")
+        .replace(
+            "let mut input = this.input.take().unwrap();",
+            "let input = &mut this.input;",
+        )
+        .replace(
+            "this.interpreter.as_mut().unwrap().resetAcceptPosition(&mut input,",
+            "this.interpreter.resetAcceptPosition(input,",
+        )
+        .replace("this.input = Some(input);", "")
+        .replace("resetAcceptPosition(&mut self", "resetAcceptPosition(&self"))
 }
 
 /// Runs one rendered descriptor through the full pipeline: `StringTemplate`
