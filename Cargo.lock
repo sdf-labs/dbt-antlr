@@ -769,10 +769,6 @@ dependencies = [
 [[package]]
 name = "runtime-testsuite"
 version = "0.7.0"
-dependencies = [
- "sha2",
- "zip",
-]
 
 [[package]]
 name = "rustc-demangle"

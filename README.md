@@ -13,8 +13,8 @@ for SQL-like languages.
 - `crates/dbt-antlr-g4-parser` — the `.g4` grammar front-end.
 - `crates/dbt-antlr-runtime` — our ANTLR4 runtime for Rust. This is the code
   generation target.
-- `tests/runtime-testsuite` — harness for the official ANTLR
-  runtime conformance suite.
+- `tests/runtime-testsuite` — harness and vendored post-rendered corpus for the
+  official ANTLR runtime conformance suite.
 
 ## History and credits
 

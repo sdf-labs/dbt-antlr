@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Konstantin Vyatkin
 #![allow(clippy::print_stderr, clippy::print_stdout)]
 
-use std::collections::HashMap;
 use std::env;
 use std::ffi::OsStr;
 use std::fmt::Write as _;
@@ -15,18 +14,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 mod custom_descriptors;
-mod upstream;
 
 /// Vendored case tree (`<Group>/<Name>.txt`) inside the testsuite package.
 const VENDORED_CORPUS: &str = "tests/runtime-testsuite/corpus";
-/// Tool jar (a `StringTemplate` 4 carrier) used only by `--export-corpus`.
-const ANTLR_JAR_ENV: &str = "ANTLR4_JAR";
-/// Upstream case tree, an `--export-corpus` input only.
-const EXPORT_SOURCE_ENV: &str = "ANTLR4_RUNTIME_TESTSUITE";
-/// Template group, an `--export-corpus` input only.
-const TEMPLATE_PATH: &str = "resources/org/antlr/v4/test/runtime/templates/Rust.test.stg";
-const DESCRIPTOR_PATH: &str = "resources/org/antlr/v4/test/runtime/descriptors";
-const RENDER_DRIVER: &str = "tests/runtime-testsuite/java/RenderGrammar.java";
 const RUNTIME_PACKAGE: &str = "dbt-antlr-runtime";
 /// Guard against a single pathological case stalling the whole sweep; the
 /// upstream JVM harness bounds execution the same way.
@@ -38,25 +28,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         fs::remove_dir_all(&args.work_dir)?;
     }
     fs::create_dir_all(&args.work_dir)?;
-
-    if let Some(export) = &args.export {
-        let descriptors = load_descriptors(&export.source_root, &args)?;
-        ensure_descriptors_loaded(&descriptors, &export.source_root)?;
-        let render = RenderContext::prepare(&args.work_dir, &args.workspace_root, export)?;
-        let exported = export_corpus(
-            &args,
-            &render,
-            &export.source_root,
-            &descriptors,
-            &export.out_dir,
-        )
-        .map_err(|error| format!("corpus export: {error}"))?;
-        println!(
-            "exported {exported} descriptor(s) to {}",
-            export.out_dir.display()
-        );
-        return Ok(());
-    }
 
     let descriptors = load_descriptors(&args.corpus, &args)?;
     ensure_descriptors_loaded(&descriptors, &args.corpus)?;
@@ -180,9 +151,6 @@ fn run_case(args: &Args, context: &SweepContext<'_>, descriptor: &Descriptor) ->
 /// Failure buckets reported per case, mirroring the pipeline stage that broke.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum Category {
-    /// `RenderGrammar.java` / `StringTemplate` rendering of the descriptor
-    /// grammar failed.
-    RenderFail,
     /// `dbt-antlr-codegen` exited non-zero or reported diagnostics.
     ToolFail,
     /// `rustc` rejected the generated recognizer plus harness `main.rs`.
@@ -198,7 +166,6 @@ enum Category {
 impl Category {
     const fn as_str(self) -> &'static str {
         match self {
-            Self::RenderFail => "RENDER-FAIL",
             Self::ToolFail => "TOOL-FAIL",
             Self::CompileFail => "COMPILE-FAIL",
             Self::RunDiffOutput => "RUN-DIFF-OUTPUT",
@@ -207,8 +174,7 @@ impl Category {
         }
     }
 
-    const ALL: [Self; 6] = [
-        Self::RenderFail,
+    const ALL: [Self; 5] = [
         Self::ToolFail,
         Self::CompileFail,
         Self::RunDiffOutput,
@@ -270,7 +236,7 @@ impl Failure {
 /// Per-category failure counts for the sweep summary.
 #[derive(Clone, Debug, Default)]
 struct Failures {
-    counts: [usize; 6],
+    counts: [usize; Category::ALL.len()],
 }
 
 impl Failures {
@@ -325,51 +291,6 @@ impl<'a> SweepContext<'a> {
         self.runtime_rlib
             .parent()
             .expect("runtime rlib lives in a deps directory")
-    }
-}
-
-/// Render inputs for `--export-corpus`: the pinned tool jar (a carrier of
-/// `StringTemplate` 4), the template group, and the precompiled render driver.
-/// The Java single-file source launcher would recompile `RenderGrammar.java`
-/// for every render.
-struct RenderContext<'a> {
-    antlr_jar: &'a Path,
-    stg: &'a Path,
-    classes: PathBuf,
-}
-
-impl<'a> RenderContext<'a> {
-    fn prepare(
-        work_dir: &Path,
-        workspace_root: &Path,
-        export: &'a ExportCorpus,
-    ) -> io::Result<Self> {
-        let classes = work_dir.join("stg-render-classes");
-        fs::create_dir_all(&classes)?;
-        run_checked(
-            Command::new("javac")
-                .arg("-cp")
-                .arg(&export.antlr_jar)
-                .arg("-d")
-                .arg(&classes)
-                .arg(workspace_root.join(RENDER_DRIVER)),
-            "StringTemplate render driver compile",
-        )?;
-        Ok(Self {
-            antlr_jar: &export.antlr_jar,
-            stg: &export.stg,
-            classes,
-        })
-    }
-
-    /// `java -cp` separator-joined tool jar plus render driver classes.
-    fn classpath(&self) -> String {
-        let separator = if cfg!(windows) { ";" } else { ":" };
-        format!(
-            "{}{separator}{}",
-            self.antlr_jar.display(),
-            self.classes.display()
-        )
     }
 }
 
@@ -526,20 +447,6 @@ fn decode_json_string(text: &str) -> Option<String> {
     None
 }
 
-/// `--export-corpus <DIR>` plus the pinned artifacts the import renders from.
-///
-/// A re-import needs a JVM, the tool jar (a `StringTemplate` carrier), the
-/// upstream case tree, and the template group; the sweep itself needs none of
-/// them.
-#[derive(Debug)]
-struct ExportCorpus {
-    out_dir: PathBuf,
-    antlr_jar: PathBuf,
-    /// Upstream descriptor directory (the `<Group>/<Name>.txt` tree).
-    source_root: PathBuf,
-    stg: PathBuf,
-}
-
 #[derive(Debug)]
 struct Args {
     workspace_root: PathBuf,
@@ -557,14 +464,10 @@ struct Args {
     /// Generate every case with `--static-parser-dfa` (static parser SLL DFA
     /// tables).
     static_parser_dfa: bool,
-    /// Writes the post-rendered descriptor corpus instead of running the sweep.
-    export: Option<ExportCorpus>,
 }
 
 impl Args {
     fn parse() -> Result<Self, String> {
-        let mut antlr_jar = None;
-        let mut export_source = None;
         let mut workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .ancestors()
             .nth(2)
@@ -577,20 +480,12 @@ impl Args {
         let mut limit = None;
         let mut keep = false;
         let mut jobs = None;
-        let mut stg = None;
-        let mut export_corpus = None;
         let mut static_lexer_dfa = false;
         let mut static_parser_dfa = false;
 
         let mut iter = env::args().skip(1);
         while let Some(arg) = iter.next() {
             match arg.as_str() {
-                "--antlr-jar" => {
-                    antlr_jar = Some(PathBuf::from(next_arg(&mut iter, "--antlr-jar")?));
-                }
-                "--export-source" => {
-                    export_source = Some(PathBuf::from(next_arg(&mut iter, "--export-source")?));
-                }
                 "--workspace-root" => {
                     workspace_root = PathBuf::from(next_arg(&mut iter, &arg)?);
                 }
@@ -627,10 +522,6 @@ impl Args {
                             .ok_or_else(|| format!("invalid --jobs {value:?}"))?,
                     );
                 }
-                "--stg" => stg = Some(PathBuf::from(next_arg(&mut iter, "--stg")?)),
-                "--export-corpus" => {
-                    export_corpus = Some(PathBuf::from(next_arg(&mut iter, "--export-corpus")?));
-                }
                 "--static-lexer-dfa" => static_lexer_dfa = true,
                 "--static-parser-dfa" => static_parser_dfa = true,
                 "--help" | "-h" => return Err(usage()),
@@ -640,59 +531,10 @@ impl Args {
 
         let current_dir = env::current_dir().map_err(|error| error.to_string())?;
         let workspace_root = absolutize(&current_dir, workspace_root);
-        if export_corpus.is_some() && (corpus.is_some() || static_lexer_dfa || static_parser_dfa) {
-            return Err(format!(
-                "--corpus and the static-DFA modes do not apply to --export-corpus; \
-                 use --group, --case or --limit to select cases\n\n{}",
-                usage()
-            ));
-        }
         let corpus = absolutize(
             &current_dir,
             corpus.unwrap_or_else(|| workspace_root.join(VENDORED_CORPUS)),
         );
-        // A re-import renders from the pinned upstream artifacts, downloaded
-        // and checksum-verified into the workspace target/ cache. Explicit
-        // flags and environment overrides win. The sweep never needs them.
-        let export_flags_only = antlr_jar.is_some() || stg.is_some() || export_source.is_some();
-        if export_corpus.is_none() && export_flags_only {
-            return Err(format!(
-                "--antlr-jar, --stg and --export-source only apply to --export-corpus\n\n{}",
-                usage()
-            ));
-        }
-        let export = match export_corpus {
-            None => None,
-            Some(out_dir) => {
-                let antlr_jar = match explicit_or_env(antlr_jar, ANTLR_JAR_ENV) {
-                    Some(path) => absolutize(&current_dir, path),
-                    None => upstream::ensure_tool_jar(&workspace_root)?,
-                };
-                let source_root = match explicit_or_env(export_source, EXPORT_SOURCE_ENV) {
-                    Some(path) => absolutize(&current_dir, path),
-                    None => upstream::ensure_runtime_testsuite(&workspace_root)?,
-                };
-                let source_root =
-                    resolve_descriptor_root(&source_root).map_err(|error| error.to_string())?;
-                let stg = stg.map_or_else(
-                    || default_stg_path(&source_root),
-                    |stg| absolutize(&current_dir, stg),
-                );
-                if !stg.is_file() {
-                    return Err(format!(
-                        "Rust action template group not found at {}; pass --stg\n\n{}",
-                        stg.display(),
-                        usage()
-                    ));
-                }
-                Some(ExportCorpus {
-                    out_dir: absolutize(&current_dir, out_dir),
-                    antlr_jar,
-                    source_root,
-                    stg,
-                })
-            }
-        };
 
         // The default work dir is keyed on the generation mode so a
         // static-DFA sweep and an adaptive sweep (or two concurrent runs)
@@ -726,34 +568,8 @@ impl Args {
             jobs,
             static_lexer_dfa,
             static_parser_dfa,
-            export,
         })
     }
-}
-
-/// Finds the target `Rust.test.stg` next to the upstream case tree, whether
-/// `--export-source` names the runtime-testsuite root or the descriptor
-/// directory itself.
-fn default_stg_path(descriptors: &Path) -> PathBuf {
-    for ancestor in descriptors.ancestors() {
-        let candidate = ancestor.join(TEMPLATE_PATH);
-        if candidate.is_file() {
-            return candidate;
-        }
-    }
-    descriptors.join(TEMPLATE_PATH)
-}
-
-/// Resolves an optional CLI path from, in order, the explicit flag and an
-/// environment override; `None` means fall back to the pinned upstream
-/// release artifact.
-fn explicit_or_env(explicit: Option<PathBuf>, env_key: &str) -> Option<PathBuf> {
-    explicit.or_else(|| {
-        env::var(env_key)
-            .ok()
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-    })
 }
 
 fn next_arg(iter: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, String> {
@@ -770,7 +586,7 @@ fn absolutize(base: &Path, path: PathBuf) -> PathBuf {
 }
 
 fn usage() -> String {
-    "usage: runtime-testsuite [--corpus PATH] [--case Group/Name] [--group Group] [--limit N] [--jobs N] [--keep] [--work-dir PATH] [--static-lexer-dfa] [--static-parser-dfa] [--export-corpus DIR [--export-source PATH] [--antlr-jar ANTLR.jar] [--stg PATH]] [--workspace-root PATH]\n\nDefaults: corpus tests/runtime-testsuite/corpus (vendored post-rendered cases); work dir $TMPDIR/dbt-antlr-runtime-testsuite (mirrors upstream, which stages every test under java.io.tmpdir), keyed -static-lexer-dfa in --static-lexer-dfa mode; --jobs min(cores, 8)\n\n--static-lexer-dfa generates every case with --static-lexer-dfa (static lexer DFA tables) and runs the same expected outputs, so the whole corpus doubles as a static-vs-adaptive lexer differential. Descriptors flagged showDFA are skipped in this mode: they print the lazily interned lexer DFA cache, which the static walker does not populate — they introspect the adaptive engine, not lexer behavior (the lexer analogue of upstream's parser static-DFA skips). --static-parser-dfa generates every case with --static-parser-dfa (static parser SLL DFA tables and the D5 escape handoff) and runs the same expected outputs, so the corpus doubles as a parser differential; showDiagnosticErrors/traceATN descriptors are skipped because they print the adaptive ATN simulation the tables bypass.\n\n--export-corpus re-imports the corpus: it renders the upstream descriptor grammars through the template group and writes <DIR>/<Group>/<Name>.txt. It needs a JVM; --export-source (ANTLR4_RUNTIME_TESTSUITE), --antlr-jar (ANTLR4_JAR) and --stg default to the pinned dbt-antlr4 2.0.0 artifacts, downloaded and checksum-verified into <workspace>/target/dbt-antlr-runtime-testsuite-cache. An unfiltered export replaces the group directories under DIR and keeps other files; a --group/--case/--limit filtered export rewrites only the selected cases."
+    "usage: runtime-testsuite [--corpus PATH] [--case Group/Name] [--group Group] [--limit N] [--jobs N] [--keep] [--work-dir PATH] [--static-lexer-dfa] [--static-parser-dfa] [--workspace-root PATH]\n\nDefaults: corpus tests/runtime-testsuite/corpus (vendored post-rendered cases, see corpus/README.md); work dir $TMPDIR/dbt-antlr-runtime-testsuite (mirrors upstream, which stages every test under java.io.tmpdir), keyed -static-lexer-dfa in --static-lexer-dfa mode; --jobs min(cores, 8)\n\n--static-lexer-dfa generates every case with --static-lexer-dfa (static lexer DFA tables) and runs the same expected outputs, so the whole corpus doubles as a static-vs-adaptive lexer differential. Descriptors flagged showDFA are skipped in this mode: they print the lazily interned lexer DFA cache, which the static walker does not populate — they introspect the adaptive engine, not lexer behavior (the lexer analogue of upstream's parser static-DFA skips). --static-parser-dfa generates every case with --static-parser-dfa (static parser SLL DFA tables and the D5 escape handoff) and runs the same expected outputs, so the corpus doubles as a parser differential; showDiagnosticErrors/traceATN descriptors are skipped because they print the adaptive ATN simulation the tables bypass."
         .to_owned()
 }
 
@@ -789,14 +605,14 @@ pub(crate) struct Descriptor {
     pub(crate) test_type: String,
     pub(crate) grammar_name: String,
     /// Final grammar text for generation (`[grammar]` section).
-    pub(crate) grammar_template: String,
+    pub(crate) grammar: String,
     pub(crate) start_rule: String,
     pub(crate) input: String,
     pub(crate) output: String,
     pub(crate) errors: String,
     pub(crate) flags: String,
     pub(crate) skip_targets: Vec<String>,
-    pub(crate) slave_grammar_templates: Vec<String>,
+    pub(crate) slave_grammars: Vec<String>,
 }
 
 impl Descriptor {
@@ -841,25 +657,6 @@ impl Descriptor {
             .unwrap_or("LL")
             .to_owned()
     }
-}
-
-/// Resolves either the upstream `runtime-testsuite` root or the descriptor
-/// directory itself to the concrete descriptor directory.
-fn resolve_descriptor_root(path: &Path) -> io::Result<PathBuf> {
-    let direct = path.join(DESCRIPTOR_PATH);
-    if direct.is_dir() {
-        return Ok(direct);
-    }
-    if path.ends_with("descriptors") && path.is_dir() {
-        return Ok(path.to_path_buf());
-    }
-    Err(io::Error::new(
-        io::ErrorKind::NotFound,
-        format!(
-            "descriptor root not found under {}; pass runtime-testsuite root or descriptors directory",
-            path.display()
-        ),
-    ))
 }
 
 /// Loads descriptor files in stable order and applies the CLI group/case
@@ -971,14 +768,14 @@ fn parse_descriptor(group: String, name: String, text: &str) -> io::Result<Descr
         name,
         test_type: "Lexer".to_owned(),
         grammar_name: String::new(),
-        grammar_template: String::new(),
+        grammar: String::new(),
         start_rule: String::new(),
         input: String::new(),
         output: String::new(),
         errors: String::new(),
         flags: String::new(),
         skip_targets: Vec::new(),
-        slave_grammar_templates: Vec::new(),
+        slave_grammars: Vec::new(),
     };
 
     for (section, value) in sections {
@@ -987,11 +784,11 @@ fn parse_descriptor(group: String, name: String, text: &str) -> io::Result<Descr
             "type" => descriptor.test_type = value,
             "grammar" => {
                 descriptor.grammar_name = grammar_name(&value)?;
-                descriptor.grammar_template = value;
+                descriptor.grammar = value;
             }
             "slaveGrammar" => {
                 grammar_name(&value)?;
-                descriptor.slave_grammar_templates.push(value);
+                descriptor.slave_grammars.push(value);
             }
             "input" => descriptor.input = value,
             "output" => descriptor.output = value,
@@ -1116,305 +913,6 @@ fn skip_reason(
     None
 }
 
-/// Renders one grammar template through the target `.test.stg` group using
-/// the `StringTemplate` engine bundled in the tool jar, mirroring upstream
-/// `RuntimeTests.prepareGrammars`, and retargets the result to the current
-/// runtime API.
-fn render_descriptor_grammar(
-    render: &RenderContext<'_>,
-    case_dir: &Path,
-    tag: &str,
-    grammar_template: &str,
-) -> Result<RenderedGrammar, Failure> {
-    let template_path = case_dir.join(format!("{tag}.template.g4"));
-    let rendered_path = case_dir.join(format!("{tag}.rendered.g4"));
-    let io = |stage: &'static str| {
-        move |error: io::Error| {
-            Failure::new(Category::RenderFail, format!("{tag} {stage}: {error}"))
-        }
-    };
-    fs::write(&template_path, grammar_template).map_err(io("template write"))?;
-    let output = Command::new("java")
-        .arg("-cp")
-        .arg(render.classpath())
-        .arg("RenderGrammar")
-        .arg(render.stg)
-        .arg(&template_path)
-        .arg(&rendered_path)
-        .output()
-        .map_err(io("render spawn"))?;
-    if !output.status.success() {
-        return Err(Failure::new(
-            Category::RenderFail,
-            format!(
-                "{tag}: StringTemplate grammar render failed\nstdout:\n{}\nstderr:\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            ),
-        ));
-    }
-    let rendered = fs::read_to_string(&rendered_path).map_err(io("rendered read"))?;
-    let (text, shims) = apply_descriptor_shims(&rendered);
-    Ok(RenderedGrammar { text, shims })
-}
-
-/// One rendered grammar template: the text fed to the generator plus the ids
-/// of the [`DESCRIPTOR_SHIMS`] rules it needed.
-struct RenderedGrammar {
-    text: String,
-    shims: Vec<&'static str>,
-}
-
-/// One retarget of upstream's rendered action text to the current runtime API.
-///
-/// `id` names the rule in the provenance header of the vendored corpus file
-/// (`tests/runtime-testsuite/corpus`), where the rewrite is baked in.
-struct DescriptorShim {
-    id: &'static str,
-    from: &'static str,
-    to: &'static str,
-}
-
-/// Rewrites the fork's descriptor action text, which still targets the old
-/// runtime crate name, eager lexer position fields, and `Option`-shaped
-/// `BaseLexer::input`/`interpreter` fields.
-const DESCRIPTOR_SHIMS: &[DescriptorShim] = &[
-    DescriptorShim {
-        id: "runtime-crate-name",
-        from: "dbt_antlr4",
-        to: "dbt_antlr_runtime",
-    },
-    DescriptorShim {
-        id: "token-start-column-getter",
-        from: "recog.token_start_column",
-        to: "recog.get_token_start_column()",
-    },
-    DescriptorShim {
-        id: "lexer-token-start-column",
-        from: "this.token_start_column",
-        to: "0",
-    },
-    DescriptorShim {
-        id: "lexer-token-start-line",
-        from: "this.token_start_line",
-        to: "0",
-    },
-    DescriptorShim {
-        id: "simulator-set-line",
-        from: "self.set_line(line);",
-        to: "",
-    },
-    DescriptorShim {
-        id: "simulator-set-char-position",
-        from: "self.set_char_position_in_line(charPositionInLine);",
-        to: "",
-    },
-    DescriptorShim {
-        id: "lexer-input-field",
-        from: "let mut input = this.input.take().unwrap();",
-        to: "let input = &mut this.input;",
-    },
-    DescriptorShim {
-        id: "lexer-interpreter-field",
-        from: "this.interpreter.as_mut().unwrap().resetAcceptPosition(&mut input,",
-        to: "this.interpreter.resetAcceptPosition(input,",
-    },
-    DescriptorShim {
-        id: "lexer-input-restore",
-        from: "this.input = Some(input);",
-        to: "",
-    },
-    DescriptorShim {
-        id: "simulator-reset-accept-position",
-        from: "resetAcceptPosition(&mut self",
-        to: "resetAcceptPosition(&self",
-    },
-];
-
-/// Applies [`DESCRIPTOR_SHIMS`] and returns the rewritten text plus the ids of
-/// the rules that matched, in table order.
-fn apply_descriptor_shims(rendered: &str) -> (String, Vec<&'static str>) {
-    let mut text = rendered.to_owned();
-    let mut applied = Vec::new();
-    for shim in DESCRIPTOR_SHIMS {
-        if text.contains(shim.from) {
-            text = text.replace(shim.from, shim.to);
-            applied.push(shim.id);
-        }
-    }
-    (text, applied)
-}
-
-/// Renders every upstream descriptor grammar and writes the post-rendered
-/// corpus tree `<out>/<Group>/<Name>.txt`.
-///
-/// An unfiltered export replaces the group directories under `out` and keeps
-/// other files (`README.md`) in place. A `--group`/`--case`/`--limit` filtered
-/// export rewrites only the selected files.
-fn export_corpus(
-    args: &Args,
-    render: &RenderContext<'_>,
-    root: &Path,
-    descriptors: &[Descriptor],
-    out_dir: &Path,
-) -> io::Result<usize> {
-    let filtered = args.group.is_some() || args.case_name.is_some() || args.limit.is_some();
-    if out_dir.exists() && !filtered {
-        for group_dir in sorted_children(out_dir)? {
-            if group_dir.path.is_dir() {
-                fs::remove_dir_all(&group_dir.path)?;
-            }
-        }
-    }
-    let scratch = args.work_dir.join("corpus-export");
-    if scratch.exists() {
-        fs::remove_dir_all(&scratch)?;
-    }
-    fs::create_dir_all(&scratch)?;
-
-    let by_id: HashMap<String, &Descriptor> = descriptors
-        .iter()
-        .map(|descriptor| (descriptor.id(), descriptor))
-        .collect();
-
-    let mut exported = 0;
-    'cases: for group_dir in sorted_children(root)? {
-        if !group_dir.path.is_dir() {
-            continue;
-        }
-        let mut files = sorted_children(&group_dir.path)?;
-        files.retain(|entry| entry.path.extension() == Some(OsStr::new("txt")));
-        for file in files {
-            if args.limit.is_some_and(|limit| exported >= limit) {
-                break 'cases;
-            }
-            let name = file.name.trim_end_matches(".txt");
-            let id = format!("{}/{}", group_dir.name, name);
-            let Some(descriptor) = by_id.get(&id) else {
-                continue;
-            };
-            let case_scratch = scratch.join(id.replace('/', "_"));
-            fs::create_dir_all(&case_scratch)?;
-            let main = render_descriptor_grammar(
-                render,
-                &case_scratch,
-                "main",
-                &descriptor.grammar_template,
-            )
-            .map_err(render_error)?;
-            let mut shims = main.shims;
-            let mut slaves = Vec::with_capacity(descriptor.slave_grammar_templates.len());
-            for (index, template) in descriptor.slave_grammar_templates.iter().enumerate() {
-                let slave = render_descriptor_grammar(
-                    render,
-                    &case_scratch,
-                    &format!("slave{index}"),
-                    template,
-                )
-                .map_err(render_error)?;
-                shims.extend(slave.shims);
-                slaves.push(slave.text);
-            }
-            let raw = fs::read_to_string(&file.path)?;
-            let body = rewrite_grammar_sections(&raw, &main.text, &slaves);
-            let target_dir = out_dir.join(&group_dir.name);
-            fs::create_dir_all(&target_dir)?;
-            let header = corpus_header(&id, &shims);
-            fs::write(
-                target_dir.join(format!("{name}.txt")),
-                format!("{header}{body}"),
-            )?;
-            exported += 1;
-        }
-    }
-    Ok(exported)
-}
-
-/// Converts a render failure to the export path's error type.
-fn render_error(failure: Failure) -> io::Error {
-    io::Error::other(format!("{}: {}", failure.category, failure.detail))
-}
-
-/// Rewrites the `[grammar]` and `[slaveGrammar]` bodies of one descriptor file
-/// with their rendered text; every other byte of the file is preserved.
-fn rewrite_grammar_sections(raw: &str, main: &str, slaves: &[String]) -> String {
-    let mut preamble: Vec<&str> = Vec::new();
-    let mut sections: Vec<(&str, Vec<&str>)> = Vec::new();
-    for line in raw.split('\n') {
-        if let Some(name) = section_name(line) {
-            sections.push((name, Vec::new()));
-        } else if let Some((_, body)) = sections.last_mut() {
-            body.push(line);
-        } else {
-            preamble.push(line);
-        }
-    }
-    let slave_sections = sections
-        .iter()
-        .filter(|(name, _)| *name == "slaveGrammar")
-        .count();
-    assert_eq!(
-        slave_sections,
-        slaves.len(),
-        "descriptor has {slave_sections} [slaveGrammar] section(s) but {} rendered slave grammar(s)",
-        slaves.len()
-    );
-
-    let mut out: Vec<String> = Vec::with_capacity(raw.len() + main.len());
-    out.extend(preamble.into_iter().map(str::to_owned));
-    let mut slaves = slaves.iter();
-    for (name, body) in sections {
-        out.push(format!("[{name}]"));
-        match name {
-            "grammar" => push_rendered_section(&mut out, main),
-            "slaveGrammar" => {
-                let rendered = slaves
-                    .next()
-                    .expect("slave grammar count was checked above");
-                push_rendered_section(&mut out, rendered);
-            }
-            _ => out.extend(body.into_iter().map(str::to_owned)),
-        }
-    }
-    out.join("\n")
-}
-
-/// Writes one rendered grammar body followed by the blank line that separates
-/// sections in the descriptor format.
-fn push_rendered_section(out: &mut Vec<String>, rendered: &str) {
-    out.extend(
-        rendered
-            .trim_end_matches('\n')
-            .split('\n')
-            .map(str::to_owned),
-    );
-    out.push(String::new());
-}
-
-/// Provenance preamble for one corpus file. It names the source descriptor and
-/// the [`DESCRIPTOR_SHIMS`] rules the import applied; the descriptor parser
-/// ignores text before the first section, so it never reaches the sweep.
-fn corpus_header(id: &str, shims: &[&'static str]) -> String {
-    let mut header = format!(
-        "# Vendored conformance corpus file; see corpus/README.md.\n\
-         # Source: {} descriptors/{id}.txt\n\
-         # Grammar sections are rendered Rust: edit them here.\n",
-        upstream::RELEASE_TAG,
-    );
-    let mut unique: Vec<&'static str> = Vec::new();
-    for &shim in shims {
-        if !unique.contains(&shim) {
-            unique.push(shim);
-        }
-    }
-    if !unique.is_empty() {
-        header.push_str("# Local deltas: ");
-        header.push_str(&unique.join(", "));
-        header.push('\n');
-    }
-    header
-}
-
 /// Runs one descriptor through the full pipeline: `dbt-antlr` codegen, harness
 /// `main.rs`, `rustc` against the prebuilt runtime rlib, execution, and output
 /// comparison.
@@ -1432,8 +930,8 @@ fn run_descriptor(
     // Case grammars are post-rendered in the vendored corpus, so they reach
     // the generator as-is.
     let grammar_path = case_dir.join(format!("{}.g4", descriptor.grammar_name));
-    fs::write(&grammar_path, &descriptor.grammar_template).map_err(harness_io("grammar write"))?;
-    for (index, slave) in descriptor.slave_grammar_templates.iter().enumerate() {
+    fs::write(&grammar_path, &descriptor.grammar).map_err(harness_io("grammar write"))?;
+    for (index, slave) in descriptor.slave_grammars.iter().enumerate() {
         let slave_name = grammar_name(slave)
             .map_err(|error| Failure::new(Category::ToolFail, format!("slave{index}: {error}")))?;
         let slave_path = case_dir.join(format!("{slave_name}.g4"));
@@ -1465,8 +963,8 @@ fn harness_io(stage: &'static str) -> impl Fn(io::Error) -> Failure {
     move |error| Failure::new(Category::CompileFail, format!("harness {stage}: {error}"))
 }
 
-/// Runs the prebuilt generator on the rendered root grammar and lets its
-/// loader resolve delegate grammars from the case directory. Mirrors the
+/// Runs the prebuilt generator on the root grammar and lets its loader
+/// resolve delegate grammars from the case directory. Mirrors the
 /// upstream tool invocation: `-visitor` for parser tests, listener on by
 /// default, output into `src/` next to the harness `main.rs`.
 fn generate_rust(
@@ -1751,18 +1249,6 @@ fn run_binary(binary: &Path, input: &Path) -> Result<RunOutput, Failure> {
     Ok((status, drain(&stdout_path), drain(&stderr_path)))
 }
 
-fn run_checked(command: &mut Command, context: &str) -> io::Result<()> {
-    let output = run_output(command)?;
-    if output.status.success() {
-        return Ok(());
-    }
-    Err(io::Error::other(format!(
-        "{context} failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )))
-}
-
 fn run_output(command: &mut Command) -> io::Result<Output> {
     command.output()
 }
@@ -1787,9 +1273,8 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        Descriptor, apply_descriptor_shims, corpus_header, ensure_descriptors_loaded,
-        json_first_array_string, json_string_value, parse_descriptor, render_main_rs,
-        rewrite_grammar_sections, skip_reason, sorted_children,
+        Descriptor, ensure_descriptors_loaded, json_first_array_string, json_string_value,
+        parse_descriptor, render_main_rs, skip_reason, sorted_children,
     };
 
     #[test]
@@ -2005,14 +1490,14 @@ mod tests {
                 !descriptor.input.contains("Vendored conformance corpus"),
                 "{group}/{name} [input] took the provenance preamble"
             );
-            for (index, slave) in descriptor.slave_grammar_templates.iter().enumerate() {
+            for (index, slave) in descriptor.slave_grammars.iter().enumerate() {
                 assert!(
                     super::grammar_name(slave).is_ok(),
                     "{group}/{name} slave {index} has no grammar declaration"
                 );
             }
             assert_eq!(
-                descriptor.grammar_template,
+                descriptor.grammar,
                 format!("{}\n", grammars[0].trim()),
                 "{group}/{name} [grammar]"
             );
@@ -2021,81 +1506,9 @@ mod tests {
                 .map(|body| format!("{}\n", body.trim()))
                 .collect();
             assert_eq!(
-                descriptor.slave_grammar_templates, slaves,
+                descriptor.slave_grammars, slaves,
                 "{group}/{name} [slaveGrammar]"
             );
         }
-    }
-
-    #[test]
-    fn rewrite_grammar_sections_reproduces_each_corpus_file() {
-        for (group, name, text) in corpus_cases() {
-            let grammars = stored_grammars(&text);
-            let rewritten = rewrite_grammar_sections(&text, &grammars[0], &grammars[1..]);
-            assert_eq!(rewritten, text, "{group}/{name}");
-        }
-    }
-
-    #[test]
-    fn apply_descriptor_shims_reports_matched_rules_in_table_order() {
-        // The three matches appear in reverse table order, so the reported ids
-        // prove table order rather than input order.
-        let (text, applied) = apply_descriptor_shims(
-            "recog.token_start_column dbt_antlr4 let mut input = this.input.take().unwrap();",
-        );
-        assert_eq!(
-            applied,
-            vec![
-                "runtime-crate-name",
-                "token-start-column-getter",
-                "lexer-input-field"
-            ]
-        );
-        assert_eq!(
-            text,
-            "recog.get_token_start_column() dbt_antlr_runtime let input = &mut this.input;"
-        );
-        assert!(apply_descriptor_shims("lexer grammar L;").1.is_empty());
-    }
-
-    #[test]
-    fn rewrite_grammar_sections_replaces_only_grammar_bodies() {
-        let raw = "# provenance\n[type]\nLexer\n\n[grammar]\nlexer grammar L;\n\n\
-                   [input]\nkeep me\n\n[slaveGrammar]\nlexer grammar S;\n\n[output]\nkeep me too\n";
-        let rewritten = rewrite_grammar_sections(
-            raw,
-            "lexer grammar Main;",
-            &["lexer grammar Slave;".to_owned()],
-        );
-        assert_eq!(
-            rewritten,
-            "# provenance\n[type]\nLexer\n\n[grammar]\nlexer grammar Main;\n\n\
-             [input]\nkeep me\n\n[slaveGrammar]\nlexer grammar Slave;\n\n[output]\nkeep me too\n"
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "descriptor has 1 [slaveGrammar] section(s)")]
-    fn rewrite_grammar_sections_rejects_extra_rendered_slaves() {
-        let raw = "[grammar]\nlexer grammar L;\n\n[slaveGrammar]\nlexer grammar S;\n";
-        rewrite_grammar_sections(raw, "lexer grammar L;", &[]);
-    }
-
-    #[test]
-    fn corpus_header_lists_each_delta_once() {
-        let single = corpus_header("LexerExec/Case", &["lexer-input-field"]);
-        assert_eq!(
-            single,
-            "# Vendored conformance corpus file; see corpus/README.md.\n\
-             # Source: dbt-antlr4-2.0.0 descriptors/LexerExec/Case.txt\n\
-             # Grammar sections are rendered Rust: edit them here.\n\
-             # Local deltas: lexer-input-field\n"
-        );
-        let repeated = corpus_header(
-            "CompositeLexers/Case",
-            &["runtime-crate-name", "runtime-crate-name"],
-        );
-        assert!(repeated.ends_with("# Local deltas: runtime-crate-name\n"));
-        assert!(!corpus_header("LexerExec/Case", &[]).contains("Local deltas"));
     }
 }
