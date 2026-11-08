@@ -102,7 +102,7 @@ where
     pub interpreter: LexerATNSimulator<'arena>,
 
     /// `CharStream` used by this lexer
-    input: Input,
+    pub input: Input,
     recog: Ext,
 
     factory: TF,
