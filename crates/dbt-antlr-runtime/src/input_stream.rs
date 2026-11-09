@@ -27,27 +27,6 @@ impl<'input> CharStream<'input> for InputStream<'input> {
         self.get_text_inner(start, stop).into()
     }
 
-    #[inline]
-    fn has_item_at(&self) -> bool {
-        true
-    }
-
-    /// Direct byte peek: one load + high-bit test for ASCII (the common
-    /// case), full UTF-8 decode only above it. `index` is a byte offset
-    /// (char boundary, as everywhere in `InputStream`).
-    #[inline]
-    fn item_at(&self, index: isize) -> Option<i32> {
-        let &b = self.data_raw.as_bytes().get(index as usize)?;
-        if b < 0x80 {
-            Some(b as i32)
-        } else {
-            self.data_raw
-                .get(index as usize..)
-                .and_then(|it| it.chars().next())
-                .map(|it| it as i32)
-        }
-    }
-
     /// Raw byte view of the whole input from `index` on, for the walker's
     /// vectorized run scans.
     #[inline]
@@ -58,6 +37,11 @@ impl<'input> CharStream<'input> for InputStream<'input> {
     #[inline]
     fn get_data_str(&self) -> Option<&'input str> {
         Some(self.data_raw)
+    }
+
+    #[inline(always)]
+    fn is_at_eof(&mut self) -> bool {
+        (self.index as usize) >= self.data_raw.len()
     }
 
     #[inline]
@@ -96,11 +80,23 @@ impl<'input> InputStream<'input> {
             line_index: OnceLock::new(),
         }
     }
-
     /// Resets input stream to start from the beginning of this slice
     #[inline]
     pub fn reset(&mut self) {
         self.index = 0
+    }
+
+    #[inline]
+    fn item_at(&self, index: isize) -> Option<i32> {
+        let &b = self.data_raw.as_bytes().get(index as usize)?;
+        if b < 0x80 {
+            Some(b as i32)
+        } else {
+            self.data_raw
+                .get(index as usize..)
+                .and_then(|it| it.chars().next())
+                .map(|it| it as i32)
+        }
     }
 }
 
@@ -119,10 +115,7 @@ impl IntStream for InputStream<'_> {
     #[inline]
     fn la(&mut self, mut offset: isize) -> i32 {
         if offset == 1 {
-            return self
-                .data_raw
-                .item(self.index)
-                .unwrap_or(crate::int_stream::EOF);
+            return self.item_at(self.index).unwrap_or(crate::int_stream::EOF);
         }
         assert!(offset != 0, "should not be called with offset 0");
         if offset < 0 {

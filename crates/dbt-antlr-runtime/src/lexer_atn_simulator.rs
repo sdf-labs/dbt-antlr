@@ -50,6 +50,10 @@ pub trait ILexerATNSimulator<'sim>: IATNSimulator<'sim, LexerATNConfigSet<'sim>>
     }
 }
 
+pub(crate) enum FastMatch {
+    Emit { ttype: i32, accept_index: isize },
+    Slow(Result<i32, ANTLRError>),
+}
 /// Simple DFA implementation enough for lexer.
 #[derive(Debug)]
 pub struct LexerATNSimulator<'sim> {
@@ -83,11 +87,10 @@ impl<'sim> ILexerATNSimulator<'sim> for LexerATNSimulator<'sim> {
         TF: TokenFactory<'input, 'arena> + 'arena,
     {
         if let Some(Some(table)) = self.static_modes.get(mode).map(Option::as_deref) {
-            if lexer.input().has_item_at() {
-                if let Some(hay) = lexer.input().bytes_at(0) {
-                    return self.match_static_random_access(table, hay, lexer);
-                }
+            if let Some(hay) = lexer.input().bytes_at(0) {
+                return self.match_static_random_access(table, hay, lexer);
             }
+
             let mark = lexer.input().mark();
             let start_index = lexer.input().index();
             let result = self.match_static_cursor(table, mode, start_index, lexer);
@@ -195,6 +198,156 @@ impl<'sim> LexerATNSimulator<'sim> {
         match dfa.s0() {
             None => self.match_atn(lexer, dfa, scratch),
             Some(s0) => self.exec_atn(s0, lexer, dfa, scratch),
+        }
+    }
+
+    #[inline(never)]
+    pub(crate) fn match_token_continuing<'input, 'arena, Input, TF>(
+        &self,
+        mode: usize,
+        lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
+    ) -> Result<isize, ANTLRError>
+    where
+        'input: 'arena,
+        Input: CharStream<'input>,
+        TF: TokenFactory<'input, 'arena> + 'arena,
+    {
+        self.match_token(mode, lexer).map(|t| t as isize)
+    }
+
+    #[inline(always)]
+    pub(crate) fn static_mode_table(&self, mode: usize) -> Option<&'static StaticLexerDFA> {
+        self.static_modes.get(mode).and_then(Option::as_deref)
+    }
+
+    #[inline(always)]
+    pub(crate) fn match_token_fast<'input, 'arena, Input, TF>(
+        &self,
+        table: &'static StaticLexerDFA,
+        hay: &'input [u8],
+        lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
+    ) -> FastMatch
+    where
+        'input: 'arena,
+        Input: CharStream<'input>,
+        TF: TokenFactory<'input, 'arena> + 'arena,
+    {
+        let mut cursor = lexer.input().index() as usize;
+
+        'walk: loop {
+            let low = table.low.as_ptr();
+            let walker_tag = table.walker_tag.as_ptr();
+            let start_entry = table.start_entry;
+            let mut s = start_entry & STATE_MASK;
+            let mut accept_index: isize = if start_entry & ACCEPT_BIT != 0 {
+                cursor as isize
+            } else {
+                -1
+            };
+            let mut accept_state: u16 = s;
+            let mut pending_wtag: u16 = 0;
+
+            'accept: {
+                loop {
+                    let target: u16;
+                    if cursor < hay.len() {
+                        let b = unsafe { *hay.get_unchecked(cursor) };
+                        if b >= 0x80 {
+                            break;
+                        }
+                        let entry = unsafe { *low.add(s as usize * ASCII_ROW + b as usize) };
+                        if entry >= ESCAPE {
+                            if entry == NO_EDGE && accept_index >= 0 {
+                                break 'accept;
+                            }
+                            break;
+                        }
+                        target = entry & STATE_MASK;
+                        cursor += 1;
+                        if entry & ACCEPT_BIT != 0 {
+                            accept_index = cursor as isize;
+                            accept_state = target;
+                        }
+                    } else {
+                        let entry = table.eof_entry(s);
+                        if entry >= ESCAPE {
+                            if entry == NO_EDGE && accept_index >= 0 {
+                                break 'accept;
+                            }
+                            break;
+                        }
+                        target = entry & STATE_MASK;
+                        if entry & ACCEPT_BIT != 0 {
+                            accept_index = cursor as isize;
+                            accept_state = target;
+                            break 'accept;
+                        }
+                    }
+                    s = target;
+
+                    let wtag = unsafe { *walker_tag.add(s as usize) };
+                    if wtag != 0 {
+                        if wtag == WALKER_LEAF_TAG {
+                            break 'accept;
+                        }
+                        if wtag & WALKER_TERMINAL_POS_BIT != 0 {
+                            let tp = table.walker_positive_at(wtag);
+                            let c = scan_positive(hay, cursor, tp.lo, tp.hi);
+                            if c > cursor {
+                                accept_index = c as isize;
+                                accept_state = tp.target;
+                            }
+                            break 'accept;
+                        }
+                        if wtag >= WALKER_NONTERM_POS_BIT {
+                            let tp = table.walker_positive_at(wtag);
+                            let c = scan_positive(hay, cursor, tp.lo, tp.hi);
+                            if c > cursor {
+                                if accept_index == cursor as isize {
+                                    accept_index = c as isize;
+                                }
+                                cursor = c;
+                            }
+                        } else {
+                            pending_wtag = wtag;
+                            break;
+                        }
+                    }
+                }
+
+                return FastMatch::Slow(
+                    self.match_static_slow(
+                        table,
+                        cursor,
+                        s,
+                        accept_index,
+                        accept_state,
+                        pending_wtag,
+                        lexer,
+                    )
+                    .map(|t| t as i32),
+                );
+            }
+
+            let acc = table.walker_accept_at(accept_state);
+            if acc.action == WALKER_ACTION_NONE {
+                return FastMatch::Emit {
+                    ttype: acc.ttype,
+                    accept_index,
+                };
+            }
+            if acc.action == WALKER_ACTION_SKIP {
+                if (accept_index as usize) < hay.len() {
+                    lexer.advance_token_start(accept_index);
+                    cursor = accept_index as usize;
+                    continue 'walk;
+                }
+                lexer.input().seek(accept_index);
+                lexer.skip();
+                return FastMatch::Slow(Ok(acc.ttype));
+            }
+            lexer.input().seek(accept_index);
+            return FastMatch::Slow(Ok(execute_accept_actions(table, accept_state, lexer)));
         }
     }
 
@@ -308,8 +461,8 @@ impl<'sim> LexerATNSimulator<'sim> {
                 .map(|t| t as i32);
         }
 
-        lexer.input().seek(accept_index);
         let acc = table.walker_accept_at(accept_state);
+        lexer.input().seek(accept_index);
         if acc.action == WALKER_ACTION_NONE {
             return Ok(acc.ttype);
         }
@@ -374,15 +527,14 @@ impl<'sim> LexerATNSimulator<'sim> {
                             accept_state = target;
                         }
                     } else {
-                        symbol = item_at_non_ascii(lexer.input(), cursor);
+                        let (ch, len) = decode_non_ascii(hay, cursor);
+                        symbol = ch;
                         entry = table.edge_entry(s, symbol);
                         if entry >= ESCAPE {
                             break;
                         }
                         target = entry & STATE_MASK;
-                        if symbol != EOF {
-                            cursor += char::from_u32(symbol as u32).map_or(1, |c| c.len_utf8());
-                        }
+                        cursor += len;
                         if entry & ACCEPT_BIT != 0 {
                             accept_index = cursor as isize;
                             accept_state = target;
@@ -576,10 +728,15 @@ impl<'sim> LexerATNSimulator<'sim> {
         match prev_accept {
             Some((index, state)) => {
                 lexer.input().seek(index);
-                for action in table.accept_actions(state) {
-                    action.execute(lexer);
+                let acc = table.walker_accept_at(state);
+                if acc.action == WALKER_ACTION_NONE {
+                    return Ok(acc.ttype as isize);
                 }
-                Ok(table.accept_type(state) as isize)
+                if acc.action == WALKER_ACTION_SKIP {
+                    lexer.skip();
+                    return Ok(acc.ttype as isize);
+                }
+                Ok(execute_accept_actions(table, state, lexer) as isize)
             }
             None => {
                 if symbol == EOF && lexer.input().index() == start_index {
@@ -1149,8 +1306,24 @@ where
 
 #[cold]
 #[inline(never)]
-fn item_at_non_ascii<'input, Input: CharStream<'input>>(input: &Input, cursor: usize) -> i32 {
-    input.item_at(cursor as isize).unwrap_or(EOF)
+fn decode_non_ascii(hay: &[u8], cursor: usize) -> (i32, usize) {
+    let rem = &hay[cursor..];
+    let b = rem[0];
+    let len = if b < 0xE0 {
+        2
+    } else if b < 0xF0 {
+        3
+    } else {
+        4
+    };
+    if let Some(slice) = rem.get(..len) {
+        if let Ok(s) = std::str::from_utf8(slice) {
+            if let Some(c) = s.chars().next() {
+                return (c as i32, len);
+            }
+        }
+    }
+    (EOF, 0)
 }
 
 #[inline(never)]
