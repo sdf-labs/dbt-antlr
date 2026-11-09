@@ -1,10 +1,8 @@
 //! Input to lexer
 use std::borrow::Cow;
-use std::sync::OnceLock;
 
 use crate::char_stream::{CharStream, InputData};
 use crate::int_stream::IntStream;
-use crate::token::LineIndex;
 
 /// Default rust target input stream.
 ///
@@ -15,10 +13,8 @@ use crate::token::LineIndex;
 /// which does not use rusts native `str` type, so it would do additional conversions and allocations along the way.
 #[derive(Debug)]
 pub struct InputStream<'input> {
-    name: String,
     data_raw: &'input str,
     index: isize,
-    line_index: OnceLock<LineIndex>,
 }
 
 impl<'input> CharStream<'input> for InputStream<'input> {
@@ -46,16 +42,20 @@ impl<'input> CharStream<'input> for InputStream<'input> {
 
     #[inline]
     fn get_line(&self, byte_offset: isize) -> u32 {
-        self.line_index
-            .get_or_init(|| LineIndex::new(self.data_raw))
-            .line(byte_offset.max(0) as u32)
+        let bytes = self.data_raw.as_bytes();
+        let len = (byte_offset.max(0) as usize).min(bytes.len());
+        1 + memchr::memchr_iter(b'\n', &bytes[..len]).count() as u32
     }
 
     #[inline]
     fn get_char_position_in_line(&self, byte_offset: isize) -> i32 {
-        self.line_index
-            .get_or_init(|| LineIndex::new(self.data_raw))
-            .char_position_in_line(self.data_raw, byte_offset.max(0) as u32)
+        let bytes = self.data_raw.as_bytes();
+        let len = (byte_offset.max(0) as usize).min(bytes.len());
+        let line_start = memchr::memrchr(b'\n', &bytes[..len]).map_or(0, |i| i + 1);
+        bytes[line_start..len]
+            .iter()
+            .filter(|&&b| (b as i8) >= -0x40)
+            .count() as i32
     }
 }
 
@@ -72,13 +72,9 @@ impl<'input> InputStream<'input> {
     }
 
     /// Creates new `InputStream` over borrowed data
+    #[inline]
     pub fn new(data_raw: &'input str) -> Self {
-        Self {
-            name: "<empty>".to_owned(),
-            data_raw,
-            index: 0,
-            line_index: OnceLock::new(),
-        }
+        Self { data_raw, index: 0 }
     }
     /// Resets input stream to start from the beginning of this slice
     #[inline]
@@ -152,7 +148,7 @@ impl IntStream for InputStream<'_> {
     }
 
     fn get_source_name(&self) -> String {
-        self.name.clone()
+        "<empty>".to_owned()
     }
 }
 

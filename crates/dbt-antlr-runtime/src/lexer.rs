@@ -113,7 +113,9 @@ where
 
     factory: TF,
 
+    primary_error_listener: Option<Box<dyn ErrorListener<'input, 'arena, Self, TF::Tok>>>,
     error_listeners: Vec<Box<dyn ErrorListener<'input, 'arena, Self, TF::Tok>>>,
+    has_default_console_listener: bool,
 
     pub token_start_char_index: isize,
     /// Overrides token type emitted by lexer for current token
@@ -297,11 +299,17 @@ where
         &mut self,
         listener: Box<dyn ErrorListener<'input, 'arena, Self, TF::Tok>>,
     ) {
-        self.error_listeners.push(listener);
+        if self.primary_error_listener.is_none() {
+            self.primary_error_listener = Some(listener);
+        } else {
+            self.error_listeners.push(listener);
+        }
     }
 
     /// Remove and drop all error listeners
     pub fn remove_error_listeners(&mut self) {
+        self.has_default_console_listener = false;
+        self.primary_error_listener = None;
         self.error_listeners.clear();
     }
 
@@ -316,7 +324,9 @@ where
             input,
             recog,
             factory,
-            error_listeners: vec![Box::new(ConsoleErrorListener {})],
+            primary_error_listener: None,
+            error_listeners: Vec::new(),
+            has_default_console_listener: true,
             token_start_char_index: 0,
             token_type: TOKEN_INVALID_TYPE,
             text: None,
@@ -459,12 +469,24 @@ fn notify_listeners<'input, 'arena, L, Input, TF>(
     Input: CharStream<'input>,
     TF: TokenFactory<'input, 'arena> + 'arena,
 {
+    if !lexer.has_default_console_listener
+        && lexer.primary_error_listener.is_none()
+        && lexer.error_listeners.is_empty()
+    {
+        return;
+    }
     let input = &lexer.input;
     let start = lexer.token_start_char_index;
     let inner = input.get_text(start, lexer.get_char_index());
     let line = input.get_line(start);
     let column = input.get_char_position_in_line(start);
     let text = format!("token recognition error at: '{}'", inner);
+    if lexer.has_default_console_listener {
+        ConsoleErrorListener.syntax_error(lexer, None, line, column, &text, Some(e));
+    }
+    if let Some(ref listener) = lexer.primary_error_listener {
+        listener.syntax_error(lexer, None, line, column, &text, Some(e));
+    }
     for listener in lexer.error_listeners.iter() {
         listener.syntax_error(lexer, None, line, column, &text, Some(e))
     }
