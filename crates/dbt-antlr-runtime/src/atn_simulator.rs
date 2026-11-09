@@ -1,3 +1,4 @@
+use std::cell::OnceCell;
 use std::fmt::{Debug, Error, Formatter};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -24,14 +25,23 @@ where
     fn decision_to_dfa(&self, decision: usize) -> Option<&'sim DFA<'sim, CS>>;
 }
 
+struct SimulatorCaches<'sim, CS>
+where
+    CS: ConfigSet<'sim> + 'sim,
+{
+    shared_context_cache: Arc<NotifyOnDrop<PredictionContextCache<'sim>>>,
+    decision_to_dfa: Arc<NotifyOnDrop<Vec<DFA<'sim, CS>>>>,
+}
+
 pub struct BaseATNSimulator<'sim, CS>
 where
     CS: ConfigSet<'sim> + 'sim,
 {
     pub atn: &'static ATN,
     pub(crate) static_lexer_tables: Option<&'static StaticLexerTables>,
-    shared_context_cache: Arc<NotifyOnDrop<PredictionContextCache<'sim>>>,
-    decision_to_dfa: Arc<NotifyOnDrop<Vec<DFA<'sim, CS>>>>,
+    manager: &'sim (),
+    acquire_caches: fn(&'sim ()) -> SimulatorCaches<'sim, CS>,
+    caches: OnceCell<SimulatorCaches<'sim, CS>>,
     allocation_limit_bytes: usize,
 }
 
@@ -44,7 +54,9 @@ impl<'sim, CS: ConfigSet<'sim>> Debug for BaseATNSimulator<'sim, CS> {
 macro_rules! dfa_sum_method {
     ($name:ident, $inner:ident) => {
         pub fn $name(&self) -> usize {
-            self.decision_to_dfa.iter().map(|dfa| dfa.$inner()).sum()
+            self.caches.get().map_or(0, |caches| {
+                caches.decision_to_dfa.iter().map(|dfa| dfa.$inner()).sum()
+            })
         }
     };
     ($name:ident) => {
@@ -53,19 +65,30 @@ macro_rules! dfa_sum_method {
 }
 
 impl<'sim, CS: ConfigSet<'sim>> BaseATNSimulator<'sim, CS> {
+    #[inline]
+    fn caches(&self) -> &SimulatorCaches<'sim, CS> {
+        self.caches
+            .get_or_init(|| (self.acquire_caches)(self.manager))
+    }
+
     pub fn total_allocated_bytes(&self) -> usize {
         self.context_cache_bytes() + self.dfa_bytes() + self.edge_set_bytes()
     }
 
     pub fn context_cache_bytes(&self) -> usize {
-        self.shared_context_cache.allocated_bytes()
+        self.caches
+            .get()
+            .map_or(0, |caches| caches.shared_context_cache.allocated_bytes())
     }
 
     pub fn edge_set_bytes(&self) -> usize {
-        self.decision_to_dfa
-            .iter()
-            .next()
-            .map_or(0, |dfa| dfa.edge_set_bytes())
+        self.caches.get().map_or(0, |caches| {
+            caches
+                .decision_to_dfa
+                .iter()
+                .next()
+                .map_or(0, |dfa| dfa.edge_set_bytes())
+        })
     }
 
     dfa_sum_method!(dfa_bytes, allocated_bytes);
@@ -93,15 +116,17 @@ impl<'sim, CS: ConfigSet<'sim>> IATNSimulator<'sim, CS> for BaseATNSimulator<'si
     }
 
     fn shared_context_cache(&self) -> &'sim PredictionContextCache<'sim> {
+        let caches = self.caches();
         unsafe {
             std::mem::transmute::<&PredictionContextCache<'sim>, &'sim PredictionContextCache<'sim>>(
-                &self.shared_context_cache,
+                &caches.shared_context_cache,
             )
         }
     }
 
     fn decision_to_dfa(&self, decision: usize) -> Option<&'sim DFA<'sim, CS>> {
-        self.decision_to_dfa
+        self.caches()
+            .decision_to_dfa
             .get(decision)
             .map(|dfa| unsafe { std::mem::transmute::<&DFA<'sim, CS>, &'sim DFA<'sim, CS>>(dfa) })
     }
@@ -188,22 +213,15 @@ impl<CS: ConfigSet<'static> + 'static> ATNSimulatorMan<CS> {
         }
     }
 
-    pub fn get_simulator<'sim>(
-        &self,
-        // Only used to ground the 'sim lifetime:
-        _: &'sim Arena,
-    ) -> BaseATNSimulator<'sim, CS::TransmutedType<'sim>> {
-        let dfa_lock = self.decision_to_dfa.read().unwrap();
-        let allocation_limit_bytes = self.get_allocation_limit_bytes();
-
-        BaseATNSimulator {
-            atn: self.atn,
-            static_lexer_tables: self.static_lexer_tables,
+    fn acquire_caches<'sim>(ptr: &'sim ()) -> SimulatorCaches<'sim, CS::TransmutedType<'sim>> {
+        let this = unsafe { &*(ptr as *const ()).cast::<Self>() };
+        let dfa_lock = this.decision_to_dfa.read().unwrap();
+        SimulatorCaches {
             shared_context_cache: unsafe {
                 std::mem::transmute::<
                     Arc<NotifyOnDrop<PredictionContextCache<'_>>>,
                     Arc<NotifyOnDrop<PredictionContextCache<'_>>>,
-                >(self.shared_context_cache.read().unwrap().clone())
+                >(this.shared_context_cache.read().unwrap().clone())
             },
             decision_to_dfa: unsafe {
                 std::mem::transmute::<
@@ -211,7 +229,22 @@ impl<CS: ConfigSet<'static> + 'static> ATNSimulatorMan<CS> {
                     Arc<NotifyOnDrop<Vec<DFA<'_, <CS as ConfigSet<'_>>::TransmutedType<'_>>>>>,
                 >(dfa_lock.clone())
             },
-            allocation_limit_bytes,
+        }
+    }
+
+    #[inline]
+    pub fn get_simulator<'sim>(
+        &'sim self,
+        // Only used to ground the 'sim lifetime:
+        _: &'sim Arena,
+    ) -> BaseATNSimulator<'sim, CS::TransmutedType<'sim>> {
+        BaseATNSimulator {
+            atn: self.atn,
+            static_lexer_tables: self.static_lexer_tables,
+            manager: unsafe { &*(self as *const Self).cast::<()>() },
+            acquire_caches: Self::acquire_caches,
+            caches: OnceCell::new(),
+            allocation_limit_bytes: self.get_allocation_limit_bytes(),
         }
     }
 
