@@ -150,8 +150,14 @@ impl LineIndex {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum SourceFallback<'input> {
-    Stream(&'input SourceInfo<'input>),
-    Fixed { line: u32, column: i32 },
+    Stream {
+        info: &'input SourceInfo<'input>,
+        pos: u32,
+    },
+    Fixed {
+        line: u32,
+        column: i32,
+    },
 }
 
 /// Shared input text and lazily built [`LineIndex`] referenced by [`CommonToken`].
@@ -159,7 +165,7 @@ pub(crate) enum SourceFallback<'input> {
 pub struct SourceInfo<'input> {
     pub(crate) input: &'input str,
     line_index: OnceLock<LineIndex>,
-    fallback: Option<SourceFallback<'input>>,
+    pub(crate) fallback: Option<SourceFallback<'input>>,
 }
 
 impl<'input> SourceInfo<'input> {
@@ -167,7 +173,7 @@ impl<'input> SourceInfo<'input> {
         Self {
             input,
             line_index: OnceLock::new(),
-            fallback: None,
+            fallback: Some(SourceFallback::Fixed { line: 0, column: 0 }),
         }
     }
 
@@ -179,14 +185,11 @@ impl<'input> SourceInfo<'input> {
         }
     }
 
-    pub(crate) const fn new_override(
-        input: &'input str,
-        fallback: Option<SourceFallback<'input>>,
-    ) -> Self {
+    pub(crate) const fn new_override(input: &'input str, fallback: SourceFallback<'input>) -> Self {
         Self {
             input,
             line_index: OnceLock::new(),
-            fallback,
+            fallback: Some(fallback),
         }
     }
 
@@ -199,7 +202,7 @@ impl<'input> SourceInfo<'input> {
     pub fn line(&self, byte_offset: u32) -> u32 {
         match self.fallback {
             None => self.line_index().line(byte_offset),
-            Some(SourceFallback::Stream(s)) => s.line(byte_offset),
+            Some(SourceFallback::Stream { info, pos }) => info.line(pos),
             Some(SourceFallback::Fixed { line, .. }) => line,
         }
     }
@@ -210,10 +213,20 @@ impl<'input> SourceInfo<'input> {
             None => self
                 .line_index()
                 .char_position_in_line(self.input, byte_offset),
-            Some(SourceFallback::Stream(s)) => s.char_position_in_line(byte_offset),
+            Some(SourceFallback::Stream { info, pos }) => info.char_position_in_line(pos),
             Some(SourceFallback::Fixed { column, .. }) => column,
         }
     }
+}
+
+#[cold]
+#[inline(never)]
+fn advance_to_char_boundary(s: &str, mut index: usize) -> usize {
+    let len = s.len();
+    while index < len && !s.is_char_boundary(index) {
+        index += 1;
+    }
+    index.min(len)
 }
 
 /// Zero-copy token backed by a shared [`SourceInfo`] and lazy line/column index.
@@ -225,14 +238,11 @@ pub struct CommonToken<'input> {
     pub start: i32,
     pub stop: i32,
     pub token_index: i32,
-    text_end: u32,
-    pos: u32,
 }
 
-const _: () = assert!(size_of::<CommonToken<'static>>() == 32);
+const _: () = assert!(size_of::<CommonToken<'static>>() == 24);
 impl<'input> CommonToken<'input> {
     #[inline]
-    #[allow(clippy::too_many_arguments)]
     pub(crate) const fn new_slice(
         source: &'input SourceInfo<'input>,
         token_type: i32,
@@ -240,8 +250,6 @@ impl<'input> CommonToken<'input> {
         start: i32,
         stop: i32,
         token_index: i32,
-        text_end: u32,
-        pos: u32,
     ) -> Self {
         Self {
             source,
@@ -249,8 +257,6 @@ impl<'input> CommonToken<'input> {
             start,
             stop,
             token_index,
-            text_end,
-            pos,
         }
     }
 }
@@ -349,42 +355,54 @@ impl Token for CommonToken<'_> {
 
     #[inline]
     fn get_line(&self) -> u32 {
-        if self.pos == u32::MAX {
-            0
-        } else {
-            self.source.line(self.pos)
-        }
+        self.source.line(self.start.max(0) as u32)
     }
 
     #[inline]
     fn get_char_position_in_line(&self) -> i32 {
-        if self.pos == u32::MAX {
-            0
-        } else {
-            self.source.char_position_in_line(self.pos)
-        }
+        self.source.char_position_in_line(self.start.max(0) as u32)
     }
 
     #[inline(always)]
     fn get_pos_offset(&self) -> Option<u32> {
-        if self.pos == u32::MAX {
-            None
-        } else {
-            Some(self.pos)
+        match self.source.fallback {
+            None => Some(self.start.max(0) as u32),
+            Some(SourceFallback::Stream { pos, .. }) => Some(pos),
+            Some(SourceFallback::Fixed { .. }) => None,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn get_text(&self) -> &str {
-        if self.get_token_type() == TOKEN_EOF || self.text_end == u32::MAX - 1 {
-            "<EOF>"
-        } else if self.text_end != u32::MAX {
-            &self.source.input[self.start as usize..self.text_end as usize]
-        } else {
-            self.source.input
+        if self.get_token_type() == TOKEN_EOF {
+            return "<EOF>";
         }
+        if self.source.fallback.is_some() {
+            return self.source.input;
+        }
+        let input = self.source.input;
+        let input_len = input.len();
+        let start = self.start as isize;
+        let stop = self.stop as isize;
+        if stop >= input_len as isize || start >= input_len as isize {
+            return "<EOF>";
+        }
+        if stop < start || start < 0 {
+            return "";
+        }
+        let start = start as usize;
+        let end = (stop + 1) as usize;
+        let end = if end < input_len {
+            if input.is_char_boundary(end) {
+                end
+            } else {
+                advance_to_char_boundary(input, end)
+            }
+        } else {
+            input_len
+        };
+        &input[start..end]
     }
-
     #[inline(always)]
     fn get_token_index(&self) -> isize {
         self.token_index as isize
@@ -532,16 +550,8 @@ impl From<&dyn Token> for OwningToken {
 
 static INVALID_SOURCE_INFO: SourceInfo<'static> = SourceInfo::new_static("<invalid>");
 
-pub(crate) static INVALID_COMMON: CommonToken<'static> = CommonToken::new_slice(
-    &INVALID_SOURCE_INFO,
-    TOKEN_INVALID_TYPE,
-    0,
-    -1,
-    -1,
-    -1,
-    u32::MAX,
-    u32::MAX,
-);
+pub(crate) static INVALID_COMMON: CommonToken<'static> =
+    CommonToken::new_slice(&INVALID_SOURCE_INFO, TOKEN_INVALID_TYPE, 0, -1, -1, -1);
 
 #[cfg(test)]
 mod tests {
@@ -552,7 +562,7 @@ mod tests {
 
     #[test]
     fn test_common_token_size_and_lazy_line_index() {
-        assert_eq!(size_of::<CommonToken<'static>>(), 32);
+        assert_eq!(size_of::<CommonToken<'static>>(), 24);
 
         let input_text = "alpha\nbeta は!\ngamma";
         Arena::with(|arena| {
