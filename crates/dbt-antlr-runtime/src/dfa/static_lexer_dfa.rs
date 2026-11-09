@@ -12,11 +12,10 @@
 //! tables without bounds checks. `to_words` is the exact inverse of
 //! `from_words`.
 //!
-//! The runtime form expands the serialized low rows into dense per-state
-//! rows (column 0 is the EOF edge, columns 1..=128 are symbols 0..=127),
-//! derives the direct symbol-to-class map from the class starts, expands
-//! the deduplicated class rows, and decodes the continuation pool into an
-//! owned form ready for the resume path.
+//! The runtime form keeps the EOF edges in `eof` and the ASCII symbols
+//! `0..=127` in dense 128-wide rows in `low`. It also builds the direct
+//! symbol-to-class map from `class_starts`, expands the deduplicated class
+//! rows, and decodes the continuation pool into an owned form.
 //!
 //! # Word stream format (version 1)
 //!
@@ -126,14 +125,19 @@ pub const BEHIND_POSITION_INDEPENDENT: u32 = 0xFFFF;
 
 /// Dense-row width for the symbols 0..=127, which are direct-indexed.
 pub(crate) const ASCII_ROW: usize = 128;
-/// Low-row stride: column 0 is the EOF edge, then `ASCII_ROW` symbol
-/// columns.
-pub(crate) const LOW_ROW: usize = ASCII_ROW + 1;
 /// Maximum input symbol.
 const MAX_SYMBOL: u32 = 0x10FFFF;
 /// Table limit of the state count per mode: state ids stay below
 /// `ACCEPT_BIT`, so `ACCEPT_BIT | state` never collides with the sentinels.
 const MAX_STATE_COUNT: usize = 0x7FFE;
+/// Walker tag for an accept state with no outgoing edges.
+pub(crate) const WALKER_LEAF_TAG: u16 = 0xFFFF;
+/// Bit in a walker tag that marks a terminal positive ASCII scan.
+pub(crate) const WALKER_TERMINAL_POS_BIT: u16 = 0x8000;
+/// Bit in a walker tag that marks a non-terminal positive ASCII scan.
+pub(crate) const WALKER_NONTERM_POS_BIT: u16 = 0x4000;
+/// Mask that extracts the 1-based payload index from a walker tag.
+pub(crate) const WALKER_INDEX_MASK: u16 = 0x3FFF;
 
 /// All static lexer DFA tables of a grammar, one entry per lexer mode. A
 /// mode that the builder could not compile has no table; the walker runs
@@ -149,8 +153,9 @@ pub struct StaticLexerTables {
 #[cfg_attr(feature = "static-dfa-build", derive(PartialEq))]
 pub struct StaticLexerDFA {
     pub(crate) start_state: u16,
-    /// `num_states * LOW_ROW` dense targets: column 0 is the EOF edge,
-    /// columns 1..=128 are the symbols 0..=127.
+    /// EOF edge entry per state.
+    pub(crate) eof: Vec<u16>,
+    /// `num_states * ASCII_ROW` dense targets for the symbols `0..=127`.
     pub(crate) low: Vec<u16>,
     /// Direct symbol-to-class map for the symbols `ASCII_ROW..=MAX_SYMBOL`
     /// (empty when the mode has no edges past 127).
@@ -183,6 +188,10 @@ pub struct StaticLexerDFA {
     pub(crate) accel_tag: Vec<u16>,
     /// Run-acceleration payloads (see [`Accel`]), accelerated states only.
     pub(crate) accel_data: Vec<Accel>,
+    /// Predecoded walker tag per state (`WALKER_LEAF_TAG`, `WALKER_*_POS_BIT`, or `accel_tag`).
+    pub(crate) walker_tag: Vec<u16>,
+    /// Deduplicated positive ASCII bitmaps referenced by `walker_tag`.
+    pub(crate) walker_positive: Vec<TerminalPositive>,
     /// Continuation index of the EOF escape edge of each state.
     /// `NO_CONTINUATION` marks a budget escape, or no EOF escape at all.
     pub(crate) eof_escape: Vec<u32>,
@@ -203,6 +212,14 @@ pub(crate) struct EscapeRange {
     pub(crate) lo: i32,
     pub(crate) hi: i32,
     pub(crate) continuation: u32,
+}
+
+/// Predecoded 128-bit ASCII bitmap (`lo`, `hi`) and target accept state for the walker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TerminalPositive {
+    pub(crate) lo: u64,
+    pub(crate) hi: u64,
+    pub(crate) target: u16,
 }
 
 /// One continuation of the pool: everything the resume path needs to
@@ -242,7 +259,7 @@ pub(crate) struct ContinuationConfig {
 /// walker consumes the run with one scan. A run ends on the first byte that
 /// does not loop, and the normal table walk resumes from that byte.
 #[repr(C, u32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Accel {
     /// Run over the ASCII bytes set in the 128-bit bitmap (four 32-bit words,
     /// low to high).
@@ -289,8 +306,8 @@ impl Accel {
     /// `(state, tag, payload...)`, in the section layout of the word-stream
     /// documentation.
     #[cfg(feature = "static-dfa-build")]
-    pub(crate) fn to_serialized(self, s: u16) -> Vec<u32> {
-        match self {
+    pub(crate) fn to_serialized(&self, s: u16) -> Vec<u32> {
+        match *self {
             Accel::Positive([w0, w1, w2, w3]) => {
                 vec![u32::from(s), ACCEL_POSITIVE, w0, w1, w2, w3]
             }
@@ -837,49 +854,34 @@ impl StaticLexerDFA {
     #[cfg(feature = "static-dfa-build")]
     #[inline]
     pub fn edge_entry(&self, s: u16, t: i32) -> u16 {
-        // Column 0 is EOF (`t = -1` wraps to 0), columns 1..=128 are symbols
-        // 0..=127; everything else takes the class-map path.
-        let col = (t as u32).wrapping_add(1) as usize;
-        if col < LOW_ROW {
-            return unsafe { *self.low.get_unchecked(s as usize * LOW_ROW + col) };
+        if (t as u32) < ASCII_ROW as u32 {
+            return unsafe { *self.low.get_unchecked(s as usize * ASCII_ROW + t as usize) };
         }
-        // Two direct loads: symbol to class, class to target. The length
-        // check also covers modes without hi edges (an empty class map) and
-        // symbols beyond MAX_SYMBOL.
-        let i = t as usize - ASCII_ROW;
-        if i >= self.class_of.len() {
-            return NO_EDGE;
-        }
-        unsafe {
-            let class = *self.class_of.get_unchecked(i) as usize;
-            let row = *self.row_of.get_unchecked(s as usize) as usize;
-            *self.hi_rows.get_unchecked(row * self.num_classes + class)
-        }
+        self.edge_entry_non_ascii(s, t)
     }
 
     /// Raw edge entry of state `s` on input symbol `t` (`-1` = EOF):
-    /// `NO_EDGE` when there is no edge, `ESCAPE` for an escape edge, else
-    /// `target | ACCEPT_BIT?` (the bit marks accept states, so the per-char
-    /// walk loop needs only this one table load per input symbol).
-    ///
-    /// No bounds checks apart from the class-map length: every `s` the
-    /// walker produces is a valid state id (the start state and all
-    /// serialized targets are validated at load time), `row_of` entries are
-    /// validated in range at load time, and class ids are smaller than
-    /// `num_classes` by construction.
+    /// see the `static-dfa-build` twin above.
     #[cfg(not(feature = "static-dfa-build"))]
     #[inline]
     pub(crate) fn edge_entry(&self, s: u16, t: i32) -> u16 {
-        // Column 0 is EOF (`t = -1` wraps to 0), columns 1..=128 are symbols
-        // 0..=127; everything else takes the class-map path.
-        let col = (t as u32).wrapping_add(1) as usize;
-        if col < LOW_ROW {
-            return unsafe { *self.low.get_unchecked(s as usize * LOW_ROW + col) };
+        if (t as u32) < ASCII_ROW as u32 {
+            return unsafe { *self.low.get_unchecked(s as usize * ASCII_ROW + t as usize) };
         }
-        // Two direct loads: symbol to class, class to target. The length
-        // check also covers modes without hi edges (an empty class map) and
-        // symbols beyond MAX_SYMBOL.
-        let i = t as usize - ASCII_ROW;
+        self.edge_entry_non_ascii(s, t)
+    }
+
+    #[inline]
+    pub(crate) fn eof_entry(&self, s: u16) -> u16 {
+        unsafe { *self.eof.get_unchecked(s as usize) }
+    }
+
+    #[inline(never)]
+    pub(crate) fn edge_entry_non_ascii(&self, s: u16, t: i32) -> u16 {
+        if t == EOF {
+            return unsafe { *self.eof.get_unchecked(s as usize) };
+        }
+        let i = (t as usize).wrapping_sub(ASCII_ROW);
         if i >= self.class_of.len() {
             return NO_EDGE;
         }
@@ -918,7 +920,10 @@ impl StaticLexerDFA {
     #[inline]
     pub(crate) fn accept_actions(&self, s: u16) -> &[LexerAction] {
         let (off, len) = unsafe { *self.accept_actions.get_unchecked(s as usize) };
-        &self.actions[off as usize..(off + len) as usize]
+        unsafe {
+            self.actions
+                .get_unchecked(off as usize..(off + len) as usize)
+        }
     }
 
     /// Run-acceleration flavor tag of state `s`: 0 = none, else an index
@@ -935,8 +940,8 @@ impl StaticLexerDFA {
     /// Unchecked-index safety: tags are written only at load, bounded by
     /// the payload table length.
     #[inline]
-    pub(crate) fn accel_payload(&self, tag: u16) -> Accel {
-        unsafe { *self.accel_data.get_unchecked(tag as usize - 1) }
+    pub(crate) fn accel_payload(&self, tag: u16) -> &Accel {
+        unsafe { self.accel_data.get_unchecked(tag as usize - 1) }
     }
 
     /// The continuation index of the escape edge of state `s` on `symbol`
@@ -1052,7 +1057,7 @@ impl StaticLexerDFA {
     }
 
     /// Run-acceleration descriptor of state `s`, if any.
-    pub fn state_accel(&self, s: u16) -> Option<Accel> {
+    pub fn state_accel(&self, s: u16) -> Option<&Accel> {
         let tag = self.accel_tag(s);
         (tag != 0).then(|| self.accel_payload(tag))
     }
@@ -1067,15 +1072,7 @@ impl StaticLexerDFA {
 
     /// Number of populated ASCII edge entries (`0..=127`) across all states.
     pub fn ascii_populated_edges(&self) -> usize {
-        let num_states = self.num_states();
-        let mut count = 0;
-        for s in 0..num_states {
-            count += self.low[s * LOW_ROW + 1..(s + 1) * LOW_ROW]
-                .iter()
-                .filter(|&&entry| entry != NO_EDGE)
-                .count();
-        }
-        count
+        self.low.iter().filter(|&&entry| entry != NO_EDGE).count()
     }
 
     /// Number of singleton context nodes in continuation `index`.
@@ -1141,16 +1138,8 @@ impl StaticLexerDFA {
         }
         out.extend(offsets.iter().map(|&o| o as u32));
 
-        for s in 0..num_states {
-            out.push(u32::from(self.low[s * LOW_ROW]));
-        }
-        for s in 0..num_states {
-            out.extend(
-                self.low[s * LOW_ROW + 1..(s + 1) * LOW_ROW]
-                    .iter()
-                    .map(|&entry| u32::from(entry)),
-            );
-        }
+        out.extend(self.eof.iter().map(|&entry| u32::from(entry)));
+        out.extend(self.low.iter().map(|&entry| u32::from(entry)));
 
         self.write_hi_classes(out);
 
@@ -1287,6 +1276,116 @@ pub(crate) fn dense_hi_rows(row_runs: &[Vec<(u32, u32, u16)>], num_classes: usiz
     hi_rows
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compute_walker_accel(
+    eof: &[u16],
+    low: &[u16],
+    hi_rows: &[u16],
+    row_of: &[u32],
+    num_classes: usize,
+    accept_type: &[i32],
+    accel_tag: &[u16],
+    accel_data: &[Accel],
+) -> (Vec<u16>, Vec<TerminalPositive>) {
+    let num_states = accept_type.len();
+    let mut single_target: Vec<Option<(u64, u64, u16)>> = vec![None; num_states];
+    let mut is_leaf = vec![false; num_states];
+
+    for s in 0..num_states {
+        let no_eof = eof[s] == NO_EDGE;
+        let no_hi = if num_classes == 0 {
+            true
+        } else {
+            let row = row_of[s] as usize;
+            hi_rows[row * num_classes..(row + 1) * num_classes]
+                .iter()
+                .all(|&e| e == NO_EDGE)
+        };
+        if !no_eof || !no_hi {
+            continue;
+        }
+        let ascii_row = &low[s * ASCII_ROW..(s + 1) * ASCII_ROW];
+        let mut expected: u16 = NO_EDGE;
+        let mut uniform = true;
+        let mut lo_mask = 0u64;
+        let mut hi_mask = 0u64;
+        for (c, &entry) in ascii_row.iter().enumerate() {
+            if entry == NO_EDGE {
+                continue;
+            }
+            if entry == ESCAPE || (entry & ACCEPT_BIT == 0) {
+                uniform = false;
+                break;
+            }
+            if expected == NO_EDGE {
+                expected = entry;
+            } else if entry != expected {
+                uniform = false;
+                break;
+            }
+            if c < 64 {
+                lo_mask |= 1u64 << c;
+            } else {
+                hi_mask |= 1u64 << (c - 64);
+            }
+        }
+        if !uniform {
+            continue;
+        }
+        if expected == NO_EDGE {
+            if accept_type[s] >= 0 {
+                is_leaf[s] = true;
+            }
+        } else {
+            single_target[s] = Some((lo_mask, hi_mask, expected & STATE_MASK));
+        }
+    }
+
+    let mut walker_tag = vec![0u16; num_states];
+    let mut walker_positive: Vec<TerminalPositive> = Vec::new();
+    let mut intern_pos = |tp: TerminalPositive| -> Option<u16> {
+        if let Some(pos) = walker_positive.iter().position(|&x| x == tp) {
+            Some((pos + 1) as u16)
+        } else if walker_positive.len() < WALKER_INDEX_MASK as usize {
+            walker_positive.push(tp);
+            Some(walker_positive.len() as u16)
+        } else {
+            None
+        }
+    };
+
+    for s in 0..num_states {
+        if is_leaf[s] {
+            walker_tag[s] = WALKER_LEAF_TAG;
+            continue;
+        }
+        if accept_type[s] >= 0 {
+            if let Some((lo, hi, target)) = single_target[s] {
+                if single_target[target as usize] == Some((lo, hi, target)) {
+                    if let Some(idx) = intern_pos(TerminalPositive { lo, hi, target }) {
+                        walker_tag[s] = WALKER_TERMINAL_POS_BIT | idx;
+                        continue;
+                    }
+                }
+            }
+        }
+        let tag = accel_tag[s];
+        if tag != 0 {
+            if let Accel::Positive([w0, w1, w2, w3]) = accel_data[tag as usize - 1] {
+                let lo = (w0 as u64) | ((w1 as u64) << 32);
+                let hi = (w2 as u64) | ((w3 as u64) << 32);
+                if let Some(idx) = intern_pos(TerminalPositive { lo, hi, target: 0 }) {
+                    walker_tag[s] = WALKER_NONTERM_POS_BIT | idx;
+                }
+            } else if tag <= WALKER_INDEX_MASK {
+                walker_tag[s] = tag;
+            }
+        }
+    }
+
+    (walker_tag, walker_positive)
+}
+
 /// Cursor over the word stream with bounds-checked reads.
 struct Reader<'a> {
     words: &'a [u32],
@@ -1387,14 +1486,13 @@ fn read_mode(r: &mut Reader, mode: usize) -> Result<Option<StaticLexerDFA>, Stat
     for _ in 0..num_states {
         accept_action_offsets.push(r.next()? as i32);
     }
-    let mut low = vec![NO_EDGE; num_states * LOW_ROW];
-    for s in 0..num_states {
-        low[s * LOW_ROW] = check_edge(mode, r.next()?, num_states, &accept_type)?;
+    let mut eof = Vec::with_capacity(num_states);
+    for _ in 0..num_states {
+        eof.push(check_edge(mode, r.next()?, num_states, &accept_type)?);
     }
-    for s in 0..num_states {
-        for c in 1..LOW_ROW {
-            low[s * LOW_ROW + c] = check_edge(mode, r.next()?, num_states, &accept_type)?;
-        }
+    let mut low = Vec::with_capacity(num_states * ASCII_ROW);
+    for _ in 0..num_states * ASCII_ROW {
+        low.push(check_edge(mode, r.next()?, num_states, &accept_type)?);
     }
     let hi = read_hi_classes(r, mode, num_states, &accept_type)?;
     let action_lists = read_action_lists(r, mode, &accept_action_offsets)?;
@@ -1402,8 +1500,19 @@ fn read_mode(r: &mut Reader, mode: usize) -> Result<Option<StaticLexerDFA>, Stat
     let (eof_escape, escape_off, escape_ranges) = read_escape_rows(r, mode, num_states)?;
     let continuations = read_continuations(r, mode)?;
 
+    let (walker_tag, walker_positive) = compute_walker_accel(
+        &eof,
+        &low,
+        &hi.hi_rows,
+        &hi.row_of,
+        hi.num_classes,
+        &accept_type,
+        &accel_tag,
+        &accel_data,
+    );
     let table = StaticLexerDFA {
         start_state: start_state as u16,
+        eof,
         low,
         class_of: hi.class_of,
         hi_rows: hi.hi_rows,
@@ -1415,6 +1524,8 @@ fn read_mode(r: &mut Reader, mode: usize) -> Result<Option<StaticLexerDFA>, Stat
         actions: action_lists.actions,
         accel_tag,
         accel_data,
+        walker_tag,
+        walker_positive,
         eof_escape,
         escape_off,
         escape_ranges,
@@ -1656,12 +1767,12 @@ fn read_accel(
             }
         };
         accel_data.push(payload);
-        // The tag is the payload index + 1 in a u16.
+        // The tag is the payload index + 1 in the low 14 bits of a u16.
         check_index(
             mode,
             "accel payload",
             accel_data.len() as u32,
-            u16::MAX as usize + 1,
+            WALKER_INDEX_MASK as usize + 1,
         )?;
         accel_tag[s as usize] = accel_data.len() as u16;
     }
@@ -1839,9 +1950,9 @@ impl StaticLexerDFA {
             // Every ESCAPE entry needs a covering range. The range's
             // continuation can be NO_CONTINUATION (a budget escape), so
             // check coverage, not the continuation value.
-            for col in 1..LOW_ROW {
-                let symbol = col as i32 - 1;
-                if self.low[s * LOW_ROW + col] == ESCAPE
+            for col in 0..ASCII_ROW {
+                let symbol = col as i32;
+                if self.low[s * ASCII_ROW + col] == ESCAPE
                     && self.escape_range(s as u16, symbol).is_none()
                 {
                     return Err(StaticLexerError::InconsistentEscapeRow {
@@ -1951,21 +2062,39 @@ mod tests {
     #[test]
     fn accel_tags_beyond_a_u8_round_trip() {
         const NUM_STATES: usize = 300;
+        let eof = vec![NO_EDGE; NUM_STATES];
+        let low = vec![NO_EDGE; NUM_STATES * ASCII_ROW];
+        let accept_type = vec![-1; NUM_STATES];
+        let accel_tag: Vec<u16> = (1..=NUM_STATES as u16).collect();
+        let accel_data: Vec<Accel> = (0..NUM_STATES)
+            .map(|state| Accel::positive(state as u128))
+            .collect();
+        let (walker_tag, walker_positive) = compute_walker_accel(
+            &eof,
+            &low,
+            &[],
+            &[],
+            0,
+            &accept_type,
+            &accel_tag,
+            &accel_data,
+        );
         let table = StaticLexerDFA {
             start_state: 0,
-            low: vec![NO_EDGE; NUM_STATES * LOW_ROW],
+            eof,
+            low,
             class_of: Vec::new(),
             hi_rows: Vec::new(),
             row_of: Vec::new(),
             num_classes: 0,
             class_starts: Vec::new(),
-            accept_type: vec![-1; NUM_STATES],
+            accept_type,
             accept_actions: vec![(0, 0); NUM_STATES],
             actions: Vec::new(),
-            accel_tag: (1..=NUM_STATES as u16).collect(),
-            accel_data: (0..NUM_STATES)
-                .map(|state| Accel::positive(state as u128))
-                .collect(),
+            accel_tag,
+            accel_data,
+            walker_tag,
+            walker_positive,
             eof_escape: vec![NO_CONTINUATION; NUM_STATES],
             escape_off: vec![0; NUM_STATES + 1],
             escape_ranges: Vec::new(),
@@ -1981,7 +2110,7 @@ mod tests {
             assert_eq!(decoded.accel_tag(state), state + 1);
             assert_eq!(
                 decoded.state_accel(state),
-                Some(Accel::positive(u128::from(state)))
+                Some(&Accel::positive(u128::from(state)))
             );
         }
     }
