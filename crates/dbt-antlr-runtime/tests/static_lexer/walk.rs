@@ -114,7 +114,7 @@ fn compile(kind: GrammarKind, builder: &StaticLexerDfaBuilder) -> Fixture {
 // ======= Test lexer extension =======
 
 /// A `CharStream` over an `InputStream` that hides the random-access fast
-/// path: `has_item_at()` is false, so the static walker takes the
+/// path: `bytes_at()` is `None`, so the static walker takes the
 /// cursor-based fallback loop. Everything else delegates.
 #[derive(Debug)]
 struct CursorStream<'input>(InputStream<'input>);
@@ -156,10 +156,6 @@ impl IntStream for CursorStream<'_> {
 impl<'input> CharStream<'input> for CursorStream<'input> {
     fn get_text(&self, a: isize, b: isize) -> Cow<'input, str> {
         self.0.get_text(a, b)
-    }
-
-    fn has_item_at(&self) -> bool {
-        false
     }
 }
 

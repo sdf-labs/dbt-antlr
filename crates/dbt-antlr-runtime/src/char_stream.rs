@@ -15,34 +15,9 @@ pub trait CharStream<'input>: IntStream {
     /// This fact can be used by custom implementations  
     fn get_text(&self, a: isize, b: isize) -> Cow<'input, str>;
 
-    /// Whether [`CharStream::item_at`] is usable on this stream. `false`
-    /// (the default) means the stream only supports cursor-based
-    /// `la`/`consume` access; the table-driven lexer walker then uses the
-    /// (slower) cursor path. A method (not an associated const) to keep
-    /// `CharStream` dyn-compatible; inlines to a constant in the
-    /// monomorphized walker.
-    #[doc(hidden)]
-    #[inline]
-    fn has_item_at(&self) -> bool {
-        false
-    }
-
-    /// Random access to the underlying data: the code point starting at
-    /// index `index`, or `None` at/past end of input. Only usable when
-    /// [`CharStream::has_item_at`] is true; the default (never called then)
-    /// returns `None`. Lets the table-driven lexer walker hold a local
-    /// cursor and peek the next input item directly, instead of a `la(1)`
-    /// decode plus a `consume()` walk per char.
-    #[doc(hidden)]
-    #[inline]
-    fn item_at(&self, index: isize) -> Option<i32> {
-        let _ = index;
-        None
-    }
-
     /// Random access to the raw input bytes from byte index `index` to end
     /// of input; `None` when the stream has no byte view (the default) or
-    /// `index` is out of bounds. Only usable when [`CharStream::has_item_at`]
+    /// `index` is out of bounds. Lets the table-driven lexer walker run
     /// is true. Lets the table-driven lexer walker run vectorized scans
     /// over the self-loop runs marked in the static lexer tables.
     #[doc(hidden)]
@@ -56,6 +31,12 @@ pub trait CharStream<'input>: IntStream {
     #[inline]
     fn get_data_str(&self) -> Option<&'input str> {
         None
+    }
+
+    #[doc(hidden)]
+    #[inline(always)]
+    fn is_at_eof(&mut self) -> bool {
+        self.la(1) == crate::int_stream::EOF
     }
 
     #[doc(hidden)]
