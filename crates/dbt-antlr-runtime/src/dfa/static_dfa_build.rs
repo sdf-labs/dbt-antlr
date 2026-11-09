@@ -21,7 +21,7 @@
 //! semantic contexts interned.
 //! [`ModeBuild::finalize`] then lays out the walker's own [`StaticLexerDFA`]:
 //! `u16` packing with the `NO_EDGE`/`ESCAPE`/`ACCEPT_BIT` sentinels, the
-//! dense 129-wide low rows, the hi-class compression, the deduplicated
+//! separate `eof` and dense 128-wide `low` rows, the hi-class compression, the deduplicated
 //! accept action tables, the accel classification, the escape ranges, and
 //! the continuation pool. The word-stream encoding of the tables lives with
 //! the decoder: `StaticLexerTables::to_words` in [`crate::dfa::static_lexer_dfa`],
@@ -73,9 +73,9 @@ use crate::atn_config::LexerATNConfig;
 use crate::atn_config_set::MutableLexerATNConfigSet;
 use crate::atn_state::{ATNStateRef, ATNStateType, StarLoopEntryState};
 use crate::dfa::static_lexer_dfa::{
-    class_map, dense_hi_rows, Accel, ContinuationConfig, EscapeRange, LexerContinuation,
-    StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, CONTINUATION_MOVED_CONFIGS,
-    CONTINUATION_SOURCE_SET, ESCAPE, LOW_ROW, NO_CONTINUATION, NO_EDGE,
+    class_map, compute_walker_accel, dense_hi_rows, Accel, ContinuationConfig, EscapeRange,
+    LexerContinuation, StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, ASCII_ROW,
+    CONTINUATION_MOVED_CONFIGS, CONTINUATION_SOURCE_SET, ESCAPE, NO_CONTINUATION, NO_EDGE,
 };
 use crate::dfa::FinalizeStore;
 use crate::int_stream::EOF;
@@ -166,7 +166,7 @@ pub struct StateSummary {
 }
 
 /// A self-recursive lexer rule compiled into [`Accel::CountedExclusion`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompiledRecursiveRule {
     /// Rule index in the lexer ATN.
     pub rule_index: usize,
@@ -373,13 +373,13 @@ impl StaticLexerDfaBuilder {
             .iter()
             .map(|rule| CompiledRecursiveRule {
                 rule_index: rule.rule_index as usize,
-                accel: rule.accel,
+                accel: rule.accel.clone(),
             })
             .collect();
         let mut states = build_state_summaries(&mode.states, &mode.rows);
         let table = mode.finalize(atn);
         for (index, state) in states.iter_mut().enumerate() {
-            state.accel = table.state_accel(index as u16);
+            state.accel = table.state_accel(index as u16).cloned();
         }
         ModeBuildOutcome {
             table: Some(table),
@@ -834,16 +834,15 @@ impl<'sc> ModeBuild<'sc> {
         let num_states = self.states.len();
         let accept_type: Vec<i32> = self.states.iter().map(|s| s.accept_type).collect();
 
-        // Low rows: column 0 is the EOF edge, columns 1..=128 are the
-        // symbols 0..=127.
-        let mut low = vec![NO_EDGE; num_states * LOW_ROW];
+        let mut eof = Vec::with_capacity(num_states);
+        let mut low = vec![NO_EDGE; num_states * ASCII_ROW];
         for (s, rows) in self.rows.iter().enumerate() {
-            low[s * LOW_ROW] = pack_entry(&accept_type, rows.eof);
+            eof.push(pack_entry(&accept_type, rows.eof));
             for iv in &rows.intervals {
                 if iv.lo <= ASCII_MAX {
                     let entry = pack_entry(&accept_type, iv.entry);
                     for c in iv.lo..=iv.hi.min(ASCII_MAX) {
-                        low[s * LOW_ROW + 1 + c as usize] = entry;
+                        low[s * ASCII_ROW + c as usize] = entry;
                     }
                 }
             }
@@ -937,8 +936,19 @@ impl<'sc> ModeBuild<'sc> {
             .map(|cont| commit_continuation(atn, cont))
             .collect();
 
+        let (walker_tag, walker_positive) = compute_walker_accel(
+            &eof,
+            &low,
+            &hi_rows,
+            &row_of,
+            num_classes,
+            &accept_type,
+            &accel_tag,
+            &accel_data,
+        );
         StaticLexerDFA {
             start_state: 0,
+            eof,
             low,
             class_of,
             hi_rows,
@@ -950,6 +960,8 @@ impl<'sc> ModeBuild<'sc> {
             actions,
             accel_tag,
             accel_data,
+            walker_tag,
+            walker_positive,
             eof_escape,
             escape_off,
             escape_ranges,
@@ -965,7 +977,7 @@ impl<'sc> ModeBuild<'sc> {
 /// instead of deferring these to adaptive runtime, we compile them into a
 /// special [`Accel::CountedExclusion`] that uses a depth counter to track the
 /// recursion while still utilizing SIMD accelerated scans.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct SimpleRecursiveRule {
     rule_index: i32,
     rec_return_state: i32,
@@ -1238,7 +1250,7 @@ fn maybe_counted_accel(
             return None;
         }
     }
-    Some(cc.accel)
+    Some(cc.accel.clone())
 }
 
 /// The run-acceleration descriptor of one state, classified from its structural

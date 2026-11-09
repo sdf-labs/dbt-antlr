@@ -423,7 +423,7 @@ fn build_mode_report(
         .iter()
         .enumerate()
         .filter_map(|(state_index, state_summary)| {
-            let accel = state_summary.accel?;
+            let accel = state_summary.accel.as_ref()?;
             let accept_rule = state_summary
                 .accept_rule_index
                 .and_then(|rule_index| unit.rules.get(rule_index))
@@ -572,8 +572,8 @@ fn build_mode_failure_report(
     }
 }
 
-fn build_accel_kind_report(accel: Accel, hi_all_self_loop: bool) -> StaticLexerAccelKindReport {
-    match accel {
+fn build_accel_kind_report(accel: &Accel, hi_all_self_loop: bool) -> StaticLexerAccelKindReport {
+    match *accel {
         Accel::Positive(words) => {
             let bitmap = Accel::bitmap_u128(words);
             let ascii_count = bitmap.count_ones();
