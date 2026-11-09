@@ -75,6 +75,7 @@ impl Arena {
         &self.payloads
     }
 
+    #[inline(always)]
     pub fn alloc_token<T>(&self, value: T) -> &mut T
     where
         T: Token,

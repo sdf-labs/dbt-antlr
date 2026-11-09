@@ -219,35 +219,36 @@ where
     Input: CharStream<'input>,
     TF: TokenFactory<'input, 'arena> + 'arena,
 {
-    fn emit_token(&mut self, token: &'arena mut TF::Tok) {
-        self.token = Some(token);
-    }
-
-    fn emit(&mut self) {
+    #[inline(always)]
+    fn emit(&mut self) -> &'arena mut TF::Tok {
         Ext::before_emit(self);
         let stop = self.get_char_index() - 1;
-        let token = self.factory.create(
+        let text = if self.text.is_some() {
+            self.text.take()
+        } else {
+            None
+        };
+        self.factory.create(
             Some(&mut self.input),
             self.token_type,
-            self.text.take(),
+            text,
             self.channel,
             self.token_start_char_index,
             stop,
-        );
-        self.emit_token(token);
+        )
     }
 
-    fn emit_eof(&mut self) {
+    #[inline(always)]
+    fn emit_eof(&mut self) -> &'arena mut TF::Tok {
         let char_index = self.get_char_index();
-        let token = self.factory.create(
+        self.factory.create(
             Some(&mut self.input),
             super::int_stream::EOF,
             None,
             LEXER_DEFAULT_TOKEN_CHANNEL,
             char_index,
             char_index - 1,
-        );
-        self.emit_token(token)
+        )
     }
 
     /// Current position in input stream
@@ -338,14 +339,15 @@ where
     #[allow(unused_labels)]
     fn next_token(&mut self) -> &'arena mut TF::Tok {
         let _marker = self.input().mark();
-        'outer: loop {
+        let token = 'outer: loop {
             if self.hit_eof {
-                self.emit_eof();
-                break;
+                break self.emit_eof();
             }
             self.token = None;
             self.channel = LEXER_DEFAULT_TOKEN_CHANNEL;
-            self.text = None;
+            if self.text.is_some() {
+                self.text = None;
+            }
             self.token_start_char_index = self.input().index();
 
             'inner: loop {
@@ -376,13 +378,13 @@ where
                 }
             }
 
-            if self.token.is_none() {
-                self.emit();
-                break;
-            }
-        }
+            break match self.token.take() {
+                Some(tok) => tok,
+                None => self.emit(),
+            };
+        };
         self.input().release(_marker);
-        self.token.take().unwrap()
+        token
     }
 
     fn get_line(&self) -> u32 {

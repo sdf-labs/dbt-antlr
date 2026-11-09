@@ -4,7 +4,7 @@ use std::cell::Cell;
 use std::fmt::Debug;
 
 use crate::char_stream::CharStream;
-use crate::token::{CommonToken, OwningToken, SourceFallback, SourceInfo, Token, TOKEN_EOF};
+use crate::token::{CommonToken, OwningToken, SourceFallback, SourceInfo, Token};
 use crate::Arena;
 
 #[inline]
@@ -52,16 +52,6 @@ where
 pub struct CommonTokenFactory<'input, 'arena> {
     arena: &'arena Arena,
     source_info: Cell<Option<&'input SourceInfo<'input>>>,
-}
-
-#[cold]
-#[inline(never)]
-fn advance_to_char_boundary(s: &str, mut index: usize) -> usize {
-    let len = s.len();
-    while index < len && !s.is_char_boundary(index) {
-        index += 1;
-    }
-    index.min(len)
 }
 
 impl<'input, 'arena> CommonTokenFactory<'input, 'arena>
@@ -135,19 +125,20 @@ where
             },
             None => "",
         };
-        let override_info = self.arena.alloc_in_tokens(SourceInfo::new_override(
-            text_str,
-            stream_info.map(SourceFallback::Stream),
-        ));
+        let fallback = match stream_info {
+            Some(info) if start >= 0 => SourceFallback::Stream {
+                info,
+                pos: start as u32,
+            },
+            _ => SourceFallback::Fixed { line: 0, column: 0 },
+        };
+        let override_info = self
+            .arena
+            .alloc_in_tokens(SourceInfo::new_override(text_str, fallback));
         let override_info: &'input SourceInfo<'input> = unsafe {
             std::mem::transmute::<&'arena SourceInfo<'input>, &'input SourceInfo<'input>>(
                 override_info,
             )
-        };
-        let pos = if start >= 0 && stream_info.is_some() {
-            start as u32
-        } else {
-            u32::MAX
         };
         self.arena.alloc_token(CommonToken::new_slice(
             override_info,
@@ -156,8 +147,6 @@ where
             start as i32,
             stop as i32,
             -1,
-            u32::MAX,
-            pos,
         ))
     }
 }
@@ -172,7 +161,7 @@ where
         Self::new(arena)
     }
 
-    #[inline]
+    #[inline(always)]
     fn create<T>(
         &self,
         source: Option<&mut T>,
@@ -191,26 +180,6 @@ where
                     Some(info) => info,
                     None => self.init_source_info(x),
                 };
-                let input_len = source_info.input.len();
-                let text_end = if ttype == TOKEN_EOF
-                    || stop >= input_len as isize
-                    || start >= input_len as isize
-                {
-                    u32::MAX - 1
-                } else if stop < start || start < 0 {
-                    start.max(0) as u32
-                } else {
-                    let end = (stop + 1) as usize;
-                    if end < input_len {
-                        if source_info.input.is_char_boundary(end) {
-                            end as u32
-                        } else {
-                            advance_to_char_boundary(source_info.input, end) as u32
-                        }
-                    } else {
-                        input_len as u32
-                    }
-                };
                 self.arena.alloc_token(CommonToken::new_slice(
                     source_info,
                     ttype,
@@ -218,8 +187,6 @@ where
                     start as i32,
                     stop as i32,
                     -1,
-                    text_end,
-                    start.max(0) as u32,
                 ))
             }
             (text, source) => self.create_slow(source, ttype, text, channel, start, stop),
@@ -237,17 +204,12 @@ where
         let text_str: &'input str = unsafe {
             std::mem::transmute::<&'arena str, &'input str>(self.arena.alloc_string(text))
         };
-        let (fallback, pos) = match (self.source_info.get(), reference_token.get_pos_offset()) {
-            (Some(stream_info), Some(offset)) => {
-                (Some(SourceFallback::Stream(stream_info)), offset)
-            }
-            _ => (
-                Some(SourceFallback::Fixed {
-                    line: reference_token.get_line(),
-                    column: reference_token.get_char_position_in_line(),
-                }),
-                0,
-            ),
+        let fallback = match (self.source_info.get(), reference_token.get_pos_offset()) {
+            (Some(info), Some(pos)) => SourceFallback::Stream { info, pos },
+            _ => SourceFallback::Fixed {
+                line: reference_token.get_line(),
+                column: reference_token.get_char_position_in_line(),
+            },
         };
         let override_info = self
             .arena
@@ -264,8 +226,6 @@ where
             -1,
             -1,
             -1,
-            u32::MAX,
-            pos,
         ))
     }
 }
