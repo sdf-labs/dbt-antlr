@@ -10,7 +10,7 @@ use crate::char_stream::CharStream;
 use crate::dfa::static_lexer_dfa::{
     Accel, LexerContinuation, StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, ASCII_ROW,
     CONTINUATION_MOVED_CONFIGS, CONTINUATION_SOURCE_SET, ESCAPE, NO_CONTINUATION, NO_EDGE,
-    STATE_MASK, WALKER_INDEX_MASK, WALKER_LEAF_TAG, WALKER_NONTERM_POS_BIT,
+    STATE_MASK, WALKER_ACTION_NONE, WALKER_ACTION_SKIP, WALKER_LEAF_TAG, WALKER_NONTERM_POS_BIT,
     WALKER_TERMINAL_POS_BIT,
 };
 use crate::dfa::{DFAState, ProposedDFAState, DFA};
@@ -58,7 +58,7 @@ pub struct LexerATNSimulator<'sim> {
     start_index: Cell<isize>,
     mode: Cell<usize>,
     prev_accept: Cell<Option<ResolvedAccept<'sim>>>,
-    static_tables: Option<&'static StaticLexerTables>,
+    static_modes: &'static [Option<Box<StaticLexerDFA>>],
     /// Number of escape edges the table walker handed to the lazy path.
     #[doc(hidden)]
     pub escape_count: Cell<usize>,
@@ -82,29 +82,23 @@ impl<'sim> ILexerATNSimulator<'sim> for LexerATNSimulator<'sim> {
         Input: CharStream<'input>,
         TF: TokenFactory<'input, 'arena> + 'arena,
     {
-        let mark = lexer.input().mark();
-        let result = (|| {
-            let start_index = lexer.input().index();
-            if let Some(tables) = self.static_tables {
-                if let Some(table) = tables.mode(mode) {
-                    if lexer.input().has_item_at() {
-                        if let Some(hay) = lexer.input().bytes_at(0) {
-                            return self.match_static_random_access(
-                                table,
-                                mode,
-                                start_index,
-                                hay,
-                                lexer,
-                            );
-                        }
-                    }
-                    return self.match_static_cursor(table, mode, start_index, lexer);
+        if let Some(Some(table)) = self.static_modes.get(mode).map(Option::as_deref) {
+            if lexer.input().has_item_at() {
+                if let Some(hay) = lexer.input().bytes_at(0) {
+                    return self.match_static_random_access(table, hay, lexer);
                 }
             }
-            self.match_token_atn_entry(mode, start_index, lexer)
-        })();
+            let mark = lexer.input().mark();
+            let start_index = lexer.input().index();
+            let result = self.match_static_cursor(table, mode, start_index, lexer);
+            lexer.input().release(mark);
+            return result.map(|t| t as i32);
+        }
+        let mark = lexer.input().mark();
+        let start_index = lexer.input().index();
+        let result = self.match_token_atn_entry(mode, start_index, lexer);
         lexer.input().release(mark);
-        result
+        result.map(|t| t as i32)
     }
 
     #[inline]
@@ -138,7 +132,9 @@ impl<'sim> LexerATNSimulator<'sim> {
     pub fn new(base: BaseATNSimulator<'sim, LexerATNConfigSet<'sim>>) -> LexerATNSimulator<'sim> {
         LexerATNSimulator {
             // Note: already validated by the manager at construction:
-            static_tables: base.static_lexer_tables,
+            static_modes: base
+                .static_lexer_tables
+                .map_or(&[], StaticLexerTables::mode_slice),
             base,
             start_index: Cell::new(0),
             mode: Cell::new(0),
@@ -160,7 +156,7 @@ impl<'sim> LexerATNSimulator<'sim> {
     /// This is mostly for use by tests.
     pub fn set_static_tables(&mut self, tables: &'static StaticLexerTables) {
         tables.validate_for_atn(self.atn());
-        self.static_tables = Some(tables);
+        self.static_modes = tables.mode_slice();
     }
 
     #[inline(never)]
@@ -169,7 +165,7 @@ impl<'sim> LexerATNSimulator<'sim> {
         mode: usize,
         start_index: isize,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
-    ) -> Result<i32, ANTLRError>
+    ) -> Result<isize, ANTLRError>
     where
         'input: 'arena,
         Input: CharStream<'input>,
@@ -179,7 +175,7 @@ impl<'sim> LexerATNSimulator<'sim> {
         self.mode.set(mode);
         self.start_index.set(start_index);
         self.prev_accept.set(None);
-        self.match_token_atn(lexer, &scratch)
+        self.match_token_atn(lexer, &scratch).map(|t| t as isize)
     }
 
     fn match_token_atn<'scratch, 'input, 'arena, Input, TF>(
@@ -208,8 +204,6 @@ impl<'sim> LexerATNSimulator<'sim> {
     fn match_static_random_access<'input, 'arena, Input, TF>(
         &self,
         table: &'static StaticLexerDFA,
-        mode: usize,
-        start_index: isize,
         hay: &'input [u8],
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
     ) -> Result<i32, ANTLRError>
@@ -218,24 +212,153 @@ impl<'sim> LexerATNSimulator<'sim> {
         Input: CharStream<'input>,
         TF: TokenFactory<'input, 'arena> + 'arena,
     {
-        let mut s = table.start_state();
-        let mut accept_index: isize = if table.accept_type(s) >= 0 {
+        let start_index = lexer.input().index();
+        let start_entry = table.start_entry;
+        let mut s = start_entry & STATE_MASK;
+        let mut accept_index: isize = if start_entry & ACCEPT_BIT != 0 {
             start_index
         } else {
             -1
         };
         let mut accept_state: u16 = s;
 
-        let low = table.low.as_slice();
-        let walker_tag = table.walker_tag.as_slice();
-        let walker_positive = table.walker_positive.as_slice();
+        let low = table.low.as_ptr();
+        let walker_tag = table.walker_tag.as_ptr();
 
         let mut cursor = start_index as usize;
-        let mut symbol: i32;
-        let mut entry: u16;
-        let mut target: u16;
+        let mut pending_wtag: u16 = 0;
         'accept: {
             loop {
+                let target: u16;
+                if cursor < hay.len() {
+                    let b = unsafe { *hay.get_unchecked(cursor) };
+                    if b >= 0x80 {
+                        break;
+                    }
+                    let entry = unsafe { *low.add(s as usize * ASCII_ROW + b as usize) };
+                    if entry >= ESCAPE {
+                        if entry == NO_EDGE && accept_index >= 0 {
+                            break 'accept;
+                        }
+                        break;
+                    }
+                    target = entry & STATE_MASK;
+                    cursor += 1;
+                    if entry & ACCEPT_BIT != 0 {
+                        accept_index = cursor as isize;
+                        accept_state = target;
+                    }
+                } else {
+                    let entry = table.eof_entry(s);
+                    if entry >= ESCAPE {
+                        if entry == NO_EDGE && accept_index >= 0 {
+                            break 'accept;
+                        }
+                        break;
+                    }
+                    target = entry & STATE_MASK;
+                    if entry & ACCEPT_BIT != 0 {
+                        accept_index = cursor as isize;
+                        accept_state = target;
+                        break 'accept;
+                    }
+                }
+                s = target;
+
+                let wtag = unsafe { *walker_tag.add(s as usize) };
+                if wtag != 0 {
+                    if wtag == WALKER_LEAF_TAG {
+                        break 'accept;
+                    }
+                    if wtag & WALKER_TERMINAL_POS_BIT != 0 {
+                        let tp = table.walker_positive_at(wtag);
+                        let c = scan_positive(hay, cursor, tp.lo, tp.hi);
+                        if c > cursor {
+                            accept_index = c as isize;
+                            accept_state = tp.target;
+                        }
+                        break 'accept;
+                    }
+                    if wtag >= WALKER_NONTERM_POS_BIT {
+                        let tp = table.walker_positive_at(wtag);
+                        let c = scan_positive(hay, cursor, tp.lo, tp.hi);
+                        if c > cursor {
+                            if accept_index == cursor as isize {
+                                accept_index = c as isize;
+                            }
+                            cursor = c;
+                        }
+                    } else {
+                        pending_wtag = wtag;
+                        break;
+                    }
+                }
+            }
+
+            return self
+                .match_static_slow(
+                    table,
+                    cursor,
+                    s,
+                    accept_index,
+                    accept_state,
+                    pending_wtag,
+                    lexer,
+                )
+                .map(|t| t as i32);
+        }
+
+        lexer.input().seek(accept_index);
+        let acc = table.walker_accept_at(accept_state);
+        if acc.action == WALKER_ACTION_NONE {
+            return Ok(acc.ttype);
+        }
+        if acc.action == WALKER_ACTION_SKIP {
+            lexer.skip();
+            return Ok(acc.ttype);
+        }
+        Ok(execute_accept_actions(table, accept_state, lexer))
+    }
+
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn match_static_slow<'input, 'arena, Input, TF>(
+        &self,
+        table: &'static StaticLexerDFA,
+        mut cursor: usize,
+        mut s: u16,
+        mut accept_index: isize,
+        mut accept_state: u16,
+        pending_wtag: u16,
+        lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
+    ) -> Result<isize, ANTLRError>
+    where
+        'input: 'arena,
+        Input: CharStream<'input>,
+        TF: TokenFactory<'input, 'arena> + 'arena,
+    {
+        let start_index = lexer.input().index();
+        let hay = lexer.input().bytes_at(0).unwrap_or(&[]);
+        if pending_wtag != 0 {
+            let accel = table.accel_payload(pending_wtag);
+            let c = run_scan(hay, cursor, accel);
+            if c > cursor {
+                if accept_index == cursor as isize
+                    && !matches!(accel, Accel::CountedExclusion { .. })
+                {
+                    accept_index = c as isize;
+                }
+                cursor = c;
+            }
+        }
+
+        let low = table.low.as_slice();
+        let walker_tag = table.walker_tag.as_slice();
+        let mut symbol: i32;
+        let mut entry: u16;
+        'accept: {
+            loop {
+                let target: u16;
                 if cursor < hay.len() {
                     let b = unsafe { *hay.get_unchecked(cursor) };
                     if b < 0x80 {
@@ -289,9 +412,7 @@ impl<'sim> LexerATNSimulator<'sim> {
                         break 'accept;
                     }
                     if wtag & WALKER_TERMINAL_POS_BIT != 0 {
-                        let tp = unsafe {
-                            *walker_positive.get_unchecked((wtag & WALKER_INDEX_MASK) as usize - 1)
-                        };
+                        let tp = table.walker_positive_at(wtag);
                         let c = scan_positive(hay, cursor, tp.lo, tp.hi);
                         if c > cursor {
                             accept_index = c as isize;
@@ -300,9 +421,7 @@ impl<'sim> LexerATNSimulator<'sim> {
                         break 'accept;
                     }
                     if wtag >= WALKER_NONTERM_POS_BIT {
-                        let tp = unsafe {
-                            *walker_positive.get_unchecked((wtag & WALKER_INDEX_MASK) as usize - 1)
-                        };
+                        let tp = table.walker_positive_at(wtag);
                         let c = scan_positive(hay, cursor, tp.lo, tp.hi);
                         if c > cursor {
                             if accept_index == cursor as isize {
@@ -328,7 +447,7 @@ impl<'sim> LexerATNSimulator<'sim> {
             if entry == ESCAPE {
                 return self.static_escape(
                     table,
-                    mode,
+                    table.mode as usize,
                     start_index,
                     s,
                     symbol,
@@ -343,7 +462,7 @@ impl<'sim> LexerATNSimulator<'sim> {
             }
             if accept_index < 0 {
                 if symbol == EOF && cursor == start_index as usize {
-                    return Ok(TOKEN_EOF);
+                    return Ok(TOKEN_EOF as isize);
                 }
                 lexer.input().seek(cursor as isize);
                 return Err(ANTLRError::lexer_no_alt(start_index));
@@ -351,10 +470,15 @@ impl<'sim> LexerATNSimulator<'sim> {
         }
 
         lexer.input().seek(accept_index);
-        for action in table.accept_actions(accept_state) {
-            action.execute(lexer);
+        let acc = table.walker_accept_at(accept_state);
+        if acc.action == WALKER_ACTION_NONE {
+            return Ok(acc.ttype as isize);
         }
-        Ok(table.accept_type(accept_state))
+        if acc.action == WALKER_ACTION_SKIP {
+            lexer.skip();
+            return Ok(acc.ttype as isize);
+        }
+        Ok(execute_accept_actions(table, accept_state, lexer) as isize)
     }
 
     /// Token matching with a precomputed [`StaticLexerDFA`] over a cursor-only
@@ -366,7 +490,7 @@ impl<'sim> LexerATNSimulator<'sim> {
         mode: usize,
         start_index: isize,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
-    ) -> Result<i32, ANTLRError>
+    ) -> Result<isize, ANTLRError>
     where
         'input: 'arena,
         Input: CharStream<'input>,
@@ -443,7 +567,7 @@ impl<'sim> LexerATNSimulator<'sim> {
         prev_accept: Option<(isize, u16)>,
         symbol: i32,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
-    ) -> Result<i32, ANTLRError>
+    ) -> Result<isize, ANTLRError>
     where
         'input: 'arena,
         Input: CharStream<'input>,
@@ -455,11 +579,11 @@ impl<'sim> LexerATNSimulator<'sim> {
                 for action in table.accept_actions(state) {
                     action.execute(lexer);
                 }
-                Ok(table.accept_type(state))
+                Ok(table.accept_type(state) as isize)
             }
             None => {
                 if symbol == EOF && lexer.input().index() == start_index {
-                    return Ok(TOKEN_EOF);
+                    return Ok(TOKEN_EOF as isize);
                 }
                 Err(ANTLRError::lexer_no_alt(start_index))
             }
@@ -486,7 +610,7 @@ impl<'sim> LexerATNSimulator<'sim> {
         cursor: isize,
         prev_accept: Option<(isize, u16)>,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
-    ) -> Result<i32, ANTLRError>
+    ) -> Result<isize, ANTLRError>
     where
         'input: 'arena,
         Input: CharStream<'input>,
@@ -511,7 +635,7 @@ impl<'sim> LexerATNSimulator<'sim> {
         }));
         let continuation = table.escape_continuation(state, symbol);
         if continuation == NO_CONTINUATION {
-            return self.restart_token_lazy(lexer, &scratch);
+            return self.restart_token_lazy(lexer, &scratch).map(|t| t as isize);
         }
         self.match_token_from_continuation(
             table.continuation(continuation),
@@ -519,6 +643,7 @@ impl<'sim> LexerATNSimulator<'sim> {
             lexer,
             &scratch,
         )
+        .map(|t| t as isize)
     }
 
     /// Restarts the current token on the lazy path from the token start.
@@ -1002,6 +1127,24 @@ fn scan_positive(hay: &[u8], mut c: usize, lo: u64, hi: u64) -> usize {
         }
     }
     c
+}
+
+#[cold]
+#[inline(never)]
+fn execute_accept_actions<'input, 'arena, Input, TF>(
+    table: &'static StaticLexerDFA,
+    accept_state: u16,
+    lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
+) -> i32
+where
+    'input: 'arena,
+    Input: CharStream<'input>,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+{
+    for action in table.accept_actions(accept_state) {
+        action.execute(lexer);
+    }
+    table.accept_type(accept_state)
 }
 
 #[cold]

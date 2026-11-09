@@ -73,9 +73,10 @@ use crate::atn_config::LexerATNConfig;
 use crate::atn_config_set::MutableLexerATNConfigSet;
 use crate::atn_state::{ATNStateRef, ATNStateType, StarLoopEntryState};
 use crate::dfa::static_lexer_dfa::{
-    class_map, compute_walker_accel, dense_hi_rows, Accel, ContinuationConfig, EscapeRange,
-    LexerContinuation, StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, ASCII_ROW,
-    CONTINUATION_MOVED_CONFIGS, CONTINUATION_SOURCE_SET, ESCAPE, NO_CONTINUATION, NO_EDGE,
+    class_map, compute_walker_accel, compute_walker_accept, dense_hi_rows, Accel,
+    ContinuationConfig, EscapeRange, LexerContinuation, StaticLexerDFA, StaticLexerTables,
+    ACCEPT_BIT, ASCII_ROW, CONTINUATION_MOVED_CONFIGS, CONTINUATION_SOURCE_SET, ESCAPE,
+    NO_CONTINUATION, NO_EDGE,
 };
 use crate::dfa::FinalizeStore;
 use crate::int_stream::EOF;
@@ -377,7 +378,7 @@ impl StaticLexerDfaBuilder {
             })
             .collect();
         let mut states = build_state_summaries(&mode.states, &mode.rows);
-        let table = mode.finalize(atn);
+        let table = mode.finalize(atn, mode_index);
         for (index, state) in states.iter_mut().enumerate() {
             state.accel = table.state_accel(index as u16).cloned();
         }
@@ -830,7 +831,7 @@ impl<'sc> ModeBuild<'sc> {
     }
 
     /// Converts the structural build into a final [`StaticLexerDFA`].
-    fn finalize(self, atn: &ATN) -> StaticLexerDFA {
+    fn finalize(self, atn: &ATN, mode_index: usize) -> StaticLexerDFA {
         let num_states = self.states.len();
         let accept_type: Vec<i32> = self.states.iter().map(|s| s.accept_type).collect();
 
@@ -946,10 +947,17 @@ impl<'sc> ModeBuild<'sc> {
             &accel_tag,
             &accel_data,
         );
+        let walker_accept = compute_walker_accept(&accept_type, &accept_actions, &actions);
+        let start_entry = if accept_type[0] >= 0 { ACCEPT_BIT } else { 0 };
         StaticLexerDFA {
-            start_state: 0,
-            eof,
             low,
+            walker_tag,
+            walker_accept,
+            walker_positive,
+            eof,
+            start_state: 0,
+            start_entry,
+            mode: mode_index as u32,
             class_of,
             hi_rows,
             row_of,
@@ -960,8 +968,6 @@ impl<'sc> ModeBuild<'sc> {
             actions,
             accel_tag,
             accel_data,
-            walker_tag,
-            walker_positive,
             eof_escape,
             escape_off,
             escape_ranges,

@@ -138,6 +138,9 @@ pub(crate) const WALKER_TERMINAL_POS_BIT: u16 = 0x8000;
 pub(crate) const WALKER_NONTERM_POS_BIT: u16 = 0x4000;
 /// Mask that extracts the 1-based payload index from a walker tag.
 pub(crate) const WALKER_INDEX_MASK: u16 = 0x3FFF;
+pub(crate) const WALKER_ACTION_NONE: u32 = 0;
+pub(crate) const WALKER_ACTION_SKIP: u32 = 1;
+pub(crate) const WALKER_ACTION_LIST: u32 = 2;
 
 /// All static lexer DFA tables of a grammar, one entry per lexer mode. A
 /// mode that the builder could not compile has no table; the walker runs
@@ -145,18 +148,26 @@ pub(crate) const WALKER_INDEX_MASK: u16 = 0x3FFF;
 #[derive(Debug)]
 #[cfg_attr(feature = "static-dfa-build", derive(PartialEq))]
 pub struct StaticLexerTables {
-    pub(crate) modes: Vec<Option<StaticLexerDFA>>,
+    pub(crate) modes: Vec<Option<Box<StaticLexerDFA>>>,
 }
 
 /// The table of one lexer mode.
+#[repr(C)]
 #[derive(Debug)]
 #[cfg_attr(feature = "static-dfa-build", derive(PartialEq))]
 pub struct StaticLexerDFA {
-    pub(crate) start_state: u16,
-    /// EOF edge entry per state.
-    pub(crate) eof: Vec<u16>,
     /// `num_states * ASCII_ROW` dense targets for the symbols `0..=127`.
     pub(crate) low: Vec<u16>,
+    /// Predecoded walker tag per state (`WALKER_LEAF_TAG`, `WALKER_*_POS_BIT`, or `accel_tag`).
+    pub(crate) walker_tag: Vec<u16>,
+    pub(crate) walker_accept: Vec<WalkerAccept>,
+    /// Deduplicated positive ASCII bitmaps referenced by `walker_tag`.
+    pub(crate) walker_positive: Vec<TerminalPositive>,
+    /// EOF edge entry per state.
+    pub(crate) eof: Vec<u16>,
+    pub(crate) start_state: u16,
+    pub(crate) start_entry: u16,
+    pub(crate) mode: u32,
     /// Direct symbol-to-class map for the symbols `ASCII_ROW..=MAX_SYMBOL`
     /// (empty when the mode has no edges past 127).
     pub(crate) class_of: Vec<u16>,
@@ -188,10 +199,6 @@ pub struct StaticLexerDFA {
     pub(crate) accel_tag: Vec<u16>,
     /// Run-acceleration payloads (see [`Accel`]), accelerated states only.
     pub(crate) accel_data: Vec<Accel>,
-    /// Predecoded walker tag per state (`WALKER_LEAF_TAG`, `WALKER_*_POS_BIT`, or `accel_tag`).
-    pub(crate) walker_tag: Vec<u16>,
-    /// Deduplicated positive ASCII bitmaps referenced by `walker_tag`.
-    pub(crate) walker_positive: Vec<TerminalPositive>,
     /// Continuation index of the EOF escape edge of each state.
     /// `NO_CONTINUATION` marks a budget escape, or no EOF escape at all.
     pub(crate) eof_escape: Vec<u32>,
@@ -222,6 +229,12 @@ pub(crate) struct TerminalPositive {
     pub(crate) target: u16,
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WalkerAccept {
+    pub(crate) ttype: i32,
+    pub(crate) action: u32,
+}
 /// One continuation of the pool: everything the resume path needs to
 /// rebuild the configs of an escape edge.
 #[derive(Debug, PartialEq, Eq)]
@@ -722,7 +735,7 @@ impl StaticLexerTables {
         let num_modes = r.next()? as usize;
         let mut modes = Vec::with_capacity(num_modes);
         for mode in 0..num_modes {
-            modes.push(read_mode(&mut r, mode)?);
+            modes.push(read_mode(&mut r, mode)?.map(Box::new));
         }
         if r.pos != words.len() {
             return Err(StaticLexerError::TrailingWords {
@@ -736,7 +749,12 @@ impl StaticLexerTables {
     /// The table for lexer mode `m`, if the builder compiled one.
     #[inline]
     pub fn mode(&self, m: usize) -> Option<&StaticLexerDFA> {
-        self.modes.get(m).and_then(Option::as_ref)
+        self.modes.get(m).and_then(Option::as_deref)
+    }
+
+    #[inline]
+    pub(crate) fn mode_slice(&self) -> &[Option<Box<StaticLexerDFA>>] {
+        &self.modes
     }
 
     /// Number of lexer modes in the stream, including modes without a
@@ -749,15 +767,16 @@ impl StaticLexerTables {
     /// of the type ([`Self::from_words`] is the wire side).
     #[cfg(feature = "static-dfa-build")]
     pub(crate) fn from_modes(modes: Vec<Option<StaticLexerDFA>>) -> Self {
-        StaticLexerTables { modes }
+        StaticLexerTables {
+            modes: modes.into_iter().map(|m| m.map(Box::new)).collect(),
+        }
     }
 
     /// The inverse of `from_modes`: unpacks into the per-mode tables.
     #[cfg(feature = "static-dfa-build")]
     pub(crate) fn into_modes(self) -> Vec<Option<StaticLexerDFA>> {
-        self.modes
+        self.modes.into_iter().map(|m| m.map(|b| *b)).collect()
     }
-
     /// Encodes the tables as a word stream: the exact inverse of
     /// [`Self::from_words`]. Generated code embeds the words.
     ///
@@ -942,6 +961,20 @@ impl StaticLexerDFA {
     #[inline]
     pub(crate) fn accel_payload(&self, tag: u16) -> &Accel {
         unsafe { self.accel_data.get_unchecked(tag as usize - 1) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn walker_positive_at(&self, wtag: u16) -> TerminalPositive {
+        unsafe {
+            *self
+                .walker_positive
+                .get_unchecked((wtag & WALKER_INDEX_MASK) as usize - 1)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn walker_accept_at(&self, s: u16) -> WalkerAccept {
+        unsafe { *self.walker_accept.get_unchecked(s as usize) }
     }
 
     /// The continuation index of the escape edge of state `s` on `symbol`
@@ -1386,6 +1419,27 @@ pub(crate) fn compute_walker_accel(
     (walker_tag, walker_positive)
 }
 
+pub(crate) fn compute_walker_accept(
+    accept_type: &[i32],
+    accept_actions: &[(u32, u32)],
+    actions: &[LexerAction],
+) -> Vec<WalkerAccept> {
+    accept_type
+        .iter()
+        .zip(accept_actions.iter())
+        .map(|(&ttype, &(off, len))| {
+            let action = if len == 0 {
+                WALKER_ACTION_NONE
+            } else if len == 1 && actions[off as usize] == LexerAction::Skip {
+                WALKER_ACTION_SKIP
+            } else {
+                WALKER_ACTION_LIST
+            };
+            WalkerAccept { ttype, action }
+        })
+        .collect()
+}
+
 /// Cursor over the word stream with bounds-checked reads.
 struct Reader<'a> {
     words: &'a [u32],
@@ -1510,10 +1564,26 @@ fn read_mode(r: &mut Reader, mode: usize) -> Result<Option<StaticLexerDFA>, Stat
         &accel_tag,
         &accel_data,
     );
+    let walker_accept = compute_walker_accept(
+        &accept_type,
+        &action_lists.accept_actions,
+        &action_lists.actions,
+    );
+    let start_state = start_state as u16;
+    let start_entry = if accept_type[start_state as usize] >= 0 {
+        start_state | ACCEPT_BIT
+    } else {
+        start_state
+    };
     let table = StaticLexerDFA {
-        start_state: start_state as u16,
-        eof,
         low,
+        walker_tag,
+        walker_accept,
+        walker_positive,
+        eof,
+        start_state,
+        start_entry,
+        mode: mode as u32,
         class_of: hi.class_of,
         hi_rows: hi.hi_rows,
         row_of: hi.row_of,
@@ -1524,8 +1594,6 @@ fn read_mode(r: &mut Reader, mode: usize) -> Result<Option<StaticLexerDFA>, Stat
         actions: action_lists.actions,
         accel_tag,
         accel_data,
-        walker_tag,
-        walker_positive,
         eof_escape,
         escape_off,
         escape_ranges,
@@ -2079,22 +2147,28 @@ mod tests {
             &accel_tag,
             &accel_data,
         );
+        let accept_actions = vec![(0, 0); NUM_STATES];
+        let actions = Vec::new();
+        let walker_accept = compute_walker_accept(&accept_type, &accept_actions, &actions);
         let table = StaticLexerDFA {
-            start_state: 0,
-            eof,
             low,
+            walker_tag,
+            walker_accept,
+            walker_positive,
+            eof,
+            start_state: 0,
+            start_entry: 0,
+            mode: 0,
             class_of: Vec::new(),
             hi_rows: Vec::new(),
             row_of: Vec::new(),
             num_classes: 0,
             class_starts: Vec::new(),
             accept_type,
-            accept_actions: vec![(0, 0); NUM_STATES],
-            actions: Vec::new(),
+            accept_actions,
+            actions,
             accel_tag,
             accel_data,
-            walker_tag,
-            walker_positive,
             eof_escape: vec![NO_CONTINUATION; NUM_STATES],
             escape_off: vec![0; NUM_STATES + 1],
             escape_ranges: Vec::new(),
