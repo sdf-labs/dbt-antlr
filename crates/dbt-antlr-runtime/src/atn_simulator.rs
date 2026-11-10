@@ -25,12 +25,15 @@ where
     fn decision_to_dfa(&self, decision: usize) -> Option<&'sim DFA<'sim, CS>>;
 }
 
-struct SimulatorCaches<'sim, CS>
+pub(crate) struct SimulatorCaches<'sim, CS>
 where
     CS: ConfigSet<'sim> + 'sim,
 {
     shared_context_cache: Arc<NotifyOnDrop<PredictionContextCache<'sim>>>,
     decision_to_dfa: Arc<NotifyOnDrop<Vec<DFA<'sim, CS>>>>,
+}
+pub(crate) trait CacheProvider<'sim, CS: ConfigSet<'sim>> {
+    fn acquire_caches(&self) -> SimulatorCaches<'sim, CS>;
 }
 
 pub struct BaseATNSimulator<'sim, CS>
@@ -39,8 +42,7 @@ where
 {
     pub atn: &'static ATN,
     pub(crate) static_lexer_tables: Option<&'static StaticLexerTables>,
-    manager: &'sim (),
-    acquire_caches: fn(&'sim ()) -> SimulatorCaches<'sim, CS>,
+    manager: &'sim (dyn CacheProvider<'sim, CS> + 'sim),
     caches: OnceCell<SimulatorCaches<'sim, CS>>,
     allocation_limit_bytes: usize,
 }
@@ -67,8 +69,7 @@ macro_rules! dfa_sum_method {
 impl<'sim, CS: ConfigSet<'sim>> BaseATNSimulator<'sim, CS> {
     #[inline]
     fn caches(&self) -> &SimulatorCaches<'sim, CS> {
-        self.caches
-            .get_or_init(|| (self.acquire_caches)(self.manager))
+        self.caches.get_or_init(|| self.manager.acquire_caches())
     }
 
     pub fn total_allocated_bytes(&self) -> usize {
@@ -213,36 +214,16 @@ impl<CS: ConfigSet<'static> + 'static> ATNSimulatorMan<CS> {
         }
     }
 
-    fn acquire_caches<'sim>(ptr: &'sim ()) -> SimulatorCaches<'sim, CS::TransmutedType<'sim>> {
-        let this = unsafe { &*(ptr as *const ()).cast::<Self>() };
-        let dfa_lock = this.decision_to_dfa.read().unwrap();
-        SimulatorCaches {
-            shared_context_cache: unsafe {
-                std::mem::transmute::<
-                    Arc<NotifyOnDrop<PredictionContextCache<'_>>>,
-                    Arc<NotifyOnDrop<PredictionContextCache<'_>>>,
-                >(this.shared_context_cache.read().unwrap().clone())
-            },
-            decision_to_dfa: unsafe {
-                std::mem::transmute::<
-                    Arc<NotifyOnDrop<Vec<DFA<'_, CS>>>>,
-                    Arc<NotifyOnDrop<Vec<DFA<'_, <CS as ConfigSet<'_>>::TransmutedType<'_>>>>>,
-                >(dfa_lock.clone())
-            },
-        }
-    }
-
     #[inline]
-    pub fn get_simulator<'sim>(
-        &'sim self,
+    pub fn get_simulator<'a: 'sim, 'sim>(
+        &'a self,
         // Only used to ground the 'sim lifetime:
         _: &'sim Arena,
     ) -> BaseATNSimulator<'sim, CS::TransmutedType<'sim>> {
         BaseATNSimulator {
             atn: self.atn,
             static_lexer_tables: self.static_lexer_tables,
-            manager: unsafe { &*(self as *const Self).cast::<()>() },
-            acquire_caches: Self::acquire_caches,
+            manager: self,
             caches: OnceCell::new(),
             allocation_limit_bytes: self.get_allocation_limit_bytes(),
         }
@@ -306,6 +287,27 @@ impl<CS: ConfigSet<'static> + 'static> ATNSimulatorMan<CS> {
         self.context_cache_sentinel.wait();
 
         self.is_resetting.store(false, Ordering::Release);
+    }
+}
+impl<'sim, CS: ConfigSet<'static> + 'static> CacheProvider<'sim, CS::TransmutedType<'sim>>
+    for ATNSimulatorMan<CS>
+{
+    fn acquire_caches(&self) -> SimulatorCaches<'sim, CS::TransmutedType<'sim>> {
+        let dfa_lock = self.decision_to_dfa.read().unwrap();
+        SimulatorCaches {
+            shared_context_cache: unsafe {
+                std::mem::transmute::<
+                    Arc<NotifyOnDrop<PredictionContextCache<'_>>>,
+                    Arc<NotifyOnDrop<PredictionContextCache<'_>>>,
+                >(self.shared_context_cache.read().unwrap().clone())
+            },
+            decision_to_dfa: unsafe {
+                std::mem::transmute::<
+                    Arc<NotifyOnDrop<Vec<DFA<'_, CS>>>>,
+                    Arc<NotifyOnDrop<Vec<DFA<'_, <CS as ConfigSet<'_>>::TransmutedType<'_>>>>>,
+                >(dfa_lock.clone())
+            },
+        }
     }
 }
 

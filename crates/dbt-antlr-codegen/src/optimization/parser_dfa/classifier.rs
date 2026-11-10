@@ -899,8 +899,8 @@ impl DecisionClassifier {
             None
         };
         let mut completion_depths = std::mem::take(&mut self.completion_depths);
+        let manager = ParserATNSimulatorManager::new(atn);
         let attempt = Arena::with(|arena| {
-            let manager = ParserATNSimulatorManager::new(atn);
             let simulator = ParserATNSimulator::new(manager.get_simulator(arena));
             let scratch = Bump::new();
             let mut build = DecisionBuild {

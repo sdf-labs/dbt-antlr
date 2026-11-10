@@ -15,12 +15,10 @@ pub trait CharStream<'input>: IntStream {
     /// This fact can be used by custom implementations  
     fn get_text(&self, a: isize, b: isize) -> Cow<'input, str>;
 
-    /// Random access to the raw input bytes from byte index `index` to end
-    /// of input; `None` when the stream has no byte view (the default) or
-    /// `index` is out of bounds. Lets the table-driven lexer walker run
-    /// is true. Lets the table-driven lexer walker run vectorized scans
-    /// over the self-loop runs marked in the static lexer tables.
-    #[doc(hidden)]
+    /// Random access to the raw input bytes from byte index `index` to end of
+    /// input, if the underlying stream supports random access; returns `None`
+    /// when the stream has no byte view (the default) or `index` is out of
+    /// bounds.
     #[inline]
     fn bytes_at(&self, index: isize) -> Option<&'input [u8]> {
         let _ = index;
