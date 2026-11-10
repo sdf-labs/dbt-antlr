@@ -49,7 +49,13 @@ fn build(grammar: &str) -> (ATN, StaticLexerDfaBuild) {
 fn walk(dfa: &StaticLexerDFA, from: u16, text: &str) -> u16 {
     let mut s = from;
     for c in text.chars() {
-        let entry = dfa.edge_entry(s, c as i32);
+        // SAFETY: `s` is the caller's state or a walked edge target; the check
+        // keeps it a valid state number.
+        assert!(
+            (s as usize) < dfa.num_states(),
+            "walk: state {s} is not a state"
+        );
+        let entry = unsafe { dfa.edge_entry(s, c as i32) };
         assert!(
             entry != NO_EDGE && entry != ESCAPE,
             "walk: edge on {c:?} from state {s} must be a plain edge, got {entry:#06x}"
@@ -62,7 +68,10 @@ fn walk(dfa: &StaticLexerDFA, from: u16, text: &str) -> u16 {
 /// The sorted, deduplicated accept token types of the mode.
 fn accept_types(dfa: &StaticLexerDFA) -> Vec<i32> {
     let mut types: Vec<i32> = (0..dfa.num_states() as u16)
-        .map(|s| dfa.accept_type(s))
+        .map(|s| {
+            // SAFETY: `s` comes from `0..num_states`.
+            unsafe { dfa.accept_type(s) }
+        })
         .filter(|&t| t >= 0)
         .collect();
     types.sort_unstable();
@@ -73,8 +82,10 @@ fn accept_types(dfa: &StaticLexerDFA) -> Vec<i32> {
 /// True when no edge of the mode escapes (symbol edges and EOF edges).
 fn has_no_escapes(dfa: &StaticLexerDFA) -> bool {
     (0..dfa.num_states() as u16).all(|s| {
-        dfa.edge_entry(s, EOF) != ESCAPE
-            && dfa.escape_continuation(s, EOF) == NO_CONTINUATION
+        // SAFETY: `s` comes from `0..num_states`.
+        let eof = unsafe { dfa.edge_entry(s, EOF) };
+        eof != ESCAPE
+            && unsafe { dfa.escape_continuation(s, EOF) } == NO_CONTINUATION
             && dfa.escape_ranges(s).is_empty()
     })
 }
@@ -303,9 +314,11 @@ fn check_invariants(build: &StaticLexerDfaBuild, atn: &ATN) {
             for symbol in symbols {
                 let entry = mode.edge(s as u16, symbol);
                 check_entry(mode, s, symbol, entry);
+                // SAFETY: `s` ranges over the decoded mode's states, which are
+                // the committed table's states.
+                let committed_entry = unsafe { committed.edge_entry(s as u16, symbol) };
                 assert_eq!(
-                    entry,
-                    committed.edge_entry(s as u16, symbol),
+                    entry, committed_entry,
                     "edge entry of the committed table matches the word stream"
                 );
             }
@@ -379,18 +392,21 @@ fn csv_is_fully_static() {
 
     // The STRING accept: '"' ... '"' — walk a minimal string.
     let s = walk(dfa, dfa.start_state(), "\"a\"");
-    assert_eq!(dfa.accept_type(s), 6);
+    // SAFETY: `s` is a state returned by `walk`.
+    assert_eq!(unsafe { dfa.accept_type(s) }, 6);
 
     // The TEXT state loops on hi symbols.
     let text = walk(dfa, dfa.start_state(), "x");
-    assert_eq!(dfa.accept_type(text), 5);
-    let entry = dfa.edge_entry(text, 0x400); // a hi symbol: TEXT loops
+    // SAFETY: `text` is a state returned by `walk`.
+    assert_eq!(unsafe { dfa.accept_type(text) }, 5);
+    let entry = unsafe { dfa.edge_entry(text, 0x400) }; // a hi symbol: TEXT loops
     assert_ne!(entry, NO_EDGE);
     assert_eq!(entry & STATE_MASK, text);
 
     // The WS action list is channel(HIDDEN): one (0, 1, 0) triple.
     let ws = walk(dfa, dfa.start_state(), " ");
-    assert_eq!(dfa.accept_type(ws), 4);
+    // SAFETY: `ws` is a state returned by `walk`.
+    assert_eq!(unsafe { dfa.accept_type(ws) }, 4);
     assert_eq!(dfa.accept_action_triples(ws), vec![(0, 1, 0)]);
 }
 
@@ -426,8 +442,9 @@ fn spike_escape_coordinates() {
     // step of that edge reaches the KWLET accept under the assumed-true
     // predicate, so skip_alt fires and the continuation is source-set.
     let le = walk(dfa, dfa.start_state(), "le");
-    assert_eq!(dfa.edge_entry(le, 't' as i32), ESCAPE);
-    let cont = dfa.escape_continuation(le, 't' as i32);
+    // SAFETY: `le` is a state returned by `walk`.
+    assert_eq!(unsafe { dfa.edge_entry(le, 't' as i32) }, ESCAPE);
+    let cont = unsafe { dfa.escape_continuation(le, 't' as i32) };
     assert_ne!(cont, NO_CONTINUATION, "escape range for 't'");
     assert_eq!(dfa.continuation_kind(cont), CONTINUATION_SOURCE_SET);
     assert!(dfa.continuation_num_configs(cont) > 0);
@@ -440,10 +457,11 @@ fn spike_escape_coordinates() {
     // Nested comment bodies stay static and do not escape on nested "/*".
     let body = walk(dfa, dfa.start_state(), "/*");
     let slash = walk(dfa, body, "/");
-    assert_ne!(dfa.edge_entry(body, 'a' as i32), ESCAPE);
-    assert_ne!(dfa.edge_entry(body, 'a' as i32), NO_EDGE);
-    assert_ne!(dfa.edge_entry(slash, '*' as i32), ESCAPE);
-    assert_ne!(dfa.edge_entry(slash, '*' as i32), NO_EDGE);
+    // SAFETY: `body` and `slash` are states returned by `walk`.
+    assert_ne!(unsafe { dfa.edge_entry(body, 'a' as i32) }, ESCAPE);
+    assert_ne!(unsafe { dfa.edge_entry(body, 'a' as i32) }, NO_EDGE);
+    assert_ne!(unsafe { dfa.edge_entry(slash, '*' as i32) }, ESCAPE);
+    assert_ne!(unsafe { dfa.edge_entry(slash, '*' as i32) }, NO_EDGE);
 }
 
 #[test]
@@ -464,7 +482,11 @@ fn non_counted_recursion_escapes() {
     let counts = build.modes[0].escape_counts;
     assert_eq!(counts.recursive_context, 1, "recursion escapes at entry");
     assert_eq!(dfa.num_states(), 2);
-    assert_eq!(dfa.edge_entry(dfa.start_state(), '{' as i32), ESCAPE);
+    // SAFETY: `start_state` is a state of the table.
+    assert_eq!(
+        unsafe { dfa.edge_entry(dfa.start_state(), '{' as i32) },
+        ESCAPE
+    );
     let kinds: Vec<u32> = (0..dfa.num_continuations() as u32)
         .map(|i| dfa.continuation_kind(i))
         .collect();
@@ -497,7 +519,8 @@ fn modes_grammar_builds_all_modes() {
     let default_mode = build.table(0).expect("mode 0");
     assert!(default_mode.num_classes() > 0);
     let text = walk(default_mode, default_mode.start_state(), "x");
-    let entry = default_mode.edge_entry(text, 0x10FFFF);
+    // SAFETY: `text` is a state returned by `walk`.
+    let entry = unsafe { default_mode.edge_entry(text, 0x10FFFF) };
     assert_ne!(entry, NO_EDGE);
     assert_eq!(entry & STATE_MASK, text);
 
@@ -531,8 +554,9 @@ fn custom_action_escapes() {
     // of `CUST: 'cust' {..} 'x'`. The same closure also reaches the ID accept,
     // so skip_alt fires and the continuation is source-set.
     let cus = walk(dfa, dfa.start_state(), "cus");
-    assert_eq!(dfa.edge_entry(cus, 't' as i32), ESCAPE);
-    let cont = dfa.escape_continuation(cus, 't' as i32);
+    // SAFETY: `cus` is a state returned by `walk`.
+    assert_eq!(unsafe { dfa.edge_entry(cus, 't' as i32) }, ESCAPE);
+    let cont = unsafe { dfa.escape_continuation(cus, 't' as i32) };
     assert_ne!(cont, NO_CONTINUATION, "escape range for 't'");
     assert_eq!(dfa.continuation_kind(cont), CONTINUATION_SOURCE_SET);
 }
@@ -586,17 +610,20 @@ fn eof_edges_are_compiled() {
 
     // After "ab", the EOF edge reaches the AB accept: AB = 1.
     let ab = walk(dfa, dfa.start_state(), "ab");
-    let entry = dfa.edge_entry(ab, EOF);
+    // SAFETY: `ab` is a state returned by `walk`.
+    let entry = unsafe { dfa.edge_entry(ab, EOF) };
     assert_ne!(entry, NO_EDGE);
     assert_ne!(entry, ESCAPE);
     assert_eq!(entry & ACCEPT_BIT, ACCEPT_BIT);
-    assert_eq!(dfa.accept_type(entry & STATE_MASK), 1);
+    // SAFETY: `entry` is an edge target masked to a state number.
+    assert_eq!(unsafe { dfa.accept_type(entry & STATE_MASK) }, 1);
 
     // EOF from the start state and after "a" alone is no edge: 'a' matches
     // the A rule and stops there.
-    assert_eq!(dfa.edge_entry(dfa.start_state(), EOF), NO_EDGE);
+    // SAFETY: `start_state` and the walked state are states of the table.
+    assert_eq!(unsafe { dfa.edge_entry(dfa.start_state(), EOF) }, NO_EDGE);
     assert_eq!(
-        dfa.edge_entry(walk(dfa, dfa.start_state(), "a"), EOF),
+        unsafe { dfa.edge_entry(walk(dfa, dfa.start_state(), "a"), EOF) },
         NO_EDGE
     );
 }
@@ -687,19 +714,22 @@ fn eof_edge_escapes_on_guarded_eof() {
 
     // The 'a' edge is static: the predicate sits behind the EOF match.
     let s = walk(dfa, dfa.start_state(), "a");
-    assert_eq!(dfa.edge_entry(s, EOF), ESCAPE);
+    // SAFETY: `s` is a state returned by `walk`.
+    assert_eq!(unsafe { dfa.edge_entry(s, EOF) }, ESCAPE);
 
     // The moved EOF config reaches the A accept under the assumed-true
     // predicate, so skip_alt fires and the continuation is source-set.
-    let cont = dfa.escape_continuation(s, EOF);
+    // SAFETY: `s` is a state returned by `walk`.
+    let cont = unsafe { dfa.escape_continuation(s, EOF) };
     assert_ne!(cont, NO_CONTINUATION);
     assert_eq!(dfa.continuation_kind(cont), CONTINUATION_SOURCE_SET);
     assert!(dfa.continuation_num_configs(cont) > 0);
 
     // The start state has no EOF edge at all.
-    assert_eq!(dfa.edge_entry(dfa.start_state(), EOF), NO_EDGE);
+    // SAFETY: `start_state` is a state of the table.
+    assert_eq!(unsafe { dfa.edge_entry(dfa.start_state(), EOF) }, NO_EDGE);
     assert_eq!(
-        dfa.escape_continuation(dfa.start_state(), EOF),
+        unsafe { dfa.escape_continuation(dfa.start_state(), EOF) },
         NO_CONTINUATION
     );
 }
@@ -713,19 +743,18 @@ fn dump_spike() {
     check_invariants(&build, &atn);
     let dfa = build.table(0).expect("mode 0");
     eprintln!("states: {}", dfa.num_states());
+    // SAFETY (below): `s` ranges over the states of `dfa`.
     for s in 0..dfa.num_states() as u16 {
         let mut edges = Vec::new();
         for sym in 0..=127i32 {
-            let entry = dfa.edge_entry(s, sym);
+            let entry = unsafe { dfa.edge_entry(s, sym) };
             if entry == NO_EDGE {
                 continue;
             }
             let c = char::from_u32(sym as u32).unwrap();
             if entry == ESCAPE {
-                edges.push(format!(
-                    "{c:?}->ESC(c{:?})",
-                    dfa.escape_continuation(s, sym)
-                ));
+                let cont = unsafe { dfa.escape_continuation(s, sym) };
+                edges.push(format!("{c:?}->ESC(c{cont:?})"));
             } else {
                 edges.push(format!(
                     "{c:?}->{}{}",
@@ -736,7 +765,7 @@ fn dump_spike() {
         }
         eprintln!(
             "  s{s} accept={} actions={:?} edges: {}",
-            dfa.accept_type(s),
+            unsafe { dfa.accept_type(s) },
             dfa.accept_action_triples(s),
             edges.join(" ")
         );

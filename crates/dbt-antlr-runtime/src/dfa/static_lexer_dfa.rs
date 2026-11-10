@@ -865,38 +865,46 @@ impl StaticLexerDFA {
     /// `target | ACCEPT_BIT?` (the bit marks accept states, so the per-char
     /// walk loop needs only this one table load per input symbol).
     ///
-    /// No bounds checks apart from the class-map length: every `s` the
-    /// walker produces is a valid state id (the start state and all
-    /// serialized targets are validated at load time), `row_of` entries are
-    /// validated in range at load time, and class ids are smaller than
-    /// `num_classes` by construction.
+    /// # Safety
+    /// `s` must be a valid state number
     #[cfg(feature = "static-dfa-build")]
     #[inline]
-    pub fn edge_entry(&self, s: u16, t: i32) -> u16 {
+    pub unsafe fn edge_entry(&self, s: u16, t: i32) -> u16 {
         if (t as u32) < ASCII_ROW as u32 {
             return unsafe { *self.low.get_unchecked(s as usize * ASCII_ROW + t as usize) };
         }
-        self.edge_entry_non_ascii(s, t)
+        // SAFETY: this function's contract makes `s` a valid state number.
+        unsafe { self.edge_entry_non_ascii(s, t) }
     }
 
     /// Raw edge entry of state `s` on input symbol `t` (`-1` = EOF):
-    /// see the `static-dfa-build` twin above.
+    /// `NO_EDGE` when there is no edge, `ESCAPE` for an escape edge, else
+    /// `target | ACCEPT_BIT?` (the bit marks accept states, so the per-char
+    /// walk loop needs only this one table load per input symbol).
+    ///
+    /// # Safety
+    /// `s` must be a valid state number
     #[cfg(not(feature = "static-dfa-build"))]
     #[inline]
-    pub(crate) fn edge_entry(&self, s: u16, t: i32) -> u16 {
+    pub(crate) unsafe fn edge_entry(&self, s: u16, t: i32) -> u16 {
         if (t as u32) < ASCII_ROW as u32 {
             return unsafe { *self.low.get_unchecked(s as usize * ASCII_ROW + t as usize) };
         }
-        self.edge_entry_non_ascii(s, t)
+        // SAFETY: this function's contract makes `s` a valid state number.
+        unsafe { self.edge_entry_non_ascii(s, t) }
     }
 
+    /// # Safety
+    /// `s` must be a valid state number
     #[inline]
-    pub(crate) fn eof_entry(&self, s: u16) -> u16 {
+    pub(crate) unsafe fn eof_entry(&self, s: u16) -> u16 {
         unsafe { *self.eof.get_unchecked(s as usize) }
     }
 
+    /// # Safety
+    /// `s` must be a valid state number
     #[inline(never)]
-    pub(crate) fn edge_entry_non_ascii(&self, s: u16, t: i32) -> u16 {
+    pub(crate) unsafe fn edge_entry_non_ascii(&self, s: u16, t: i32) -> u16 {
         if t == EOF {
             return unsafe { *self.eof.get_unchecked(s as usize) };
         }
@@ -914,20 +922,22 @@ impl StaticLexerDFA {
     /// Token type produced when accepting in state `s`; -1 = not an accept
     /// state.
     ///
-    /// Same unchecked-index safety argument as [`StaticLexerDFA::edge_entry`].
+    /// # Safety
+    /// `s` must be a valid state number
     #[cfg(feature = "static-dfa-build")]
     #[inline]
-    pub fn accept_type(&self, s: u16) -> i32 {
+    pub unsafe fn accept_type(&self, s: u16) -> i32 {
         unsafe { *self.accept_type.get_unchecked(s as usize) }
     }
 
     /// Token type produced when accepting in state `s`; -1 = not an accept
     /// state.
     ///
-    /// Same unchecked-index safety argument as [`StaticLexerDFA::edge_entry`].
+    /// # Safety
+    /// `s` must be a valid state number
     #[cfg(not(feature = "static-dfa-build"))]
     #[inline]
-    pub(crate) fn accept_type(&self, s: u16) -> i32 {
+    pub(crate) unsafe fn accept_type(&self, s: u16) -> i32 {
         unsafe { *self.accept_type.get_unchecked(s as usize) }
     }
 
@@ -935,9 +945,10 @@ impl StaticLexerDFA {
     /// state `s` (skip, mode, channel, type, ...), in order; empty slice
     /// when none.
     ///
-    /// Same unchecked-index safety argument as [`StaticLexerDFA::edge_entry`].
+    /// # Safety
+    /// `s` must be a valid state number
     #[inline]
-    pub(crate) fn accept_actions(&self, s: u16) -> &[LexerAction] {
+    pub(crate) unsafe fn accept_actions(&self, s: u16) -> &[LexerAction] {
         let (off, len) = unsafe { *self.accept_actions.get_unchecked(s as usize) };
         unsafe {
             self.actions
@@ -948,23 +959,26 @@ impl StaticLexerDFA {
     /// Run-acceleration flavor tag of state `s`: 0 = none, else an index
     /// + 1 into the payload table (see [`StaticLexerDFA::accel_payload`]).
     ///
-    /// Same unchecked-index safety argument as [`StaticLexerDFA::edge_entry`].
+    /// # Safety
+    /// `s` must be a valid state number
     #[inline]
-    pub(crate) fn accel_tag(&self, s: u16) -> u16 {
+    pub(crate) unsafe fn accel_tag(&self, s: u16) -> u16 {
         unsafe { *self.accel_tag.get_unchecked(s as usize) }
     }
 
     /// Run-acceleration payload for a nonzero [`StaticLexerDFA::accel_tag`].
     ///
-    /// Unchecked-index safety: tags are written only at load, bounded by
-    /// the payload table length.
+    /// # Safety
+    /// `tag` must be a valid tag obtained from [`accel_tag`]
     #[inline]
-    pub(crate) fn accel_payload(&self, tag: u16) -> &Accel {
+    pub(crate) unsafe fn accel_payload(&self, tag: u16) -> &Accel {
         unsafe { self.accel_data.get_unchecked(tag as usize - 1) }
     }
 
+    /// # Safety
+    /// `wtag` must be a valid walker tag
     #[inline(always)]
-    pub(crate) fn walker_positive_at(&self, wtag: u16) -> TerminalPositive {
+    pub(crate) unsafe fn walker_positive_at(&self, wtag: u16) -> TerminalPositive {
         unsafe {
             *self
                 .walker_positive
@@ -972,8 +986,10 @@ impl StaticLexerDFA {
         }
     }
 
+    /// # Safety
+    /// `s` must be a valid state number
     #[inline(always)]
-    pub(crate) fn walker_accept_at(&self, s: u16) -> WalkerAccept {
+    pub(crate) unsafe fn walker_accept_at(&self, s: u16) -> WalkerAccept {
         unsafe { *self.walker_accept.get_unchecked(s as usize) }
     }
 
@@ -981,40 +997,45 @@ impl StaticLexerDFA {
     /// (EOF = -1 takes the EOF escape). `NO_CONTINUATION` when the edge
     /// does not escape or the escape is a budget escape.
     ///
-    /// Same unchecked-index safety argument as [`StaticLexerDFA::edge_entry`].
+    /// # Safety
+    /// `s` must be a valid state number
     #[cfg(feature = "static-dfa-build")]
-    pub fn escape_continuation(&self, s: u16, symbol: i32) -> u32 {
+    pub unsafe fn escape_continuation(&self, s: u16, symbol: i32) -> u32 {
         if symbol == EOF {
             return unsafe { *self.eof_escape.get_unchecked(s as usize) };
         }
         // Valid tables have a range for every ESCAPE entry (checked at
         // load); the restart-on-budget-escape path treats a miss as a
         // budget escape, which stays correct.
-        self.escape_range(s, symbol)
-            .map_or(NO_CONTINUATION, |r| r.continuation)
+        // SAFETY: this function's contract makes `s` a valid state number.
+        unsafe { self.escape_range(s, symbol) }.map_or(NO_CONTINUATION, |r| r.continuation)
     }
 
     /// The continuation index of the escape edge of state `s` on `symbol`
     /// (EOF = -1 takes the EOF escape). `NO_CONTINUATION` when the edge
     /// does not escape or the escape is a budget escape.
     ///
-    /// Same unchecked-index safety argument as [`StaticLexerDFA::edge_entry`].
+    /// # Safety
+    /// `s` must be a valid state number
     #[cfg(not(feature = "static-dfa-build"))]
-    pub(crate) fn escape_continuation(&self, s: u16, symbol: i32) -> u32 {
+    pub(crate) unsafe fn escape_continuation(&self, s: u16, symbol: i32) -> u32 {
         if symbol == EOF {
             return unsafe { *self.eof_escape.get_unchecked(s as usize) };
         }
         // Valid tables have a range for every ESCAPE entry (checked at
         // load); the restart-on-budget-escape path treats a miss as a
         // budget escape, which stays correct.
-        self.escape_range(s, symbol)
-            .map_or(NO_CONTINUATION, |r| r.continuation)
+        // SAFETY: this function's contract makes `s` a valid state number.
+        unsafe { self.escape_range(s, symbol) }.map_or(NO_CONTINUATION, |r| r.continuation)
     }
 
     /// The escape range of state `s` covering `symbol`, if any. The
     /// continuation of the range can be `NO_CONTINUATION` (a budget
     /// escape): coverage and continuation value are separate facts.
-    fn escape_range(&self, s: u16, symbol: i32) -> Option<&EscapeRange> {
+    ///
+    /// # Safety
+    /// `s` must be a valid state number
+    unsafe fn escape_range(&self, s: u16, symbol: i32) -> Option<&EscapeRange> {
         let row = unsafe {
             let lo = *self.escape_off.get_unchecked(s as usize) as usize;
             let hi = *self.escape_off.get_unchecked(s as usize + 1) as usize;
@@ -1034,9 +1055,10 @@ impl StaticLexerDFA {
 
     /// The continuation at `index` in the pool.
     ///
-    /// Unchecked-index safety: continuation indices in escape rows are
-    /// validated against the pool length at load time.
-    pub(crate) fn continuation(&self, index: u32) -> &LexerContinuation {
+    /// # Safety
+    /// `index` must be a valid continuation index obtained from
+    /// [`escape_continuation`]
+    pub(crate) unsafe fn continuation(&self, index: u32) -> &LexerContinuation {
         unsafe { self.continuations.get_unchecked(index as usize) }
     }
 }
@@ -1075,7 +1097,8 @@ impl StaticLexerDFA {
     /// The accept action list of state `s` as ATN `(type, data1, data2)`
     /// triples, in order.
     pub fn accept_action_triples(&self, s: u16) -> Vec<(i32, i32, i32)> {
-        self.accept_actions(s)
+        let (off, len) = self.accept_actions[s as usize];
+        self.actions[off as usize..(off + len) as usize]
             .iter()
             .map(LexerAction::to_serialized)
             .collect()
@@ -1091,8 +1114,10 @@ impl StaticLexerDFA {
 
     /// Run-acceleration descriptor of state `s`, if any.
     pub fn state_accel(&self, s: u16) -> Option<&Accel> {
-        let tag = self.accel_tag(s);
-        (tag != 0).then(|| self.accel_payload(tag))
+        match self.accel_tag[s as usize] {
+            0 => None,
+            tag => Some(&self.accel_data[tag as usize - 1]),
+        }
     }
 
     /// Number of deduplicated hi-symbol class rows in this mode.
@@ -1990,7 +2015,9 @@ impl StaticLexerDFA {
         };
         for (s, &eof_escape) in self.eof_escape.iter().enumerate() {
             check_continuation(eof_escape)?;
-            if eof_escape != NO_CONTINUATION && self.edge_entry(s as u16, EOF) != ESCAPE {
+            // SAFETY: `s` indexes `eof_escape`, so it is a valid state number.
+            let entry = unsafe { self.edge_entry(s as u16, EOF) };
+            if eof_escape != NO_CONTINUATION && entry != ESCAPE {
                 return Err(StaticLexerError::InconsistentEscapeRow {
                     mode,
                     state: s,
@@ -2006,7 +2033,8 @@ impl StaticLexerDFA {
             let hi = self.escape_off[s + 1] as usize;
             for range in &self.escape_ranges[lo..hi] {
                 for bound in [range.lo, range.hi] {
-                    if self.edge_entry(s as u16, bound) != ESCAPE {
+                    // SAFETY: `s` indexes `escape_off`, so it is a valid state number.
+                    if unsafe { self.edge_entry(s as u16, bound) } != ESCAPE {
                         return Err(StaticLexerError::InconsistentEscapeRow {
                             mode,
                             state: s,
@@ -2020,8 +2048,9 @@ impl StaticLexerDFA {
             // check coverage, not the continuation value.
             for col in 0..ASCII_ROW {
                 let symbol = col as i32;
+                // SAFETY: `s` indexes `escape_off`, so it is a valid state number.
                 if self.low[s * ASCII_ROW + col] == ESCAPE
-                    && self.escape_range(s as u16, symbol).is_none()
+                    && unsafe { self.escape_range(s as u16, symbol) }.is_none()
                 {
                     return Err(StaticLexerError::InconsistentEscapeRow {
                         mode,
@@ -2033,8 +2062,9 @@ impl StaticLexerDFA {
             if self.num_classes > 0 {
                 let row = self.row_of[s] as usize;
                 for (class, &start) in self.class_starts.iter().enumerate() {
+                    // SAFETY: `s` indexes `escape_off`, so it is a valid state number.
                     if self.hi_rows[row * self.num_classes + class] == ESCAPE
-                        && self.escape_range(s as u16, start as i32).is_none()
+                        && unsafe { self.escape_range(s as u16, start as i32) }.is_none()
                     {
                         return Err(StaticLexerError::InconsistentEscapeRow {
                             mode,
@@ -2181,7 +2211,8 @@ mod tests {
         let decoded = tables.mode(0).expect("mode 0");
         assert_eq!(decoded.num_states(), NUM_STATES);
         for state in [0u16, 1, 254, 255, 256, 299] {
-            assert_eq!(decoded.accel_tag(state), state + 1);
+            // SAFETY: `state` is below `NUM_STATES`.
+            assert_eq!(unsafe { decoded.accel_tag(state) }, state + 1);
             assert_eq!(
                 decoded.state_accel(state),
                 Some(&Accel::positive(u128::from(state)))
@@ -2202,20 +2233,24 @@ mod tests {
                 let (Some(committed), Some(decoded)) = (build.table(m), decoded.mode(m)) else {
                     continue;
                 };
+                // SAFETY: `s` ranges over the states of both tables, so it is a
+                // valid state number for each.
                 for s in 0..committed.num_states() as u16 {
                     for symbol in [EOF, 0, b'a' as i32, 127, 128, 0x1000, 0x10FFFF] {
                         assert_eq!(
-                            committed.edge_entry(s, symbol),
-                            decoded.edge_entry(s, symbol),
+                            unsafe { committed.edge_entry(s, symbol) },
+                            unsafe { decoded.edge_entry(s, symbol) },
                             "{name} mode {m} state {s} symbol {symbol}"
                         );
                         assert_eq!(
-                            committed.escape_continuation(s, symbol),
-                            decoded.escape_continuation(s, symbol),
+                            unsafe { committed.escape_continuation(s, symbol) },
+                            unsafe { decoded.escape_continuation(s, symbol) },
                             "{name} mode {m} state {s} symbol {symbol}"
                         );
                     }
-                    assert_eq!(committed.accept_type(s), decoded.accept_type(s));
+                    let committed_type = unsafe { committed.accept_type(s) };
+                    let decoded_type = unsafe { decoded.accept_type(s) };
+                    assert_eq!(committed_type, decoded_type);
                     assert_eq!(
                         committed.accept_action_triples(s),
                         decoded.accept_action_triples(s)

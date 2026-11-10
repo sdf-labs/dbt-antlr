@@ -1934,7 +1934,8 @@ mod accel_integration_tests {
                     continue;
                 };
                 for s in 0..table.num_states() as u16 {
-                    if table.accel_tag(s) != 0 {
+                    // SAFETY: `s` ranges over the states of `table`.
+                    if unsafe { table.accel_tag(s) } != 0 {
                         tagged += 1;
                     }
                 }
