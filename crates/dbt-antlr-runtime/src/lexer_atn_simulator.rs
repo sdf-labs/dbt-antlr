@@ -247,6 +247,11 @@ impl<'sim> LexerATNSimulator<'sim> {
             let mut accept_state: u16 = s;
             let mut pending_wtag: u16 = 0;
 
+            // SAFETY (applies to every `unsafe` table access below): `s` is
+            // the mode's start state followed by validated edge targets, so it
+            // is always a valid state number; `wtag` is read from that state's
+            // `walker_tag` entry, so it is a valid walker tag; `accept_state` is
+            // a state reached the same way.
             'accept: {
                 loop {
                     let target: u16;
@@ -269,7 +274,7 @@ impl<'sim> LexerATNSimulator<'sim> {
                             accept_state = target;
                         }
                     } else {
-                        let entry = table.eof_entry(s);
+                        let entry = unsafe { table.eof_entry(s) };
                         if entry >= ESCAPE {
                             if entry == NO_EDGE && accept_index >= 0 {
                                 break 'accept;
@@ -291,7 +296,7 @@ impl<'sim> LexerATNSimulator<'sim> {
                             break 'accept;
                         }
                         if wtag & WALKER_TERMINAL_POS_BIT != 0 {
-                            let tp = table.walker_positive_at(wtag);
+                            let tp = unsafe { table.walker_positive_at(wtag) };
                             let c = scan_positive(hay, cursor, tp.lo, tp.hi);
                             if c > cursor {
                                 accept_index = c as isize;
@@ -300,7 +305,7 @@ impl<'sim> LexerATNSimulator<'sim> {
                             break 'accept;
                         }
                         if wtag >= WALKER_NONTERM_POS_BIT {
-                            let tp = table.walker_positive_at(wtag);
+                            let tp = unsafe { table.walker_positive_at(wtag) };
                             let c = scan_positive(hay, cursor, tp.lo, tp.hi);
                             if c > cursor {
                                 if accept_index == cursor as isize {
@@ -329,7 +334,7 @@ impl<'sim> LexerATNSimulator<'sim> {
                 );
             }
 
-            let acc = table.walker_accept_at(accept_state);
+            let acc = unsafe { table.walker_accept_at(accept_state) };
             if acc.action == WALKER_ACTION_NONE {
                 return FastMatch::Emit {
                     ttype: acc.ttype,
@@ -380,6 +385,11 @@ impl<'sim> LexerATNSimulator<'sim> {
 
         let mut cursor = start_index as usize;
         let mut pending_wtag: u16 = 0;
+        // SAFETY (applies to every `unsafe` table access below): `s` is the
+        // mode's start state followed by validated edge targets, so it is always
+        // a valid state number; `wtag` is read from that state's `walker_tag`
+        // entry, so it is a valid walker tag; `accept_state` is a state reached
+        // the same way.
         'accept: {
             loop {
                 let target: u16;
@@ -402,7 +412,7 @@ impl<'sim> LexerATNSimulator<'sim> {
                         accept_state = target;
                     }
                 } else {
-                    let entry = table.eof_entry(s);
+                    let entry = unsafe { table.eof_entry(s) };
                     if entry >= ESCAPE {
                         if entry == NO_EDGE && accept_index >= 0 {
                             break 'accept;
@@ -424,7 +434,7 @@ impl<'sim> LexerATNSimulator<'sim> {
                         break 'accept;
                     }
                     if wtag & WALKER_TERMINAL_POS_BIT != 0 {
-                        let tp = table.walker_positive_at(wtag);
+                        let tp = unsafe { table.walker_positive_at(wtag) };
                         let c = scan_positive(hay, cursor, tp.lo, tp.hi);
                         if c > cursor {
                             accept_index = c as isize;
@@ -433,7 +443,7 @@ impl<'sim> LexerATNSimulator<'sim> {
                         break 'accept;
                     }
                     if wtag >= WALKER_NONTERM_POS_BIT {
-                        let tp = table.walker_positive_at(wtag);
+                        let tp = unsafe { table.walker_positive_at(wtag) };
                         let c = scan_positive(hay, cursor, tp.lo, tp.hi);
                         if c > cursor {
                             if accept_index == cursor as isize {
@@ -461,7 +471,7 @@ impl<'sim> LexerATNSimulator<'sim> {
                 .map(|t| t as i32);
         }
 
-        let acc = table.walker_accept_at(accept_state);
+        let acc = unsafe { table.walker_accept_at(accept_state) };
         lexer.input().seek(accept_index);
         if acc.action == WALKER_ACTION_NONE {
             return Ok(acc.ttype);
@@ -493,7 +503,9 @@ impl<'sim> LexerATNSimulator<'sim> {
         let start_index = lexer.input().index();
         let hay = lexer.input().bytes_at(0).unwrap_or(&[]);
         if pending_wtag != 0 {
-            let accel = table.accel_payload(pending_wtag);
+            // SAFETY: `pending_wtag` is a nonzero tag read from a state's
+            // `walker_tag` entry, so `accel_payload` sees a valid tag.
+            let accel = unsafe { table.accel_payload(pending_wtag) };
             let c = run_scan(hay, cursor, accel);
             if c > cursor {
                 if accept_index == cursor as isize
@@ -509,6 +521,10 @@ impl<'sim> LexerATNSimulator<'sim> {
         let walker_tag = table.walker_tag.as_slice();
         let mut symbol: i32;
         let mut entry: u16;
+        // SAFETY (applies to every `unsafe` table access below): `s` and
+        // `accept_state` are the caller's valid states or validated edge
+        // targets, so they are always valid state numbers; `wtag` is read from
+        // such a state's `walker_tag` entry, so it is a valid walker tag.
         'accept: {
             loop {
                 let target: u16;
@@ -529,7 +545,7 @@ impl<'sim> LexerATNSimulator<'sim> {
                     } else {
                         let (ch, len) = decode_non_ascii(hay, cursor);
                         symbol = ch;
-                        entry = table.edge_entry(s, symbol);
+                        entry = unsafe { table.edge_entry(s, symbol) };
                         if entry >= ESCAPE {
                             break;
                         }
@@ -545,7 +561,7 @@ impl<'sim> LexerATNSimulator<'sim> {
                     }
                 } else {
                     symbol = EOF;
-                    entry = table.eof_entry(s);
+                    entry = unsafe { table.eof_entry(s) };
                     if entry >= ESCAPE {
                         break;
                     }
@@ -564,7 +580,7 @@ impl<'sim> LexerATNSimulator<'sim> {
                         break 'accept;
                     }
                     if wtag & WALKER_TERMINAL_POS_BIT != 0 {
-                        let tp = table.walker_positive_at(wtag);
+                        let tp = unsafe { table.walker_positive_at(wtag) };
                         let c = scan_positive(hay, cursor, tp.lo, tp.hi);
                         if c > cursor {
                             accept_index = c as isize;
@@ -573,7 +589,7 @@ impl<'sim> LexerATNSimulator<'sim> {
                         break 'accept;
                     }
                     if wtag >= WALKER_NONTERM_POS_BIT {
-                        let tp = table.walker_positive_at(wtag);
+                        let tp = unsafe { table.walker_positive_at(wtag) };
                         let c = scan_positive(hay, cursor, tp.lo, tp.hi);
                         if c > cursor {
                             if accept_index == cursor as isize {
@@ -582,7 +598,7 @@ impl<'sim> LexerATNSimulator<'sim> {
                             cursor = c;
                         }
                     } else {
-                        let accel = table.accel_payload(wtag);
+                        let accel = unsafe { table.accel_payload(wtag) };
                         let c = run_scan(hay, cursor, accel);
                         if c > cursor {
                             if accept_index == cursor as isize
@@ -622,7 +638,7 @@ impl<'sim> LexerATNSimulator<'sim> {
         }
 
         lexer.input().seek(accept_index);
-        let acc = table.walker_accept_at(accept_state);
+        let acc = unsafe { table.walker_accept_at(accept_state) };
         if acc.action == WALKER_ACTION_NONE {
             return Ok(acc.ttype as isize);
         }
@@ -648,8 +664,12 @@ impl<'sim> LexerATNSimulator<'sim> {
         Input: CharStream<'input>,
         TF: TokenFactory<'input, 'arena> + 'arena,
     {
+        // SAFETY (applies to every `unsafe` table access below): `s` is the
+        // mode's start state followed by validated edge targets, so it is always
+        // a valid state number, and every tag read from such a state is a valid
+        // accel tag.
         let mut s = table.start_state();
-        let mut prev_accept: Option<(isize, u16)> = if table.accept_type(s) >= 0 {
+        let mut prev_accept: Option<(isize, u16)> = if unsafe { table.accept_type(s) } >= 0 {
             Some((start_index, s))
         } else {
             None
@@ -657,7 +677,7 @@ impl<'sim> LexerATNSimulator<'sim> {
 
         let mut symbol = lexer.input().la(1);
         loop {
-            let entry = table.edge_entry(s, symbol);
+            let entry = unsafe { table.edge_entry(s, symbol) };
             if entry == NO_EDGE {
                 break;
             }
@@ -685,9 +705,10 @@ impl<'sim> LexerATNSimulator<'sim> {
             }
             symbol = lexer.input().la(1);
             s = target;
-            let tag = table.accel_tag(s);
+            let tag = unsafe { table.accel_tag(s) };
             if tag != 0 {
-                if let &Accel::CountedExclusion { opener, closer, n } = table.accel_payload(tag) {
+                let accel = unsafe { table.accel_payload(tag) };
+                if let &Accel::CountedExclusion { opener, closer, n } = accel {
                     let opener = [opener[0] as u8, opener[1] as u8, opener[2] as u8];
                     let closer = [closer[0] as u8, closer[1] as u8, closer[2] as u8];
                     let input = lexer.input();
@@ -728,7 +749,9 @@ impl<'sim> LexerATNSimulator<'sim> {
         match prev_accept {
             Some((index, state)) => {
                 lexer.input().seek(index);
-                let acc = table.walker_accept_at(state);
+                // SAFETY: `state` is an accept state recorded during the walk,
+                // so it is a valid state number.
+                let acc = unsafe { table.walker_accept_at(state) };
                 if acc.action == WALKER_ACTION_NONE {
                     return Ok(acc.ttype as isize);
                 }
@@ -778,11 +801,15 @@ impl<'sim> LexerATNSimulator<'sim> {
         self.mode.set(mode);
         self.start_index.set(start_index);
         lexer.input().seek(cursor);
+        // SAFETY (applies to every `unsafe` table access below): `state` is the
+        // escape state recorded during the walk, so it is a valid state number;
+        // `continuation` comes from `escape_continuation`, so it is a valid
+        // continuation index.
         self.prev_accept.set(prev_accept.map(|(index, state)| {
-            let actions = table.accept_actions(state);
+            let actions = unsafe { table.accept_actions(state) };
             ResolvedAccept {
                 index,
-                prediction: table.accept_type(state),
+                prediction: unsafe { table.accept_type(state) },
                 executor: if actions.is_empty() {
                     None
                 } else {
@@ -790,12 +817,12 @@ impl<'sim> LexerATNSimulator<'sim> {
                 },
             }
         }));
-        let continuation = table.escape_continuation(state, symbol);
+        let continuation = unsafe { table.escape_continuation(state, symbol) };
         if continuation == NO_CONTINUATION {
             return self.restart_token_lazy(lexer, &scratch).map(|t| t as isize);
         }
         self.match_token_from_continuation(
-            table.continuation(continuation),
+            unsafe { table.continuation(continuation) },
             symbol,
             lexer,
             &scratch,
@@ -1298,10 +1325,12 @@ where
     Input: CharStream<'input>,
     TF: TokenFactory<'input, 'arena> + 'arena,
 {
-    for action in table.accept_actions(accept_state) {
+    // SAFETY: every caller passes an accept state reached by the walk, so
+    // `accept_state` is a valid state number.
+    for action in unsafe { table.accept_actions(accept_state) } {
         action.execute(lexer);
     }
-    table.accept_type(accept_state)
+    unsafe { table.accept_type(accept_state) }
 }
 
 #[cold]
