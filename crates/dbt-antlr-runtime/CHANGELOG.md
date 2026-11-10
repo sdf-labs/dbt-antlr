@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-runtime-v0.7.0...dbt-antlr-runtime-v0.8.0) - 2026-11-10
+
+### Added
+
+- *(runtime)* add prediction perf counters behind `perf-counters` feature ([#65](https://github.com/sdf-labs/dbt-antlr/pull/65))
+
+### Other
+
+- *(runtime)* mark static lexer unchecked accessors unsafe ([#66](https://github.com/sdf-labs/dbt-antlr/pull/66))
+- *(runtime)* use CacheProvider trait object in BaseATNSimulator ([#64](https://github.com/sdf-labs/dbt-antlr/pull/64))
+- *(runtime)* eliminate per-file heap allocations and lock ops in static lexer ([#63](https://github.com/sdf-labs/dbt-antlr/pull/63))
+- *(runtime)* inline static lexer skip loop and eliminate post-match overhead ([#62](https://github.com/sdf-labs/dbt-antlr/pull/62))
+- *(runtime)* shrink CommonToken to 24B and inline token emission ([#61](https://github.com/sdf-labs/dbt-antlr/pull/61))
+- *(runtime)* eliminate static lexer match_token setup and register spills ([#60](https://github.com/sdf-labs/dbt-antlr/pull/60))
+- *(runtime)* optimize static lexer DFA character scanning and inner walk loop ([#59](https://github.com/sdf-labs/dbt-antlr/pull/59))
+- *(runtime)* avoid detaching LexerATNSimulator per token in BaseLexer ([#55](https://github.com/sdf-labs/dbt-antlr/pull/55))
+- *(runtime)* make LexerAction and Accel word-shaped #[repr(C, u32)] enums ([#53](https://github.com/sdf-labs/dbt-antlr/pull/53))
+
 ## [0.7.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-runtime-v0.6.2...dbt-antlr-runtime-v0.7.0) - 2026-11-03
 
 ### Added
