@@ -34,6 +34,8 @@ pub use error_strategy::{BailErrorStrategy, DefaultErrorStrategy, ErrorStrategy}
 
 pub use input_stream::InputStream;
 
+pub mod predict_timing;
+
 #[doc(inline)]
 pub use lexer::{BaseLexer, Lexer};
 #[doc(inline)]

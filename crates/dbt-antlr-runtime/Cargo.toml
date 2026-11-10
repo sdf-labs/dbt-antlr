@@ -25,6 +25,9 @@ arena-allocation-limit = []
 recursion-limit = []
 atn-dump = []
 static-dfa-build = []
+# Runtime perf counters: only useful for profiling, don't enable in production
+# builds:
+perf-counters = []
 
 [dependencies]
 uuid = "1.16.0"
