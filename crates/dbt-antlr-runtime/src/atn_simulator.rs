@@ -13,6 +13,9 @@ use crate::errors::ANTLRError;
 use crate::prediction_context::PredictionContextCache;
 use crate::Arena;
 
+#[cfg(feature = "perf-counters")]
+use crate::predict_timing;
+
 pub type LexerATNSimulatorManager = ATNSimulatorMan<LexerATNConfigSet<'static>>;
 pub type ParserATNSimulatorManager = ATNSimulatorMan<ATNConfigSet<'static>>;
 
@@ -45,6 +48,15 @@ where
     manager: &'sim (dyn CacheProvider<'sim, CS> + 'sim),
     caches: OnceCell<SimulatorCaches<'sim, CS>>,
     allocation_limit_bytes: usize,
+
+    #[cfg(feature = "perf-counters")]
+    pub(crate) adaptive_predict_invocations: &'static AtomicUsize,
+    #[cfg(feature = "perf-counters")]
+    pub(crate) adaptive_predict_full_ll_invocations: &'static AtomicUsize,
+    #[cfg(feature = "perf-counters")]
+    pub(crate) adaptive_predict_time: predict_timing::Sink,
+    #[cfg(feature = "perf-counters")]
+    pub(crate) full_ll_time: predict_timing::Sink,
 }
 
 impl<'sim, CS: ConfigSet<'sim>> Debug for BaseATNSimulator<'sim, CS> {
@@ -145,6 +157,15 @@ where
     decision_to_dfa: RwLock<Arc<NotifyOnDrop<Vec<DFA<'static, CS>>>>>,
     context_cache_sentinel: SentinelGuard,
     decision_to_dfa_sentinel: SentinelGuard,
+
+    #[cfg(feature = "perf-counters")]
+    adaptive_predict_invocations: &'static AtomicUsize,
+    #[cfg(feature = "perf-counters")]
+    adaptive_predict_full_ll_invocations: &'static AtomicUsize,
+    #[cfg(feature = "perf-counters")]
+    adaptive_predict_time: &'static predict_timing::Accumulator,
+    #[cfg(feature = "perf-counters")]
+    full_ll_time: &'static predict_timing::Accumulator,
 }
 
 impl<CS> Debug for ATNSimulatorMan<CS>
@@ -211,6 +232,15 @@ impl<CS: ConfigSet<'static> + 'static> ATNSimulatorMan<CS> {
             decision_to_dfa: RwLock::new(Arc::new(decision_to_dfa)),
             context_cache_sentinel,
             decision_to_dfa_sentinel,
+
+            #[cfg(feature = "perf-counters")]
+            adaptive_predict_invocations: Box::leak(Box::new(AtomicUsize::new(0))),
+            #[cfg(feature = "perf-counters")]
+            adaptive_predict_full_ll_invocations: Box::leak(Box::new(AtomicUsize::new(0))),
+            #[cfg(feature = "perf-counters")]
+            adaptive_predict_time: predict_timing::new_accumulator(),
+            #[cfg(feature = "perf-counters")]
+            full_ll_time: predict_timing::new_accumulator(),
         }
     }
 
@@ -226,6 +256,15 @@ impl<CS: ConfigSet<'static> + 'static> ATNSimulatorMan<CS> {
             manager: self,
             caches: OnceCell::new(),
             allocation_limit_bytes: self.get_allocation_limit_bytes(),
+
+            #[cfg(feature = "perf-counters")]
+            adaptive_predict_invocations: self.adaptive_predict_invocations,
+            #[cfg(feature = "perf-counters")]
+            adaptive_predict_full_ll_invocations: self.adaptive_predict_full_ll_invocations,
+            #[cfg(feature = "perf-counters")]
+            adaptive_predict_time: predict_timing::sink(self.adaptive_predict_time),
+            #[cfg(feature = "perf-counters")]
+            full_ll_time: predict_timing::sink(self.full_ll_time),
         }
     }
 
@@ -236,6 +275,27 @@ impl<CS: ConfigSet<'static> + 'static> ATNSimulatorMan<CS> {
 
     pub fn get_allocation_limit_bytes(&self) -> usize {
         self.allocation_limit_bytes.load(Ordering::Relaxed)
+    }
+
+    #[cfg(feature = "perf-counters")]
+    pub fn adaptive_predict_invocations(&self) -> usize {
+        self.adaptive_predict_invocations.load(Ordering::Relaxed)
+    }
+
+    #[cfg(feature = "perf-counters")]
+    pub fn adaptive_predict_full_ll_invocations(&self) -> usize {
+        self.adaptive_predict_full_ll_invocations
+            .load(Ordering::Relaxed)
+    }
+
+    #[cfg(feature = "perf-counters")]
+    pub fn adaptive_predict_time_ns(&self) -> u64 {
+        predict_timing::read_ns(self.adaptive_predict_time)
+    }
+
+    #[cfg(feature = "perf-counters")]
+    pub fn full_ll_time_ns(&self) -> u64 {
+        predict_timing::read_ns(self.full_ll_time)
     }
 
     #[allow(dead_code)]

@@ -5,6 +5,11 @@ use std::cell::Cell;
 use std::hash::Hasher;
 use std::marker::PhantomData;
 
+#[cfg(feature = "perf-counters")]
+use crate::predict_timing;
+#[cfg(feature = "perf-counters")]
+use std::sync::atomic::Ordering;
+
 use bit_set::BitSet;
 use hashbrown::{DefaultHashBuilder, HashMap, HashSet};
 
@@ -141,9 +146,8 @@ impl<'sim> ParserATNSimulator<'sim> {
         self.prediction_mode.set(v)
     }
 
-    // fn reset(&self) { unimplemented!() }
-
-    /// Called by generated parser to choose an alternative when LL(1) parsing is not enough
+    /// Called by generated parser to choose an alternative when LL(1) parsing
+    /// is not enough
     pub fn adaptive_predict<'input, 'arena, TF, P>(
         &self,
         decision: i32,
@@ -155,6 +159,31 @@ impl<'sim> ParserATNSimulator<'sim> {
         TF: TokenFactory<'input, 'arena> + 'arena,
         P: Parser<'input, 'arena, TF>,
     {
+        #[cfg(feature = "perf-counters")]
+        let span = predict_timing::Span::start();
+        let predicted = self.predict::<TF, P>(decision, parser);
+        #[cfg(feature = "perf-counters")]
+        span.charge(self.base.adaptive_predict_time);
+        predicted
+    }
+
+    #[inline(always)]
+    fn predict<'input, 'arena, TF, P>(
+        &self,
+        decision: i32,
+        parser: &mut P,
+    ) -> Result<i32, ANTLRError>
+    where
+        'input: 'arena,
+        'arena: 'sim,
+        TF: TokenFactory<'input, 'arena> + 'arena,
+        P: Parser<'input, 'arena, TF>,
+    {
+        #[cfg(feature = "perf-counters")]
+        self.base
+            .adaptive_predict_invocations
+            .fetch_add(1, Ordering::Relaxed);
+
         self.start_index.set(parser.get_input_stream_mut().index());
         let scratch = bumpalo::Bump::new();
         let mut merge_cache = MergeCache::new(&scratch);
@@ -654,6 +683,26 @@ impl<'sim> ParserATNSimulator<'sim> {
     fn exec_atn_with_full_context<'input, 'arena, 'scratch, 'cache, TF, P>(
         &self,
         local: &mut Local<'input, 'arena, 'sim, 'scratch, 'cache, TF, P>,
+        s0: MutableATNConfigSet<'scratch>,
+    ) -> Result<i32, ANTLRError>
+    where
+        'input: 'arena,
+        'sim: 'scratch,
+        TF: TokenFactory<'input, 'arena> + 'arena,
+        P: Parser<'input, 'arena, TF>,
+    {
+        #[cfg(feature = "perf-counters")]
+        let span = predict_timing::Span::start();
+        let predicted = self.exec_atn_full_context::<TF, P>(local, s0);
+        #[cfg(feature = "perf-counters")]
+        span.charge(self.base.full_ll_time);
+        predicted
+    }
+
+    #[inline(always)]
+    fn exec_atn_full_context<'input, 'arena, 'scratch, 'cache, TF, P>(
+        &self,
+        local: &mut Local<'input, 'arena, 'sim, 'scratch, 'cache, TF, P>,
         // _D: &DFAState,
         s0: MutableATNConfigSet<'scratch>,
     ) -> Result<i32, ANTLRError>
@@ -663,7 +712,11 @@ impl<'sim> ParserATNSimulator<'sim> {
         TF: TokenFactory<'input, 'arena> + 'arena,
         P: Parser<'input, 'arena, TF>,
     {
-        //println!("exec_atn_with_full_context");
+        #[cfg(feature = "perf-counters")]
+        self.base
+            .adaptive_predict_full_ll_invocations
+            .fetch_add(1, Ordering::Relaxed);
+
         let full_ctx = true;
         let mut found_exact_ambig = false;
         let mut prev = s0;
