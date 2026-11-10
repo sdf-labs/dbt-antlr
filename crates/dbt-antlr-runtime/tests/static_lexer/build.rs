@@ -3,8 +3,8 @@
 //! are compiled to lexer ATN words through `dbt-antlr-codegen`'s `atn-export`.
 //!
 //! The per-grammar expectations assert directly on the committed
-//! [`StaticLexerDFA`] tables of `build.modes`. A test-only word-stream
-//! decoder (`check_invariants`) keeps the wire format itself covered.
+//! [`StaticLexerDFA`] tables of `build.modes`. A test-only image decoder
+//! (`check_invariants`) keeps the packed image layout itself covered.
 #![cfg(feature = "static-dfa-build")]
 
 use std::path::PathBuf;
@@ -12,12 +12,12 @@ use std::path::PathBuf;
 use dbt_antlr_runtime::atn::ATN;
 use dbt_antlr_runtime::atn_deserializer::ATNDeserializer;
 use dbt_antlr_runtime::dfa::static_dfa_build::{
-    ModeFailure, StaticLexerDfaBuild, StaticLexerDfaBuilder,
+    ModeFailure, StaticLexerDfaBuildOutput, StaticLexerDfaBuilder,
 };
 use dbt_antlr_runtime::dfa::static_lexer_dfa::{
-    StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, BEHIND_POSITION_INDEPENDENT,
-    CONTINUATION_MOVED_CONFIGS, CONTINUATION_SOURCE_SET, ESCAPE, NO_CONTINUATION, NO_EDGE,
-    STATE_MASK, STATIC_DFA_FORMAT_VERSION, STATIC_DFA_MAGIC,
+    Accel, StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, CONTINUATION_MOVED_CONFIGS,
+    CONTINUATION_SOURCE_SET, ESCAPE, NO_CONTINUATION, NO_EDGE, STATE_MASK,
+    STATIC_DFA_FORMAT_VERSION, STATIC_DFA_MAGIC,
 };
 use dbt_antlr_runtime::int_stream::EOF;
 
@@ -27,7 +27,7 @@ fn grammar_path(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn build_with(grammar: &str, builder: &StaticLexerDfaBuilder) -> (ATN, StaticLexerDfaBuild) {
+fn build_with(grammar: &str, builder: &StaticLexerDfaBuilder) -> (ATN, StaticLexerDfaBuildOutput) {
     let units = dbt_antlr_codegen::atn_export::compile_atn_data(&grammar_path(grammar), &[])
         .expect("grammar compiles");
     let words = units
@@ -39,7 +39,7 @@ fn build_with(grammar: &str, builder: &StaticLexerDfaBuilder) -> (ATN, StaticLex
     (atn, build)
 }
 
-fn build(grammar: &str) -> (ATN, StaticLexerDfaBuild) {
+fn build(grammar: &str) -> (ATN, StaticLexerDfaBuildOutput) {
     build_with(grammar, &StaticLexerDfaBuilder::new())
 }
 
@@ -90,27 +90,110 @@ fn has_no_escapes(dfa: &StaticLexerDFA) -> bool {
     })
 }
 
-// ======= Test-only decoder for the version-1 word stream =======
+// ======= Test-only decoder for the packed image =======
+
+/// Header of a packed mode image, decoded from its raw words.
+#[derive(Debug)]
+struct ImageHeader {
+    total_words: usize,
+    num_states: usize,
+    num_classes: usize,
+    num_hi_rows: usize,
+    start_state: u32,
+    eof: usize,
+    low: usize,
+    walker_tag: usize,
+    walker_accept: usize,
+    walker_positive: usize,
+    walker_positive_len: usize,
+    class_starts: usize,
+    hi_rows: usize,
+    row_of: usize,
+    accept_actions: usize,
+    actions: usize,
+    actions_len: usize,
+    accel_tag: usize,
+    accel_data: usize,
+    accel_data_len: usize,
+    eof_escape: usize,
+    escape_off: usize,
+    escape_ranges: usize,
+    escape_ranges_len: usize,
+    continuations: usize,
+    continuations_len: usize,
+    continuation_ctxs: usize,
+    continuation_ctxs_len: usize,
+    continuation_configs: usize,
+    continuation_configs_len: usize,
+    continuation_actions: usize,
+    continuation_actions_len: usize,
+}
+
+impl ImageHeader {
+    fn read(image: &[u32]) -> Self {
+        assert!(image.len() >= 32, "mode image holds the 32-word header");
+        let word = |index: usize| image[index] as usize;
+        Self {
+            total_words: word(0),
+            num_states: word(1),
+            num_classes: word(2),
+            num_hi_rows: word(3),
+            start_state: image[4],
+            eof: word(5),
+            low: word(6),
+            walker_tag: word(7),
+            walker_accept: word(8),
+            walker_positive: word(9),
+            walker_positive_len: word(10),
+            class_starts: word(11),
+            hi_rows: word(12),
+            row_of: word(13),
+            accept_actions: word(14),
+            actions: word(15),
+            actions_len: word(16),
+            accel_tag: word(17),
+            accel_data: word(18),
+            accel_data_len: word(19),
+            eof_escape: word(20),
+            escape_off: word(21),
+            escape_ranges: word(22),
+            escape_ranges_len: word(23),
+            continuations: word(24),
+            continuations_len: word(25),
+            continuation_ctxs: word(26),
+            continuation_ctxs_len: word(27),
+            continuation_configs: word(28),
+            continuation_configs_len: word(29),
+            continuation_actions: word(30),
+            continuation_actions_len: word(31),
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 struct DecodedMode {
     present: bool,
+    accept_action_triples: Vec<Vec<(i32, i32, i32)>>,
     num_states: usize,
     start_state: u32,
     accept_type: Vec<i32>,
     eof: Vec<u16>,
     low: Vec<[u16; 128]>,
     class_starts: Vec<i32>,
-    hi_rows: Vec<Vec<(u32, u32, u16)>>,
+    hi_rows: Vec<Vec<u16>>,
     row_of: Vec<u32>,
     escape_rows: Vec<Vec<(i32, i32, u32)>>,
+    /// The run-acceleration descriptor of every state.
+    accel: Vec<Option<Accel>>,
+    /// The EOF escape index of every state.
+    eof_escape: Vec<u32>,
     continuations: Vec<DecodedCont>,
 }
 
 #[derive(Debug)]
 struct DecodedCont {
     kind: u32,
-    ctxs: Vec<(u32, u32, i32)>,
+    ctxs: Vec<(u32, i32)>,
     configs: Vec<DecodedCfg>,
 }
 
@@ -120,115 +203,320 @@ struct DecodedCfg {
     flags: u32,
     alt: u32,
     ctx_local: u32,
-    actions: Vec<(u32, u32)>,
+    actions: Vec<u32>,
 }
 
-struct Reader<'a> {
-    words: &'a [u32],
-    pos: usize,
+/// A section of the image as the test decoder reads it: byte offset and
+/// element count.
+fn section<'a>(image: &'a [u32], offset: usize, len: usize, what: &str) -> &'a [u32] {
+    assert_eq!(offset % 4, 0, "{what}: section offset is word aligned");
+    let words = offset / 4;
+    let end = words.checked_add(len).expect("section end");
+    assert!(
+        end <= image.len(),
+        "{what}: section ends at word {end} of {}",
+        image.len()
+    );
+    &image[words..end]
 }
 
-impl<'a> Reader<'a> {
-    fn next(&mut self) -> u32 {
-        let w = self.words[self.pos];
-        self.pos += 1;
-        w
-    }
-
-    fn next_i32(&mut self) -> i32 {
-        self.next() as i32
-    }
-
-    fn take(&mut self, n: usize) -> &'a [u32] {
-        let s = &self.words[self.pos..self.pos + n];
-        self.pos += n;
-        s
-    }
+/// The `u16` entries of a word table, two per word.
+fn u16s(words: &[u32], entries: usize) -> Vec<u16> {
+    (0..entries)
+        .map(|index| (words[index >> 1] >> ((index & 1) * 16)) as u16)
+        .collect()
 }
 
-fn decode(words: &[u32]) -> Vec<DecodedMode> {
-    let mut r = Reader { words, pos: 0 };
-    assert_eq!(r.next(), STATIC_DFA_MAGIC);
-    assert_eq!(r.next(), STATIC_DFA_FORMAT_VERSION);
-    assert_eq!(r.next() as usize, words.len());
-    let num_modes = r.next() as usize;
-    let modes: Vec<_> = (0..num_modes).map(|_| decode_mode(&mut r)).collect();
-    assert_eq!(r.pos, words.len(), "all words consumed");
+fn decode(image: &[u32]) -> Vec<DecodedMode> {
+    assert_eq!(image[0], STATIC_DFA_MAGIC);
+    assert_eq!(image[1], STATIC_DFA_FORMAT_VERSION);
+    assert_eq!(image[2] as usize, image.len(), "container length");
+    let num_modes = image[3] as usize;
+    let modes_end = 4 + 2 * num_modes;
+    let data = &image[modes_end..];
+    let mut modes = Vec::with_capacity(num_modes);
+    let mut consumed = 0;
+    for mode in 0..num_modes {
+        let offset = image[4 + 2 * mode];
+        let len = image[4 + 2 * mode + 1];
+        if offset == u32::MAX {
+            assert_eq!(len, u32::MAX, "mode {mode} absent length");
+            modes.push(DecodedMode::default());
+            continue;
+        }
+        let offset = offset as usize;
+        let len = len as usize;
+        assert_eq!(offset, consumed, "mode {mode} offset");
+        let mode_image = &data[offset..offset + len];
+        let header = ImageHeader::read(mode_image);
+        assert_eq!(header.total_words, len, "mode {mode} length");
+        consumed = offset + len;
+        modes.push(decode_mode(mode_image, &header));
+    }
+    assert_eq!(
+        consumed,
+        data.len(),
+        "the mode table covers the data section"
+    );
     modes
 }
 
-fn decode_mode(r: &mut Reader) -> DecodedMode {
-    let mut mode = DecodedMode {
-        present: r.next() != 0,
-        ..Default::default()
-    };
-    if !mode.present {
-        return mode;
+#[allow(clippy::too_many_lines)]
+fn decode_mode(image: &[u32], header: &ImageHeader) -> DecodedMode {
+    let n = header.num_states;
+    assert!(header.total_words <= image.len(), "mode image length");
+    let image = &image[..header.total_words];
+    // The sections tile the image in the order of the header fields, so a
+    // section offset is the end of the previous section.
+    let layout = [
+        (header.eof, n.div_ceil(2) * 4),
+        (header.low, (n * 128).div_ceil(2) * 4),
+        (header.walker_tag, n.div_ceil(2) * 4),
+        (header.walker_accept, n * 8),
+        (header.walker_positive, header.walker_positive_len * 20),
+        (header.class_starts, header.num_classes * 4),
+        (
+            header.hi_rows,
+            (header.num_hi_rows * header.num_classes).div_ceil(2) * 4,
+        ),
+        (header.row_of, n * 4),
+        (header.accept_actions, n * 8),
+        (header.actions, header.actions_len * 4 * 4),
+        (header.accel_tag, n.div_ceil(2) * 4),
+        (header.accel_data, header.accel_data_len * 8 * 4),
+        (header.eof_escape, n * 4),
+        (header.escape_off, (n + 1) * 4),
+        (header.escape_ranges, header.escape_ranges_len * 12),
+        (header.continuations, header.continuations_len * 20),
+        (header.continuation_ctxs, header.continuation_ctxs_len * 8),
+        (
+            header.continuation_configs,
+            header.continuation_configs_len * 24,
+        ),
+        (
+            header.continuation_actions,
+            header.continuation_actions_len * 4,
+        ),
+    ];
+    let mut next = 32 * 4;
+    for (offset, len) in layout {
+        assert_eq!(offset, next, "sections tile the image in header order");
+        next += len;
     }
-    mode.num_states = r.next() as usize;
-    mode.start_state = r.next();
-    let n = mode.num_states;
-    mode.accept_type = (0..n).map(|_| r.next_i32()).collect();
-    for _ in 0..n {
-        r.next(); // accept action list offsets
-    }
-    mode.eof = (0..n).map(|_| r.next() as u16).collect();
-    mode.low = (0..n)
-        .map(|_| {
-            let mut row = [0u16; 128];
-            for c in &mut row {
-                *c = r.next() as u16;
-            }
-            row
+    assert_eq!(next, header.total_words * 4, "the sections fill the image");
+    let eof = u16s(section(image, header.eof, n.div_ceil(2), "eof"), n);
+    let low = u16s(
+        section(image, header.low, (n * 128).div_ceil(2), "low"),
+        n * 128,
+    );
+    let walker_accept = section(image, header.walker_accept, n * 2, "walker_accept");
+    let accept_type: Vec<i32> = walker_accept
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|record| {
+            assert!(record[1] <= 2, "walker accept action tag in 0..=2");
+            record[0] as i32
         })
         .collect();
-    let num_classes = r.next() as usize;
-    if num_classes > 0 {
-        mode.class_starts = r.take(num_classes).iter().map(|&w| w as i32).collect();
-        let num_rows = r.next() as usize;
-        let num_triples = r.next() as usize;
-        let row_offsets: Vec<usize> = (0..=num_rows).map(|_| r.next() as usize).collect();
-        assert_eq!(row_offsets[0], 0);
-        assert_eq!(row_offsets[num_rows], num_triples);
-        for w in row_offsets.windows(2) {
-            assert!(w[0] <= w[1]);
-        }
-        for row in 0..num_rows {
-            let mut runs = Vec::new();
-            for _ in row_offsets[row]..row_offsets[row + 1] {
-                runs.push((r.next(), r.next(), r.next() as u16));
-            }
-            mode.hi_rows.push(runs);
-        }
-        mode.row_of = (0..n).map(|_| r.next()).collect();
+    let spans = section(image, header.accept_actions, n * 2, "accept_actions");
+    for record in section(image, header.actions, header.actions_len * 4, "actions").chunks(4) {
+        let ty = record[0] as i32;
+        assert!(
+            (0..=7).contains(&ty) && ty != 1,
+            "accept actions are position-independent LexerAction records"
+        );
+        assert_eq!(record[2], 0, "unused union payload word 2 is zero");
+        assert_eq!(record[3], 0, "unused union payload word 3 is zero");
     }
-    let num_action_ints = r.next() as usize;
-    r.take(num_action_ints);
-    let num_accel_ints = r.next() as usize;
-    r.take(num_accel_ints);
-    for _ in 0..n {
-        r.next(); // EOF escape index
-        let num_ranges = r.next() as usize;
-        let mut ranges = Vec::new();
-        for _ in 0..num_ranges {
-            ranges.push((r.next_i32(), r.next_i32(), r.next()));
+    let accel_tags = u16s(
+        section(image, header.accel_tag, n.div_ceil(2), "accel_tag"),
+        n,
+    );
+    let accel_data = section(
+        image,
+        header.accel_data,
+        header.accel_data_len * 8,
+        "accel_data",
+    );
+    let accel: Vec<Option<Accel>> = accel_tags
+        .iter()
+        .map(|&tag| {
+            assert!(
+                (tag as usize) <= header.accel_data_len,
+                "accel tag in range"
+            );
+            (tag != 0).then(|| decode_accel(&accel_data[(tag as usize - 1) * 8..][..8]))
+        })
+        .collect();
+    let eof_escape = section(image, header.eof_escape, n, "eof_escape");
+    let escape_off = section(image, header.escape_off, n + 1, "escape_off");
+    let escape_ranges = section(
+        image,
+        header.escape_ranges,
+        header.escape_ranges_len * 3,
+        "escape_ranges",
+    );
+    let class_starts: Vec<i32> = section(
+        image,
+        header.class_starts,
+        header.num_classes,
+        "class_starts",
+    )
+    .iter()
+    .map(|&word| word as i32)
+    .collect();
+    let hi_rows_entries = header.num_hi_rows * header.num_classes;
+    let hi_rows = u16s(
+        section(
+            image,
+            header.hi_rows,
+            hi_rows_entries.div_ceil(2),
+            "hi_rows",
+        ),
+        hi_rows_entries,
+    );
+    let row_of = section(image, header.row_of, n, "row_of").to_vec();
+
+    if header.num_classes > 0 {
+        assert_eq!(class_starts[0], 128, "class starts begin at 128");
+        for pair in class_starts.windows(2) {
+            assert!(pair[0] < pair[1], "class starts increase");
         }
-        mode.escape_rows.push(ranges);
+        assert!(
+            *class_starts.last().unwrap() <= 0x10FFFF,
+            "class starts in range"
+        );
     }
-    let num_conts = r.next() as usize;
-    for _ in 0..num_conts {
-        let kind = r.next();
-        let nctx = r.next() as usize;
-        let ctxs = (0..nctx)
-            .map(|_| (r.next(), r.next(), r.next_i32()))
-            .collect();
-        let nconfigs = r.next() as usize;
-        let mut configs = Vec::new();
-        for _ in 0..nconfigs {
-            let (state, flags, alt, ctx_local) = (r.next(), r.next(), r.next(), r.next());
-            let nactions = r.next() as usize;
-            let actions = (0..nactions).map(|_| (r.next(), r.next())).collect();
-            configs.push(DecodedCfg {
+    if header.num_classes > 0 {
+        for &row in &row_of {
+            assert!((row as usize) < header.num_hi_rows, "row of state in range");
+        }
+    }
+
+    let mut accept_action_triples = Vec::with_capacity(n);
+    for state in 0..n {
+        let off = spans[2 * state] as usize;
+        let len = spans[2 * state + 1] as usize;
+        assert!(off + len <= header.actions_len, "action span in range");
+        accept_action_triples.push(
+            (0..len)
+                .map(|index| {
+                    let records = section(image, header.actions, header.actions_len * 4, "actions");
+                    let record = &records[(off + index) * 4..(off + index) * 4 + 4];
+                    (record[0] as i32, record[1] as i32, record[2] as i32)
+                })
+                .collect(),
+        );
+    }
+
+    let mut low_rows = Vec::with_capacity(n);
+    let mut escape_rows = Vec::with_capacity(n);
+    for state in 0..n {
+        let mut row = [0u16; 128];
+        row.copy_from_slice(&low[state * 128..(state + 1) * 128]);
+        low_rows.push(row);
+        let from = escape_off[state] as usize;
+        let to = escape_off[state + 1] as usize;
+        assert!(from <= to, "escape rows are monotonic");
+        assert!(to <= header.escape_ranges_len, "escape row in range");
+        let mut ranges = Vec::with_capacity(to - from);
+        let mut prev_hi: Option<i32> = None;
+        for range in from..to {
+            let lo = escape_ranges[range * 3] as i32;
+            let hi = escape_ranges[range * 3 + 1] as i32;
+            let continuation = escape_ranges[range * 3 + 2];
+            assert!(lo >= 0 && lo <= hi && hi <= 0x10FFFF, "escape range bounds");
+            assert!(
+                prev_hi.is_none_or(|p| p < lo),
+                "escape ranges are sorted and disjoint"
+            );
+            assert!(
+                continuation == NO_CONTINUATION
+                    || (continuation as usize) < header.continuations_len,
+                "escape continuation in range"
+            );
+            prev_hi = Some(hi);
+            ranges.push((lo, hi, continuation));
+        }
+        escape_rows.push(ranges);
+    }
+    for &offset in escape_off {
+        assert!((offset as usize) <= header.escape_ranges_len);
+    }
+    for state in 0..n {
+        let eof_escape = eof_escape[state];
+        if eof_escape != NO_CONTINUATION {
+            assert_eq!(
+                eof[state], ESCAPE,
+                "the EOF escape index needs an EOF escape edge"
+            );
+            assert!(
+                (eof_escape as usize) < header.continuations_len,
+                "the EOF escape continuation is in range"
+            );
+        }
+    }
+
+    let ctxs_words = header.continuation_ctxs_len * 2;
+    let ctxs = section(
+        image,
+        header.continuation_ctxs,
+        ctxs_words,
+        "continuation_ctxs",
+    );
+    let configs_words = header.continuation_configs_len * 6;
+    let configs_pool = section(
+        image,
+        header.continuation_configs,
+        configs_words,
+        "continuation_configs",
+    );
+    let action_pool = section(
+        image,
+        header.continuation_actions,
+        header.continuation_actions_len,
+        "continuation_actions",
+    );
+    let pool = section(
+        image,
+        header.continuations,
+        header.continuations_len * 5,
+        "continuations",
+    );
+    let mut continuations = Vec::with_capacity(header.continuations_len);
+    for index in 0..header.continuations_len {
+        let entry = &pool[index * 5..index * 5 + 5];
+        let kind = entry[0];
+        assert!(
+            kind == CONTINUATION_MOVED_CONFIGS || kind == CONTINUATION_SOURCE_SET,
+            "continuation kind"
+        );
+        let ctxs_off = entry[1] as usize;
+        let ctxs_len = entry[2] as usize;
+        let configs_off = entry[3] as usize;
+        let configs_len = entry[4] as usize;
+        assert!(ctxs_off + ctxs_len <= header.continuation_ctxs_len);
+        assert!(configs_off + configs_len <= header.continuation_configs_len);
+        let mut decoded_ctxs = Vec::with_capacity(ctxs_len);
+        for local in 0..ctxs_len {
+            let entry = &ctxs[(ctxs_off + local) * 2..(ctxs_off + local) * 2 + 2];
+            let (parent, return_state) = (entry[0], entry[1] as i32);
+            assert!((parent as usize) <= local, "context table is topological");
+            decoded_ctxs.push((parent, return_state));
+        }
+        let mut decoded_configs = Vec::with_capacity(configs_len);
+        for local in 0..configs_len {
+            let entry = &configs_pool[(configs_off + local) * 6..(configs_off + local) * 6 + 6];
+            let (state, alt, ctx_local, flags) = (entry[0], entry[1], entry[2], entry[3]);
+            let actions_off = entry[4] as usize;
+            let actions_len = entry[5] as usize;
+            assert!(flags & !0b11 == 0, "only defined flag bits are set");
+            assert!(alt >= 1, "lexer config alts are 1-based");
+            assert!((ctx_local as usize) <= ctxs_len, "config context in range");
+            assert!(actions_off + actions_len <= header.continuation_actions_len);
+            let actions = action_pool[actions_off..actions_off + actions_len].to_vec();
+            decoded_configs.push(DecodedCfg {
                 state,
                 flags,
                 alt,
@@ -236,18 +524,64 @@ fn decode_mode(r: &mut Reader) -> DecodedMode {
                 actions,
             });
         }
-        mode.continuations.push(DecodedCont {
+        continuations.push(DecodedCont {
             kind,
-            ctxs,
-            configs,
+            ctxs: decoded_ctxs,
+            configs: decoded_configs,
         });
     }
-    mode
+    DecodedMode {
+        present: true,
+        num_states: n,
+        start_state: header.start_state,
+        accept_type,
+        eof,
+        low: low_rows,
+        class_starts,
+        hi_rows: (0..header.num_hi_rows)
+            .map(|row| hi_rows[row * header.num_classes..(row + 1) * header.num_classes].to_vec())
+            .collect(),
+        row_of,
+        escape_rows,
+        accel,
+        eof_escape: eof_escape.to_vec(),
+        continuations,
+        accept_action_triples,
+    }
+}
+
+/// Rebuilds the accel descriptor of a payload (the payload words of the
+/// image) the way the walker does.
+fn decode_accel(payload: &[u32]) -> Accel {
+    match payload[0] {
+        1 => {
+            assert_eq!(&payload[5..8], &[0, 0, 0]);
+            Accel::Positive([payload[1], payload[2], payload[3], payload[4]])
+        }
+        2 => {
+            assert_eq!(&payload[2..8], &[0; 6]);
+            Accel::Exclude(payload[1])
+        }
+        3 => {
+            assert_eq!(&payload[3..8], &[0; 5]);
+            Accel::Exclude2(payload[1], payload[2])
+        }
+        4 => {
+            assert_eq!(&payload[4..8], &[0; 4]);
+            Accel::Exclude3(payload[1], payload[2], payload[3])
+        }
+        5 => Accel::CountedExclusion {
+            opener: [payload[1], payload[2], payload[3]],
+            closer: [payload[4], payload[5], payload[6]],
+            n: payload[7],
+        },
+        tag => panic!("invalid accel tag {tag}"),
+    }
 }
 
 impl DecodedMode {
     /// The edge entry of `state` on `symbol`, following the table lookup
-    /// rules (column 0 = EOF, 1..=128 dense, hi classes above).
+    /// rules (EOF, 0..=127 dense, hi classes above).
     fn edge(&self, state: u16, symbol: i32) -> u16 {
         if symbol == EOF {
             return self.eof[state as usize];
@@ -255,22 +589,16 @@ impl DecodedMode {
         if (0..=127).contains(&symbol) {
             return self.low[state as usize][symbol as usize];
         }
-        if self.class_starts.is_empty() {
+        if self.class_starts.is_empty() || symbol > 0x10FFFF {
             return NO_EDGE;
         }
+        let symbol = symbol as u32;
         let class = self
             .class_starts
-            .partition_point(|&s| s <= symbol)
-            .checked_sub(1)
-            .expect("symbol above 127 has a class") as u32;
+            .partition_point(|&start| start as u32 <= symbol)
+            - 1;
         let row = &self.hi_rows[self.row_of[state as usize] as usize];
-        let mut entry = NO_EDGE;
-        for &(lo, hi, target) in row {
-            if (lo..=hi).contains(&class) {
-                entry = target;
-            }
-        }
-        entry
+        row[class]
     }
 
     fn escape_range(&self, state: u16, symbol: i32) -> Option<u32> {
@@ -281,15 +609,14 @@ impl DecodedMode {
     }
 }
 
-/// Wire-level codec coverage: the word stream decodes with the runtime
-/// decoder and re-encodes word for word, and the test-only decoder below
-/// checks the structural invariants of every section against the build
-/// diagnostics and the committed tables.
-fn check_invariants(build: &StaticLexerDfaBuild, atn: &ATN) {
-    let decoded = StaticLexerTables::from_words(&build.words).expect("builder words decode");
-    assert_eq!(decoded.to_words(), build.words, "word stream round-trips");
-
-    let modes = decode(&build.words);
+/// Wire-level coverage: the builder's word stream loads as a zero-copy image,
+/// and the test-only decoder below reads every section straight from the image
+/// words and cross-checks it against the runtime accessors of the committed
+/// table.
+fn check_invariants(build: &StaticLexerDfaBuildOutput, atn: &ATN) {
+    let image: &'static [u32] = Box::leak(build.words.clone().into_boxed_slice());
+    let loaded = StaticLexerTables::from_image(image).expect("builder image loads");
+    let modes = decode(image);
     assert_eq!(modes.len(), build.modes.len());
     for (index, (mode, info)) in modes.iter().zip(&build.modes).enumerate() {
         assert_eq!(mode.present, info.table.is_some());
@@ -300,35 +627,102 @@ fn check_invariants(build: &StaticLexerDfaBuild, atn: &ATN) {
         }
         assert!(info.failure.is_none());
         assert_eq!(mode.num_states, info.num_states);
+        assert_eq!(
+            mode.start_state as usize,
+            info.table.as_ref().unwrap().start_state() as usize
+        );
         assert!((mode.start_state as usize) < mode.num_states);
         assert_eq!(mode.continuations.len(), info.num_continuations);
+        assert_eq!(
+            loaded.mode(index),
+            build.table(index),
+            "the loaded image is the committed table"
+        );
 
-        let committed = build.table(index).expect("present mode");
-        // Every section of the word stream agrees with the committed
-        // table: EOF and the dense low row, plus one probe per hi class
-        // (the target is constant within a class by construction).
+        // Every section of the image agrees with the committed table: EOF and
+        // the dense low row, plus one probe per hi class (the target is
+        // constant within a class by construction).
+        let table = loaded.mode(index).expect("present mode");
         for s in 0..mode.num_states {
+            assert_eq!(
+                table.state_accel(s as u16),
+                mode.accel[s].as_ref(),
+                "accel of state {s}"
+            );
             let mut symbols: Vec<i32> = (0..=127).collect();
             symbols.push(EOF);
             symbols.extend(mode.class_starts.iter().copied());
             for symbol in symbols {
                 let entry = mode.edge(s as u16, symbol);
                 check_entry(mode, s, symbol, entry);
-                // SAFETY: `s` ranges over the decoded mode's states, which are
-                // the committed table's states.
-                let committed_entry = unsafe { committed.edge_entry(s as u16, symbol) };
+                // SAFETY: `s` ranges over `0..mode.num_states`.
                 assert_eq!(
-                    entry, committed_entry,
-                    "edge entry of the committed table matches the word stream"
+                    entry,
+                    unsafe { table.edge_entry(s as u16, symbol) },
+                    "edge entry of the committed table matches the image"
                 );
             }
+            // SAFETY: `s` ranges over `0..mode.num_states`.
+            assert_eq!(mode.accept_type[s], unsafe { table.accept_type(s as u16) });
+            assert_eq!(
+                table.accept_action_triples(s as u16),
+                mode.accept_action_triples[s],
+                "accept actions of state {s}"
+            );
+            let ranges: Vec<(i32, i32, u32)> = mode.escape_rows[s]
+                .iter()
+                .map(|&(lo, hi, continuation)| (lo, hi, continuation))
+                .collect();
+            assert_eq!(
+                table.escape_ranges(s as u16),
+                ranges,
+                "escape ranges of state {s}"
+            );
+        }
+        for (state, ranges) in mode.escape_rows.iter().enumerate() {
+            for &(lo, hi, continuation) in ranges {
+                // SAFETY: `state` ranges over `0..mode.num_states`.
+                assert_eq!(
+                    unsafe { table.escape_continuation(state as u16, lo) },
+                    continuation,
+                    "escape continuation at state {state} symbol {lo}"
+                );
+                assert_eq!(
+                    unsafe { table.escape_continuation(state as u16, hi) },
+                    continuation
+                );
+            }
+            // SAFETY: `state` ranges over `0..mode.num_states`.
+            assert_eq!(
+                unsafe { table.escape_continuation(state as u16, EOF) },
+                mode.eof_escape[state],
+                "the EOF escape index of state {state}"
+            );
+        }
+        for (id, cont) in mode.continuations.iter().enumerate() {
+            assert_eq!(table.continuation_kind(id as u32), cont.kind);
+            assert_eq!(
+                table.continuation_num_configs(id as u32),
+                cont.configs.len()
+            );
+            assert_eq!(table.continuation_num_contexts(id as u32), cont.ctxs.len());
+            assert_eq!(
+                table.continuation_config_states(id as u32),
+                cont.configs
+                    .iter()
+                    .map(|config| config.state as usize)
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                table.continuation_num_non_greedy_configs(id as u32),
+                cont.configs.iter().filter(|c| c.flags & 1 != 0).count()
+            );
         }
         for cont in &mode.continuations {
             assert!(
                 cont.kind == CONTINUATION_MOVED_CONFIGS || cont.kind == CONTINUATION_SOURCE_SET
             );
-            for (i, &(kind, parent, return_state)) in cont.ctxs.iter().enumerate() {
-                assert_eq!(kind, 0, "lexer contexts are singleton chains");
+            for (i, &(parent, return_state)) in cont.ctxs.iter().enumerate() {
                 assert!((parent as usize) < i + 1, "context table is topological");
                 assert!((return_state as usize) < atn.states_count());
             }
@@ -337,8 +731,11 @@ fn check_invariants(build: &StaticLexerDfaBuild, atn: &ATN) {
                 assert!(cfg.alt >= 1, "lexer config alts are 1-based");
                 assert!(cfg.flags & !0b11 == 0, "only defined flag bits are set");
                 assert!((cfg.ctx_local as usize) <= cont.ctxs.len());
-                for &(_, behind) in &cfg.actions {
-                    assert_eq!(behind, BEHIND_POSITION_INDEPENDENT);
+                for &action in &cfg.actions {
+                    assert!(
+                        (action as usize) < atn.lexer_actions.len(),
+                        "continuation action index in range"
+                    );
                 }
             }
         }
@@ -353,8 +750,10 @@ fn check_entry(mode: &DecodedMode, state: usize, symbol: i32, entry: u16) {
         return;
     }
     if entry == ESCAPE {
-        // Escape edges never carry the accept bit and must have an escape
-        // range covering the symbol (the EOF escape index covers EOF).
+        // An escape edge is the `ESCAPE` sentinel itself (its bit pattern also
+        // happens to carry `ACCEPT_BIT`; escape edges never mark accepts) and
+        // must have an escape range covering the symbol (the EOF escape index
+        // covers EOF).
         if symbol != EOF {
             assert!(
                 mode.escape_range(state as u16, symbol).is_some(),

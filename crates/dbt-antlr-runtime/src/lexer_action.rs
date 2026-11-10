@@ -10,6 +10,7 @@ pub(crate) const LEXER_ACTION_TYPE_POP_MODE: i32 = 4;
 pub(crate) const LEXER_ACTION_TYPE_PUSH_MODE: i32 = 5;
 pub(crate) const LEXER_ACTION_TYPE_SKIP: i32 = 6;
 pub(crate) const LEXER_ACTION_TYPE_TYPE: i32 = 7;
+pub(crate) const LEXER_ACTION_TYPE_INDEXED_CUSTOM: i32 = 8;
 
 /// One lexer command attached to an action transition.
 ///
@@ -35,7 +36,7 @@ pub enum LexerAction {
         offset: i32,
         rule_index: i32,
         action_index: i32,
-    } = 8,
+    } = LEXER_ACTION_TYPE_INDEXED_CUSTOM as u32,
 }
 
 impl LexerAction {
@@ -120,6 +121,43 @@ impl LexerAction {
             LexerAction::PushMode(mode) => lexer.push_mode(mode as usize),
             LexerAction::Skip => lexer.skip(),
             LexerAction::Type(ty) => lexer.set_type(ty),
+        }
+    }
+
+    /// The 4-word `#[repr(C, u32)]` image representation of this action, with
+    /// unused union payload words zero-filled so the image contains no
+    /// uninitialized padding bytes.
+    #[cfg(feature = "static-dfa-build")]
+    pub(crate) fn to_image_words(self) -> [u32; 4] {
+        match self {
+            LexerAction::Channel(channel) => {
+                [LEXER_ACTION_TYPE_CHANNEL as u32, channel as u32, 0, 0]
+            }
+            LexerAction::Custom {
+                rule_index,
+                action_index,
+            } => [
+                LEXER_ACTION_TYPE_CUSTOM as u32,
+                rule_index as u32,
+                action_index as u32,
+                0,
+            ],
+            LexerAction::Mode(mode) => [LEXER_ACTION_TYPE_MODE as u32, mode as u32, 0, 0],
+            LexerAction::More => [LEXER_ACTION_TYPE_MORE as u32, 0, 0, 0],
+            LexerAction::PopMode => [LEXER_ACTION_TYPE_POP_MODE as u32, 0, 0, 0],
+            LexerAction::PushMode(mode) => [LEXER_ACTION_TYPE_PUSH_MODE as u32, mode as u32, 0, 0],
+            LexerAction::Skip => [LEXER_ACTION_TYPE_SKIP as u32, 0, 0, 0],
+            LexerAction::Type(ttype) => [LEXER_ACTION_TYPE_TYPE as u32, ttype as u32, 0, 0],
+            LexerAction::IndexedCustom {
+                offset,
+                rule_index,
+                action_index,
+            } => [
+                LEXER_ACTION_TYPE_INDEXED_CUSTOM as u32,
+                offset as u32,
+                rule_index as u32,
+                action_index as u32,
+            ],
         }
     }
 }

@@ -48,6 +48,15 @@ jobs:
           cargo clippy -p dbt-antlr-codegen --no-default-features -- -D warnings
           cargo clippy -p dbt-antlr-codegen --no-default-features --features download -- -D warnings
 
+      # The runtime has a big-endian path that the host targets never compile.
+      - name: Install big-endian target
+        run: rustup target add s390x-unknown-linux-gnu
+
+      - name: cargo check (big-endian)
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo check -p dbt-antlr-runtime --lib --target s390x-unknown-linux-gnu
+
   # Workspace unit/integration tests on the MSRV and current stable.
   unittests:
     name: cargo test (${{ matrix.os }}, ${{ matrix.rust }})
