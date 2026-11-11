@@ -88,7 +88,7 @@
 //! entry the walker dereferences unchecked.
 
 use std::fmt::{self, Debug, Display, Formatter};
-use std::mem::size_of;
+use std::mem::{align_of, size_of};
 
 /// First word of an image container: ASCII "SDFA".
 pub const STATIC_PARSER_DFA_MAGIC: u32 = 0x5344_4641;
@@ -221,7 +221,8 @@ pub enum StaticParserDfaError {
     },
     /// An entry points outside the table it addresses.
     InvalidReference {
-        /// The table index, or the dispatch index for dispatch entries.
+        /// The table index, or the decision or dispatch index for their
+        /// entries.
         table: usize,
         /// What the entry addresses.
         what: &'static str,
@@ -232,7 +233,8 @@ pub enum StaticParserDfaError {
     },
     /// A table entry breaks an invariant of the format.
     Malformed {
-        /// The table index, or the dispatch index for dispatch entries.
+        /// The table index, or the decision or dispatch index for their
+        /// entries.
         table: usize,
         /// What is malformed.
         what: &'static str,
@@ -706,7 +708,7 @@ impl StaticParserTable {
             )
         };
 
-        let loaded = Self {
+        let mut loaded = Self {
             rows_ptr,
             row_of_ptr,
             outcomes_ptr,
@@ -719,7 +721,6 @@ impl StaticParserTable {
             #[cfg(target_endian = "big")]
             big_endian_u16,
         };
-        let mut loaded = loaded;
         loaded.validate_entries(table, num_cells)?;
         // SAFETY: every table has state 0, and `validate_entries` checked
         // that its row is row 0 or none.
@@ -744,6 +745,7 @@ impl StaticParserTable {
     #[inline]
     fn section<T>(&self, offset: u32, len: u32) -> &[T] {
         debug_assert_eq!(size_of::<T>() % 4, 0, "sections hold whole words");
+        debug_assert!(align_of::<T>() <= 4, "sections are word aligned");
         let words = self.data.as_slice();
         // SAFETY: see above.
         unsafe {
@@ -847,7 +849,8 @@ impl StaticParserTable {
     ///
     /// # Safety
     ///
-    /// `state` must be a state of the table: `0` or an edge target.
+    /// `state` must be below the state count of the table. The start state 0
+    /// and every edge target are.
     #[inline(always)]
     pub(crate) unsafe fn outcome_unchecked(&self, state: usize) -> i32 {
         debug_assert!(state < self.num_states as usize);
@@ -872,7 +875,8 @@ impl StaticParserTable {
     ///
     /// # Safety
     ///
-    /// `state` must be a state of the table: `0` or an edge target.
+    /// `state` must be below the state count of the table. The start state 0
+    /// and every edge target are.
     #[inline(always)]
     pub(crate) unsafe fn edge_entry_unchecked(&self, state: usize, token: i32) -> u16 {
         debug_assert!(state < self.num_states as usize);
@@ -898,11 +902,15 @@ impl StaticParserTable {
     /// [`ESCAPE`], [`CONFLICT_ESCAPE`], and [`GUARDED`]. A value at or above
     /// [`VIRTUAL_ALT_BASE`] is the virtual alternative of a shared-descent
     /// group.
+    ///
+    /// Panics when `state` is not a state of the table.
     pub fn accept(&self, state: i32) -> i32 {
         self.outcome(state).accept()
     }
 
     /// The alternative a guarded state resolves to, if the state is guarded.
+    ///
+    /// Panics when `state` is not a state of the table.
     pub fn guarded_alt(&self, state: i32) -> Option<i32> {
         match self.outcome(state) {
             Outcome::Guarded(alt) => Some(alt),
@@ -934,6 +942,8 @@ impl StaticParserTable {
     }
 
     /// The lowest alternative that already left the decision, if any.
+    ///
+    /// Panics when `state` is not a state of the table.
     #[inline]
     pub fn fallback(&self, state: i32) -> Option<i32> {
         let fallbacks = self.fallbacks();
@@ -946,6 +956,8 @@ impl StaticParserTable {
     }
 
     /// The lowest conflicting alternative of a conflict escape state.
+    ///
+    /// Panics when `state` is not a state of the table.
     pub fn conflict_min_alt(&self, state: i32) -> Option<i32> {
         match self.outcome(state) {
             Outcome::Conflict(alt) => Some(alt),
@@ -954,6 +966,8 @@ impl StaticParserTable {
     }
 
     /// The continuation of a frontier escape state and its slot.
+    ///
+    /// Panics when `state` is not a state of the table.
     pub fn continuation(&self, state: i32) -> Option<(usize, ContinuationView<'_>)> {
         match self.outcome(state) {
             Outcome::Escape(Some(slot)) => Some((slot as usize, self.continuation_at(slot))),
@@ -1419,8 +1433,14 @@ impl StaticParserTables {
         }
     }
 
+    /// Checks that every decision slot names a table or dispatch, and that
+    /// the decision tables and their slots name each other.
     fn validate_slots(&self) -> Result<(), StaticParserDfaError> {
-        for &slot in self.slots() {
+        let malformed = |decision, what| StaticParserDfaError::Malformed {
+            table: decision,
+            what,
+        };
+        for (decision, &slot) in self.slots().iter().enumerate() {
             let (what, value, count) = if slot == NO_TABLE {
                 continue;
             } else if slot & DISPATCH_BIT != 0 {
@@ -1434,11 +1454,23 @@ impl StaticParserTables {
             };
             if value as usize >= count {
                 return Err(StaticParserDfaError::InvalidReference {
-                    table: 0,
+                    table: decision,
                     what,
                     value: i64::from(value),
                     count,
                 });
+            }
+            if slot & DISPATCH_BIT == 0 && self.tables[slot as usize].decision() != decision as i32
+            {
+                return Err(malformed(decision, "the table of a decision slot"));
+            }
+        }
+        for (index, table) in self.tables.iter().enumerate() {
+            let Ok(decision) = usize::try_from(table.decision()) else {
+                continue;
+            };
+            if self.slots().get(decision) != Some(&(index as u32)) {
+                return Err(malformed(index, "the decision of a table"));
             }
         }
         Ok(())
@@ -1478,6 +1510,9 @@ impl StaticParserTables {
                         value: i64::from(table),
                         count: self.tables.len(),
                     });
+                }
+                if table >= 0 && self.tables[table as usize].decision() != -1 {
+                    return Err(malformed("the decision of a precedence class table"));
                 }
             }
             for (precedence, &table) in by_precedence.iter().enumerate() {
@@ -2580,6 +2615,74 @@ mod tests {
             ),
             "a self-referencing context node is a cycle"
         );
+    }
+
+    #[test]
+    fn decision_slots_and_tables_must_agree() {
+        // The table of slot 0 claims decision 1.
+        let words = StaticParserTables::image(
+            &[DecisionTables::Single(0), DecisionTables::None],
+            &[table(1, vec![1], &[Vec::new()])],
+        );
+        assert!(matches!(
+            reload_owned(words),
+            Err(StaticParserDfaError::Malformed { table: 0, .. })
+        ));
+        // A precedence class table claims a decision.
+        let words = StaticParserTables::image(
+            &[DecisionTables::Dispatch(dispatch(&[], &[0]))],
+            &[table(0, vec![1], &[Vec::new()])],
+        );
+        assert!(matches!(
+            reload_owned(words),
+            Err(StaticParserDfaError::Malformed { .. })
+        ));
+    }
+
+    #[test]
+    fn tables_outside_the_atn_are_rejected() {
+        use crate::atn::ATN;
+        use crate::atn_type::ATNType;
+
+        let atn = ATN::new(ATNType::Parser, 0);
+        let tables = single(table(0, vec![1], &[Vec::new()]));
+        assert!(matches!(
+            tables.validate_for_atn(&atn),
+            Err(StaticParserDfaError::OutsideAtn {
+                what: "decision slot",
+                ..
+            })
+        ));
+        let guarded = StaticParserTables::new(
+            Vec::new(),
+            vec![table(-1, vec![1], &[Vec::new()]).with_guards(vec![0], vec![3], Vec::new())],
+        );
+        assert!(matches!(
+            guarded.validate_for_atn(&atn),
+            Err(StaticParserDfaError::OutsideAtn {
+                what: "guard invoking state",
+                ..
+            })
+        ));
+        let escaping = StaticParserTables::new(
+            Vec::new(),
+            vec![StaticParserTableBuilder::from_state_edges(
+                -1,
+                vec![ESCAPE],
+                vec![0],
+                vec![0],
+                vec![continuation(0)],
+                &[Vec::new()],
+            )],
+        );
+        assert!(matches!(
+            escaping.validate_for_atn(&atn),
+            Err(StaticParserDfaError::OutsideAtn {
+                what: "return state",
+                ..
+            })
+        ));
+        assert_eq!(StaticParserTables::empty().validate_for_atn(&atn), Ok(()));
     }
 
     #[test]
