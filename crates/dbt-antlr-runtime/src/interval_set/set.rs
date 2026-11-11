@@ -186,24 +186,17 @@ impl IntervalSetBuf {
             }
 
             if added.adjacent(r) || !added.disjoint(r) {
-                // next to each other, make a single larger interval
-                let bigger = added.union(r);
-                *r = bigger;
-                // make sure we didn't just create an interval that
-                // should be merged with next interval in list
-                loop {
-                    i += 1;
-                    let Some(next) = self.intervals.get(i) else {
-                        break;
-                    };
+                let mut bigger = added.union(r);
+                let mut end = i + 1;
+                while let Some(next) = self.intervals.get(end) {
                     if !bigger.adjacent(next) && bigger.disjoint(next) {
                         break;
                     }
-
-                    // if we bump up against or overlap next, merge
-                    self.intervals[i - 1] = bigger.union(next); // set to 3 merged ones
-                    self.intervals.remove(i);
+                    bigger = bigger.union(next);
+                    end += 1;
                 }
+                self.intervals[i] = bigger;
+                self.intervals.drain(i + 1..end);
                 return;
             }
             if added.starts_before_disjoint(r) {
