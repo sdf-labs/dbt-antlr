@@ -70,7 +70,8 @@
 //! - `fallbacks`: `fallbacks_len` `i32` entries, either none or one per state:
 //!   the lowest alternative that already left the decision, `0` for none.
 //! - `row_of`: `num_states` `u16` entries: the row of the state, `NO_ROW` for
-//!   a state without edges.
+//!   a state without edges or one where the walk stops. The row of the start
+//!   state is row 0 or `NO_ROW`.
 //! - `rows`: `num_rows * row_width` `u16` entries: the distinct rows. Column
 //!   `c` is the token `min_token + c`. An entry is `NO_EDGE` or the target
 //!   state, with [`TERMINAL_BIT`] set when the target's outcome is not `0`.
@@ -587,7 +588,9 @@ pub struct StaticParserTable {
     min_token: i32,
     row_width: u32,
     num_states: u32,
-    num_continuations: u32,
+    /// `row_width` when the walk starts on row 0 of the image, `0` when the
+    /// start state stops the walk or has no edge.
+    start_width: u32,
     data: ImageWords,
     #[cfg(target_endian = "big")]
     big_endian_u16: BigEndianU16Tables,
@@ -711,12 +714,19 @@ impl StaticParserTable {
             min_token: header.min_token,
             row_width: header.row_width,
             num_states: header.num_states,
-            num_continuations: header.continuations_len,
+            start_width: 0,
             data,
             #[cfg(target_endian = "big")]
             big_endian_u16,
         };
+        let mut loaded = loaded;
         loaded.validate_entries(table, num_cells)?;
+        // SAFETY: every table has state 0, and `validate_entries` checked
+        // that its row is row 0 or none.
+        let start_row = unsafe { *loaded.row_of_ptr };
+        if start_row == 0 && loaded.outcomes()[0] == 0 {
+            loaded.start_width = loaded.row_width;
+        }
         Ok(loaded)
     }
 
@@ -844,6 +854,19 @@ impl StaticParserTable {
         unsafe { *self.outcomes_ptr.add(state) }
     }
 
+    /// The row entry of the start state for a token, [`NO_EDGE`] when the
+    /// start state stops the walk or has no edge for the token.
+    #[inline(always)]
+    pub(crate) fn start_entry(&self, token: i32) -> u16 {
+        let column = (token as u32).wrapping_sub(self.min_token as u32);
+        if column >= self.start_width {
+            return NO_EDGE;
+        }
+        // SAFETY: a nonzero `start_width` means that row 0 exists and has
+        // `start_width` columns.
+        unsafe { *self.rows_ptr.add(column as usize) }
+    }
+
     /// The row entry of a state for a token: [`NO_EDGE`] or the target state,
     /// with [`TERMINAL_BIT`] when the walk stops at the target.
     ///
@@ -957,7 +980,7 @@ impl StaticParserTable {
 
     /// The number of continuations, i.e. of cache slots per DFA.
     pub fn num_continuations(&self) -> usize {
-        self.num_continuations as usize
+        self.header().continuations_len as usize
     }
 
     /// The target state of a token edge, or `None` when the table has no edge.
@@ -1016,6 +1039,9 @@ impl StaticParserTable {
             if row != NO_ROW && row as usize >= num_rows {
                 return Err(reference("row index", i64::from(row), num_rows));
             }
+        }
+        if !matches!(self.row_of()[0], 0 | NO_ROW) {
+            return Err(malformed("the row of the start state"));
         }
         for &entry in self.rows() {
             if entry == NO_EDGE {
@@ -1828,17 +1854,24 @@ mod build {
         pub fn to_image(&self) -> Vec<u32> {
             let num_states = self.outcomes.len();
             let outcomes: Vec<i32> = self.outcomes.iter().map(|o| o.encode()).collect();
-
-            let min_token = self
+            // The walk stops at a terminal state, so its edges are dead.
+            let live_edges: Vec<&[(i32, i32, u32)]> = self
                 .edges
                 .iter()
+                .zip(&outcomes)
+                .map(|(runs, &outcome)| if outcome == 0 { &runs[..] } else { &[] })
+                .collect();
+
+            let min_token = live_edges
+                .iter()
+                .copied()
                 .flatten()
                 .map(|&(lo, _, _)| lo)
                 .min()
                 .unwrap_or(0);
-            let max_token = self
-                .edges
+            let max_token = live_edges
                 .iter()
+                .copied()
                 .flatten()
                 .map(|&(_, hi, _)| hi)
                 .max()
@@ -1856,7 +1889,7 @@ mod build {
             let mut rows: Vec<u16> = Vec::new();
             let mut row_of = Vec::with_capacity(num_states);
             let mut distinct: HashMap<Vec<u16>, u16> = HashMap::new();
-            for runs in &self.edges {
+            for runs in live_edges {
                 if runs.is_empty() {
                     row_of.push(NO_ROW);
                     continue;
@@ -2260,6 +2293,27 @@ mod tests {
             );
         }
         assert_eq!(reload(&built), built);
+    }
+
+    #[test]
+    fn terminal_states_keep_no_row() {
+        // State 1 accepts, so its edges are dead and do not widen the rows.
+        let built = single(table(0, vec![0, 1], &[vec![(3, 4, 1)], vec![(90, 99, 0)]]));
+        let accepting = built.table(0, 0).expect("the table");
+        assert_eq!(accepting.header().num_rows, 1);
+        assert_eq!(accepting.header().row_width, 2, "tokens 3..=4");
+        assert_eq!(accepting.edge(1, 90), None);
+        assert_eq!(accepting.start_entry(3), 1 | TERMINAL_BIT);
+        assert_eq!(accepting.start_entry(5), NO_EDGE);
+
+        let start_accepts = single(table(0, vec![2], &[vec![(1, 1, 0)]]));
+        let start = start_accepts.table(0, 0).expect("the table");
+        assert_eq!(
+            start.start_entry(1),
+            NO_EDGE,
+            "the start state stops the walk"
+        );
+        assert_eq!(start.accept(0), 2);
     }
 
     #[test]

@@ -589,7 +589,8 @@ where
     /// fallback alternative fails like the adaptive simulation does.
     ///
     /// The walk consumes tokens while it reads them and rewinds afterwards, so
-    /// every step costs one `la(1)` and one `consume`. It must not read
+    /// every step costs one `la(1)`, plus one `consume` unless the step stops
+    /// the walk. It must not read
     /// `la(k)`: a channel-filtering token stream resolves `la(k)` by scanning
     /// from the current token, which would make a k-token lookahead O(k^2).
     ///
@@ -612,8 +613,13 @@ where
     }
     /// The table walk of [`Self::dfa_predict`] and
     /// [`Self::dfa_predict_virtual`].
+    ///
+    /// An edge entry flags a target state where the walk stops, so the walk
+    /// resolves an accept without consuming the token that leads into it. A
+    /// one-token decision that accepts returns before it marks the input.
+    #[inline]
     fn dfa_walk(&mut self, decision: i32) -> Result<i32, ANTLRError> {
-        use crate::dfa::static_parser_dfa::{Outcome, NO_EDGE, STATE_MASK};
+        use crate::dfa::static_parser_dfa::{NO_EDGE, STATE_MASK, TERMINAL_BIT};
 
         let Some(tables) = self.get_interpreter().static_parser_tables() else {
             return Ok(crate::atn::INVALID_ALT);
@@ -621,51 +627,104 @@ where
         let Some(table) = tables.table(decision, self.get_precedence()) else {
             return Ok(crate::atn::INVALID_ALT);
         };
+        let token = self.input.la(1);
+        let entry = table.start_entry(token);
+        if entry >= TERMINAL_BIT && entry != NO_EDGE {
+            // SAFETY: the loader checked that edge targets are states.
+            let outcome = unsafe { table.outcome_unchecked(usize::from(entry & STATE_MASK)) };
+            if outcome > 0 {
+                return Ok(outcome);
+            }
+        }
+        self.dfa_walk_steps(table, decision, token, entry)
+    }
+
+    /// Continues [`Self::dfa_walk`] from the start state, whose entry for
+    /// `token` is `entry`.
+    fn dfa_walk_steps(
+        &mut self,
+        table: &crate::dfa::static_parser_dfa::StaticParserTable,
+        decision: i32,
+        mut token: i32,
+        mut entry: u16,
+    ) -> Result<i32, ANTLRError> {
+        use crate::dfa::static_parser_dfa::{Outcome, NO_EDGE, STATE_MASK, TERMINAL_BIT};
+
         let start_index = self.input.index();
         let mark = self.input.mark();
         let mut state = 0_usize;
         let result = loop {
-            // SAFETY: `state` is 0 or an edge target, and the loader checked
-            // that both are states of the table.
-            let outcome = unsafe { table.outcome_unchecked(state) };
-            if outcome > 0 {
-                self.input.seek(start_index);
-                break Ok(outcome);
+            if entry == NO_EDGE {
+                break self.dfa_no_edge(table, decision, state, start_index);
             }
-            if outcome != 0 {
-                break self.dfa_terminal(table, decision, Outcome::decode(outcome), start_index);
-            }
-            let token = self.input.la(1);
-            // SAFETY: as above.
-            let entry = unsafe { table.edge_entry_unchecked(state, token) };
-            if entry != NO_EDGE {
-                state = usize::from(entry & STATE_MASK);
-                if token != TOKEN_EOF {
+            let target = usize::from(entry & STATE_MASK);
+            if entry & TERMINAL_BIT != 0 {
+                // SAFETY: the loader checked that edge targets are states.
+                let outcome = unsafe { table.outcome_unchecked(target) };
+                if outcome > 0 {
+                    self.input.seek(start_index);
+                    break Ok(outcome);
+                }
+                let outcome = Outcome::decode(outcome);
+                if matches!(outcome, Some(Outcome::Escape(Some(_)))) && token != TOKEN_EOF {
+                    // A frontier continuation resumes after the token that
+                    // led into the escape state.
                     self.input.consume();
                 }
-                continue;
+                break self.dfa_terminal(table, decision, outcome, start_index);
             }
-            if let Some(fallback) = table.fallback(state as i32) {
-                self.input.seek(start_index);
-                break Ok(fallback);
+            if token != TOKEN_EOF {
+                self.input.consume();
             }
-            let start = OwningToken::from(self.input.get(start_index) as &dyn Token);
-            let error = match self.input.lt(1) {
-                Some(offending) => {
-                    ANTLRError::no_alt_full(self, start, OwningToken::from(offending as &dyn Token))
-                }
-                None => ANTLRError::no_alt(self),
-            };
-            self.input.seek(start_index);
-            break Err(error);
+            state = target;
+            token = self.input.la(1);
+            // SAFETY: `state` is an edge target.
+            entry = unsafe { table.edge_entry_unchecked(state, token) };
         };
         self.input.release(mark);
         result
     }
 
+    /// Resolves a table walk without an edge for the current token: the start
+    /// state may stop the walk itself, and otherwise the state falls back to
+    /// an alternative that already left the decision or fails.
+    #[cold]
+    fn dfa_no_edge(
+        &mut self,
+        table: &crate::dfa::static_parser_dfa::StaticParserTable,
+        decision: i32,
+        state: usize,
+        start_index: isize,
+    ) -> Result<i32, ANTLRError> {
+        use crate::dfa::static_parser_dfa::Outcome;
+
+        // SAFETY: `state` is 0 or an edge target.
+        let outcome = unsafe { table.outcome_unchecked(state) };
+        if outcome > 0 {
+            self.input.seek(start_index);
+            return Ok(outcome);
+        }
+        if outcome != 0 {
+            return self.dfa_terminal(table, decision, Outcome::decode(outcome), start_index);
+        }
+        if let Some(fallback) = table.fallback(state as i32) {
+            self.input.seek(start_index);
+            return Ok(fallback);
+        }
+        let start = OwningToken::from(self.input.get(start_index) as &dyn Token);
+        let error = match self.input.lt(1) {
+            Some(offending) => {
+                ANTLRError::no_alt_full(self, start, OwningToken::from(offending as &dyn Token))
+            }
+            None => ANTLRError::no_alt(self),
+        };
+        self.input.seek(start_index);
+        Err(error)
+    }
+
     /// Resolves a table walk that stopped at an escape, conflict escape, or
-    /// guarded state. A frontier continuation resumes from the position the
-    /// walk reached; every other outcome rewinds to `start_index`.
+    /// guarded state. A frontier continuation resumes from the current
+    /// position; every other outcome rewinds to `start_index`.
     #[cold]
     fn dfa_terminal(
         &mut self,
