@@ -5,8 +5,8 @@
 //! drives the move and closure code of the simulator itself, so maximal munch,
 //! rule priority, non-greedy loops, and action accumulation match the lazy
 //! path by construction. The result is one [`StaticLexerDFA`] table per lexer
-//! mode plus the `Vec<u32>` word stream that generated code embeds
-//! ([`StaticLexerTables::to_words`]). The static table walker tokenizes
+//! mode plus the packed image that generated code embeds
+//! ([`StaticLexerDfaBuilder::build`]). The static table walker tokenizes
 //! from the tables without ATN simulation.
 //!
 //! # Build structure
@@ -19,13 +19,15 @@
 //! [`BuildStore`] (one per mode; its arena backs both the scratch and the
 //! finalized configs), so contexts are hash-consed and executors and
 //! semantic contexts interned.
-//! [`ModeBuild::finalize`] then lays out the walker's own [`StaticLexerDFA`]:
+//! [`ModeBuild::finalize`] then fills the sections of a `ModeSections`:
 //! `u16` packing with the `NO_EDGE`/`ESCAPE`/`ACCEPT_BIT` sentinels, the
 //! separate `eof` and dense 128-wide `low` rows, the hi-class compression, the deduplicated
 //! accept action tables, the accel classification, the escape ranges, and
-//! the continuation pool. The word-stream encoding of the tables lives with
-//! the decoder: `StaticLexerTables::to_words` in [`crate::dfa::static_lexer_dfa`],
-//! whose module documentation is the authoritative wire-format contract.
+//! the continuation pool. The build's `finalize` freezes them into the packed
+//! image of the walker's own [`StaticLexerDFA`]. The container that generated
+//! code embeds is assembled by [`StaticLexerDfaBuilder::build`]; the module
+//! documentation of [`crate::dfa::static_lexer_dfa`] is the authoritative
+//! format contract.
 //!
 //! # Escape edges
 //!
@@ -73,10 +75,10 @@ use crate::atn_config::LexerATNConfig;
 use crate::atn_config_set::MutableLexerATNConfigSet;
 use crate::atn_state::{ATNStateRef, ATNStateType, StarLoopEntryState};
 use crate::dfa::static_lexer_dfa::{
-    class_map, compute_walker_accel, compute_walker_accept, dense_hi_rows, Accel,
-    ContinuationConfig, EscapeRange, LexerContinuation, StaticLexerDFA, StaticLexerTables,
-    ACCEPT_BIT, ASCII_ROW, CONTINUATION_MOVED_CONFIGS, CONTINUATION_SOURCE_SET, ESCAPE,
-    NO_CONTINUATION, NO_EDGE,
+    config_flags, dense_hi_rows, Accel, ActionSpan, ContinuationConfig, ContinuationContext,
+    ContinuationPools, EscapeRange, LexerContinuation, ModeSections, StaticLexerDFA, ACCEPT_BIT,
+    ASCII_ROW, CONTINUATION_MOVED_CONFIGS, CONTINUATION_SOURCE_SET, ESCAPE, NO_CONTINUATION,
+    NO_EDGE, STATIC_DFA_FORMAT_VERSION, STATIC_DFA_MAGIC,
 };
 use crate::dfa::FinalizeStore;
 use crate::int_stream::EOF;
@@ -102,16 +104,15 @@ const MAX_CONTEXT_DEPTH: u32 = 32;
 /// of the committed tables, and the per-mode build outcomes (each carrying
 /// its committed table).
 #[derive(Debug)]
-pub struct StaticLexerDfaBuild {
-    /// The word-stream encoding of the tables of `modes`
-    /// (`StaticLexerTables::to_words`), in the format of the
-    /// [`crate::dfa::static_lexer_dfa`] module documentation.
+pub struct StaticLexerDfaBuildOutput {
+    /// The packed image container of the tables of `modes`, in the format of
+    /// the [`crate::dfa::static_lexer_dfa`] module documentation.
     pub words: Vec<u32>,
     /// Per-mode build outcomes, in mode order.
     pub modes: Vec<ModeBuildOutcome>,
 }
 
-impl StaticLexerDfaBuild {
+impl StaticLexerDfaBuildOutput {
     /// The committed table of one mode, when the mode has one.
     pub fn table(&self, mode: usize) -> Option<&StaticLexerDFA> {
         self.modes.get(mode)?.table.as_ref()
@@ -280,23 +281,37 @@ impl StaticLexerDfaBuilder {
     }
 
     /// Builds the tables of every lexer mode of `atn`.
-    pub fn build(&self, atn: &ATN) -> StaticLexerDfaBuild {
+    pub fn build(&self, atn: &ATN) -> StaticLexerDfaBuildOutput {
+        const PREAMBLE_WORDS: usize = 4;
+        const MODE_WORDS: usize = 2;
+
         let num_modes = atn.mode_to_start_state.len();
         let mut modes = Vec::with_capacity(num_modes);
         for mode in 0..num_modes {
             modes.push(self.build_mode(atn, mode));
         }
-        let tables = StaticLexerTables::from_modes(
-            modes
-                .iter_mut()
-                .map(|outcome| outcome.table.take())
-                .collect(),
-        );
-        let words = tables.to_words();
-        for (outcome, table) in modes.iter_mut().zip(tables.into_modes()) {
-            outcome.table = table;
+
+        let modes_end = PREAMBLE_WORDS + num_modes * MODE_WORDS;
+        let mut words = vec![
+            STATIC_DFA_MAGIC,
+            STATIC_DFA_FORMAT_VERSION,
+            0,
+            num_modes as u32,
+        ];
+        words.resize(modes_end, u32::MAX);
+        for (mode, outcome) in modes.iter().enumerate() {
+            let Some(table) = &outcome.table else {
+                continue;
+            };
+            let offset = (words.len() - modes_end) as u32;
+            let len = table.words().len() as u32;
+            words.extend_from_slice(table.words());
+            words[PREAMBLE_WORDS + mode * MODE_WORDS] = offset;
+            words[PREAMBLE_WORDS + mode * MODE_WORDS + 1] = len;
         }
-        StaticLexerDfaBuild { words, modes }
+        words[2] = words.len() as u32;
+
+        StaticLexerDfaBuildOutput { words, modes }
     }
 
     fn build_mode(&self, atn: &ATN, mode_index: usize) -> ModeBuildOutcome {
@@ -378,7 +393,7 @@ impl StaticLexerDfaBuilder {
             })
             .collect();
         let mut states = build_state_summaries(&mode.states, &mode.rows);
-        let table = mode.finalize(atn, mode_index);
+        let table = mode.finalize(atn).finalize(mode_index);
         for (index, state) in states.iter_mut().enumerate() {
             state.accel = table.state_accel(index as u16).cloned();
         }
@@ -830,8 +845,9 @@ impl<'sc> ModeBuild<'sc> {
         id
     }
 
-    /// Converts the structural build into a final [`StaticLexerDFA`].
-    fn finalize(self, atn: &ATN, mode_index: usize) -> StaticLexerDFA {
+    /// Converts the structural build into the sections of a
+    /// [`ModeSections`], ready for its `finalize`.
+    fn finalize(self, atn: &ATN) -> ModeSections {
         let num_states = self.states.len();
         let accept_type: Vec<i32> = self.states.iter().map(|s| s.accept_type).collect();
 
@@ -850,27 +866,26 @@ impl<'sc> ModeBuild<'sc> {
         }
 
         // Hi-class compression: the class bounds are the union of the
-        // hi-edge bounds of the mode; rows dedupe by content; `class_of`
-        // derives from the class starts (the loader's invariant).
+        // hi-edge bounds of the mode; rows dedupe by content; the symbol to
+        // class map derives from the class starts.
         let class_bounds = collect_class_starts(&self.rows);
         let num_classes = class_bounds.len();
         let mut class_starts = Vec::new();
-        let mut class_of = Vec::new();
         let mut hi_rows = Vec::new();
-        let mut row_of = Vec::new();
+        // Every state names a row, so the section has `num_states` entries
+        // even for a mode without hi edges: the image has no section whose
+        // length the header cannot state.
+        let mut row_of = vec![0u32; num_states];
         if num_classes > 0 {
             class_starts = class_bounds.iter().map(|&s| s as u32).collect();
-            class_of = class_map(&class_starts);
             let mut rows: Vec<Vec<(u32, u32, u16)>> = Vec::new();
             let mut row_ids: HashMap<Vec<(u32, u32, u16)>, u32> = HashMap::new();
-            row_of = Vec::with_capacity(num_states);
-            for state_rows in &self.rows {
+            for (state, state_rows) in self.rows.iter().enumerate() {
                 let runs = class_runs(&class_bounds, &hi_clipped(&accept_type, state_rows));
-                let id = *row_ids.entry(runs).or_insert_with_key(|runs| {
+                row_of[state] = *row_ids.entry(runs).or_insert_with_key(|runs| {
                     rows.push(runs.clone());
                     (rows.len() - 1) as u32
                 });
-                row_of.push(id);
             }
             hi_rows = dense_hi_rows(&rows, num_classes);
         }
@@ -878,11 +893,11 @@ impl<'sc> ModeBuild<'sc> {
         // Accept action tables: `LexerAction` clones from the ATN, the
         // lists deduplicated by content (the loader's invariant).
         let mut actions: Vec<LexerAction> = Vec::new();
-        let mut list_ids: HashMap<Vec<LexerAction>, (u32, u32)> = HashMap::new();
+        let mut list_ids: HashMap<Vec<LexerAction>, ActionSpan> = HashMap::new();
         let mut accept_actions = Vec::with_capacity(num_states);
         for state in &self.states {
             if state.accept_actions.is_empty() {
-                accept_actions.push((0, 0));
+                accept_actions.push(ActionSpan::EMPTY);
                 continue;
             }
             let list: Vec<LexerAction> = state
@@ -891,9 +906,12 @@ impl<'sc> ModeBuild<'sc> {
                 .map(|&index| atn.lexer_actions[index as usize])
                 .collect();
             let entry = list_ids.entry(list).or_insert_with_key(|list| {
-                let start = actions.len() as u32;
+                let span = ActionSpan {
+                    off: actions.len() as u32,
+                    len: list.len() as u32,
+                };
                 actions.extend_from_slice(list);
-                (start, list.len() as u32)
+                span
             });
             accept_actions.push(*entry);
         }
@@ -931,34 +949,17 @@ impl<'sc> ModeBuild<'sc> {
             escape_off.push(escape_ranges.len() as u32);
         }
 
+        let mut pools = ContinuationPools::default();
         let continuations = self
             .continuations
             .iter()
-            .map(|cont| commit_continuation(atn, cont))
+            .map(|cont| commit_continuation(atn, cont, &mut pools))
             .collect();
 
-        let (walker_tag, walker_positive) = compute_walker_accel(
-            &eof,
-            &low,
-            &hi_rows,
-            &row_of,
-            num_classes,
-            &accept_type,
-            &accel_tag,
-            &accel_data,
-        );
-        let walker_accept = compute_walker_accept(&accept_type, &accept_actions, &actions);
-        let start_entry = if accept_type[0] >= 0 { ACCEPT_BIT } else { 0 };
-        StaticLexerDFA {
-            low,
-            walker_tag,
-            walker_accept,
-            walker_positive,
-            eof,
+        ModeSections {
             start_state: 0,
-            start_entry,
-            mode: mode_index as u32,
-            class_of,
+            eof,
+            low,
             hi_rows,
             row_of,
             num_classes,
@@ -972,6 +973,9 @@ impl<'sc> ModeBuild<'sc> {
             escape_off,
             escape_ranges,
             continuations,
+            continuation_ctxs: pools.ctxs,
+            continuation_configs: pools.configs,
+            continuation_actions: pools.actions,
         }
     }
 }
@@ -1642,13 +1646,19 @@ fn class_runs(class_starts: &[i32], hi: &[(i32, i32, u16)]) -> Vec<(u32, u32, u1
 
 /// Converts a structural continuation to the walker's pool entry: the
 /// continuation-local topological context table and the [`ContinuationConfig`]
-/// structs. Local id 0 is the empty context. Entry `i` has local id `i + 1`,
-/// and parents refer to smaller ids. `(parent_local, return_state)` keys the
-/// local dedup map: after finalization the pair names a context node exactly.
-fn commit_continuation(atn: &ATN, cont: &PendingContinuation) -> LexerContinuation {
+/// structs, appended to the shared pools of the mode. Local id 0 is the empty
+/// context. Entry `i` has local id `i + 1`, and parents refer to smaller ids.
+/// `(parent_local, return_state)` keys the local dedup map: after finalization
+/// the pair names a context node exactly.
+fn commit_continuation(
+    atn: &ATN,
+    cont: &PendingContinuation,
+    pools: &mut ContinuationPools,
+) -> LexerContinuation {
     let mut ctxs: Vec<(u32, i32)> = Vec::new();
     let mut local_ids: HashMap<(u32, i32), u32> = HashMap::new();
     let mut configs = Vec::with_capacity(cont.configs.len());
+    let mut flat_actions = Vec::new();
     for (config, alt_reached_accept) in &cont.configs {
         let mut chain = Vec::new();
         let mut cur = config.get_context();
@@ -1682,16 +1692,22 @@ fn commit_continuation(atn: &ATN, cont: &PendingContinuation) -> LexerContinuati
             state: config.get_state().get_state_number(),
             alt: config.get_alt(),
             ctx: parent_local,
-            non_greedy: config.has_passed_through_non_greedy_decision(),
-            alt_reached_accept: *alt_reached_accept,
-            actions,
+            flags: config_flags(
+                config.has_passed_through_non_greedy_decision(),
+                *alt_reached_accept,
+            ),
+            actions_off: flat_actions.len() as u32,
+            actions_len: actions.len() as u32,
         });
+        flat_actions.extend(actions);
     }
-    LexerContinuation {
-        kind: cont.kind.tag(),
-        ctxs,
-        configs,
-    }
+    let ctxs = ctxs
+        .into_iter()
+        .map(|(parent, return_state)| ContinuationContext {
+            parent,
+            return_state,
+        });
+    pools.push(cont.kind.tag(), ctxs, configs, flat_actions)
 }
 
 #[cfg(test)]
@@ -1699,7 +1715,7 @@ mod tests {
     use super::*;
     use crate::atn_deserializer::ATNDeserializer;
     use crate::atn_state::ATNStateRef;
-    use crate::dfa::static_lexer_dfa::{ACCEL_EXCLUSION, ACCEL_POSITIVE};
+    use crate::dfa::static_lexer_dfa::ACCEL_POSITIVE;
     use crate::prediction_context::PredictionContext;
 
     fn push_ctx<'a>(
@@ -1806,8 +1822,8 @@ mod tests {
         let accel = compute_accel(2, &rows).expect("exclusion run");
         assert_eq!(accel, Accel::Exclude2(u32::from(b'a'), u32::from(b'b')));
         assert_eq!(
-            accel.to_serialized(2),
-            vec![2, ACCEL_EXCLUSION, 2, u32::from(b'a'), u32::from(b'b'), 0]
+            accel.to_image_words(),
+            [3, u32::from(b'a'), u32::from(b'b'), 0, 0, 0, 0, 0]
         );
     }
 
@@ -1826,13 +1842,12 @@ mod tests {
         let bitmap = Accel::bitmap_u128(bitmap_words);
         assert_eq!(bitmap & (1 << b'\n'), 0);
         assert_eq!(bitmap.count_ones(), 13);
-        let words = accel.to_serialized(1);
-        assert_eq!(words.len(), 6);
-        assert_eq!(words[0], 1);
-        assert_eq!(words[1], ACCEL_POSITIVE);
+        let words = accel.to_image_words();
+        assert_eq!(words.len(), 8);
+        assert_eq!(words[0], ACCEL_POSITIVE);
         let mut round_trip = 0u128;
         for i in 0..4 {
-            round_trip |= u128::from(words[2 + i]) << (i * 32);
+            round_trip |= u128::from(words[1 + i]) << (i * 32);
         }
         assert_eq!(round_trip, bitmap);
     }
@@ -1853,23 +1868,59 @@ mod tests {
     }
 
     #[test]
+    fn accel_and_action_image_words_overlay_round_trip() {
+        let descriptors = [
+            Accel::positive(0x0123_4567_89AB_CDEF_0011_2233_4455_6677),
+            Accel::Exclude(u32::from(b'\n')),
+            Accel::Exclude2(u32::from(b'a'), u32::from(b'b')),
+            Accel::Exclude3(u32::from(b'"'), u32::from(b'\r'), u32::from(b'\n')),
+            Accel::CountedExclusion {
+                opener: [u32::from(b'/'), u32::from(b'*'), u32::from(b'-')],
+                closer: [u32::from(b'-'), u32::from(b'*'), u32::from(b'/')],
+                n: 3,
+            },
+        ];
+        for accel in descriptors {
+            let words = accel.to_image_words();
+            let overlaid = unsafe { &*(words.as_ptr() as *const Accel) };
+            assert_eq!(overlaid, &accel);
+        }
+
+        let actions = [
+            LexerAction::Channel(2),
+            LexerAction::Custom {
+                rule_index: 3,
+                action_index: 5,
+            },
+            LexerAction::Mode(1),
+            LexerAction::More,
+            LexerAction::PopMode,
+            LexerAction::PushMode(4),
+            LexerAction::Skip,
+            LexerAction::Type(7),
+            LexerAction::IndexedCustom {
+                offset: 9,
+                rule_index: 3,
+                action_index: 5,
+            },
+        ];
+        for action in actions {
+            let words = action.to_image_words();
+            let overlaid = unsafe { *(words.as_ptr() as *const LexerAction) };
+            assert_eq!(overlaid, action);
+        }
+    }
+
+    #[test]
     fn counted_exclude_serialization() {
-        use crate::dfa::static_lexer_dfa::ACCEL_COUNTED_EXCLUSION;
         let a1 = Accel::CountedExclusion {
             opener: [u32::from(b'{'), 0, 0],
             closer: [u32::from(b'}'), 0, 0],
             n: 1,
         };
         assert_eq!(
-            a1.to_serialized(4),
-            vec![
-                4,
-                ACCEL_COUNTED_EXCLUSION,
-                1,
-                u32::from(b'{'),
-                u32::from(b'}'),
-                0
-            ]
+            a1.to_image_words(),
+            [5, u32::from(b'{'), 0, 0, u32::from(b'}'), 0, 0, 1]
         );
         let a2 = Accel::CountedExclusion {
             opener: [u32::from(b'/'), u32::from(b'*'), 0],
@@ -1877,14 +1928,16 @@ mod tests {
             n: 2,
         };
         assert_eq!(
-            a2.to_serialized(5),
-            vec![
+            a2.to_image_words(),
+            [
                 5,
-                ACCEL_COUNTED_EXCLUSION,
-                2,
-                u32::from_le_bytes([b'/', b'*', 0, 0]),
-                u32::from_le_bytes([b'*', b'/', 0, 0]),
+                u32::from(b'/'),
+                u32::from(b'*'),
                 0,
+                u32::from(b'*'),
+                u32::from(b'/'),
+                0,
+                2,
             ]
         );
         let a3 = Accel::CountedExclusion {
@@ -1893,14 +1946,16 @@ mod tests {
             n: 3,
         };
         assert_eq!(
-            a3.to_serialized(6),
-            vec![
-                6,
-                ACCEL_COUNTED_EXCLUSION,
+            a3.to_image_words(),
+            [
+                5,
+                u32::from(b'/'),
+                u32::from(b'*'),
+                u32::from(b'-'),
+                u32::from(b'-'),
+                u32::from(b'*'),
+                u32::from(b'/'),
                 3,
-                u32::from_le_bytes([b'/', b'*', b'-', 0]),
-                u32::from_le_bytes([b'-', b'*', b'/', 0]),
-                0,
             ]
         );
     }

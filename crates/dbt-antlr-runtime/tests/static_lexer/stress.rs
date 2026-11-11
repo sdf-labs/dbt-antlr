@@ -27,7 +27,7 @@ use dbt_antlr_codegen::OptimizationOptions;
 use dbt_antlr_runtime::atn::ATN;
 use dbt_antlr_runtime::atn_deserializer::ATNDeserializer;
 use dbt_antlr_runtime::atn_simulator::LexerATNSimulatorManager;
-use dbt_antlr_runtime::dfa::static_dfa_build::{StaticLexerDfaBuild, StaticLexerDfaBuilder};
+use dbt_antlr_runtime::dfa::static_dfa_build::{StaticLexerDfaBuildOutput, StaticLexerDfaBuilder};
 use dbt_antlr_runtime::dfa::static_lexer_dfa::StaticLexerTables;
 use dbt_antlr_runtime::error_listener::ErrorListener;
 use dbt_antlr_runtime::errors::ANTLRError;
@@ -151,7 +151,7 @@ struct Fixture {
     tables: &'static StaticLexerTables,
 }
 
-fn compile_fixture(grammar: &Path) -> (StaticLexerDfaBuild, Fixture) {
+fn compile_fixture(grammar: &Path) -> (StaticLexerDfaBuildOutput, Fixture) {
     let library = [grammar.parent().expect("grammar has a dir").to_path_buf()];
     let units = dbt_antlr_codegen::atn_export::compile_atn_data(grammar, &library)
         .expect("grammar compiles");
@@ -163,8 +163,9 @@ fn compile_fixture(grammar: &Path) -> (StaticLexerDfaBuild, Fixture) {
         .deserialize(&mut words.iter())
         .into_static();
     let build = StaticLexerDfaBuilder::new().build(atn);
+    let image: &'static [u32] = Box::leak(build.words.clone().into_boxed_slice());
     let tables: &'static StaticLexerTables = Box::leak(Box::new(
-        StaticLexerTables::from_words(&build.words).expect("tables decode"),
+        StaticLexerTables::from_image(image).expect("tables load"),
     ));
     let fixture = Fixture {
         atn_manager_truth: Box::leak(Box::new(LexerATNSimulatorManager::new(atn))),

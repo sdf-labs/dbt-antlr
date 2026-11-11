@@ -8,7 +8,7 @@ use crate::atn_simulator::{BaseATNSimulator, IATNSimulator};
 use crate::atn_state::{ATNState, ATNStateRef, ATNStateType};
 use crate::char_stream::CharStream;
 use crate::dfa::static_lexer_dfa::{
-    Accel, LexerContinuation, StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, ASCII_ROW,
+    Accel, ContinuationView, StaticLexerDFA, StaticLexerTables, ACCEPT_BIT, ASCII_ROW,
     CONTINUATION_MOVED_CONFIGS, CONTINUATION_SOURCE_SET, ESCAPE, NO_CONTINUATION, NO_EDGE,
     STATE_MASK, WALKER_ACTION_NONE, WALKER_ACTION_SKIP, WALKER_LEAF_TAG, WALKER_NONTERM_POS_BIT,
     WALKER_TERMINAL_POS_BIT,
@@ -235,8 +235,8 @@ impl<'sim> LexerATNSimulator<'sim> {
         let mut cursor = lexer.input().index() as usize;
 
         'walk: loop {
-            let low = table.low.as_ptr();
-            let walker_tag = table.walker_tag.as_ptr();
+            let low = table.low_ptr();
+            let walker_tag = table.walker_tag_ptr();
             let start_entry = table.start_entry;
             let mut s = start_entry & STATE_MASK;
             let mut accept_index: isize = if start_entry & ACCEPT_BIT != 0 {
@@ -297,16 +297,16 @@ impl<'sim> LexerATNSimulator<'sim> {
                         }
                         if wtag & WALKER_TERMINAL_POS_BIT != 0 {
                             let tp = unsafe { table.walker_positive_at(wtag) };
-                            let c = scan_positive(hay, cursor, tp.lo, tp.hi);
+                            let c = scan_positive(hay, cursor, tp.lo(), tp.hi());
                             if c > cursor {
                                 accept_index = c as isize;
-                                accept_state = tp.target;
+                                accept_state = tp.target();
                             }
                             break 'accept;
                         }
                         if wtag >= WALKER_NONTERM_POS_BIT {
                             let tp = unsafe { table.walker_positive_at(wtag) };
-                            let c = scan_positive(hay, cursor, tp.lo, tp.hi);
+                            let c = scan_positive(hay, cursor, tp.lo(), tp.hi());
                             if c > cursor {
                                 if accept_index == cursor as isize {
                                     accept_index = c as isize;
@@ -380,8 +380,8 @@ impl<'sim> LexerATNSimulator<'sim> {
         };
         let mut accept_state: u16 = s;
 
-        let low = table.low.as_ptr();
-        let walker_tag = table.walker_tag.as_ptr();
+        let low = table.low_ptr();
+        let walker_tag = table.walker_tag_ptr();
 
         let mut cursor = start_index as usize;
         let mut pending_wtag: u16 = 0;
@@ -435,16 +435,16 @@ impl<'sim> LexerATNSimulator<'sim> {
                     }
                     if wtag & WALKER_TERMINAL_POS_BIT != 0 {
                         let tp = unsafe { table.walker_positive_at(wtag) };
-                        let c = scan_positive(hay, cursor, tp.lo, tp.hi);
+                        let c = scan_positive(hay, cursor, tp.lo(), tp.hi());
                         if c > cursor {
                             accept_index = c as isize;
-                            accept_state = tp.target;
+                            accept_state = tp.target();
                         }
                         break 'accept;
                     }
                     if wtag >= WALKER_NONTERM_POS_BIT {
                         let tp = unsafe { table.walker_positive_at(wtag) };
-                        let c = scan_positive(hay, cursor, tp.lo, tp.hi);
+                        let c = scan_positive(hay, cursor, tp.lo(), tp.hi());
                         if c > cursor {
                             if accept_index == cursor as isize {
                                 accept_index = c as isize;
@@ -517,8 +517,8 @@ impl<'sim> LexerATNSimulator<'sim> {
             }
         }
 
-        let low = table.low.as_slice();
-        let walker_tag = table.walker_tag.as_slice();
+        let low = table.low_slice();
+        let walker_tag = table.walker_tag_slice();
         let mut symbol: i32;
         let mut entry: u16;
         // SAFETY (applies to every `unsafe` table access below): `s` and
@@ -581,16 +581,16 @@ impl<'sim> LexerATNSimulator<'sim> {
                     }
                     if wtag & WALKER_TERMINAL_POS_BIT != 0 {
                         let tp = unsafe { table.walker_positive_at(wtag) };
-                        let c = scan_positive(hay, cursor, tp.lo, tp.hi);
+                        let c = scan_positive(hay, cursor, tp.lo(), tp.hi());
                         if c > cursor {
                             accept_index = c as isize;
-                            accept_state = tp.target;
+                            accept_state = tp.target();
                         }
                         break 'accept;
                     }
                     if wtag >= WALKER_NONTERM_POS_BIT {
                         let tp = unsafe { table.walker_positive_at(wtag) };
-                        let c = scan_positive(hay, cursor, tp.lo, tp.hi);
+                        let c = scan_positive(hay, cursor, tp.lo(), tp.hi());
                         if c > cursor {
                             if accept_index == cursor as isize {
                                 accept_index = c as isize;
@@ -851,7 +851,7 @@ impl<'sim> LexerATNSimulator<'sim> {
 
     fn match_token_from_continuation<'scratch, 'input, 'arena, Input, TF>(
         &self,
-        continuation: &'static LexerContinuation,
+        continuation: ContinuationView<'_>,
         escape_symbol: i32,
         lexer: &mut impl Lexer<'input, 'arena, Input, TF>,
         scratch: &'scratch bumpalo::Bump,
@@ -866,18 +866,18 @@ impl<'sim> LexerATNSimulator<'sim> {
         // Rebuild the singleton context chains bottom-up: local id 0 is the
         // empty context, entry i has local id i + 1 with parents that refer
         // to smaller ids.
-        let mut contexts = Vec::with_capacity(continuation.ctxs.len() + 1);
+        let mut contexts = Vec::with_capacity(continuation.ctxs().len() + 1);
         contexts.push(PredictionContextRef::new_empty());
-        for &(parent, return_state) in &continuation.ctxs {
+        for ctx in continuation.ctxs() {
             let ctx = PredictionContext::new_singleton(
-                Some(contexts[parent as usize]),
-                atn.make_state_ref(return_state),
+                Some(contexts[ctx.parent as usize]),
+                atn.make_state_ref(ctx.return_state),
             );
             contexts.push(PredictionContextRef::from(scratch.alloc(ctx)));
         }
 
         let configs: Vec<LexerATNConfig> = continuation
-            .configs
+            .configs()
             .iter()
             .map(|c| {
                 let mut config = LexerATNConfig::new(
@@ -885,9 +885,9 @@ impl<'sim> LexerATNSimulator<'sim> {
                     c.alt,
                     contexts[c.ctx as usize],
                 );
-                config.set_passed_through_non_greedy_decision(c.non_greedy);
+                config.set_passed_through_non_greedy_decision(c.non_greedy());
                 let mut executor = None;
-                for &action_index in &c.actions {
+                for &action_index in continuation.config_actions(c) {
                     let action: crate::lexer_action::LexerAction =
                         atn.lexer_actions[action_index as usize];
                     executor = Some(&*scratch.alloc(LexerActionExecutor::new_copy_append(
@@ -899,18 +899,18 @@ impl<'sim> LexerATNSimulator<'sim> {
             .collect();
 
         let mut reach = MutableLexerATNConfigSet::new(scratch);
-        match continuation.kind {
+        match continuation.kind() {
             CONTINUATION_MOVED_CONFIGS => {
                 // The configs are post-move, pre-closure: replay the
                 // closure of each with its serialized
                 // alt_reached_accept flag.
                 let mut env = LazyClosureEnv::new(self, lexer);
-                for (config, serialized) in configs.iter().zip(continuation.configs.iter()) {
+                for (config, serialized) in configs.iter().zip(continuation.configs()) {
                     closure_core(
                         atn,
                         config.clone(),
                         &mut reach,
-                        serialized.alt_reached_accept,
+                        serialized.alt_reached_accept(),
                         true,
                         escape_symbol == EOF,
                         &mut env,

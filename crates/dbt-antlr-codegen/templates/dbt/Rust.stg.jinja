@@ -1363,7 +1363,7 @@ static _serializedATN: [i32; {{ model.serialized | length }}] = [
 ];
 {%- endmacro -%}
 {#- StaticLexerTables replaces SerializedATN for `--static-lexer-dfa` lexers: the
-    `_STATIC_LEXER_TABLE_*` statics carry the static DFA word stream. When
+    `_STATIC_LEXER_TABLE_*` statics carry the packed static DFA image. When
     every mode compiled and no edge escapes (`omitAtn`), the ATN statics are
     elided and the simulator manager runs on the tables alone; otherwise the
     ATN stays for the lazy fallback of escape edges. -#}
@@ -1376,7 +1376,7 @@ static _serializedATN: [i32; {{ atn.serialized | length }}] = [
     {{ atn.serialized | wrap_list(", ", 4, "    ", 4) }}
 ];
 {% endif %}static _STATIC_LEXER_TABLES: LazyLock<StaticLexerTables> =
-    LazyLock::new(|| StaticLexerTables::from_words(&_STATIC_LEXER_TABLE_WORDS).expect("invalid static lexer DFA table words; regenerate the lexer"));
+    LazyLock::new(|| StaticLexerTables::from_image(&_STATIC_LEXER_TABLE_WORDS).expect("invalid static lexer DFA table image; regenerate the lexer"));
 static _STATIC_LEXER_TABLE_WORDS: [u32; {{ model.words | length }}] = [
     {{ model.words | wrap_list(", ", 4, "    ", 4) }}
 ];
