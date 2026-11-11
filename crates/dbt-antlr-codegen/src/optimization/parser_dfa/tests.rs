@@ -508,7 +508,7 @@ fn build_tables(path: &Path) -> (Vec<DecisionResult>, super::super::StaticParser
 }
 
 #[test]
-fn table_words_round_trip_through_the_runtime_decoder() {
+fn table_image_loads_in_the_runtime() {
     let (results, tables) = build_tables(&grammars_dir().join("ReferenceToATN.g4"));
     assert!(tables.has_table(0), "decision 0 has a hybrid table");
     assert!(tables.defers(0), "the hybrid table keeps an adaptive path");

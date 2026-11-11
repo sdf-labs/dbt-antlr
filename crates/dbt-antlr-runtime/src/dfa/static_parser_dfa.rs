@@ -1096,11 +1096,9 @@ impl StaticParserTable {
             if record.ctxs_off as usize != next_ctx || record.configs_off as usize != next_config {
                 return Err(malformed("a continuation span"));
             }
-            let nodes = ctxs
-                .get(next_ctx..next_ctx + record.ctxs_len as usize)
+            let nodes = span_of(ctxs, next_ctx, record.ctxs_len)
                 .ok_or(malformed("a continuation context span"))?;
-            let own_configs = configs
-                .get(next_config..next_config + record.configs_len as usize)
+            let own_configs = span_of(configs, next_config, record.configs_len)
                 .ok_or(malformed("a continuation config span"))?;
             next_ctx += nodes.len();
             next_config += own_configs.len();
@@ -1130,8 +1128,7 @@ impl StaticParserTable {
                 if span.edges_off as usize != next_edge || span.edges_len == 0 {
                     return Err(malformed("a context node span"));
                 }
-                let node_edges = edges
-                    .get(next_edge..next_edge + span.edges_len as usize)
+                let node_edges = span_of(edges, next_edge, span.edges_len)
                     .ok_or(malformed("a context node span"))?;
                 next_edge += node_edges.len();
                 for edge in node_edges {
@@ -1345,10 +1342,12 @@ impl StaticParserTables {
         let num_dispatches = image[5] as usize;
         let dispatch_data_len = image[6] as usize;
         let slots_start = PREAMBLE_WORDS;
-        let dir_start = slots_start + num_slots;
-        let dispatches_start = num_tables
-            .checked_mul(TABLE_DIR_WORDS)
-            .and_then(|words| dir_start.checked_add(words));
+        let dir_start = slots_start.checked_add(num_slots);
+        let dispatches_start = dir_start.and_then(|start| {
+            num_tables
+                .checked_mul(TABLE_DIR_WORDS)
+                .and_then(|words| start.checked_add(words))
+        });
         let dispatch_data_start = dispatches_start.and_then(|start| {
             num_dispatches
                 .checked_mul(DISPATCH_WORDS)
@@ -1357,8 +1356,17 @@ impl StaticParserTables {
         let tables_start = dispatch_data_start
             .and_then(|start| start.checked_add(dispatch_data_len))
             .filter(|&end| end <= image.len());
-        let (Some(dispatches_start), Some(dispatch_data_start), Some(tables_start)) =
-            (dispatches_start, dispatch_data_start, tables_start)
+        let (
+            Some(dir_start),
+            Some(dispatches_start),
+            Some(dispatch_data_start),
+            Some(tables_start),
+        ) = (
+            dir_start,
+            dispatches_start,
+            dispatch_data_start,
+            tables_start,
+        )
         else {
             return Err(StaticParserDfaError::TruncatedImage {
                 what: "the container directory",
@@ -1466,10 +1474,13 @@ impl StaticParserTables {
             }
         }
         for (index, table) in self.tables.iter().enumerate() {
-            let Ok(decision) = usize::try_from(table.decision()) else {
+            if table.decision() == -1 {
                 continue;
-            };
-            if self.slots().get(decision) != Some(&(index as u32)) {
+            }
+            let named = usize::try_from(table.decision())
+                .ok()
+                .and_then(|decision| self.slots().get(decision));
+            if named != Some(&(index as u32)) {
                 return Err(malformed(index, "the decision of a table"));
             }
         }
@@ -1641,6 +1652,11 @@ impl StaticParserTables {
         }
         Ok(())
     }
+}
+
+/// The `len` entries of `pool` at `start`, `None` when they leave the pool.
+fn span_of<T>(pool: &[T], start: usize, len: u32) -> Option<&[T]> {
+    pool.get(start..start.checked_add(len as usize)?)
 }
 
 /// The precedence class of a value: the number of cutoffs below it.
@@ -2534,6 +2550,27 @@ mod tests {
             reload_owned(words[..3].to_vec()),
             Err(StaticParserDfaError::TruncatedImage { .. })
         ));
+        let mut bad = vec![
+            STATIC_PARSER_DFA_MAGIC,
+            FORMAT_VERSION,
+            9,
+            u32::MAX - 6,
+            0,
+            0,
+            2,
+            0,
+            0,
+        ];
+        assert!(matches!(
+            reload_owned(bad.clone()),
+            Err(StaticParserDfaError::TruncatedImage { .. })
+        ));
+        bad[3] = 0;
+        bad[5] = u32::MAX;
+        assert!(matches!(
+            reload_owned(bad),
+            Err(StaticParserDfaError::TruncatedImage { .. })
+        ));
 
         // Header word 6 is the outcomes offset: unaligned.
         let mut bad = words.clone();
@@ -2624,6 +2661,12 @@ mod tests {
             &[DecisionTables::Single(0), DecisionTables::None],
             &[table(1, vec![1], &[Vec::new()])],
         );
+        assert!(matches!(
+            reload_owned(words),
+            Err(StaticParserDfaError::Malformed { table: 0, .. })
+        ));
+        // An unreferenced table claims an invalid decision.
+        let words = StaticParserTables::image(&[], &[table(-2, vec![1], &[Vec::new()])]);
         assert!(matches!(
             reload_owned(words),
             Err(StaticParserDfaError::Malformed { table: 0, .. })

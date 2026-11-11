@@ -4,8 +4,8 @@
 //!
 //! The pass classifies the prediction decisions of every root parser unit,
 //! builds the static prediction tables, and hands the emitter both the tables
-//! (which it turns into `dfa_predict` call sites) and the `SDFA` word stream
-//! that rides in the trailing section of the packed parser ATN. It reads the
+//! (which it turns into `dfa_predict` call sites) and the `SDFA` table image
+//! that the generated parser embeds beside its packed parser ATN. It reads the
 //! runtime ATN of the compiled unit directly, so the analysis never serializes
 //! or deserializes words.
 //!
@@ -52,8 +52,8 @@ const DUMP_SELECTOR_NO_MATCH: &str = "G4S191";
 /// resolved statically.
 const STATIC_ONLY_RESOLVED: &str = "G4S192";
 
-/// The static tables of one parser unit, as the emitter and the packed ATN
-/// need them.
+/// The static tables of one parser unit, as the emitter and the embedded
+/// table image need them.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct StaticParserTables {
     tables: RuntimeTables,
@@ -136,7 +136,7 @@ impl StaticParserDfa {
     pub(crate) const SAFETY: SafetyClass = SafetyClass::TreeAndApiPreserving;
 
     /// Classifies the decisions of one compiled parser unit, builds the tables
-    /// the generated parser will decode, and records the diagnostics of the
+    /// the generated parser will embed, and records the diagnostics of the
     /// decisions that stay partly adaptive.
     ///
     /// With [`AtnFallback::Forbidden`], the escape states of every partial
@@ -272,7 +272,7 @@ impl StaticParserDfa {
 pub(crate) struct StaticParserDfaArtifact {
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) report: StaticParserDfaReport,
-    /// The tables the generated parser decodes from its packed ATN.
+    /// The tables the generated parser embeds as its table image.
     pub(crate) tables: StaticParserTables,
 }
 
