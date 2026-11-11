@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-runtime-v0.8.0...dbt-antlr-runtime-v0.8.1) - 2026-11-11
+
+### Fixed
+
+- *(runtime)* merge all overlapped intervals in IntervalSetBuf::add_interval ([#68](https://github.com/sdf-labs/dbt-antlr/pull/68))
+
 ## [0.8.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-runtime-v0.7.0...dbt-antlr-runtime-v0.8.0) - 2026-11-10
 
 ### Added
