@@ -1405,8 +1405,8 @@ static _serializedATN: [u32; {{ model.serialized | length }}] = [
 ];
 {%- if model.staticTables %}
 static _STATIC_PARSER_TABLES: LazyLock<StaticParserTables> = LazyLock::new(|| {
-    StaticParserTables::from_words(&_STATIC_PARSER_TABLE_WORDS)
-        .expect("invalid static parser DFA tables; regenerate the parser")
+    StaticParserTables::from_image(&_STATIC_PARSER_TABLE_WORDS)
+        .expect("invalid static parser DFA table image; regenerate the parser")
 });
 static _STATIC_PARSER_TABLE_WORDS: [u32; {{ model.staticTables.words | length }}] = [
     {{ model.staticTables.words | wrap_list(", ", 4, "    ", 4) }}

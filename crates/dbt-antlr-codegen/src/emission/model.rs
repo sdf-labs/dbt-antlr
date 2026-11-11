@@ -221,7 +221,7 @@ pub struct PackedAtnModel {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StaticParserTablesModel {
-    /// The `SDFA` words of the tables.
+    /// The packed image words of the tables.
     pub words: Vec<u32>,
 }
 

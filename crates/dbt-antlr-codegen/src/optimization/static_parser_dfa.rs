@@ -123,9 +123,9 @@ impl StaticParserTables {
         self.atn_fallback
     }
 
-    /// The `SDFA` word stream, empty when the unit has no table.
+    /// The `SDFA` table image, empty when the unit has no table.
     pub(crate) fn words(&self) -> Vec<u32> {
-        self.tables.to_words()
+        self.tables.words().to_vec()
     }
 }
 

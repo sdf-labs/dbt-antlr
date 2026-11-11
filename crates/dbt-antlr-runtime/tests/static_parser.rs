@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Bo Lin
 //! Integration tests for `--static-parser-dfa`: the `StaticDFA.g4` static
 //! tables, `LrDfa.g4` precedence dispatch, the `FuzzExpr.g4` static-vs-adaptive
-//! differential, the `SDFA` word codec, the D5 escape handoff, and the
+//! differential, the `SDFA` table image, the D5 escape handoff, and the
 //! `--static-dfa-only` resolution of the `GuardExpr.g4` escape states.
 
 #[rustfmt::skip]
@@ -579,7 +579,7 @@ fn fuzz_escape_corners() {
 }
 
 #[test]
-fn sdfa_words_round_trip() {
+fn sdfa_image_reloads_in_place() {
     Arena::with(|arena| {
         let manager = gen::fuzzexprparser_static::parser_simulator_manager();
         let simulator = manager.get_simulator(arena);
@@ -588,10 +588,16 @@ fn sdfa_words_round_trip() {
             .expect("the parser has static tables");
         assert!(!tables.is_empty());
 
-        let words = tables.to_words();
-        let decoded = StaticParserTables::from_words(&words).expect("round-trip decode");
-        assert_eq!(&decoded, tables);
-        assert_eq!(decoded.to_words(), words);
+        let words: &'static [u32] = Box::leak(tables.words().to_vec().into_boxed_slice());
+        let reloaded = StaticParserTables::from_image(words).expect("the image reloads");
+        assert_eq!(reloaded.words(), tables.words());
+        assert_eq!(reloaded.tables().len(), tables.tables().len());
+        for (reloaded, table) in reloaded.tables().iter().zip(tables.tables()) {
+            assert_eq!(reloaded.words(), table.words());
+            for state in 0..table.num_states() as i32 {
+                assert_eq!(reloaded.accept(state), table.accept(state));
+            }
+        }
     });
 }
 

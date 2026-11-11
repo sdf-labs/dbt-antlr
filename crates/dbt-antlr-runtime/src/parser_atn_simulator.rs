@@ -358,7 +358,7 @@ impl<'sim> ParserATNSimulator<'sim> {
         decision: i32,
         slot: usize,
         total_slots: usize,
-        continuation: &crate::dfa::static_parser_dfa::ParserContinuation,
+        continuation: crate::dfa::static_parser_dfa::ContinuationView<'_>,
         start_index: isize,
         parser: &mut P,
     ) -> Result<i32, ANTLRError>
@@ -405,7 +405,7 @@ impl<'sim> ParserATNSimulator<'sim> {
     fn materialize_continuation<'input, 'arena, 'scratch, 'cache, TF, P>(
         &self,
         local: &mut Local<'input, 'arena, 'sim, 'scratch, 'cache, TF, P>,
-        continuation: &crate::dfa::static_parser_dfa::ParserContinuation,
+        continuation: crate::dfa::static_parser_dfa::ContinuationView<'_>,
         slot: usize,
         total_slots: usize,
     ) -> Result<&'sim DFAState<'sim, ATNConfigSet<'sim>>, ANTLRError>
@@ -415,38 +415,27 @@ impl<'sim> ParserATNSimulator<'sim> {
         TF: TokenFactory<'input, 'arena> + 'arena,
         P: Parser<'input, 'arena, TF>,
     {
-        use crate::dfa::static_parser_dfa::ContinuationContextNode;
-
         let atn = self.atn();
         // The context DAG is topological, so every parent is built before the
         // node that names it.
         let mut contexts: Vec<PredictionContextRef<'scratch>> =
-            Vec::with_capacity(continuation.contexts.len());
-        for node in &continuation.contexts {
+            Vec::with_capacity(continuation.num_contexts());
+        for node in continuation.contexts() {
             let context = match node {
-                ContinuationContextNode::Singleton {
-                    parent,
-                    return_state,
-                } => PredictionContext::new_singleton(
-                    (*return_state >= 0).then(|| context_ref(&contexts, *parent)),
-                    return_state_ref(atn, *return_state),
+                [edge] => PredictionContext::new_singleton(
+                    (edge.return_state >= 0).then(|| context_ref(&contexts, edge.parent)),
+                    return_state_ref(atn, edge.return_state),
                 ),
-                ContinuationContextNode::Array {
-                    parents,
-                    return_states,
-                } => {
-                    let parents = local.scratch().alloc_slice_fill_iter(
-                        parents
-                            .iter()
-                            .zip(return_states)
-                            .map(|(&parent, &return_state)| {
-                                (return_state >= 0).then(|| context_ref(&contexts, parent))
-                            }),
-                    );
+                edges => {
+                    let parents = local
+                        .scratch()
+                        .alloc_slice_fill_iter(edges.iter().map(|edge| {
+                            (edge.return_state >= 0).then(|| context_ref(&contexts, edge.parent))
+                        }));
                     let return_states = local.scratch().alloc_slice_fill_iter(
-                        return_states
+                        edges
                             .iter()
-                            .map(|&return_state| return_state_ref(atn, return_state)),
+                            .map(|edge| return_state_ref(atn, edge.return_state)),
                     );
                     PredictionContext::new_array(parents, return_states)
                 }
@@ -455,7 +444,7 @@ impl<'sim> ParserATNSimulator<'sim> {
         }
 
         let mut configs = MutableATNConfigSet::new(local.scratch(), false);
-        for config in &continuation.configs {
+        for config in continuation.configs() {
             let mut atn_config = ATNConfig::new(
                 atn.make_state_ref(config.state),
                 config.alt,
