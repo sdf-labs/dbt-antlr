@@ -615,10 +615,9 @@ where
     fn dfa_walk(&mut self, decision: i32) -> Result<i32, ANTLRError> {
         use crate::dfa::static_parser_dfa::{CONFLICT_ESCAPE, ESCAPE, GUARDED};
 
-        let tables = self.get_interpreter().atn().static_dfas();
-        if tables.is_empty() {
+        let Some(tables) = self.get_interpreter().static_parser_tables() else {
             return Ok(crate::atn::INVALID_ALT);
-        }
+        };
         let Some(table) = tables.table(decision, self.get_precedence()) else {
             return Ok(crate::atn::INVALID_ALT);
         };

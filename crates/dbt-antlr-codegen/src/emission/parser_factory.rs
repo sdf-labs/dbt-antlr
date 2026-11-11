@@ -16,8 +16,6 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use dbt_antlr_runtime::dfa::static_parser_dfa::append_sdfa_section;
-
 use crate::emission::action_translator::{ActionScope, LabelDef, split_action, translate_action};
 use crate::emission::lexer_factory::{
     ANTLR_VERSION, capitalize, collect_named_actions, escape_if_needed, rule_context_struct_name,
@@ -29,7 +27,8 @@ use crate::emission::model::{
     ActionChunkModel, BitsetModel, ChoiceModel, ChunkContextModel, DeclModel, DescentGroupModel,
     DescentTailModel, IndexedActionModel, OpLabelModel, PackedAtnModel, ParserFileContext,
     ParserFileModel, ParserModel, RuleActionFunctionModel, RuleFunctionModel,
-    RuleNamedActionsModel, RuleRefModel, SrcOpModel, StructDeclModel, TokenInfoModel,
+    RuleNamedActionsModel, RuleRefModel, SrcOpModel, StaticParserTablesModel, StructDeclModel,
+    TokenInfoModel,
 };
 use crate::error::EmitError;
 use crate::grammar::atn::{
@@ -109,12 +108,11 @@ pub(crate) fn build_parser_file_context(
         funcs,
         sempred_funcs,
         atn: PackedAtnModel {
-            serialized: match static_tables {
-                Some(tables) => {
-                    append_sdfa_section(&encode_packed_atn(compiled.atn), &tables.words())
-                }
-                None => encode_packed_atn(compiled.atn),
-            },
+            serialized: encode_packed_atn(compiled.atn),
+            static_tables: static_tables
+                .map(StaticParserTables::words)
+                .filter(|words| !words.is_empty())
+                .map(|words| StaticParserTablesModel { words }),
         },
     };
 

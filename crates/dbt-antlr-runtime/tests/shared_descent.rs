@@ -27,7 +27,6 @@ mod gen {
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use dbt_antlr_runtime::atn_simulator::IATNSimulator;
 use dbt_antlr_runtime::common_token_stream::CommonTokenStream;
 use dbt_antlr_runtime::errors::ANTLRError;
 use dbt_antlr_runtime::int_stream::IntStream;
@@ -407,7 +406,9 @@ fn paren_table_accepts_with_the_group() {
     Arena::with(|arena| {
         let manager = gen::parenexprparser_static::parser_simulator_manager();
         let simulator = manager.get_simulator(arena);
-        let tables = simulator.atn().static_dfas();
+        let tables = simulator
+            .static_parser_tables()
+            .expect("the parser has static tables");
         let groups = tables
             .tables()
             .iter()
@@ -493,7 +494,9 @@ fn excluded_descent_context_rules_have_no_groups_and_match_adaptive() {
     Arena::with(|arena| {
         let manager = gen::descentcontextparser_static::parser_simulator_manager();
         let simulator = manager.get_simulator(arena);
-        let tables = simulator.atn().static_dfas();
+        let tables = simulator
+            .static_parser_tables()
+            .expect("the parser has static tables");
         let groups = tables
             .tables()
             .iter()

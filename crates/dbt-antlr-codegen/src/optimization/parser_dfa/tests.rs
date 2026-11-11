@@ -605,9 +605,9 @@ fn table_build_is_deterministic() {
 }
 
 #[test]
-fn packed_atn_tail_decodes_back_into_the_same_tables() {
+fn emitted_tables_validate_against_the_packed_atn() {
     use dbt_antlr_runtime::atn_packed_deserializer::PackedATNDeserializer;
-    use dbt_antlr_runtime::dfa::static_parser_dfa::append_sdfa_section;
+    use dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables;
 
     for grammar in [
         "ReferenceToATN.g4",
@@ -625,27 +625,22 @@ fn packed_atn_tail_decodes_back_into_the_same_tables() {
             .expect("parser artifact");
         let build = crate::optimization::StaticParserDfa::build(parser, AtnFallback::Allowed);
         let packed = crate::grammar::atn::encode_packed_atn(parser.atn);
-        let with_tables = append_sdfa_section(&packed, &build.tables.words());
-        assert!(
-            with_tables.len() > packed.len(),
-            "{grammar}: tables appended"
-        );
-
         let atn = PackedATNDeserializer::new()
-            .deserialize(&with_tables)
-            .expect("the extended stream deserializes");
-        assert_eq!(
-            atn.static_dfas().to_words(),
-            build.tables.words(),
-            "{grammar}: the decoded tables round-trip"
-        );
-
-        let plain = PackedATNDeserializer::new()
             .deserialize(&packed)
-            .expect("a stream without tables deserializes");
+            .expect("the packed ATN deserializes");
+        let tables = StaticParserTables::from_words(&build.tables.words())
+            .expect("the emitted words decode");
+        assert!(!tables.is_empty(), "{grammar}: the unit has tables");
+        tables
+            .validate_for_atn(&atn)
+            .unwrap_or_else(|error| panic!("{grammar}: {error}"));
+
+        let mut extended = packed.clone();
+        extended.push(0);
+        extended[25] += 1;
         assert!(
-            plain.static_dfas().is_empty(),
-            "{grammar}: no tail, no tables"
+            PackedATNDeserializer::new().deserialize(&extended).is_err(),
+            "{grammar}: words after the last packed section are rejected"
         );
     }
 }

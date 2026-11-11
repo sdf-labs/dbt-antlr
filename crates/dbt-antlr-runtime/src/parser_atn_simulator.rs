@@ -136,6 +136,15 @@ impl<'sim> ParserATNSimulator<'sim> {
         self.base.total_allocated_bytes()
     }
 
+    /// The static parser DFA tables of the parser, `None` when it was
+    /// generated without `--static-parser-dfa`.
+    #[inline]
+    pub fn static_parser_tables(
+        &self,
+    ) -> Option<&'static crate::dfa::static_parser_dfa::StaticParserTables> {
+        self.base.static_parser_tables()
+    }
+
     /// Returns current prediction mode
     pub fn get_prediction_mode(&self) -> PredictionMode {
         self.prediction_mode.get()

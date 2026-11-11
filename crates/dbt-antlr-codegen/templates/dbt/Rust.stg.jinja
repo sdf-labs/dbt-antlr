@@ -1388,9 +1388,13 @@ static _STATIC_LEXER_TABLE_WORDS: [u32; {{ model.words | length }}] = [
 {%- endmacro -%}
 {#- PackedSerializedATN replaces the STG SerializedATN for parsers: the
     parser file embeds the packed parser-ATN u32 words (PATN v3) decoded by
-    PackedATNDeserializer, instead of Java i32 words + ATNDeserializer. -#}
+    PackedATNDeserializer, instead of Java i32 words + ATNDeserializer. A
+    `--static-parser-dfa` parser also embeds its static parser DFA tables in
+    the `_STATIC_PARSER_TABLE_*` statics, attached beside the ATN. -#}
 {%- macro PackedSerializedATN(model) -%}
-static ATN_SIMULATOR_MANAGER: LazyLock<ATNSimulatorManager> = LazyLock::new(|| ATNSimulatorManager::new(&_ATN));
+{% if model.staticTables %}static ATN_SIMULATOR_MANAGER: LazyLock<ATNSimulatorManager> = LazyLock::new(|| ATNSimulatorManager::new_with_static_parser_tables(&_ATN, &_STATIC_PARSER_TABLES));
+{% else %}static ATN_SIMULATOR_MANAGER: LazyLock<ATNSimulatorManager> = LazyLock::new(|| ATNSimulatorManager::new(&_ATN));
+{% endif -%}
 static _ATN: LazyLock<ATN> = LazyLock::new(|| {
     PackedATNDeserializer::new()
         .deserialize(&_serializedATN)
@@ -1399,6 +1403,15 @@ static _ATN: LazyLock<ATN> = LazyLock::new(|| {
 static _serializedATN: [u32; {{ model.serialized | length }}] = [
     {{ model.serialized | wrap_list(", ", 4, "    ", 4) }}
 ];
+{%- if model.staticTables %}
+static _STATIC_PARSER_TABLES: LazyLock<StaticParserTables> = LazyLock::new(|| {
+    StaticParserTables::from_words(&_STATIC_PARSER_TABLE_WORDS)
+        .expect("invalid static parser DFA tables; regenerate the parser")
+});
+static _STATIC_PARSER_TABLE_WORDS: [u32; {{ model.staticTables.words | length }}] = [
+    {{ model.staticTables.words | wrap_list(", ", 4, "    ", 4) }}
+];
+{%- endif %}
 {%- endmacro -%}
 {%- macro codeFileExtension() -%}
 .rs

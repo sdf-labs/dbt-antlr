@@ -1031,15 +1031,15 @@ where
 	}
 }
 
-static ATN_SIMULATOR_MANAGER: LazyLock<ATNSimulatorManager> = LazyLock::new(|| ATNSimulatorManager::new(&_ATN));
+static ATN_SIMULATOR_MANAGER: LazyLock<ATNSimulatorManager> = LazyLock::new(|| ATNSimulatorManager::new_with_static_parser_tables(&_ATN, &_STATIC_PARSER_TABLES));
 static _ATN: LazyLock<ATN> = LazyLock::new(|| {
     PackedATNDeserializer::new()
         .deserialize(&_serializedATN)
         .expect("invalid packed parser ATN")
 });
-static _serializedATN: [u32; 2998] = [
+static _serializedATN: [u32; 1806] = [
     1346458702, 3, 16909060, 29, 14, 140, 154, 0, 0, 15, 6, 29, 980, 1009, 
-    770, 1779, 0, 1779, 0, 1779, 15, 1794, 6, 1800, 6, 2998, 0, 1779, 0, 
+    770, 1779, 0, 1779, 0, 1779, 15, 1794, 6, 1800, 6, 1806, 0, 1779, 0, 
     2, 0, 8, 0, 1, 4294967295, 4294967295, 7, 0, 16, 1, 0, 4294967295, 4294967295, 
     2, 1, 12, 1, 1, 4294967295, 4294967295, 7, 1, 16, 2, 0, 4294967295, 
     4294967295, 2, 2, 12, 2, 1, 4294967295, 4294967295, 7, 2, 16, 3, 0, 
@@ -1158,8 +1158,14 @@ static _serializedATN: [u32; 2998] = [
     0, 0, 0, 1, 128, 0, 0, 0, 1, 138, 0, 0, 0, 1, 134, 0, 0, 0, 1, 137, 
     0, 0, 0, 1, 11, 0, 0, 0, 1, 136, 0, 0, 0, 39, 45, 52, 54, 65, 72, 79, 
     90, 92, 99, 112, 114, 116, 134, 136, 0, 2, 4, 6, 8, 10, 1, 3, 5, 7, 
-    9, 11, 1396983361, 2, 1192, 16, 15, 0, 20, 15, 9, 75, 0, 0, 3, 4, 5, 
-    6, 0, 4294967295, 0, 0, 1, 0, 0, 0, 4294967295, 4294967295, 2, 4294967295, 
+    9, 11
+];static _STATIC_PARSER_TABLES: LazyLock<StaticParserTables> = LazyLock::new(|| {
+    StaticParserTables::from_words(&_STATIC_PARSER_TABLE_WORDS)
+        .expect("invalid static parser DFA tables; regenerate the parser")
+});
+static _STATIC_PARSER_TABLE_WORDS: [u32; 1192] = [
+    1396983361, 2, 1192, 16, 15, 0, 20, 15, 9, 75, 0, 0, 3, 4, 5, 6, 0, 
+    4294967295, 0, 0, 1, 0, 0, 0, 4294967295, 4294967295, 2, 4294967295, 
     1, 4294967295, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 
     0, 0, 0, 1, 2, 2, 2, 2, 3, 2, 4, 5, 2, 6, 7, 8, 2, 2, 2, 2, 2, 2, 0, 
     18, 24, 24, 33, 42, 48, 54, 63, 75, 2, 2, 1, 3, 3, 2, 4, 4, 3, 5, 5, 

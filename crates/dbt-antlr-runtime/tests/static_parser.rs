@@ -583,7 +583,9 @@ fn sdfa_words_round_trip() {
     Arena::with(|arena| {
         let manager = gen::fuzzexprparser_static::parser_simulator_manager();
         let simulator = manager.get_simulator(arena);
-        let tables = simulator.atn().static_dfas();
+        let tables = simulator
+            .static_parser_tables()
+            .expect("the parser has static tables");
         assert!(!tables.is_empty());
 
         let words = tables.to_words();
@@ -636,7 +638,9 @@ fn frontier_escape_resumes_from_the_continuation() {
     Arena::with(|arena| {
         let manager = gen::fuzzexprparser_static::parser_simulator_manager();
         let simulator = manager.get_simulator(arena);
-        let tables = simulator.atn().static_dfas();
+        let tables = simulator
+            .static_parser_tables()
+            .expect("the parser has static tables");
 
         // `binding : target '=' e | e` is the hybrid decision: its table stops
         // at the depth-4 frontier and carries the frontier config sets.
@@ -684,7 +688,9 @@ fn continuation_state_is_reused_across_parses() {
     Arena::with(|arena| {
         let manager = gen::fuzzexprparser_static::parser_simulator_manager();
         let simulator = manager.get_simulator(arena);
-        let tables = simulator.atn().static_dfas();
+        let tables = simulator
+            .static_parser_tables()
+            .expect("the parser has static tables");
         let binding = tables
             .table(BINDING, 0)
             .expect("binding has a hybrid table");
@@ -949,7 +955,9 @@ fn guarded_iterates_match_the_adaptive_engine() {
     Arena::with(|arena| {
         let manager = gen::loopfrontierparser_static::parser_simulator_manager();
         let simulator = manager.get_simulator(arena);
-        let tables = simulator.atn().static_dfas();
+        let tables = simulator
+            .static_parser_tables()
+            .expect("the parser has static tables");
         let guarded = tables
             .tables()
             .iter()
@@ -1157,7 +1165,9 @@ fn guarded_obligations_match_the_adaptive_engine() {
     Arena::with(|arena| {
         let manager = gen::loopobligationparser_static::parser_simulator_manager();
         let simulator = manager.get_simulator(arena);
-        let tables = simulator.atn().static_dfas();
+        let tables = simulator
+            .static_parser_tables()
+            .expect("the parser has static tables");
         let guarded: Vec<_> = tables
             .tables()
             .iter()

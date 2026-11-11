@@ -32,10 +32,10 @@
 //!
 //! # Wire format
 //!
-//! The tables ride in a self-locating `SDFA` section appended to the packed
-//! parser ATN word stream (design decision D1). The section starts after the
-//! last packed ATN section and repeats its own magic, version, and length, so
-//! the packed ATN decoder stays unchanged for streams without tables.
+//! Generated parsers embed the tables as their own `SDFA` word stream, beside
+//! the packed parser ATN, and hand both to
+//! `ATNSimulatorManager::new_with_static_parser_tables`. The stream starts with
+//! its magic, version, and length.
 //!
 //! Edges are stored per *distinct row*: every state names one row of
 //! `edge_width` columns (token `t` is column `t + 1`, EOF is column 0) and a
@@ -99,9 +99,6 @@ fn checked_count(
     }
     Ok(count)
 }
-
-/// Word index of the total-length word in a packed ATN header.
-const PACKED_ATN_TOTAL_LEN: usize = 25;
 
 /// Decoder cap on the states of one table. The classifier stops at 1000.
 const MAX_TABLE_STATES: usize = 1 << 16;
@@ -1307,21 +1304,6 @@ impl StaticParserTables {
         }
         Ok(())
     }
-}
-
-/// Appends an `SDFA` section to a packed ATN word stream.
-///
-/// The packed ATN header carries the total stream length, so appending also
-/// updates that word. An empty section leaves the stream unchanged.
-pub fn append_sdfa_section(packed_words: &[u32], sdfa_words: &[u32]) -> Vec<u32> {
-    if sdfa_words.is_empty() {
-        return packed_words.to_vec();
-    }
-    let mut words = Vec::with_capacity(packed_words.len() + sdfa_words.len());
-    words.extend_from_slice(packed_words);
-    words.extend_from_slice(sdfa_words);
-    words[PACKED_ATN_TOTAL_LEN] = words.len() as u32;
-    words
 }
 
 /// A cursor over an `SDFA` word stream.

@@ -386,15 +386,15 @@ where
 	}
 }
 
-static ATN_SIMULATOR_MANAGER: LazyLock<ATNSimulatorManager> = LazyLock::new(|| ATNSimulatorManager::new(&_ATN));
+static ATN_SIMULATOR_MANAGER: LazyLock<ATNSimulatorManager> = LazyLock::new(|| ATNSimulatorManager::new_with_static_parser_tables(&_ATN, &_STATIC_PARSER_TABLES));
 static _ATN: LazyLock<ATN> = LazyLock::new(|| {
     PackedATNDeserializer::new()
         .deserialize(&_serializedATN)
         .expect("invalid packed parser ATN")
 });
-static _serializedATN: [u32; 959] = [
+static _serializedATN: [u32; 615] = [
     1346458702, 3, 16909060, 29, 11, 47, 50, 0, 0, 3, 2, 29, 329, 358, 250, 
-    608, 0, 608, 0, 608, 3, 611, 2, 613, 2, 959, 0, 608, 0, 2, 0, 8, 0, 
+    608, 0, 608, 0, 608, 3, 611, 2, 613, 2, 615, 0, 608, 0, 2, 0, 8, 0, 
     1, 4294967295, 4294967295, 7, 0, 16, 1, 0, 4294967295, 4294967295, 2, 
     1, 12, 1, 1, 4294967295, 4294967295, 7, 1, 16, 2, 0, 4294967295, 4294967295, 
     1, 0, 8, 2, 1, 4294967295, 4294967295, 1, 0, 32, 3, 1, 4294967295, 4294967295, 
@@ -432,7 +432,12 @@ static _serializedATN: [u32; 959] = [
     3, 0, 0, 1, 42, 0, 0, 0, 10, 36, 6, 0, 0, 5, 37, 4, 0, 0, 5, 42, 10, 
     0, 0, 10, 39, 5, 0, 0, 5, 40, 5, 0, 0, 3, 2, 1, 42, 6, 1, 28, 0, 0, 
     0, 1, 35, 0, 0, 0, 1, 38, 0, 0, 0, 1, 45, 0, 0, 0, 1, 41, 0, 0, 0, 1, 
-    44, 0, 0, 0, 1, 3, 0, 0, 0, 1, 43, 0, 0, 0, 26, 41, 43, 0, 2, 1, 3, 
+    44, 0, 0, 0, 1, 3, 0, 0, 0, 1, 43, 0, 0, 0, 26, 41, 43, 0, 2, 1, 3
+];static _STATIC_PARSER_TABLES: LazyLock<StaticParserTables> = LazyLock::new(|| {
+    StaticParserTables::from_words(&_STATIC_PARSER_TABLE_WORDS)
+        .expect("invalid static parser DFA tables; regenerate the parser")
+});
+static _STATIC_PARSER_TABLE_WORDS: [u32; 344] = [
     1396983361, 2, 344, 5, 3, 1, 4, 7, 2, 9, 0, 1, 2, 3, 0, 0, 0, 0, 0, 
     1, 1, 1, 0, 9, 9, 1, 1, 1, 4, 4, 2, 5, 5, 3, 0, 0, 0, 0, 0, 4294967295, 
     16, 12, 6, 48, 0, 2, 0, 2, 0, 1, 2, 2, 2, 0, 4294967293, 0, 4294967293, 
