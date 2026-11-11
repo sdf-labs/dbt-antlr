@@ -813,21 +813,42 @@ fn fully_static_parser_never_defers() {
 #[test]
 fn static_parser_dfa_embeds_the_sdfa_section() {
     // The `SDFA` magic (`0x5344_4641`) as the decimal word the generated
-    // `_serializedATN` array carries.
+    // `_STATIC_PARSER_TABLE_WORDS` array starts with.
+    const SDFA_HEAD: &str = "_STATIC_PARSER_TABLE_WORDS: [u32; ";
     const SDFA_MAGIC_DECIMAL: &str = "1396983361";
     let with_tables = emit_grammar("ReferenceToATN.g4", |options| {
         options.static_parser_dfa(true);
     });
     let parser = lexer_content(&with_tables, "referencetoatnparser.rs");
+    let words = parser
+        .split_once(SDFA_HEAD)
+        .expect("the parser embeds its table words")
+        .1;
+    let first_word = words
+        .split_once("= [")
+        .and_then(|(_, rest)| rest.split(',').next())
+        .map(str::trim);
+    assert_eq!(first_word, Some(SDFA_MAGIC_DECIMAL));
     assert!(
-        parser.contains(SDFA_MAGIC_DECIMAL),
-        "the packed ATN carries the appended table section"
+        parser.contains(
+            "ATNSimulatorManager::new_with_static_parser_tables(&_ATN, &_STATIC_PARSER_TABLES)"
+        ),
+        "the simulator manager attaches the tables beside the ATN"
+    );
+    let atn = parser
+        .split_once("static _serializedATN")
+        .expect("the parser keeps its ATN")
+        .1;
+    let atn = &atn[..atn.find("];").expect("the ATN words end")];
+    assert!(
+        !atn.contains(SDFA_MAGIC_DECIMAL),
+        "the packed ATN carries no table section"
     );
 
     let without_tables = emit_grammar("ReferenceToATN.g4", |_options| {});
     let plain = lexer_content(&without_tables, "referencetoatnparser.rs");
     assert!(
-        !plain.contains(SDFA_MAGIC_DECIMAL),
+        !plain.contains(SDFA_MAGIC_DECIMAL) && !plain.contains("_STATIC_PARSER_TABLE"),
         "flag-off output carries no table section"
     );
     assert!(

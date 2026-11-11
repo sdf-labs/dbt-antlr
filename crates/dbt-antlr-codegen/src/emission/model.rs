@@ -209,6 +209,20 @@ impl StaticLexerTablesModel {
 pub struct PackedAtnModel {
     /// Packed parser ATN words.
     pub serialized: Vec<u32>,
+    /// Static parser DFA tables of a `--static-parser-dfa` build, `None` when
+    /// the parser has no table.
+    pub static_tables: Option<StaticParserTablesModel>,
+}
+
+/// Static parser DFA table payload of a `--static-parser-dfa` parser build.
+///
+/// Materialized through the emission templates as the `_STATIC_PARSER_TABLE_*`
+/// statics, which the simulator manager attaches beside the ATN.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StaticParserTablesModel {
+    /// The packed image words of the tables.
+    pub words: Vec<u32>,
 }
 
 /// Root render context: the formal arguments of the `ParserFile` template.

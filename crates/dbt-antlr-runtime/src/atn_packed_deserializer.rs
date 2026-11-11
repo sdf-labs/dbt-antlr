@@ -202,10 +202,12 @@ pub enum PackedATNError {
         /// The flag word value.
         value: u32,
     },
-    /// The trailing `SDFA` section is malformed.
-    InvalidStaticTables {
-        /// The decoder error.
-        error: crate::dfa::static_parser_dfa::StaticParserDfaError,
+    /// Words follow the last packed section.
+    TrailingWords {
+        /// The word index where the last section ends.
+        end: usize,
+        /// The actual stream word count.
+        actual: usize,
     },
 }
 
@@ -310,8 +312,11 @@ impl fmt::Display for PackedATNError {
             PackedATNError::InvalidBooleanFlag { what, value } => {
                 write!(f, "{what} flag is {value}; expected 0 or 1")
             }
-            PackedATNError::InvalidStaticTables { error } => {
-                write!(f, "invalid static parser DFA tables: {error}")
+            PackedATNError::TrailingWords { end, actual } => {
+                write!(
+                    f,
+                    "the packed sections end at word {end} of a {actual}-word stream"
+                )
             }
         }
     }
@@ -360,14 +365,11 @@ impl PackedATNDeserializer {
         .map(|section| section.offset + section.len)
         .max()
         .unwrap_or(HEADER_WORDS);
-        if words.len() > packed_end {
-            let tables =
-                crate::dfa::static_parser_dfa::StaticParserTables::from_words(&words[packed_end..])
-                    .map_err(|error| PackedATNError::InvalidStaticTables { error })?;
-            tables
-                .validate_for_atn(&atn)
-                .map_err(|error| PackedATNError::InvalidStaticTables { error })?;
-            atn.static_dfas = tables;
+        if words.len() != packed_end {
+            return Err(PackedATNError::TrailingWords {
+                end: packed_end,
+                actual: words.len(),
+            });
         }
         Ok(atn)
     }

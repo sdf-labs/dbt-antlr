@@ -589,7 +589,8 @@ where
     /// fallback alternative fails like the adaptive simulation does.
     ///
     /// The walk consumes tokens while it reads them and rewinds afterwards, so
-    /// every step costs one `la(1)` and one `consume`. It must not read
+    /// every step costs one `la(1)`, plus one `consume` unless the step stops
+    /// the walk. It must not read
     /// `la(k)`: a channel-filtering token stream resolves `la(k)` by scanning
     /// from the current token, which would make a k-token lookahead O(k^2).
     ///
@@ -612,134 +613,197 @@ where
     }
     /// The table walk of [`Self::dfa_predict`] and
     /// [`Self::dfa_predict_virtual`].
+    ///
+    /// An edge entry flags a target state where the walk stops, so the walk
+    /// resolves an accept without consuming the token that leads into it. A
+    /// one-token decision that accepts returns before it marks the input.
+    #[inline]
     fn dfa_walk(&mut self, decision: i32) -> Result<i32, ANTLRError> {
-        use crate::dfa::static_parser_dfa::{CONFLICT_ESCAPE, ESCAPE, GUARDED};
+        use crate::dfa::static_parser_dfa::{NO_EDGE, STATE_MASK, TERMINAL_BIT};
 
-        let tables = self.get_interpreter().atn().static_dfas();
-        if tables.is_empty() {
+        let Some(tables) = self.get_interpreter().static_parser_tables() else {
             return Ok(crate::atn::INVALID_ALT);
-        }
+        };
         let Some(table) = tables.table(decision, self.get_precedence()) else {
             return Ok(crate::atn::INVALID_ALT);
         };
+        let token = self.input.la(1);
+        let entry = table.start_entry(token);
+        if entry >= TERMINAL_BIT && entry != NO_EDGE {
+            // SAFETY: the loader checked that edge targets are states.
+            let outcome = unsafe { table.outcome_unchecked(usize::from(entry & STATE_MASK)) };
+            if outcome > 0 {
+                return Ok(outcome);
+            }
+        }
+        self.dfa_walk_steps(table, decision, token, entry)
+    }
+
+    /// Continues [`Self::dfa_walk`] from the start state, whose entry for
+    /// `token` is `entry`.
+    fn dfa_walk_steps(
+        &mut self,
+        table: &crate::dfa::static_parser_dfa::StaticParserTable,
+        decision: i32,
+        mut token: i32,
+        mut entry: u16,
+    ) -> Result<i32, ANTLRError> {
+        use crate::dfa::static_parser_dfa::{Outcome, NO_EDGE, STATE_MASK, TERMINAL_BIT};
+
         let start_index = self.input.index();
         let mark = self.input.mark();
-        let mut state = 0_i32;
+        let mut state = 0_usize;
         let result = loop {
-            let accept = table.accept(state);
-            if accept > 0 {
-                self.input.seek(start_index);
-                break Ok(accept);
+            if entry == NO_EDGE {
+                break self.dfa_no_edge(table, decision, state, start_index);
             }
-            if accept == CONFLICT_ESCAPE {
-                self.input.seek(start_index);
-                break match table.conflict_min_alt(state) {
-                    Some(min_alt) => self
-                        .get_interpreter()
-                        .adaptive_predict_conflict(decision, min_alt, self),
-                    None => Ok(crate::atn::INVALID_ALT),
-                };
-            }
-            if accept == GUARDED {
-                // A guarded conflict (an optional-postfix take or a precedence
-                // loop's iterate) resolves to the guarded alternative unless
-                // the real parse stack's epsilon-pop chase can reach a guard
-                // root. The walk stops at the first invoking state whose follow
-                // region cannot reach its own rule's stop.
-                let mut defers = false;
-                let mut context = self.ctx();
-                while let Some(node) = context {
-                    let invoking_state = node.get_invoking_state();
-                    if invoking_state < 0 {
-                        break;
-                    }
-                    let parent = node.get_parent();
-                    let parent_ptr =
-                        parent.map_or(std::ptr::null(), |p| p as *const _ as *const ());
-                    if let Some((_, call_sites)) =
-                        self.neutral_call_sites.iter().find(|&&(ptr, sites)| {
-                            ptr == parent_ptr && sites.first() == Some(&invoking_state)
-                        })
-                    {
-                        if call_sites
-                            .iter()
-                            .any(|&site| table.guard_step(site) == Some(true))
-                        {
-                            defers = true;
-                            break;
-                        }
-                        if call_sites
-                            .iter()
-                            .all(|&site| table.guard_step(site) == Some(false))
-                        {
-                            break;
-                        }
-                        context = parent;
-                        continue;
-                    }
-                    match table.guard_step(invoking_state) {
-                        Some(true) => {
-                            defers = true;
-                            break;
-                        }
-                        Some(false) => break,
-                        None => context = parent,
-                    }
-                }
-                self.input.seek(start_index);
-                break if defers {
-                    Ok(crate::atn::INVALID_ALT)
-                } else {
-                    Ok(table.guarded_alt(state).unwrap_or(crate::atn::INVALID_ALT))
-                };
-            }
-            if accept == ESCAPE {
-                // A frontier continuation resumes from the position the walk
-                // reached, so it must not rewind first.
-                break match table.continuation(state) {
-                    Some((slot, continuation)) => self.get_interpreter().resume_from_continuation(
-                        decision,
-                        slot,
-                        table.num_continuations(),
-                        continuation,
-                        start_index,
-                        self,
-                    ),
-                    None => {
-                        self.input.seek(start_index);
-                        Ok(crate::atn::INVALID_ALT)
-                    }
-                };
-            }
-            let token = self.input.la(1);
-            match table.edge(state, token) {
-                Some(target) => {
-                    state = target;
-                    if token != TOKEN_EOF {
-                        self.input.consume();
-                    }
-                }
-                None => {
-                    if let Some(fallback) = table.fallback(state) {
-                        self.input.seek(start_index);
-                        break Ok(fallback);
-                    }
-                    let start = OwningToken::from(self.input.get(start_index) as &dyn Token);
-                    let error = match self.input.lt(1) {
-                        Some(offending) => ANTLRError::no_alt_full(
-                            self,
-                            start,
-                            OwningToken::from(offending as &dyn Token),
-                        ),
-                        None => ANTLRError::no_alt(self),
-                    };
+            let target = usize::from(entry & STATE_MASK);
+            if entry & TERMINAL_BIT != 0 {
+                // SAFETY: the loader checked that edge targets are states.
+                let outcome = unsafe { table.outcome_unchecked(target) };
+                if outcome > 0 {
                     self.input.seek(start_index);
-                    break Err(error);
+                    break Ok(outcome);
                 }
+                let outcome = Outcome::decode(outcome);
+                if matches!(outcome, Some(Outcome::Escape(Some(_)))) && token != TOKEN_EOF {
+                    // A frontier continuation resumes after the token that
+                    // led into the escape state.
+                    self.input.consume();
+                }
+                break self.dfa_terminal(table, decision, outcome, start_index);
             }
+            if token != TOKEN_EOF {
+                self.input.consume();
+            }
+            state = target;
+            token = self.input.la(1);
+            // SAFETY: `state` is an edge target.
+            entry = unsafe { table.edge_entry_unchecked(state, token) };
         };
         self.input.release(mark);
         result
+    }
+
+    /// Resolves a table walk without an edge for the current token: the start
+    /// state may stop the walk itself, and otherwise the state falls back to
+    /// an alternative that already left the decision or fails.
+    #[cold]
+    fn dfa_no_edge(
+        &mut self,
+        table: &crate::dfa::static_parser_dfa::StaticParserTable,
+        decision: i32,
+        state: usize,
+        start_index: isize,
+    ) -> Result<i32, ANTLRError> {
+        use crate::dfa::static_parser_dfa::Outcome;
+
+        // SAFETY: `state` is 0 or an edge target.
+        let outcome = unsafe { table.outcome_unchecked(state) };
+        if outcome > 0 {
+            self.input.seek(start_index);
+            return Ok(outcome);
+        }
+        if outcome != 0 {
+            return self.dfa_terminal(table, decision, Outcome::decode(outcome), start_index);
+        }
+        if let Some(fallback) = table.fallback(state as i32) {
+            self.input.seek(start_index);
+            return Ok(fallback);
+        }
+        let start = OwningToken::from(self.input.get(start_index) as &dyn Token);
+        let error = match self.input.lt(1) {
+            Some(offending) => {
+                ANTLRError::no_alt_full(self, start, OwningToken::from(offending as &dyn Token))
+            }
+            None => ANTLRError::no_alt(self),
+        };
+        self.input.seek(start_index);
+        Err(error)
+    }
+
+    /// Resolves a table walk that stopped at an escape, conflict escape, or
+    /// guarded state. A frontier continuation resumes from the current
+    /// position; every other outcome rewinds to `start_index`.
+    #[cold]
+    fn dfa_terminal(
+        &mut self,
+        table: &crate::dfa::static_parser_dfa::StaticParserTable,
+        decision: i32,
+        outcome: Option<crate::dfa::static_parser_dfa::Outcome>,
+        start_index: isize,
+    ) -> Result<i32, ANTLRError> {
+        use crate::dfa::static_parser_dfa::Outcome;
+
+        match outcome {
+            Some(Outcome::Escape(Some(slot))) => self.get_interpreter().resume_from_continuation(
+                decision,
+                slot as usize,
+                table.num_continuations(),
+                table.continuation_at(slot),
+                start_index,
+                self,
+            ),
+            Some(Outcome::Conflict(min_alt)) => {
+                self.input.seek(start_index);
+                self.get_interpreter()
+                    .adaptive_predict_conflict(decision, min_alt, self)
+            }
+            Some(Outcome::Guarded(alt)) => {
+                let defers = self.guard_defers(table);
+                self.input.seek(start_index);
+                Ok(if defers { crate::atn::INVALID_ALT } else { alt })
+            }
+            _ => {
+                self.input.seek(start_index);
+                Ok(crate::atn::INVALID_ALT)
+            }
+        }
+    }
+
+    /// Whether a guarded take defers to the adaptive simulation.
+    ///
+    /// A guarded conflict (an optional-postfix take or a precedence loop's
+    /// iterate) resolves to the guarded alternative unless the real parse
+    /// stack's epsilon-pop chase can reach a guard root. The walk stops at the
+    /// first invoking state whose follow region cannot reach its own rule's
+    /// stop.
+    fn guard_defers(&self, table: &crate::dfa::static_parser_dfa::StaticParserTable) -> bool {
+        let mut context = self.ctx();
+        while let Some(node) = context {
+            let invoking_state = node.get_invoking_state();
+            if invoking_state < 0 {
+                return false;
+            }
+            let parent = node.get_parent();
+            let parent_ptr = parent.map_or(std::ptr::null(), |p| p as *const _ as *const ());
+            if let Some((_, call_sites)) = self
+                .neutral_call_sites
+                .iter()
+                .find(|&&(ptr, sites)| ptr == parent_ptr && sites.first() == Some(&invoking_state))
+            {
+                if call_sites
+                    .iter()
+                    .any(|&site| table.guard_step(site) == Some(true))
+                {
+                    return true;
+                }
+                if call_sites
+                    .iter()
+                    .all(|&site| table.guard_step(site) == Some(false))
+                {
+                    return false;
+                }
+                context = parent;
+                continue;
+            }
+            match table.guard_step(invoking_state) {
+                Some(true) => return true,
+                Some(false) => return false,
+                None => context = parent,
+            }
+        }
+        false
     }
     /// Whether a shared-descent group can start a neutral parse here.
     ///

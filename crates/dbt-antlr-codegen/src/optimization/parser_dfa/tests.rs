@@ -508,15 +508,14 @@ fn build_tables(path: &Path) -> (Vec<DecisionResult>, super::super::StaticParser
 }
 
 #[test]
-fn table_words_round_trip_through_the_runtime_decoder() {
+fn table_image_loads_in_the_runtime() {
     let (results, tables) = build_tables(&grammars_dir().join("ReferenceToATN.g4"));
     assert!(tables.has_table(0), "decision 0 has a hybrid table");
     assert!(tables.defers(0), "the hybrid table keeps an adaptive path");
 
     let words = tables.words();
-    let decoded = dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables::from_words(&words)
-        .expect("the emitted words decode");
-    assert_eq!(decoded.to_words(), words, "the codec is stable");
+    let decoded = load_image(&words);
+    assert_eq!(decoded.words(), words, "the image loads in place");
     assert_eq!(
         decoded.table(0, 0).expect("decoded table").num_states(),
         results[0].num_dfa_states
@@ -554,9 +553,8 @@ fn hybrid_frontier_escapes_carry_continuations() {
         .max_by_key(|result| result.escapes)
         .expect("FuzzExpr has a hybrid decision");
     let words = tables.words();
-    let decoded = dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables::from_words(&words)
-        .expect("the emitted words decode");
-    assert_eq!(decoded.to_words(), words, "the codec is stable");
+    let decoded = load_image(&words);
+    assert_eq!(decoded.words(), words, "the image loads in place");
 
     let table = decoded
         .table(hybrid.decision as i32, 0)
@@ -583,8 +581,7 @@ fn precedence_class_tables_are_deduplicated() {
     assert!(classes.tables.iter().flatten().count() > 0);
 
     let words = tables.words();
-    let decoded = dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables::from_words(&words)
-        .expect("the emitted words decode");
+    let decoded = load_image(&words);
     assert!(
         decoded.is_precedence_dispatched(precedence.decision as i32),
         "the precedence decision dispatches on its precedence"
@@ -605,9 +602,9 @@ fn table_build_is_deterministic() {
 }
 
 #[test]
-fn packed_atn_tail_decodes_back_into_the_same_tables() {
+fn emitted_tables_validate_against_the_packed_atn() {
     use dbt_antlr_runtime::atn_packed_deserializer::PackedATNDeserializer;
-    use dbt_antlr_runtime::dfa::static_parser_dfa::append_sdfa_section;
+    use dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables;
 
     for grammar in [
         "ReferenceToATN.g4",
@@ -625,27 +622,23 @@ fn packed_atn_tail_decodes_back_into_the_same_tables() {
             .expect("parser artifact");
         let build = crate::optimization::StaticParserDfa::build(parser, AtnFallback::Allowed);
         let packed = crate::grammar::atn::encode_packed_atn(parser.atn);
-        let with_tables = append_sdfa_section(&packed, &build.tables.words());
-        assert!(
-            with_tables.len() > packed.len(),
-            "{grammar}: tables appended"
-        );
-
         let atn = PackedATNDeserializer::new()
-            .deserialize(&with_tables)
-            .expect("the extended stream deserializes");
-        assert_eq!(
-            atn.static_dfas().to_words(),
-            build.tables.words(),
-            "{grammar}: the decoded tables round-trip"
-        );
-
-        let plain = PackedATNDeserializer::new()
             .deserialize(&packed)
-            .expect("a stream without tables deserializes");
+            .expect("the packed ATN deserializes");
+        let tables =
+            StaticParserTables::from_image(Box::leak(build.tables.words().into_boxed_slice()))
+                .expect("the emitted image loads");
+        assert!(!tables.is_empty(), "{grammar}: the unit has tables");
+        tables
+            .validate_for_atn(&atn)
+            .unwrap_or_else(|error| panic!("{grammar}: {error}"));
+
+        let mut extended = packed.clone();
+        extended.push(0);
+        extended[25] += 1;
         assert!(
-            plain.static_dfas().is_empty(),
-            "{grammar}: no tail, no tables"
+            PackedATNDeserializer::new().deserialize(&extended).is_err(),
+            "{grammar}: words after the last packed section are rejected"
         );
     }
 }
@@ -1133,9 +1126,16 @@ fn resolve_static_only(path: &Path) -> Vec<DecisionResult> {
 fn decoded_tables(
     results: &[DecisionResult],
 ) -> dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables {
-    let words = super::build_tables(results).to_words();
-    dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables::from_words(&words)
-        .expect("the emitted words decode")
+    load_image(super::build_tables(results).words())
+}
+
+/// Overlays an emitted table image the way a generated parser does, from a
+/// `'static` word array.
+fn load_image(words: &[u32]) -> dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables {
+    dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables::from_image(Box::leak(
+        words.to_vec().into_boxed_slice(),
+    ))
+    .expect("the emitted image loads")
 }
 
 /// Every state of every runtime table either accepts an alternative or

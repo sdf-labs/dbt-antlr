@@ -4,12 +4,13 @@
 //!
 //! The classifier produces one [`StaticDfaTable`] per decision (or per
 //! precedence class) as an owned snapshot. This module turns those snapshots
-//! into the [`StaticParserTables`] the runtime decodes: it normalizes the
+//! into the [`StaticParserTables`] image the runtime overlays: it normalizes the
 //! escape markers, collects the continuations, indexes the decisions, and
 //! deduplicates repeated precedence class tables.
 
 use dbt_antlr_runtime::dfa::static_parser_dfa::{
-    DecisionTables, ParserContinuation, PrecedenceDispatch, StaticParserTable, StaticParserTables,
+    DecisionTables, ParserContinuation, PrecedenceDispatch, StaticParserTableBuilder,
+    StaticParserTables,
 };
 
 use super::{CONFLICT_ESCAPE, DecisionResult, ESCAPE, StaticDfaTable};
@@ -27,7 +28,7 @@ pub(crate) fn build_tables(results: &[DecisionResult]) -> StaticParserTables {
     }
 
     let mut decisions = vec![DecisionTables::None; num_slots];
-    let mut tables: Vec<StaticParserTable> = Vec::new();
+    let mut tables: Vec<StaticParserTableBuilder> = Vec::new();
     for result in results {
         if let Some(precedence) = result.precedence.as_ref() {
             if precedence.tables.iter().all(Option::is_none) {
@@ -67,7 +68,7 @@ pub(crate) fn build_tables(results: &[DecisionResult]) -> StaticParserTables {
 }
 
 /// Converts one snapshot table into the runtime table.
-fn runtime_table(decision: i32, table: &StaticDfaTable) -> StaticParserTable {
+fn runtime_table(decision: i32, table: &StaticDfaTable) -> StaticParserTableBuilder {
     let mut accepts = Vec::with_capacity(table.states.len());
     let mut fallbacks = Vec::with_capacity(table.states.len());
     let mut conflict_min_alts = Vec::with_capacity(table.states.len());
@@ -104,7 +105,7 @@ fn runtime_table(decision: i32, table: &StaticDfaTable) -> StaticParserTable {
                 .collect::<Vec<_>>(),
         );
     }
-    StaticParserTable::from_state_edges(
+    StaticParserTableBuilder::from_state_edges(
         decision,
         accepts,
         fallbacks,

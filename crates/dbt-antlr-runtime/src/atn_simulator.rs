@@ -8,6 +8,7 @@ use std::vec::Vec;
 use crate::atn::ATN;
 use crate::atn_config_set::{ATNConfigSet, ConfigSet, LexerATNConfigSet};
 use crate::dfa::static_lexer_dfa::StaticLexerTables;
+use crate::dfa::static_parser_dfa::StaticParserTables;
 use crate::dfa::{EdgeSetStore, DFA};
 use crate::errors::ANTLRError;
 use crate::prediction_context::PredictionContextCache;
@@ -45,6 +46,7 @@ where
 {
     pub atn: &'static ATN,
     pub(crate) static_lexer_tables: Option<&'static StaticLexerTables>,
+    pub(crate) static_parser_tables: Option<&'static StaticParserTables>,
     manager: &'sim (dyn CacheProvider<'sim, CS> + 'sim),
     caches: OnceCell<SimulatorCaches<'sim, CS>>,
     allocation_limit_bytes: usize,
@@ -104,6 +106,13 @@ impl<'sim, CS: ConfigSet<'sim>> BaseATNSimulator<'sim, CS> {
         })
     }
 
+    /// The static parser DFA tables of the simulator, `None` when the parser
+    /// was generated without `--static-parser-dfa`.
+    #[inline]
+    pub fn static_parser_tables(&self) -> Option<&'static StaticParserTables> {
+        self.static_parser_tables
+    }
+
     dfa_sum_method!(dfa_bytes, allocated_bytes);
     dfa_sum_method!(dfa_state_bytes);
 
@@ -151,6 +160,7 @@ where
 {
     atn: &'static ATN,
     static_lexer_tables: Option<&'static StaticLexerTables>,
+    static_parser_tables: Option<&'static StaticParserTables>,
     allocation_limit_bytes: AtomicUsize,
     is_resetting: AtomicBool,
     shared_context_cache: RwLock<Arc<NotifyOnDrop<PredictionContextCache<'static>>>>,
@@ -179,7 +189,7 @@ where
 
 impl<CS: ConfigSet<'static> + 'static> ATNSimulatorMan<CS> {
     pub fn new(atn: &'static ATN) -> Self {
-        Self::with_parts(atn, None)
+        Self::with_parts(atn, None, None)
     }
 
     /// Manager for a generated lexer with static DFA tables
@@ -194,7 +204,23 @@ impl<CS: ConfigSet<'static> + 'static> ATNSimulatorMan<CS> {
         tables: &'static StaticLexerTables,
     ) -> Self {
         tables.validate_for_atn(atn);
-        Self::with_parts(atn, Some(tables))
+        Self::with_parts(atn, Some(tables), None)
+    }
+
+    /// Manager for a generated parser with static parser DFA tables
+    /// (`--static-parser-dfa`): `BaseParser::dfa_predict` predicts from the
+    /// tables, and the ATN stays for the adaptive fallback of the escape
+    /// states. See [`crate::dfa::static_parser_dfa::StaticParserTables`].
+    ///
+    /// Panics when the tables reference invalid ATN decisions or states.
+    pub fn new_with_static_parser_tables(
+        atn: &'static ATN,
+        tables: &'static StaticParserTables,
+    ) -> Self {
+        if let Err(error) = tables.validate_for_atn(atn) {
+            panic!("invalid static parser DFA tables: {error}; regenerate the parser");
+        }
+        Self::with_parts(atn, None, Some(tables))
     }
 
     /// Manager for an ATN-less lexer: one whose grammar the tool proved
@@ -210,12 +236,13 @@ impl<CS: ConfigSet<'static> + 'static> ATNSimulatorMan<CS> {
     pub fn new_static_lexer(tables: &'static StaticLexerTables) -> Self {
         let atn = empty_lexer_atn();
         tables.validate_for_atn(atn);
-        Self::with_parts(atn, Some(tables))
+        Self::with_parts(atn, Some(tables), None)
     }
 
     fn with_parts(
         atn: &'static ATN,
         static_lexer_tables: Option<&'static StaticLexerTables>,
+        static_parser_tables: Option<&'static StaticParserTables>,
     ) -> Self {
         let context_cache_sentinel = SentinelGuard::new();
         let decision_to_dfa_sentinel = SentinelGuard::new();
@@ -226,6 +253,7 @@ impl<CS: ConfigSet<'static> + 'static> ATNSimulatorMan<CS> {
         Self {
             atn,
             static_lexer_tables,
+            static_parser_tables,
             allocation_limit_bytes: AtomicUsize::new(0),
             is_resetting: AtomicBool::new(false),
             shared_context_cache: RwLock::new(Arc::new(shared_context_cache)),
@@ -253,6 +281,7 @@ impl<CS: ConfigSet<'static> + 'static> ATNSimulatorMan<CS> {
         BaseATNSimulator {
             atn: self.atn,
             static_lexer_tables: self.static_lexer_tables,
+            static_parser_tables: self.static_parser_tables,
             manager: self,
             caches: OnceCell::new(),
             allocation_limit_bytes: self.get_allocation_limit_bytes(),
