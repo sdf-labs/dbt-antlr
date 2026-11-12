@@ -296,10 +296,14 @@ fn run_cargo(project: &Path, command: &str) -> Output {
                 .expect("scratch path should be UTF-8"),
         ])
         // One shared target directory keeps the runtime build cache warm
-        // across the scratch crates of this test suite.
+        // across the scratch crates of this test suite. It lives in cargo's
+        // target-dir scratch space (`<target-dir>/tmp`), so the cache dies
+        // with the build that produced it: a directory outside the target dir
+        // outlives the runtime's fingerprints and fails later runs with a
+        // missing `.rlib`.
         .env(
             "CARGO_TARGET_DIR",
-            Path::new("/tmp/pi/dbt-antlr-cli-tests/target"),
+            Path::new(env!("CARGO_TARGET_TMPDIR")).join("scratch-target"),
         )
         .env("CARGO_TERM_COLOR", "never")
         .output()
