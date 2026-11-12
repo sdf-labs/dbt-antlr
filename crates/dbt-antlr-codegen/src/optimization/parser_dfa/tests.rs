@@ -932,8 +932,8 @@ fn foreign_rooted_obligations_guard_the_iterate_reading() {
     let (open, colon, dot, prior, trim, id) =
         (types[0], types[1], types[2], types[3], types[4], types[5]);
 
-    for class in 0..2 {
-        let table = classes.tables[class].as_ref().expect("hybrid class table");
+    for table in &classes.tables[..2] {
+        let table = table.as_ref().expect("hybrid class table");
         assert_eq!(table.guard_danger, [9, 15]);
         assert_eq!(table.guard_pass, [40]);
 

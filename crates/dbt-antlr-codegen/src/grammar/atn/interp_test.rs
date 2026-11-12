@@ -637,6 +637,65 @@ mod tests {
     }
 
     #[test]
+    fn parser_ll1_analysis_of_a_doubling_ladder_is_not_exponential() {
+        let mut source = String::from("grammar NullableLadder;\ns : r0 X | r0 Y ;\n");
+        for level in 0..40 {
+            let next = level + 1;
+            source.push_str(&format!("r{level} : r{next} | r{next} P ;\n"));
+        }
+        source.push_str("r40 : A | ;\n");
+        for (token, literal) in ["A", "B", "P", "Q", "X", "Z", "Y"].iter().zip('a'..) {
+            source.push_str(&format!("{token} : '{literal}' ;\n"));
+        }
+        let compilation =
+            compile_parser_source("NullableLadder", &source).expect("ladder compiles");
+        let compiled = parser_named(&compilation, "NullableLadderParser");
+        let lookahead = &compiled.analysis.decision_lookahead;
+        assert_eq!(lookahead.len(), 42);
+        let (a, p, x, y) = (1, 3, 5, 7);
+        assert_eq!(
+            lookahead[0].alternatives,
+            [
+                Some(vec![(a, a), (p, p), (x, x)]),
+                Some(vec![(a, a), (p, p), (y, y)])
+            ]
+        );
+        for level in &lookahead[1..41] {
+            assert_eq!(
+                level.alternatives,
+                [
+                    Some(vec![(a, a), (p, p), (x, x), (y, y)]),
+                    Some(vec![(a, a), (p, p)])
+                ]
+            );
+            assert!(!level.disjoint);
+        }
+        assert_eq!(
+            lookahead[41].alternatives,
+            [Some(vec![(a, a)]), Some(vec![(p, p), (x, x), (y, y)])]
+        );
+        assert!(lookahead[41].disjoint);
+    }
+
+    #[test]
+    fn parser_ll1_analysis_reuses_a_rule_look_only_with_the_same_active_callers() {
+        // The look of `b` under the active caller `a` cannot reach the stop
+        // state of `b`. The look of `b` with no active caller can, so the
+        // closure body `b` can match the empty string.
+        let error = compile_parser_source(
+            "CycleMemo",
+            "grammar CycleMemo;\ns : ( b | a Z )* ;\na : b Z | ;\nb : a ;\nZ : 'z' ;\n",
+        )
+        .expect_err("a nullable closure body must be fatal");
+        let codes = error
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>();
+        assert_eq!(codes, ["G4A001"]);
+    }
+
+    #[test]
     fn lexer_basic_matches_java_serialization_and_direct_artifact() {
         assert_lexer_fixture("lexer-basic", "LexerBasic");
     }
@@ -4998,6 +5057,25 @@ mod tests {
         grammar_name: &str,
     ) -> Result<Compilation, crate::grammar::diagnostic::CompilationError> {
         compile_fixture(fixture_name, &[&format!("{grammar_name}.g4")])
+    }
+
+    fn compile_parser_source(
+        grammar_name: &str,
+        source: &str,
+    ) -> Result<Compilation, crate::grammar::diagnostic::CompilationError> {
+        let directory = std::env::temp_dir().join(format!(
+            "dbt-antlr-interp-{}-{grammar_name}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).expect("temp directory");
+        let path = directory.join(format!("{grammar_name}.g4"));
+        std::fs::write(&path, source).expect("grammar file");
+        let compilation = compile(LoadOptions {
+            roots: vec![path],
+            library_directories: Vec::new(),
+        });
+        let _ = std::fs::remove_dir_all(&directory);
+        compilation
     }
 
     fn compile_lexer_fixture(
