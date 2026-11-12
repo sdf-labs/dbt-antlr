@@ -31,6 +31,13 @@ pub(crate) struct StaticDfaState {
     /// guarded. A guarded state takes its alternative unless the runtime stack
     /// guard defers.
     pub(crate) guarded_alt: i32,
+    /// The other alternative of a guarded state: the skip of an optional
+    /// postfix or the exit of a precedence loop. A table that keeps the
+    /// adaptive fallback defers to the adaptive simulation instead.
+    pub(crate) guard_defer_alt: i32,
+    /// The guard group of a guarded state: an index into
+    /// [`StaticDfaTable::guard_groups`].
+    pub(crate) guard_group: u32,
     /// The closed config set of a frontier escape state, when SLL can resume
     /// from it instead of restarting at the decision start.
     pub(crate) continuation: Option<ParserContinuation>,
@@ -81,11 +88,14 @@ pub(crate) struct StaticDfaTable {
     pub(crate) max_k: i32,
     /// State `0` is the start state.
     pub(crate) states: Vec<StaticDfaState>,
-    /// Sorted invoking states whose follow region reaches a guard root: the
-    /// runtime guard defers when the parse stack carries one.
-    pub(crate) guard_danger: Vec<i32>,
-    /// Sorted invoking states whose follow region can pop out of its rule
-    /// without reaching a guard root: the runtime guard continues up the stack.
+    /// The danger set of every guard group: sorted invoking states whose
+    /// follow region reaches a guard root of the group. The runtime guard of a
+    /// state walks up the parse stack through the frames of
+    /// [`Self::guard_pass`]. It defers when it reaches an invoking state of the
+    /// danger set of its group.
+    pub(crate) guard_groups: Vec<Vec<i32>>,
+    /// Sorted invoking states whose follow region can pop out of its rule:
+    /// the runtime guard continues up the stack.
     pub(crate) guard_pass: Vec<i32>,
 }
 
@@ -99,7 +109,7 @@ impl StaticDfaTable {
             cyclic,
             max_k,
             states,
-            guard_danger: Vec::new(),
+            guard_groups: Vec::new(),
             guard_pass: Vec::new(),
         }
     }
@@ -114,6 +124,15 @@ impl StaticDfaTable {
             .iter()
             .filter(|state| state.is_guarded())
             .count()
+    }
+
+    /// The sorted union of the danger sets of all guard groups.
+    #[cfg(test)]
+    pub(crate) fn guard_danger(&self) -> Vec<i32> {
+        let mut danger: Vec<i32> = self.guard_groups.iter().flatten().copied().collect();
+        danger.sort_unstable();
+        danger.dedup();
+        danger
     }
 
     /// How much of the start state's alphabet leads to an accepting state.

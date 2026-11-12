@@ -1063,7 +1063,7 @@ fn static_dfa_only_dumps_annotate_the_resolved_states() {
 
 #[test]
 fn static_dfa_only_guesses_the_minimum_viable_alternative_at_the_frontier() {
-    let output = emit_static_only(&grammars_dir().join("parser/GuardExpr.g4"), false)
+    let output = emit_static_only(&grammars_dir().join("parser/ParenExpr.g4"), false)
         .expect("every decision resolves");
     let warnings = output
         .diagnostics
@@ -1075,10 +1075,10 @@ fn static_dfa_only_guesses_the_minimum_viable_alternative_at_the_frontier() {
         panic!("one resolved decision: {warnings:?}");
     };
     assert!(
-        warning.starts_with("parser decision 2 of rule 'expr' resolves its escape states"),
+        warning.starts_with("parser decision 1 of rule 'e' resolves its escape states"),
         "{warning}"
     );
-    let clause = " undecided states predict the minimum viable alternative (witness: '='";
+    let clause = " undecided states predict the minimum viable alternative (witness: '('";
     let guesses: usize = warning
         .split_once(clause)
         .and_then(|(before, _)| before.rsplit(' ').next())
@@ -1093,9 +1093,9 @@ fn static_dfa_only_guesses_the_minimum_viable_alternative_at_the_frontier() {
     assert!(manifest.contains("\"syntaxErrorStates\": 0"), "{manifest}");
 
     let mut optimization = OptimizationOptions::new();
-    optimization.static_dfa_only(true).dump_dfas("expr");
+    optimization.static_dfa_only(true).dump_dfas("e");
     let output = emit_files_with_options(
-        &grammars_dir().join("parser/GuardExpr.g4"),
+        &grammars_dir().join("parser/ParenExpr.g4"),
         &[grammars_dir()],
         true,
         false,
@@ -1109,6 +1109,54 @@ fn static_dfa_only_guesses_the_minimum_viable_alternative_at_the_frontier() {
         dump.matches("(static-dfa-only: minimum viable alternative)")
             .count(),
         guesses,
+        "{dump}"
+    );
+}
+
+#[test]
+fn static_dfa_only_keeps_the_stack_guards() {
+    let output = emit_static_only(&grammars_dir().join("parser/InlineAlias.g4"), false)
+        .expect("every decision resolves");
+    let warnings = output
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == "G4S192")
+        .map(|diagnostic| diagnostic.message())
+        .collect::<Vec<_>>();
+    let [warning] = warnings.as_slice() else {
+        panic!("one resolved decision: {warnings:?}");
+    };
+    let clause =
+        " guarded states return the skip or the exit where the stack guard defers (witness: ";
+    let guarded: usize = warning
+        .split_once(clause)
+        .and_then(|(before, _)| before.rsplit(' ').next())
+        .and_then(|count| count.parse().ok())
+        .unwrap_or_else(|| panic!("no guard clause: {warning}"));
+    assert!(guarded > 0);
+    let manifest = output.optimization_manifest.expect("manifest written");
+    assert!(
+        manifest.contains(&format!("\"guardedStates\": {guarded}")),
+        "{manifest}"
+    );
+
+    let mut optimization = OptimizationOptions::new();
+    optimization.static_dfa_only(true).dump_dfas("expr");
+    let output = emit_files_with_options(
+        &grammars_dir().join("parser/InlineAlias.g4"),
+        &[grammars_dir()],
+        true,
+        false,
+        &optimization,
+    )
+    .expect("the dump renders");
+    let [dump] = output.reports.as_slice() else {
+        panic!("one dump per parser unit: {:?}", output.reports);
+    };
+    assert_eq!(
+        dump.matches("GUARDED alt=1, or alt=2 when the parse stack reaches a guard root")
+            .count(),
+        guarded,
         "{dump}"
     );
 }

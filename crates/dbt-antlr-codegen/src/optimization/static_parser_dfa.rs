@@ -265,6 +265,7 @@ impl StaticParserDfa {
             ("hybridDecisions", Value::from(totals.hybrid_decisions)),
             ("adaptiveDecisions", Value::from(totals.adaptive_decisions)),
             ("escapeStates", Value::from(totals.escape_states)),
+            ("guardedStates", Value::from(totals.guarded_states)),
             ("minAltStates", Value::from(totals.min_alt_states)),
             (
                 "minViableAltStates",
@@ -430,6 +431,7 @@ impl StaticParserDfaReport {
             .iter()
             .filter_map(|decision| decision.result.static_only.as_ref())
         {
+            total.guarded += resolved.guarded;
             total.min_alt += resolved.min_alt;
             total.min_viable_alt += resolved.min_viable_alt;
             total.syntax_error += resolved.syntax_error;
@@ -445,6 +447,7 @@ struct ReportMetrics {
     hybrid_decisions: usize,
     adaptive_decisions: usize,
     escape_states: usize,
+    guarded_states: usize,
     min_alt_states: usize,
     min_viable_alt_states: usize,
     syntax_error_states: usize,
@@ -459,6 +462,7 @@ impl ReportMetrics {
         self.adaptive_decisions += parser.adaptive_decisions();
         self.escape_states += parser.escape_states();
         let resolved = parser.resolved_states();
+        self.guarded_states += resolved.guarded;
         self.min_alt_states += resolved.min_alt;
         self.min_viable_alt_states += resolved.min_viable_alt;
         self.syntax_error_states += resolved.syntax_error;
@@ -489,6 +493,7 @@ fn parser_report_value(parser: &StaticParserDfaReport, sources: &SourceSet) -> V
             Value::from(parser.adaptive_decisions()),
         ),
         ("escapeStates", Value::from(parser.escape_states())),
+        ("guardedStates", Value::from(resolved.guarded)),
         ("minAltStates", Value::from(resolved.min_alt)),
         ("minViableAltStates", Value::from(resolved.min_viable_alt)),
         ("syntaxErrorStates", Value::from(resolved.syntax_error)),
@@ -1040,11 +1045,14 @@ fn table_dump_lines(
     )];
     if table.guarded() > 0 {
         lines.push(format!(
-            "  guards: {} guarded states; defers iff the parse stack carries an invoking state of danger={:?} (pass={} states)",
+            "  guards: {} guarded states in {} guard groups (pass={} states). A guard walks up the parse stack through the pass frames. It defers at an invoking state of its danger set.",
             table.guarded(),
-            table.guard_danger,
+            table.guard_groups.len(),
             table.guard_pass.len()
         ));
+        for (group, danger) in table.guard_groups.iter().enumerate() {
+            lines.push(format!("    group {group}: danger={danger:?}"));
+        }
     }
     for (index, state) in table.states.iter().enumerate() {
         let mut line = format!("    s{index}: ");
@@ -1062,9 +1070,19 @@ fn table_dump_lines(
                 _ => {}
             }
         } else if state.is_guarded() {
+            let deferred = if state.resolution == Some(EscapeResolution::Guarded) {
+                format!("alt={}", state.guard_defer_alt)
+            } else {
+                "adaptivePredict".to_owned()
+            };
             line.push_str(&format!(
-                "GUARDED alt={} unless the parse stack reaches a guard root (danger={:?})",
-                state.guarded_alt, table.guard_danger
+                "GUARDED alt={}, or {deferred} when the parse stack reaches a guard root of group {} (danger={:?})",
+                state.guarded_alt,
+                state.guard_group,
+                table
+                    .guard_groups
+                    .get(state.guard_group as usize)
+                    .map_or(&[][..], Vec::as_slice)
             ));
         } else if state.is_escape() {
             line.push_str("ESCAPE");
@@ -1436,6 +1454,15 @@ fn static_only_diagnostics(
                 return Some(Diagnostic::error(NOT_FULLY_STATIC, span, message));
             };
             let mut parts = Vec::new();
+            if resolved.guarded > 0 {
+                parts.push(resolution_text(
+                    &report.vocabulary,
+                    resolved.guarded,
+                    ("guarded state returns", "guarded states return"),
+                    "the skip or the exit where the stack guard defers",
+                    resolved.guarded_witness.as_deref(),
+                ));
+            }
             if resolved.min_alt > 0 {
                 parts.push(resolution_text(
                     &report.vocabulary,

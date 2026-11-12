@@ -8,12 +8,13 @@
 //! escape markers, collects the continuations, indexes the decisions, and
 //! deduplicates repeated precedence class tables.
 
+use dbt_antlr_runtime::atn::INVALID_ALT;
 use dbt_antlr_runtime::dfa::static_parser_dfa::{
-    DecisionTables, ParserContinuation, PrecedenceDispatch, StaticParserTableBuilder,
+    DecisionTables, Guard, ParserContinuation, PrecedenceDispatch, StaticParserTableBuilder,
     StaticParserTables,
 };
 
-use super::{CONFLICT_ESCAPE, DecisionResult, ESCAPE, StaticDfaTable};
+use super::{CONFLICT_ESCAPE, DecisionResult, ESCAPE, EscapeResolution, StaticDfaTable};
 
 /// Builds the table set of one parser unit.
 pub(crate) fn build_tables(results: &[DecisionResult]) -> StaticParserTables {
@@ -72,7 +73,7 @@ fn runtime_table(decision: i32, table: &StaticDfaTable) -> StaticParserTableBuil
     let mut accepts = Vec::with_capacity(table.states.len());
     let mut fallbacks = Vec::with_capacity(table.states.len());
     let mut conflict_min_alts = Vec::with_capacity(table.states.len());
-    let mut guarded_alts = Vec::with_capacity(table.states.len());
+    let mut guards = Vec::with_capacity(table.states.len());
     let mut continuations: Vec<ParserContinuation> = Vec::new();
     let mut edges = Vec::with_capacity(table.states.len());
     for (state, entry) in table.states.iter().enumerate() {
@@ -84,7 +85,16 @@ fn runtime_table(decision: i32, table: &StaticDfaTable) -> StaticParserTableBuil
             entry.accept
         };
         accepts.push(accept);
-        guarded_alts.push(entry.guarded_alt);
+        guards.push((entry.guarded_alt > 0).then(|| Guard {
+            alt: entry.guarded_alt,
+            // A table that keeps the adaptive fallback defers to it.
+            defer_alt: if entry.resolution == Some(EscapeResolution::Guarded) {
+                entry.guard_defer_alt
+            } else {
+                INVALID_ALT
+            },
+            group: entry.guard_group,
+        }));
         fallbacks.push(entry.fallback);
         conflict_min_alts.push(if accept == CONFLICT_ESCAPE {
             entry.conflict_min_alt
@@ -113,9 +123,5 @@ fn runtime_table(decision: i32, table: &StaticDfaTable) -> StaticParserTableBuil
         continuations,
         &edges,
     )
-    .with_guards(
-        guarded_alts,
-        table.guard_danger.clone(),
-        table.guard_pass.clone(),
-    )
+    .with_guards(guards, table.guard_groups.clone(), table.guard_pass.clone())
 }

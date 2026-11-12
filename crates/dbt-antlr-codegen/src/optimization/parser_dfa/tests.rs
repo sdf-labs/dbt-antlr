@@ -808,7 +808,7 @@ fn foreign_consumption_guards_the_iterate_reading() {
         assert_eq!(state.guarded_alt, 1, "a guarded iterate takes alt 1");
     }
     let table = classes.tables[0].as_ref().expect("class 0 table");
-    assert!(!table.guard_danger.is_empty(), "the guard can trip");
+    assert!(!table.guard_danger().is_empty(), "the guard can trip");
 
     let between = classify(&grammars_dir().join("parser").join("BetweenExpr.g4"));
     let boolean_loop = &between[3];
@@ -934,7 +934,7 @@ fn foreign_rooted_obligations_guard_the_iterate_reading() {
 
     for table in &classes.tables[..2] {
         let table = table.as_ref().expect("hybrid class table");
-        assert_eq!(table.guard_danger, [9, 15]);
+        assert_eq!(table.guard_danger(), [9, 15]);
         assert_eq!(table.guard_pass, [40]);
 
         let conflict = walk(table, &[dot, id]).expect("`.` ID edge");
@@ -1011,7 +1011,7 @@ fn new_invocations_after_the_skip_are_out_of_discipline() {
         if state.is_guarded() && rule != "m" {
             let first_call = first_of_two_calls(atn, result.rule_index);
             assert!(
-                table.guard_danger.contains(&first_call),
+                table.guard_danger().contains(&first_call),
                 "{rule}: the guard defers at the first of the two calls"
             );
         }
@@ -1103,7 +1103,7 @@ fn optional_postfix_shapes_are_guarded() {
     assert_eq!(guarded, 8, "matching the reference classifier");
     assert!(!shaped[0].is_fully_static(), "a guard may defer");
     let table = shaped[0].table.as_ref().expect("the hybrid table is kept");
-    assert!(!table.guard_danger.is_empty(), "the guard can trip");
+    assert!(!table.guard_danger().is_empty(), "the guard can trip");
     assert!(!table.guard_pass.is_empty(), "the walk can continue");
     assert!(
         table.states.iter().any(|state| state.is_guarded()),
@@ -1142,10 +1142,11 @@ fn load_image(words: &[u32]) -> dbt_antlr_runtime::dfa::static_parser_dfa::Stati
     .expect("the emitted image loads")
 }
 
-/// Every state of every runtime table either accepts an alternative or
-/// continues the walk: no state defers to the adaptive simulation.
+/// Every state of every runtime table accepts an alternative, continues the
+/// walk, or is guarded with a defer alternative: no state defers to the
+/// adaptive simulation.
 fn assert_no_runtime_escapes(results: &[DecisionResult]) {
-    use dbt_antlr_runtime::dfa::static_parser_dfa::{CONFLICT_ESCAPE, ESCAPE, GUARDED};
+    use dbt_antlr_runtime::dfa::static_parser_dfa::{CONFLICT_ESCAPE, ESCAPE};
 
     let decoded = decoded_tables(results);
     for result in results {
@@ -1164,10 +1165,17 @@ fn assert_no_runtime_escapes(results: &[DecisionResult]) {
             for state in 0..table.num_states() as i32 {
                 let accept = table.accept(state);
                 assert!(
-                    ![ESCAPE, CONFLICT_ESCAPE, GUARDED].contains(&accept),
+                    ![ESCAPE, CONFLICT_ESCAPE].contains(&accept),
                     "decision {} state {state} still escapes ({accept})",
                     result.decision
                 );
+                if let Some(guard) = table.guard(state) {
+                    assert!(
+                        guard.defer_alt > 0,
+                        "decision {} state {state} defers to adaptivePredict ({guard:?})",
+                        result.decision
+                    );
+                }
             }
         }
     }
@@ -1239,24 +1247,132 @@ fn static_only_turns_predicated_states_into_syntax_errors() {
 }
 
 #[test]
-fn static_only_resolves_guarded_takes_to_the_take() {
+fn static_only_keeps_the_guard_of_guarded_takes() {
     let results = resolve_static_only(&grammars_dir().join("parser").join("GuardExpr.g4"));
     let shaped = results
         .iter()
         .find(|result| result.has_postfix_shape)
         .expect("the `pred?` decision");
-    assert_eq!(shaped.guarded_takes, 0);
+    assert!(shaped.guarded_takes > 0, "the guarded takes stay guarded");
     assert!(shaped.is_fully_static());
     let table = shaped.table.as_ref().expect("the hybrid table is kept");
-    assert_eq!(table.guarded(), 0);
-    assert!(table.guard_danger.is_empty());
-    assert!(table.guard_pass.is_empty());
+    assert_eq!(table.guarded(), shaped.guarded_takes);
+    assert!(!table.guard_groups.is_empty(), "the guard can trip");
+    assert!(!table.guard_pass.is_empty(), "the walk can continue");
+    for state in table.states.iter().filter(|state| state.is_guarded()) {
+        assert_eq!(state.resolution, Some(super::EscapeResolution::Guarded));
+        assert_eq!(state.guarded_alt, 1, "the take");
+        assert_eq!(state.guard_defer_alt, 2, "the skip");
+        assert!((state.guard_group as usize) < table.guard_groups.len());
+    }
     let resolved = shaped.static_only.as_ref().expect("resolved");
+    assert_eq!(resolved.guarded, shaped.guarded_takes);
     assert!(
-        resolved.min_alt >= 8,
-        "the 8 guarded takes predict the take: {resolved:?}"
+        shaped
+            .fallback_text()
+            .starts_with(&format!("{}g", resolved.guarded)),
+        "{}",
+        shaped.fallback_text()
     );
     assert_no_runtime_escapes(&results);
+
+    let decoded = decoded_tables(&results);
+    let runtime = decoded
+        .table(shaped.decision as i32, 0)
+        .expect("the decision has a table");
+    let guarded = table
+        .states
+        .iter()
+        .position(|state| state.is_guarded())
+        .expect("a guarded state") as i32;
+    let guard = runtime
+        .guard(guarded)
+        .expect("the runtime state is guarded");
+    assert_eq!((guard.alt, guard.defer_alt), (1, 2));
+}
+
+/// In `InlineAlias.g4`, the alias reading of `AS INT64 )` also reaches the
+/// `)` of a parenthesis, so the iterate is not real. With the adaptive
+/// fallback, the state escapes. Under `--static-dfa-only`, the guard keeps the
+/// iterate and returns the exit where the `CAST` operand is on the stack. The
+/// `AND` states guard only the `ROWS BETWEEN` operand.
+#[test]
+fn static_only_guards_iterates_that_consume_foreign_tokens() {
+    let path = grammars_dir().join("parser").join("InlineAlias.g4");
+    let hybrid = classify(&path);
+    let hybrid_loop = hybrid
+        .iter()
+        .find(|result| result.category == Category::LR_PRECEDENCE)
+        .expect("the operator loop");
+    assert!(hybrid_loop.escapes > 0, "the cast state escapes");
+
+    let results = resolve_static_only(&path);
+    let alias_loop = results
+        .iter()
+        .find(|result| result.category == Category::LR_PRECEDENCE)
+        .expect("the operator loop");
+    let resolved = alias_loop.static_only.as_ref().expect("resolved");
+    assert!(resolved.guarded > 0);
+    assert_eq!(
+        (
+            resolved.min_alt,
+            resolved.min_viable_alt,
+            resolved.syntax_error
+        ),
+        (0, 0, 0),
+        "every state of the loop is guarded: {resolved:?}"
+    );
+    assert_no_runtime_escapes(&results);
+
+    let precedence = alias_loop.precedence.as_ref().expect("precedence tables");
+    let table = precedence
+        .tables
+        .iter()
+        .flatten()
+        .max_by_key(|table| table.guarded())
+        .expect("a class table");
+    assert!(table.guard_groups.len() >= 2, "{:?}", table.guard_groups);
+    let smallest = table
+        .guard_groups
+        .iter()
+        .min_by_key(|group| group.len())
+        .expect("a group");
+    assert!(
+        table
+            .guard_groups
+            .iter()
+            .any(|group| group.len() > smallest.len()),
+        "the `AND` states do not guard the `CAST` operand: {:?}",
+        table.guard_groups
+    );
+}
+
+/// Each guarded state tests only the roots of its own readings. In
+/// `LoopObligation.g4`, the `.` state and the `[` states of the `p` loop
+/// guard different invoking states, so they are in different guard groups.
+#[test]
+fn guarded_states_have_their_own_guard_groups() {
+    let results = classify(&grammars_dir().join("parser").join("LoopObligation.g4"));
+    let p = results
+        .iter()
+        .find(|result| result.category == Category::LR_PRECEDENCE)
+        .expect("the `p` loop");
+    let precedence = p.precedence.as_ref().expect("precedence tables");
+    for table in precedence.tables.iter().flatten() {
+        if table.guarded() == 0 {
+            continue;
+        }
+        assert_eq!(table.guard_danger(), [9, 15]);
+        assert_eq!(table.guard_groups.len(), 2, "{:?}", table.guard_groups);
+        for state in table.states.iter().filter(|state| state.is_guarded()) {
+            assert_eq!(state.guard_defer_alt, 2, "the exit");
+            assert_eq!(
+                table.guard_groups[state.guard_group as usize].len(),
+                1,
+                "a state guards one invoking state"
+            );
+        }
+    }
 }
 
 /// Under `--static-dfa-only`, a hybrid table looks further than with the
@@ -1264,14 +1380,14 @@ fn static_only_resolves_guarded_takes_to_the_take() {
 /// minimum viable alternative.
 #[test]
 fn static_only_looks_further_and_guesses_the_minimum_viable_alternative() {
-    let path = grammars_dir().join("parser").join("GuardExpr.g4");
-    let adaptive = &classify(&path)[2];
+    let path = grammars_dir().join("parser").join("ParenExpr.g4");
+    let adaptive = &classify(&path)[1];
     assert_eq!(adaptive.category, Category::HYBRID);
     let default_table = adaptive.table.as_ref().expect("the hybrid table");
     assert!(default_table.escapes() > 0);
 
     let results = resolve_static_only(&path);
-    let decision = &results[2];
+    let decision = &results[1];
     let table = decision.table.as_ref().expect("the hybrid table is kept");
     assert!(
         table.states.len() > 4 * default_table.states.len(),
