@@ -177,6 +177,41 @@ struct CallInfo {
     precedence: i32,
 }
 
+/// The rule invocations of one ATN, keyed by their follow states. All build
+/// attempts over the ATN share one copy.
+#[derive(Debug, Default)]
+pub(super) struct CallSites {
+    /// The state that makes each invocation, for the guard-root analysis of
+    /// optional-postfix and precedence-loop decisions.
+    site_by_follow_state: HashMap<i32, i32>,
+    /// The rule and the precedence of each invocation.
+    call_by_follow_state: HashMap<i32, CallInfo>,
+}
+
+impl CallSites {
+    pub(super) fn of(atn: &ATN) -> Self {
+        let mut sites = Self::default();
+        for state in atn.iter_states() {
+            for transition in state.get_transitions() {
+                if let Some(rule_transition) = transition.try_as::<RuleTransition>() {
+                    let follow_state = rule_transition.follow_state.get_state_number();
+                    sites
+                        .site_by_follow_state
+                        .insert(follow_state, state.get_state_number());
+                    sites.call_by_follow_state.insert(
+                        follow_state,
+                        CallInfo {
+                            target_rule_index: rule_transition.get_target().get_rule_index(),
+                            precedence: rule_transition.precedence(),
+                        },
+                    );
+                }
+            }
+        }
+        sites
+    }
+}
+
 /// The configs produced by one closure root, in insertion order.
 struct SetBuilder<'a> {
     configs: Vec<ATNConfig<'a>>,
@@ -241,10 +276,7 @@ pub(super) struct Closure<'atn, 'a> {
     pub(super) facts: ClosureFacts,
     precedence: Option<PrecedenceClass>,
     depth_cache: HashMap<usize, i32>,
-    call_by_follow_state: Option<HashMap<i32, CallInfo>>,
-    /// Call site of every rule invocation, keyed by its follow state, for the
-    /// guard-root analysis of optional-postfix decisions.
-    site_by_follow_state: Option<HashMap<i32, i32>>,
+    call_sites: &'a CallSites,
     /// Widening bound of the current attempt: `i32::MAX` for the unbounded
     /// attempt, `0` for the fully widened one.
     depth_bound: i32,
@@ -269,8 +301,10 @@ pub(super) struct Closure<'atn, 'a> {
 }
 
 impl<'atn, 'a> Closure<'atn, 'a> {
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn new(
         atn: &'atn ATN,
+        call_sites: &'a CallSites,
         scratch: &'a Bump,
         depth_bound: i32,
         precedence: Option<PrecedenceClass>,
@@ -285,8 +319,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             facts: ClosureFacts::default(),
             precedence,
             depth_cache: HashMap::new(),
-            call_by_follow_state: None,
-            site_by_follow_state: None,
+            call_sites,
             depth_bound,
             precedence_start: false,
             loop_block,
@@ -422,8 +455,9 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             }
         }
 
-        let sites =
-            (self.postfix.is_some() || self.loop_block.is_some()).then(|| self.build_site_map());
+        let call_sites = self.call_sites;
+        let sites = (self.postfix.is_some() || self.loop_block.is_some())
+            .then_some(&call_sites.site_by_follow_state);
         let mut successors = Vec::with_capacity(classes.len());
         for (class, label) in classes {
             if self.exhausted {
@@ -454,8 +488,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                     {
                         let in_loop = taint & (FOREIGN_LINEAGE_TAINT | MIDWAY_TAINT) == 0;
                         taint |= FOREIGN_CONSUME_TAINT;
-                        if let (Some(block), Some(sites)) =
-                            (self.loop_block.as_ref(), sites.as_ref())
+                        if let (Some(block), Some(sites)) = (self.loop_block.as_ref(), sites)
                             && source.get_alt() == ITERATE_EXIT_ALT
                             && taint & ROOTED_TAINT == 0
                         {
@@ -469,7 +502,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                             );
                         }
                     }
-                    if let (Some(postfix), Some(sites)) = (self.postfix.as_ref(), sites.as_ref())
+                    if let (Some(postfix), Some(sites)) = (self.postfix.as_ref(), sites)
                         && source.get_alt() == POSTFIX_SKIP_ALT
                         && taint & ROOTED_TAINT == 0
                         && !postfix.skip_mirrors(source.get_state(), source.get_context(), taint)
@@ -760,7 +793,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
         self.closure(next, taint | PRECPRED_TAINT, depth, out);
     }
 
-    fn precedence_suppresses(&mut self, target: ATNStateRef, depth: i32) -> bool {
+    fn precedence_suppresses(&self, target: ATNStateRef, depth: i32) -> bool {
         let Some(class) = self.precedence else {
             return false;
         };
@@ -774,7 +807,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             })
     }
 
-    fn precedence_starts_self_call(&mut self, target: ATNStateRef) -> bool {
+    fn precedence_starts_self_call(&self, target: ATNStateRef) -> bool {
         let Some(class) = self.precedence else {
             return false;
         };
@@ -782,58 +815,17 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             .is_some_and(|call| call.precedence == 0 && call.target_rule_index == class.rule_index)
     }
 
-    /// The call site of every rule invocation, keyed by its follow state.
-    fn build_site_map(&mut self) -> HashMap<i32, i32> {
-        if let Some(cached) = self.site_by_follow_state.as_ref() {
-            return cached.clone();
-        }
-        let mut map = HashMap::new();
-        for state in self.atn.iter_states() {
-            for transition in state.get_transitions() {
-                if let Some(rule_transition) = transition.try_as::<RuleTransition>() {
-                    map.insert(
-                        rule_transition.follow_state.get_state_number(),
-                        state.get_state_number(),
-                    );
-                }
-            }
-        }
-        self.site_by_follow_state = Some(map.clone());
-        map
-    }
-
-    fn ensure_call_by_follow_state(&mut self) {
-        if self.call_by_follow_state.is_some() {
-            return;
-        }
-        let mut map = HashMap::new();
-        for state in self.atn.iter_states() {
-            for transition in state.get_transitions() {
-                if let Some(rule_transition) = transition.try_as::<RuleTransition>() {
-                    map.insert(
-                        rule_transition.follow_state.get_state_number(),
-                        CallInfo {
-                            target_rule_index: rule_transition.get_target().get_rule_index(),
-                            precedence: rule_transition.precedence(),
-                        },
-                    );
-                }
-            }
-        }
-        self.call_by_follow_state = Some(map);
-    }
-
-    fn call_info(&mut self, follow_state_number: i32) -> Option<CallInfo> {
-        self.ensure_call_by_follow_state();
-        self.call_by_follow_state
-            .as_ref()
-            .and_then(|map| map.get(&follow_state_number).copied())
+    fn call_info(&self, follow_state_number: i32) -> Option<CallInfo> {
+        self.call_sites
+            .call_by_follow_state
+            .get(&follow_state_number)
+            .copied()
     }
 
     /// Evaluates a precedence predicate from the call sites recorded on the
     /// context path: `None` when the path does not pin it down.
     fn evaluate_precedence_from_context(
-        &mut self,
+        &self,
         context: PredictionContextRef<'_>,
         rule: i32,
         value: i32,

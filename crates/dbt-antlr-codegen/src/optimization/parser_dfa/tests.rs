@@ -20,6 +20,7 @@ use crate::grammar::compiler::compile;
 use crate::grammar::loader::LoadOptions;
 use crate::optimization::AtnFallback;
 
+use super::classifier::AttemptKind;
 use super::loop_block::LoopBlock;
 use super::table::{StaticDfaState, StaticDfaTable};
 use super::{Category, DecisionClassifier, DecisionResult};
@@ -1597,4 +1598,135 @@ fn shared_descent_excludes_rules_whose_shared_rule_conflicts_with_member_tails()
             .all(|result| result.descent.is_none() && result.descent_group_states == 0),
         "{results:?}"
     );
+}
+
+/// Classifies the first root parser of one grammar and returns the classifier
+/// with its attempt log.
+fn classify_logged(path: &Path, budget: u64) -> (Vec<DecisionResult>, DecisionClassifier) {
+    let compilation = compile(LoadOptions {
+        roots: vec![path.to_path_buf()],
+        library_directories: Vec::new(),
+    })
+    .expect("grammar compiles");
+    let root = compilation.roots.first().expect("one root");
+    let parser = compilation
+        .parser(root.parser.expect("parser root"))
+        .expect("parser artifact");
+    let mut classifier = classifier(parser).with_visit_budget(budget);
+    let results = classifier.classify_all();
+    (results, classifier)
+}
+
+/// A first pass that stops at an untrusted conflict does not try the widened
+/// construction. When the decision stays adaptive, the witness pass runs the
+/// unbounded construction again, but not the hybrid constructions, which do
+/// not depend on the stop.
+#[test]
+fn witness_pass_repeats_only_the_stopped_attempt() {
+    let path = fixture("vscode-split").join("TParser.g4");
+    let (results, classifier) = classify_logged(&path, super::DEFAULT_VISIT_BUDGET);
+    assert_eq!(results[5].category, Category::PREDICATED);
+    assert!(results[5].table.is_none());
+    assert_eq!(
+        classifier.attempts_of(5),
+        [
+            AttemptKind::Unbounded { abort: true },
+            AttemptKind::Hybrid,
+            AttemptKind::Unbounded { abort: false }
+        ]
+    );
+}
+
+/// A decision whose first pass did not stop keeps its first-pass result, even
+/// without a table.
+#[test]
+fn unstopped_first_pass_needs_no_witness_pass() {
+    let path = grammars_dir().join("parser").join("LowCoverage.g4");
+    let (results, classifier) = classify_logged(&path, super::DEFAULT_VISIT_BUDGET);
+    assert_eq!(results[0].category, Category::PREDICATED);
+    assert!(results[0].table.is_none());
+    assert_eq!(
+        classifier.attempts_of(0),
+        [AttemptKind::Unbounded { abort: true }, AttemptKind::Hybrid]
+    );
+}
+
+/// A start state that spends the visit budget spends it in every unbounded
+/// construction, so no hybrid construction runs.
+#[test]
+fn exhausted_start_state_skips_the_hybrid_attempts() {
+    let path = grammars_dir().join("ReferenceToATN.g4");
+    let (results, classifier) = classify_logged(&path, 1);
+    assert_eq!(results[0].category, Category::OVERFLOW);
+    assert_eq!(
+        classifier.attempts_of(0),
+        [
+            AttemptKind::Unbounded { abort: true },
+            AttemptKind::Widened { abort: true }
+        ]
+    );
+}
+
+/// The witness pass does not repeat an unbounded attempt that overflowed
+/// without a stop: only the widened attempt stopped, so only the widened
+/// attempt runs again.
+#[test]
+fn witness_pass_skips_the_unstopped_unbounded_attempt() {
+    let path =
+        fixture("testcompositegrammars-testimportlargegrammar-110006096d").join("NewJava.g4");
+    let (results, classifier) = classify_logged(&path, 2_000);
+    assert_eq!(results[7].category, Category::OVERFLOW);
+    assert_eq!(
+        classifier.attempts_of(7),
+        [
+            AttemptKind::Unbounded { abort: true },
+            AttemptKind::Widened { abort: true },
+            AttemptKind::Hybrid,
+            AttemptKind::Widened { abort: false },
+        ]
+    );
+}
+
+/// Each precedence class gets its own witness pass: a class with a table keeps
+/// it, and only the classes without a table run again.
+#[test]
+fn precedence_classes_with_tables_need_no_witness_pass() {
+    let path = grammars_dir().join("parser").join("LoopFrontier.g4");
+    let (results, classifier) = classify_logged(&path, 2_000);
+    let precedence = results[4].precedence.as_ref().expect("precedence tables");
+    let adaptive = [
+        AttemptKind::Unbounded { abort: true },
+        AttemptKind::Hybrid,
+        AttemptKind::Unbounded { abort: false },
+        AttemptKind::Widened { abort: false },
+    ];
+    let mut expected = Vec::new();
+    for table in &precedence.tables {
+        match table {
+            Some(_) => expected.push(AttemptKind::Unbounded { abort: true }),
+            None => expected.extend(adaptive),
+        }
+    }
+    assert_eq!(precedence.adaptive_classes, 3);
+    assert_eq!(precedence.tables.len(), 5);
+    assert_eq!(classifier.attempts_of(4), expected);
+}
+
+/// An unbounded attempt that stops at an untrusted conflict does not fall
+/// back to full widening. Here the widened construction predicts the first
+/// alternative after `'b' 'a'`, but when `a` is not nested, only the second
+/// alternative can read `'b' 'a' 'd' 'e'`.
+#[test]
+fn stopped_unbounded_attempt_does_not_fall_back_to_widening() {
+    let results = classify_source(
+        "WidenedAfterStop",
+        "grammar WidenedAfterStop;\n\
+         top : a X | a Y ;\n\
+         a : ( A | C ( B A | B a E ) ) D ;\n\
+         A : 'a' ; B : 'b' ; C : 'c' ; D : 'd' ; E : 'e' ; X : 'x' ; Y : 'y' ;\n",
+    );
+    let decision = &results[1];
+    assert_eq!(decision.category, Category::HYBRID);
+    assert_eq!(decision.conflicts, [vec![1, 2]]);
+    assert!(decision.table.is_some());
 }
