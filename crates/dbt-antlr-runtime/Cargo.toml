@@ -12,6 +12,7 @@ documentation = "https://docs.rs/dbt-antlr-runtime"
 description = "Dbt fork of ANTLR4 runtime for Rust"
 readme = "README.md"
 edition = "2021"
+rust-version = { workspace = true }
 license = "BSD-3-Clause"
 keywords = ["ANTLR", "ANTLR4", "parsing", "runtime"]
 categories = ["parsing"]
@@ -30,7 +31,6 @@ static-dfa-build = []
 perf-counters = []
 
 [dependencies]
-uuid = "1.16.0"
 byteorder = "^1"
 fxhash = "0.2.1"
 bit-set = "0.8.0"

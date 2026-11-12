@@ -40,11 +40,10 @@ pub mod predict_timing;
 pub use lexer::{BaseLexer, Lexer};
 #[doc(inline)]
 pub use parser::{BaseParser, ListenerId, Parser};
-#[doc(inline)]
-pub use token_source::TokenSource;
-//extern crate uuid;
 #[doc(hidden)]
 pub use prediction_context::PredictionContextCache;
+#[doc(inline)]
+pub use token_source::TokenSource;
 
 #[doc(inline)]
 pub use prediction_mode::PredictionMode;
