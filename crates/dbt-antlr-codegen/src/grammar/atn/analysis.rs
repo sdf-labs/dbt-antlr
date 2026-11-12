@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Konstantin Vyatkin
-use std::collections::{BTreeMap, BTreeSet};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::rc::Rc;
 
 use petgraph::algo::tarjan_scc;
 use petgraph::graph::DiGraph;
@@ -160,12 +162,9 @@ fn epsilon_diagnostics(
     }
 
     for site in &check_sites.optionals {
-        let Some(state) = analyzer.graph.states.get(site.start) else {
-            continue;
-        };
         let mut bypasses = 0;
         let mut warned = false;
-        for transition in analyzer.transitions_from(state) {
+        for transition in analyzer.transitions_from(site.start) {
             if transition.target == site.stop {
                 bypasses += 1;
                 continue;
@@ -191,7 +190,7 @@ fn epsilon_diagnostics(
                 1,
                 "optional block must have one bypass: site={site:?}, targets={:?}",
                 analyzer
-                    .transitions_from(state)
+                    .transitions_from(site.start)
                     .map(|transition| transition.target)
                     .collect::<Vec<_>>()
             );
@@ -385,7 +384,7 @@ fn decision_lookahead(
         .copied()
         .map(|state_number| {
             let state = &graph.states[state_number];
-            let transitions = analyzer.transitions_from(state).collect::<Vec<_>>();
+            let transitions = analyzer.transitions_from(state_number).collect::<Vec<_>>();
             let alternatives = if state.non_greedy {
                 vec![None; transitions.len() + 1]
             } else {
@@ -437,25 +436,33 @@ fn range_overlaps_any(range: (i32, i32), ranges: &[(i32, i32)]) -> bool {
 
 pub(super) struct LookAnalyzer<'a> {
     graph: &'a FinalizedAtnGraph,
-    transitions: BTreeMap<super::super::model::BuildTransitionId, &'a FinalizedTransition>,
+    outgoing: Vec<Vec<&'a FinalizedTransition>>,
+    rule_looks: RefCell<Vec<Vec<Rc<RuleLook>>>>,
 }
 
 impl<'a> LookAnalyzer<'a> {
     pub(super) fn new(graph: &'a FinalizedAtnGraph) -> Self {
+        let transitions = transitions_by_id(graph);
+        let outgoing = graph
+            .states
+            .iter()
+            .map(|state| {
+                state
+                    .transitions
+                    .iter()
+                    .filter_map(|transition| transitions.get(transition).copied())
+                    .collect()
+            })
+            .collect();
         Self {
             graph,
-            transitions: transitions_by_id(graph),
+            outgoing,
+            rule_looks: RefCell::new(vec![Vec::new(); graph.rule_starts.len()]),
         }
     }
 
-    fn transitions_from(
-        &self,
-        state: &'a super::build::FinalizedState,
-    ) -> impl Iterator<Item = &'a FinalizedTransition> + '_ {
-        state
-            .transitions
-            .iter()
-            .filter_map(|transition| self.transitions.get(transition).copied())
+    fn transitions_from(&self, state: usize) -> impl Iterator<Item = &'a FinalizedTransition> + '_ {
+        self.outgoing[state].iter().copied()
     }
 
     pub(super) fn look(
@@ -465,108 +472,162 @@ impl<'a> LookAnalyzer<'a> {
         context_none: bool,
         see_through_predicates: bool,
     ) -> LookResult {
-        let mut result = LookResult::default();
-        let mut pending = vec![LookWork {
-            state: start,
-            returns: Vec::new(),
-            called_rules: BTreeSet::new(),
-        }];
-        let mut visited = BTreeSet::new();
-        while let Some(work) = pending.pop() {
-            let key = work.key();
-            if !visited.insert(key) {
+        let mut frame = LookFrame::default();
+        let mut active = vec![false; self.graph.rule_starts.len()];
+        let mut epsilon = false;
+        let mut pending = vec![start];
+        let mut visited = HashSet::new();
+        while let Some(state) = pending.pop() {
+            if !visited.insert(state) {
                 continue;
             }
-            if stop == Some(work.state) && work.returns.is_empty() && context_none {
-                result.epsilon = true;
+            if stop == Some(state) && context_none {
+                epsilon = true;
                 continue;
             }
+            if self.graph.states[state].kind == AtnStateKind::RuleStop && context_none {
+                epsilon = true;
+                continue;
+            }
+            // Java `LL1Analyzer._LOOK` under the `getDecisionLookahead`
+            // configuration (`EmptyPredictionContext`, `addEOF=false`):
+            // an outermost rule stop falls through to its follow-link
+            // transitions.
+            for transition in self.transitions_from(state) {
+                self.follow_transition(
+                    transition,
+                    &mut active,
+                    see_through_predicates,
+                    &mut pending,
+                    &mut frame,
+                );
+            }
+        }
+        LookResult {
+            ranges: normalize_ranges(&frame.ranges),
+            epsilon,
+            hit_predicate: frame.hit_predicate,
+        }
+    }
 
-            let state = &self.graph.states[work.state];
-            if state.kind == AtnStateKind::RuleStop {
-                if let Some(frame) = work.returns.last() {
-                    let mut next = work.clone();
-                    next.state = frame.follow;
-                    next.called_rules.remove(&frame.rule);
-                    next.returns.pop();
-                    pending.push(next);
-                    continue;
-                }
-                if context_none {
-                    result.epsilon = true;
-                    continue;
-                }
-                // Java `LL1Analyzer._LOOK` under the `getDecisionLookahead`
-                // configuration (`EmptyPredictionContext`, `addEOF=false`):
-                // an outermost rule stop falls through to its follow-link
-                // transitions.
+    /// Returns the look of `rule` from its start state to its stop state.
+    ///
+    /// `active` marks the rules on the call stack. The look does not enter
+    /// an active rule again.
+    fn rule_look(
+        &self,
+        rule: usize,
+        active: &mut [bool],
+        see_through_predicates: bool,
+    ) -> Rc<RuleLook> {
+        active[rule] = true;
+        let known = self.rule_looks.borrow()[rule]
+            .iter()
+            .find(|look| look.matches(see_through_predicates, active))
+            .cloned();
+        if let Some(known) = known {
+            active[rule] = false;
+            return known;
+        }
+
+        let mut frame = LookFrame {
+            tested: Some(BTreeSet::new()),
+            ..LookFrame::default()
+        };
+        let mut reaches_stop = false;
+        let mut pending = vec![self.graph.rule_starts[rule]];
+        let mut visited = HashSet::new();
+        while let Some(state) = pending.pop() {
+            if !visited.insert(state) {
+                continue;
+            }
+            if self.graph.states[state].kind == AtnStateKind::RuleStop {
+                reaches_stop = true;
+                continue;
             }
             for transition in self.transitions_from(state) {
                 self.follow_transition(
                     transition,
-                    &work,
+                    active,
                     see_through_predicates,
                     &mut pending,
-                    &mut result,
+                    &mut frame,
                 );
             }
         }
-        result.ranges = normalize_ranges(&result.ranges);
-        result
+        let tested = frame.tested.unwrap_or_default();
+        let look = Rc::new(RuleLook {
+            see_through_predicates,
+            tested: tested
+                .into_iter()
+                .map(|tested| (tested, active[tested]))
+                .collect(),
+            ranges: normalize_ranges(&frame.ranges),
+            reaches_stop,
+            hit_predicate: frame.hit_predicate,
+        });
+        active[rule] = false;
+        self.rule_looks.borrow_mut()[rule].push(Rc::clone(&look));
+        look
     }
 
     fn follow_transition(
         &self,
         transition: &FinalizedTransition,
-        work: &LookWork,
+        active: &mut [bool],
         see_through_predicates: bool,
-        pending: &mut Vec<LookWork>,
-        result: &mut LookResult,
+        pending: &mut Vec<usize>,
+        frame: &mut LookFrame,
     ) {
         match &transition.kind {
             FinalizedTransitionKind::Rule {
                 rule_index, follow, ..
             } => {
-                if work.called_rules.contains(rule_index) {
+                if let Some(tested) = &mut frame.tested {
+                    tested.insert(*rule_index);
+                }
+                if active[*rule_index] {
                     return;
                 }
-                let mut next = work.clone();
-                next.state = transition.target;
-                next.called_rules.insert(*rule_index);
-                next.returns.push(ReturnFrame {
-                    follow: *follow,
-                    rule: *rule_index,
-                });
-                pending.push(next);
+                debug_assert_eq!(transition.target, self.graph.rule_starts[*rule_index]);
+                let callee = self.rule_look(*rule_index, active, see_through_predicates);
+                if let Some(tested) = &mut frame.tested {
+                    tested.extend(callee.tested.iter().map(|(rule, _)| *rule));
+                }
+                frame.ranges.extend(callee.ranges.iter().copied());
+                frame.hit_predicate |= callee.hit_predicate;
+                if callee.reaches_stop {
+                    pending.push(*follow);
+                }
             }
             FinalizedTransitionKind::Predicate { .. } | FinalizedTransitionKind::Precedence(_) => {
                 if see_through_predicates {
-                    pending.push(work.at(transition.target));
+                    pending.push(transition.target);
                 } else {
-                    result.hit_predicate = true;
+                    frame.hit_predicate = true;
                 }
             }
             FinalizedTransitionKind::Epsilon | FinalizedTransitionKind::Action { .. } => {
-                pending.push(work.at(transition.target));
+                pending.push(transition.target);
             }
             FinalizedTransitionKind::Atom(label) => {
-                result.ranges.push((*label, *label));
+                frame.ranges.push((*label, *label));
             }
             FinalizedTransitionKind::Range { start, stop } => {
-                result.ranges.push((*start, *stop));
+                frame.ranges.push((*start, *stop));
             }
             FinalizedTransitionKind::Set(ranges) => {
-                result.ranges.extend(ranges.iter().copied());
+                frame.ranges.extend(ranges.iter().copied());
             }
             FinalizedTransitionKind::NotSet(ranges) => {
-                result.ranges.extend(complement_ranges(
+                frame.ranges.extend(complement_ranges(
                     ranges,
                     MIN_USER_TOKEN_TYPE,
                     self.graph.max_token_type,
                 ));
             }
             FinalizedTransitionKind::Wildcard => {
-                result
+                frame
                     .ranges
                     .push((MIN_USER_TOKEN_TYPE, self.graph.max_token_type));
             }
@@ -574,36 +635,36 @@ impl<'a> LookAnalyzer<'a> {
     }
 }
 
-#[derive(Clone)]
-struct LookWork {
-    state: usize,
-    returns: Vec<ReturnFrame>,
-    called_rules: BTreeSet<usize>,
+#[derive(Default)]
+struct LookFrame {
+    ranges: Vec<(i32, i32)>,
+    hit_predicate: bool,
+    tested: Option<BTreeSet<usize>>,
 }
 
-impl LookWork {
-    fn at(&self, state: usize) -> Self {
-        let mut next = self.clone();
-        next.state = state;
-        next
-    }
+/// The look of one called rule, from its start state to its stop state.
+///
+/// A look inside a called rule does not read the frames of its callers. The
+/// result depends only on the rule, on the predicate mode, and on the active
+/// rules that the look does not enter. `tested` holds each rule that the look
+/// tried to call, and whether that rule was active. The result is correct for
+/// each call stack that agrees on all of these rules.
+struct RuleLook {
+    see_through_predicates: bool,
+    tested: Vec<(usize, bool)>,
+    ranges: Vec<(i32, i32)>,
+    reaches_stop: bool,
+    hit_predicate: bool,
+}
 
-    fn key(&self) -> (usize, Vec<(usize, usize)>, Vec<usize>) {
-        (
-            self.state,
-            self.returns
+impl RuleLook {
+    fn matches(&self, see_through_predicates: bool, active: &[bool]) -> bool {
+        self.see_through_predicates == see_through_predicates
+            && self
+                .tested
                 .iter()
-                .map(|frame| (frame.follow, frame.rule))
-                .collect(),
-            self.called_rules.iter().copied().collect(),
-        )
+                .all(|(rule, was_active)| active[*rule] == *was_active)
     }
-}
-
-#[derive(Clone, Copy)]
-struct ReturnFrame {
-    follow: usize,
-    rule: usize,
 }
 
 #[derive(Default)]
