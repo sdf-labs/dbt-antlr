@@ -17,7 +17,9 @@ use dbt_antlr_runtime::dfa::static_parser_dfa::{
     ContinuationConfigEntry, ContinuationContextNode, ParserContinuation,
 };
 
-use super::closure::{ClosedSet, Closure, ClosureFacts, PrecedenceClass, Taint, taint_of};
+use super::closure::{
+    CallSites, ClosedSet, Closure, ClosureFacts, PrecedenceClass, Taint, taint_of,
+};
 use super::descent::{DescentAnalyzer, DescentPlan, DescentRules};
 use super::loop_block::{
     EXIT_ALT, EXIT_FOREIGN, ITERATE_ALT, ITERATE_REAL, LoopBlock, is_iterate_exit_pair,
@@ -217,16 +219,19 @@ impl AttemptPolicy {
             ..Self::hybrid()
         }
     }
+}
 
-    /// The first pass of the report: bail out of an untrusted conflict instead
-    /// of exploring the whole lookahead, so only the decisions that stay
-    /// adaptive pay for the deep pass.
-    const fn report_pass() -> Self {
-        Self {
-            abort_on_untrusted_conflict: true,
-            ..Self::unbounded()
-        }
-    }
+/// The classification of one decision or precedence class, with what a
+/// witness pass can reuse.
+#[derive(Debug, Default)]
+struct ClassRun {
+    result: DecisionResult,
+    /// The unbounded attempt stopped at an untrusted conflict.
+    unbounded_stopped: bool,
+    /// The widened attempt stopped at an untrusted conflict.
+    widened_stopped: bool,
+    /// The unbounded attempt spent its visit budget on the start state.
+    start_exhausted: bool,
 }
 
 /// The result of one build attempt.
@@ -238,6 +243,8 @@ struct Attempt {
     overflow: bool,
     /// Set when the attempt stopped at an untrusted conflict.
     stopped: bool,
+    /// Set when the closure of the start state spent the visit budget.
+    start_exhausted: bool,
     facts: ClosureFacts,
     utrust_resolutions: usize,
     exact_ambiguities: Vec<BitSet>,
@@ -482,6 +489,27 @@ pub(crate) struct DecisionClassifier {
     atn_fallback: AtnFallback,
     /// The shared-descent plans of the decisions.
     descent: DescentAnalyzer,
+    /// The rule invocations of the ATN, shared by every build attempt.
+    call_sites: CallSites,
+    /// The decision and the policy of every build attempt so far.
+    #[cfg(test)]
+    attempts: Vec<(usize, AttemptKind)>,
+}
+
+/// The policy of one build attempt, for tests that count the attempts.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum AttemptKind {
+    /// A static attempt with no depth bound. `abort` is `true` when the
+    /// attempt stops at an untrusted conflict.
+    Unbounded {
+        abort: bool,
+    },
+    /// A static attempt with full widening.
+    Widened {
+        abort: bool,
+    },
+    Hybrid,
 }
 
 impl DecisionClassifier {
@@ -495,6 +523,9 @@ impl DecisionClassifier {
             postfix_shapes: HashMap::new(),
             atn_fallback: AtnFallback::Allowed,
             descent: DescentAnalyzer::new(atn),
+            call_sites: CallSites::of(atn),
+            #[cfg(test)]
+            attempts: Vec::new(),
         }
     }
 
@@ -529,6 +560,16 @@ impl DecisionClassifier {
         self
     }
 
+    /// The build attempts of one decision so far, in order.
+    #[cfg(test)]
+    pub(super) fn attempts_of(&self, decision: usize) -> Vec<AttemptKind> {
+        self.attempts
+            .iter()
+            .filter(|(attempted, _)| *attempted == decision)
+            .map(|(_, kind)| *kind)
+            .collect()
+    }
+
     /// Enables shared-descent groups with the rule facts of the grammar.
     pub(crate) fn with_descent_rules(mut self, rules: DescentRules) -> Self {
         self.descent = self.descent.with_rules(rules);
@@ -542,33 +583,13 @@ impl DecisionClassifier {
     }
 
     /// Classifies every decision.
-    ///
-    /// The first pass keeps the work small by stopping at the first conflict it
-    /// does not trust; decisions that end up adaptive are then classified again
-    /// without that shortcut, because their report wants the real witness.
     pub(crate) fn classify_all(&mut self) -> Vec<DecisionResult> {
-        let decisions = self.atn.decision_to_state.len();
-        let mut results: Vec<DecisionResult> = (0..decisions)
-            .map(|decision| self.classify(decision, AttemptPolicy::report_pass()))
-            .collect();
-        for (decision, result) in results.iter_mut().enumerate() {
-            let adaptive_fallback = if result.category == Category::LR_PRECEDENCE {
-                result
-                    .precedence
-                    .as_ref()
-                    .is_none_or(|precedence| precedence.adaptive_classes > 0)
-            } else {
-                result.category != Category::LL1 && result.table.is_none()
-            };
-            if adaptive_fallback {
-                *result = self.classify(decision, AttemptPolicy::unbounded());
-            }
-        }
-        results
+        (0..self.atn.decision_to_state.len())
+            .map(|decision| self.classify(decision))
+            .collect()
     }
 
-    /// Classifies one decision under `base` policy.
-    fn classify(&mut self, decision: usize, base: AttemptPolicy) -> DecisionResult {
+    fn classify(&mut self, decision: usize) -> DecisionResult {
         let state = self.atn.decision_to_state[decision];
         let mut result = DecisionResult::new(decision, state);
 
@@ -577,7 +598,7 @@ impl DecisionClassifier {
             return result;
         }
         if self.is_precedence_loop_decision(state) {
-            return self.classify_precedence(result, base);
+            return self.classify_precedence(result);
         }
         if self.ll1_disjoint.get(decision).copied() == Some(true) {
             result.category = Category::LL1;
@@ -589,32 +610,112 @@ impl DecisionClassifier {
             return result;
         }
 
-        let mut outcome = self.attempt(decision, base, None);
-        if outcome.overflow {
-            // The retry keeps the abort policy: it belongs to the pass, not to
-            // one depth bound, so the cheap first pass stays cheap.
-            let mut widened = AttemptPolicy::widened();
-            widened.abort_on_untrusted_conflict = base.abort_on_untrusted_conflict;
-            outcome = self.attempt(decision, widened, None);
+        let run = self.first_pass(decision, None);
+        self.witness_pass(decision, None, run)
+    }
+
+    /// Classifies one decision, or one precedence class of it, and stops the
+    /// static constructions at the first conflict they do not trust.
+    ///
+    /// This shortcut keeps the static constructions small when the decision
+    /// gets a hybrid table. When a static attempt stopped and the pass found
+    /// no table, [`Self::witness_pass`] classifies again to get the real
+    /// conflict witness for the report.
+    fn first_pass(&mut self, decision: usize, class: Option<PrecedenceClass>) -> ClassRun {
+        let mut run = self.static_chain(decision, class, true, false);
+        let eligible = run.result.table.is_none()
+            && (class.is_some()
+                || !run.result.predicated_start
+                    && matches!(
+                        run.result.category,
+                        Category::OVERFLOW | Category::CONTEXT_SENSITIVE | Category::PREDICATED
+                    ));
+        if !eligible {
+            return run;
         }
-        let mut result = self.finalize(outcome);
-        if result.table.is_none()
-            && !result.predicated_start
-            && matches!(
-                result.category,
-                Category::OVERFLOW | Category::CONTEXT_SENSITIVE | Category::PREDICATED
-            )
-        {
-            for &policy in self.hybrid_policies() {
-                let hybrid_attempt = self.attempt(decision, policy, None);
-                let hybrid = self.finalize(hybrid_attempt);
-                if hybrid.table.is_some() {
-                    result = hybrid;
-                    break;
-                }
+        for &policy in self.hybrid_policies() {
+            // The start closure does not depend on the hybrid bounds. A start
+            // state that spent the visit budget once spends it again.
+            if run.start_exhausted && policy.depth_bound == i32::MAX {
+                continue;
+            }
+            let mut policy = policy;
+            policy.trust_exact_ambiguity = class.is_none();
+            let attempt = self.attempt(decision, policy, class);
+            let candidate = self.finalize(attempt);
+            if candidate.table.is_some() {
+                run.result = candidate;
+                break;
             }
         }
-        result
+        run
+    }
+
+    /// Classifies again without the shortcut of [`Self::first_pass`], when
+    /// the first pass stopped and found no table.
+    ///
+    /// When the first pass found no table, the result is the same as that of
+    /// a pass without the shortcut. An attempt that did not stop saw the same
+    /// states as an attempt without the shortcut, so it does not run again. A
+    /// stopped attempt gives an overflow, so the first pass already tried the
+    /// hybrid constructions, and they do not use the shortcut.
+    fn witness_pass(
+        &mut self,
+        decision: usize,
+        class: Option<PrecedenceClass>,
+        run: ClassRun,
+    ) -> DecisionResult {
+        if run.result.table.is_some() || !(run.unbounded_stopped || run.widened_stopped) {
+            return run.result;
+        }
+        self.static_chain(decision, class, false, !run.unbounded_stopped)
+            .result
+    }
+
+    /// The static constructions of one decision or precedence class: the
+    /// unbounded attempt, then the widened attempt when the unbounded one
+    /// overflows. An attempt that stopped at an untrusted conflict does not
+    /// count as an overflow here.
+    ///
+    /// When `skip_unbounded` is set, an earlier unbounded attempt of the same
+    /// class overflowed without a stop. The abort policy does not change that
+    /// attempt, so it does not run again.
+    fn static_chain(
+        &mut self,
+        decision: usize,
+        class: Option<PrecedenceClass>,
+        abort_on_untrusted_conflict: bool,
+        skip_unbounded: bool,
+    ) -> ClassRun {
+        let mut policy = AttemptPolicy::unbounded();
+        policy.abort_on_untrusted_conflict = abort_on_untrusted_conflict;
+        policy.trust_exact_ambiguity = class.is_none();
+        let mut run = ClassRun::default();
+        let mut retry = true;
+        if !skip_unbounded {
+            let attempt = self.attempt(decision, policy, class);
+            run.unbounded_stopped = attempt.stopped;
+            run.start_exhausted = attempt.start_exhausted;
+            let overflow = attempt.overflow;
+            run.result = self.finalize(attempt);
+            // Full widening is the fallback for a spent budget. An attempt
+            // that stopped at an untrusted conflict did not spend a budget.
+            retry = !run.unbounded_stopped
+                && match class {
+                    Some(_) => run.result.category == Category::OVERFLOW,
+                    None => overflow,
+                };
+        }
+        if retry {
+            let widened = AttemptPolicy {
+                depth_bound: AttemptPolicy::widened().depth_bound,
+                ..policy
+            };
+            let attempt = self.attempt(decision, widened, class);
+            run.widened_stopped = attempt.stopped;
+            run.result = self.finalize(attempt);
+        }
+        run
     }
 
     /// Turns what one attempt observed into a decision result: the category,
@@ -756,11 +857,7 @@ impl DecisionClassifier {
                 })
     }
 
-    fn classify_precedence(
-        &mut self,
-        mut result: DecisionResult,
-        base: AttemptPolicy,
-    ) -> DecisionResult {
+    fn classify_precedence(&mut self, mut result: DecisionResult) -> DecisionResult {
         result.category = Category::LR_PRECEDENCE;
         let state = self.atn.decision_to_state[result.decision];
         let target_rule = state.get_rule_index();
@@ -800,30 +897,8 @@ impl DecisionClassifier {
                 lo: representatives[class_index],
                 hi: cutoffs.get(class_index).copied().unwrap_or(i32::MAX),
             };
-            let mut policy = AttemptPolicy::unbounded();
-            policy.trust_exact_ambiguity = false;
-            policy.abort_on_untrusted_conflict = base.abort_on_untrusted_conflict;
-            let attempt = self.attempt(result.decision, policy, Some(class));
-            let mut outcome = self.finalize(attempt);
-            if outcome.category == Category::OVERFLOW {
-                let mut widened = AttemptPolicy::widened();
-                widened.trust_exact_ambiguity = false;
-                widened.abort_on_untrusted_conflict = base.abort_on_untrusted_conflict;
-                let attempt = self.attempt(result.decision, widened, Some(class));
-                outcome = self.finalize(attempt);
-            }
-            if outcome.table.is_none() {
-                for &policy in self.hybrid_policies() {
-                    let mut hybrid = policy;
-                    hybrid.trust_exact_ambiguity = false;
-                    let attempt = self.attempt(result.decision, hybrid, Some(class));
-                    let candidate = self.finalize(attempt);
-                    if candidate.table.is_some() {
-                        outcome = candidate;
-                        break;
-                    }
-                }
-            }
+            let run = self.first_pass(result.decision, Some(class));
+            let outcome = self.witness_pass(result.decision, Some(class), run);
 
             result.used_widening |= outcome.used_widening;
             result.saw_predicate |= outcome.saw_predicate;
@@ -874,17 +949,31 @@ impl DecisionClassifier {
 
     /// One build attempt: fresh simulator, fresh arena, fresh scratch arena.
     ///
-    /// A fresh manager per attempt is deliberate. The manager owns the vector
-    /// of DFAs, and a DFA keeps the states interned so far; the next attempt
-    /// (a different widening bound, or a hybrid bound) must start with an
-    /// empty state set, or it would reuse verdicts computed under the previous
-    /// policy.
+    /// A fresh manager per attempt is deliberate: each attempt needs an empty
+    /// DFA. The build reads its states back by their numbers, which a DFA
+    /// gives out densely in creation order. It also reads back every edge in
+    /// the DFA. The states and edges of an earlier attempt break both. A
+    /// shared manager also gives all precedence classes of a decision the same
+    /// DFA, but one config set can have other successors in another class.
     fn attempt(
         &mut self,
         decision: usize,
         policy: AttemptPolicy,
         precedence: Option<PrecedenceClass>,
     ) -> Attempt {
+        #[cfg(test)]
+        self.attempts.push((
+            decision,
+            match policy {
+                AttemptPolicy { hybrid: true, .. } => AttemptKind::Hybrid,
+                AttemptPolicy { depth_bound: 0, .. } => AttemptKind::Widened {
+                    abort: policy.abort_on_untrusted_conflict,
+                },
+                AttemptPolicy { .. } => AttemptKind::Unbounded {
+                    abort: policy.abort_on_untrusted_conflict,
+                },
+            },
+        ));
         let atn = self.atn;
         let decision_state = atn.decision_to_state[decision];
         let loop_block = precedence.map(|_| self.loop_block(decision_state));
@@ -912,6 +1001,7 @@ impl DecisionClassifier {
                 scratch: &scratch,
                 closure: Closure::new(
                     atn,
+                    &self.call_sites,
                     &scratch,
                     policy.depth_bound,
                     precedence,
@@ -1043,6 +1133,7 @@ where
         let start = self.closure.start(self.decision_state);
         if self.closure.exhausted {
             self.attempt.overflow = true;
+            self.attempt.start_exhausted = true;
             return self.take_attempt();
         }
         let Some(start_state) = self.intern(start, 0) else {
