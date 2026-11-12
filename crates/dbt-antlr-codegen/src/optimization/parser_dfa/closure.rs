@@ -212,6 +212,19 @@ impl CallSites {
     }
 }
 
+/// One config that a successor set starts from: a rule-stop config that
+/// reads EOF, or the config after a token transition.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct Step<'a> {
+    stop: bool,
+    config: ATNConfig<'a>,
+    /// A copy of `config.reaches_into_outer_context`. The equality of
+    /// `ATNConfig` ignores most bits of that field.
+    outer: i32,
+    taint: i32,
+    roots: BTreeSet<i32>,
+}
+
 /// The configs produced by one closure root, in insertion order.
 struct SetBuilder<'a> {
     configs: Vec<ATNConfig<'a>>,
@@ -377,17 +390,30 @@ impl<'atn, 'a> Closure<'atn, 'a> {
     ///
     /// The alphabet is partitioned into equivalence classes: every interval in
     /// one class enables the same set of configs, so one successor set serves
-    /// the whole class.
+    /// the whole class. Classes that start from the same steps share one
+    /// closure and one successor.
     pub(super) fn successors(
         &mut self,
         closed: &ClosedSet<'a>,
     ) -> Vec<(IntervalSetBuf, ClosedSet<'a>, BTreeSet<i32>)> {
         let all_tokens = self.all_tokens();
         let mut labels: Vec<IntervalSetBuf> = Vec::new();
-        let mut sources: Vec<ATNConfig<'a>> = Vec::new();
-        let mut targets: Vec<ATNStateRef> = Vec::new();
-        let mut is_stop: Vec<bool> = Vec::new();
-        let mut taints: Vec<i32> = Vec::new();
+        let mut step_of: Vec<usize> = Vec::new();
+        let mut steps: Vec<Step<'a>> = Vec::new();
+        let mut step_numbers: HashMap<Step<'a>, usize> = HashMap::new();
+        let mut add_step = |label: IntervalSetBuf, step: Step<'a>| {
+            let number = match step_numbers.get(&step) {
+                Some(&number) => number,
+                None => {
+                    let number = steps.len();
+                    steps.push(step.clone());
+                    step_numbers.insert(step, number);
+                    number
+                }
+            };
+            labels.push(label);
+            step_of.push(number);
+        };
 
         for config in &closed.configs {
             let mut taint = closed.taint_of(config);
@@ -400,11 +426,16 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             if state.state_type() == ATNStateType::RuleStop {
                 let mut eof = IntervalSetBuf::new();
                 eof.add_one(EOF);
-                labels.push(eof);
-                sources.push(config.clone());
-                targets.push(state);
-                is_stop.push(true);
-                taints.push(taint);
+                add_step(
+                    eof,
+                    Step {
+                        stop: true,
+                        config: config.clone(),
+                        outer: config.reaches_into_outer_context,
+                        taint,
+                        roots: BTreeSet::new(),
+                    },
+                );
                 continue;
             }
             for transition in state.get_transitions() {
@@ -428,11 +459,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                 if label.as_interval_set().as_slice().is_empty() {
                     continue;
                 }
-                labels.push(label);
-                sources.push(config.clone());
-                targets.push(transition.get_target());
-                is_stop.push(false);
-                taints.push(taint);
+                add_step(label, self.consume(config, transition.get_target(), taint));
             }
         }
 
@@ -468,75 +495,89 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             }
         }
 
-        let call_sites = self.call_sites;
-        let sites = (self.postfix.is_some() || self.loop_block.is_some())
-            .then_some(&call_sites.site_by_follow_state);
-        let mut successors = Vec::with_capacity(classes.len());
+        let mut successors: Vec<(IntervalSetBuf, ClosedSet<'a>, BTreeSet<i32>)> =
+            Vec::with_capacity(classes.len());
+        let mut successor_of: HashMap<Vec<usize>, usize> = HashMap::new();
+        let mut seen = BitSet::with_capacity(steps.len());
         for (class, label) in classes {
             if self.exhausted {
                 break;
             }
+            seen.clear();
+            let sequence: Vec<usize> = class
+                .iter()
+                .map(|index| step_of[index])
+                .filter(|&number| seen.insert(number))
+                .collect();
+            if let Some(&known) = successor_of.get(&sequence) {
+                successors[known].0.add_set(&label);
+                continue;
+            }
             let mut out = SetBuilder::new();
             let mut roots: BTreeSet<i32> = BTreeSet::new();
-            for index in class.iter() {
-                let source = &sources[index];
-                if is_stop[index] {
-                    out.insert(source.clone(), taints[index]);
+            for &number in &sequence {
+                let step = &steps[number];
+                roots.extend(step.roots.iter().copied());
+                if step.stop {
+                    out.insert(step.config.clone(), step.taint);
                 } else {
-                    // A boundary-popped configuration consumes on behalf of
-                    // "some caller". When that caller is an enclosing
-                    // invocation of this loop, the consumption is the loop's
-                    // own and the enter/exit substitution still applies.
-                    // Otherwise the consumer is foreign, and the substitution
-                    // must not fire.
-                    let mut taint = taints[index];
-                    if taint & BOUNDARY_TAINT != 0
-                        && self.loop_block.as_ref().is_some_and(|block| {
-                            !block.is_loop_consumption(
-                                source.get_state(),
-                                source.get_context(),
-                                taint,
-                            )
-                        })
-                    {
-                        let in_loop = taint & (FOREIGN_LINEAGE_TAINT | MIDWAY_TAINT) == 0;
-                        taint |= FOREIGN_CONSUME_TAINT;
-                        if let (Some(block), Some(sites)) = (self.loop_block.as_ref(), sites)
-                            && source.get_alt() == ITERATE_EXIT_ALT
-                            && taint & ROOTED_TAINT == 0
-                        {
-                            taint |= ROOTED_TAINT;
-                            collect_guard_roots(
-                                source.get_state(),
-                                source.get_context(),
-                                &|state| in_loop && block.is_loop_state(state),
-                                sites,
-                                &mut roots,
-                            );
-                        }
-                    }
-                    if let (Some(postfix), Some(sites)) = (self.postfix.as_ref(), sites)
-                        && source.get_alt() == POSTFIX_SKIP_ALT
-                        && taint & ROOTED_TAINT == 0
-                        && !postfix.skip_mirrors(source.get_state(), source.get_context(), taint)
-                    {
-                        let in_take = taint & (FOREIGN_LINEAGE_TAINT | MIDWAY_TAINT) == 0;
-                        taint |= ROOTED_TAINT;
-                        collect_guard_roots(
-                            source.get_state(),
-                            source.get_context(),
-                            &|state| in_take && state == postfix.block_end_state,
-                            sites,
-                            &mut roots,
-                        );
-                    }
-                    let advanced = source.clone().with_state(targets[index]);
-                    self.closure(advanced, taint, 0, &mut out);
+                    self.closure(step.config.clone(), step.taint, 0, &mut out);
                 }
             }
+            successor_of.insert(sequence, successors.len());
             successors.push((label, out.into_closed_set(), roots));
         }
         successors
+    }
+
+    /// Builds the step after `source` reads a token into `target`.
+    fn consume(&self, source: &ATNConfig<'a>, target: ATNStateRef, mut taint: i32) -> Step<'a> {
+        let sites = &self.call_sites.site_by_follow_state;
+        let mut roots: BTreeSet<i32> = BTreeSet::new();
+        // A boundary-popped configuration consumes on behalf of "some caller".
+        // When that caller is an enclosing invocation of this loop, the
+        // consumption is the loop's own and the enter/exit substitution still
+        // applies. Otherwise the consumer is foreign, and the substitution must
+        // not fire.
+        if let Some(block) = self.loop_block.as_ref()
+            && taint & BOUNDARY_TAINT != 0
+            && !block.is_loop_consumption(source.get_state(), source.get_context(), taint)
+        {
+            let in_loop = taint & (FOREIGN_LINEAGE_TAINT | MIDWAY_TAINT) == 0;
+            taint |= FOREIGN_CONSUME_TAINT;
+            if source.get_alt() == ITERATE_EXIT_ALT && taint & ROOTED_TAINT == 0 {
+                taint |= ROOTED_TAINT;
+                collect_guard_roots(
+                    source.get_state(),
+                    source.get_context(),
+                    &|state| in_loop && block.is_loop_state(state),
+                    sites,
+                    &mut roots,
+                );
+            }
+        }
+        if let Some(postfix) = self.postfix.as_ref()
+            && source.get_alt() == POSTFIX_SKIP_ALT
+            && taint & ROOTED_TAINT == 0
+            && !postfix.skip_mirrors(source.get_state(), source.get_context(), taint)
+        {
+            let in_take = taint & (FOREIGN_LINEAGE_TAINT | MIDWAY_TAINT) == 0;
+            taint |= ROOTED_TAINT;
+            collect_guard_roots(
+                source.get_state(),
+                source.get_context(),
+                &|state| in_take && state == postfix.block_end_state,
+                sites,
+                &mut roots,
+            );
+        }
+        Step {
+            stop: false,
+            config: source.clone().with_state(target),
+            outer: source.reaches_into_outer_context,
+            taint,
+            roots,
+        }
     }
 
     /// Rebuilds a closed set in canonical order (state number, then

@@ -1932,3 +1932,36 @@ fn profiled_builds_time_every_decision_and_list_the_slowest() {
         .count();
     assert_eq!(rows, 20, "{profile}");
 }
+
+/// Labeled single-token alternatives keep one branch per token, and all
+/// branches end at the block end. Their token classes share one closure, so
+/// each extra token adds only a few visits.
+#[test]
+fn single_token_alternatives_share_one_successor() {
+    fn keywords(count: usize) -> DecisionResult {
+        let mut source = format!("grammar Keywords{count};\ns : word X | word Y ;\nword :");
+        for keyword in 0..count {
+            source.push_str(&format!(" K{keyword} #k{keyword} |"));
+        }
+        source.push_str(" L K0 R #nested ;\nX : 'x' ; Y : 'y' ; L : '(' ; R : ')' ;\n");
+        for keyword in 0..count {
+            source.push_str(&format!("K{keyword} : 'k{keyword}' ;\n"));
+        }
+        classify_source(&format!("Keywords{count}"), &source).remove(0)
+    }
+
+    let few = keywords(2);
+    let many = keywords(200);
+    assert_eq!(few.category, Category::LLK);
+    assert_eq!(many.category, few.category);
+    assert_eq!(many.k, few.k);
+    assert_eq!(many.num_dfa_states, few.num_dfa_states);
+    let start = &many.table.as_ref().expect("LL(k) table").states[0];
+    let covered: i32 = start.edges.iter().map(|edge| edge.hi - edge.lo + 1).sum();
+    assert_eq!(
+        covered, 201,
+        "each keyword and L lead out of the start state"
+    );
+    let extra = many.cost.visits() - few.cost.visits();
+    assert!(extra <= 3 * 198, "{extra} extra visits");
+}
