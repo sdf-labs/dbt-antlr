@@ -114,6 +114,7 @@ fn help_text_lists_the_static_lexer_dfa_flag() {
         "--static-dfa-only",
         "--report-decisions",
         "--dump-dfas",
+        "--profile-decisions",
     ] {
         assert!(
             error.to_string().contains(flag),
@@ -554,6 +555,10 @@ fn cli_report_modes_print_reports_and_write_no_files() {
             vec!["--dump-dfas".to_owned(), "row".to_owned()],
             "=== static DFA dump: grammar CSVParser ===",
         ),
+        (
+            vec!["--profile-decisions".to_owned()],
+            "=== parser decision profile: CSVParser (4 decisions) ===",
+        ),
     ] {
         let mut args = vec![
             "-o".to_owned(),
@@ -637,6 +642,56 @@ fn emit_grammar(
         &optimization,
     )
     .expect("emission succeeds")
+}
+
+#[test]
+fn profile_decisions_prints_the_cost_of_each_decision() {
+    let output = emit_grammar("ReferenceToATN.g4", |options| {
+        options.profile_decisions(true);
+    });
+    assert!(output.files.is_empty(), "report mode emits no files");
+    let [profile] = output.reports.as_slice() else {
+        panic!("one profile per parser unit: {:?}", output.reports);
+    };
+    let lines: Vec<&str> = profile.lines().collect();
+    assert_eq!(
+        lines[0],
+        "=== parser decision profile: ReferenceToATNParser (2 decisions) ==="
+    );
+    assert!(lines[1].starts_with("classification: "), "{profile}");
+    assert!(lines[1].contains(" summed over the decisions"), "{profile}");
+    assert_eq!(
+        &lines[2..4],
+        [
+            "work: 2 build attempts; 124 configs visited; 10 DFA states built",
+            "budgets: 0 decisions spent the visit budget (2000000 configs); 0 decisions spent \
+             the state budget (1000 states)",
+        ]
+    );
+    assert!(lines[4].starts_with("slow: "), "{profile}");
+    assert!(
+        lines[4].ends_with(" decisions took 500 ms or more"),
+        "{profile}"
+    );
+    assert!(profile.contains("\nslowest 2 decisions:\n"), "{profile}");
+    let row = |decision: &str| {
+        lines
+            .iter()
+            .map(|line| line.split_whitespace().collect::<Vec<_>>())
+            .find(|cells| cells.first() == Some(&decision))
+            .unwrap_or_else(|| panic!("no row for decision {decision}:\n{profile}"))
+    };
+    let hybrid = row("0");
+    assert_eq!(hybrid[..4], ["0", "a", "5", "HYBRID"], "{profile}");
+    // The attempt codes end with their milliseconds, which vary.
+    let untimed: Vec<&str> = hybrid[5..]
+        .iter()
+        .map(|cell| cell.split('(').next().unwrap_or(cell))
+        .collect();
+    assert_eq!(untimed, ["124", "10", "U!", "H", "a", "100%"], "{profile}");
+    let ll1 = row("1");
+    assert_eq!(ll1[..4], ["1", "a", "9", "LL1"], "{profile}");
+    assert_eq!(ll1[5..], ["0", "0"], "{profile}");
 }
 
 #[test]

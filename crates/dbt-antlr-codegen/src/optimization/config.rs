@@ -21,13 +21,11 @@ use super::static_parser_dfa::{StaticParserDfa, StaticParserDfaSelection};
 
 type MessageRenderer = fn(&OptimizationReport, &SourceSet, &PassDescriptor) -> Vec<String>;
 
-/// One configured pass body, before the plan fixes the pass order.
 enum ConfiguredPassStage {
     GrammarTransforms(Box<dyn GrammarTransform>),
     StaticDfaBuilds(StaticDfaPass),
 }
 
-/// Whether a static DFA pass can leave input to the adaptive ATN simulation.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum AtnFallback {
     /// The generated recognizer keeps the ATN simulation for the input that
@@ -38,7 +36,7 @@ pub(crate) enum AtnFallback {
     /// A pass resolves what it can statically and reports the rest as errors.
     Forbidden,
 }
-/// One static DFA build selected by the plan.
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StaticDfaPass {
     StaticLexerDfa,
@@ -61,7 +59,6 @@ impl StaticDfaPass {
     }
 }
 
-/// The pipeline stage a selected pass runs in.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum SelectedPassStage {
     GrammarTransforms,
@@ -99,6 +96,7 @@ struct SelectionSettings {
     static_dfa_only: bool,
     report_decisions: bool,
     dump_dfas: Option<String>,
+    profile_decisions: bool,
     report_only: bool,
 }
 
@@ -114,6 +112,7 @@ impl SelectionSettings {
             static_dfa_only: options.static_dfa_only,
             report_decisions: options.report_decisions,
             dump_dfas: options.dump_dfas.clone(),
+            profile_decisions: options.profile_decisions,
             report_only: options.is_report_only(),
         }
     }
@@ -191,6 +190,7 @@ impl OptimizationPlan {
         let static_parser_reports = StaticParserDfaSelection {
             report_decisions: settings.report_decisions,
             dump_dfas: settings.dump_dfas,
+            profile_decisions: settings.profile_decisions,
         };
         let report_only = settings.report_only;
         let static_dfa_only = settings.static_dfa_only;
@@ -224,8 +224,10 @@ impl OptimizationPlan {
         self.report_only
     }
 
-    /// Whether the static DFA passes can leave input to the adaptive ATN
-    /// simulation (`--static-dfa-only` forbids it).
+    pub(crate) const fn profile_decisions(&self) -> bool {
+        self.static_parser_reports.profile_decisions
+    }
+
     pub(crate) const fn atn_fallback(&self) -> AtnFallback {
         if self.static_dfa_only {
             AtnFallback::Forbidden
@@ -276,7 +278,8 @@ fn configure_static_parser_dfa(settings: &SelectionSettings) -> Option<Configure
     let enabled = settings.static_parser_dfa
         || settings.static_dfa_only
         || settings.report_decisions
-        || settings.dump_dfas.is_some();
+        || settings.dump_dfas.is_some()
+        || settings.profile_decisions;
     enabled.then_some(ConfiguredPass {
         stage: ConfiguredPassStage::StaticDfaBuilds(StaticDfaPass::StaticParserDfa),
         emit_manifest: true,
@@ -412,6 +415,7 @@ mod tests {
             static_dfa_only: false,
             report_decisions: false,
             dump_dfas: None,
+            profile_decisions: false,
             report_only: false,
         }
     }
@@ -475,15 +479,20 @@ mod tests {
         for selection in [
             StaticParserDfaSelection {
                 report_decisions: true,
-                dump_dfas: None,
+                ..StaticParserDfaSelection::default()
             },
             StaticParserDfaSelection {
-                report_decisions: false,
                 dump_dfas: Some("all".to_owned()),
+                ..StaticParserDfaSelection::default()
+            },
+            StaticParserDfaSelection {
+                profile_decisions: true,
+                ..StaticParserDfaSelection::default()
             },
         ] {
             let mut options = OptimizationOptions::new();
             options.report_decisions(selection.report_decisions);
+            options.profile_decisions(selection.profile_decisions);
             if let Some(spec) = &selection.dump_dfas {
                 options.dump_dfas(spec);
             }

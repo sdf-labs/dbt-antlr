@@ -4,10 +4,9 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::num::NonZeroUsize;
-#[cfg(test)]
-use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
 
 use dbt_antlr_runtime::analysis::DFA;
 use dbt_antlr_runtime::analysis::{
@@ -25,6 +24,7 @@ use dbt_antlr_runtime::dfa::static_parser_dfa::{
 use super::closure::{
     CallSites, ClosedSet, Closure, ClosureFacts, PrecedenceClass, Taint, taint_of,
 };
+use super::cost::{AttemptCost, AttemptKind, AttemptOutcome, CostLog, DecisionCost};
 use super::descent::{DescentAnalyzer, DescentPlan, DescentRules};
 use super::loop_block::{
     EXIT_ALT, EXIT_FOREIGN, ITERATE_ALT, ITERATE_REAL, LoopBlock, is_iterate_exit_pair,
@@ -232,6 +232,23 @@ impl AttemptPolicy {
             ..Self::hybrid()
         }
     }
+
+    const fn kind(&self) -> AttemptKind {
+        match self {
+            Self {
+                hybrid: true,
+                hybrid_depth_cap: STATIC_ONLY_HYBRID_DEPTH_CAP,
+                ..
+            } => AttemptKind::StaticOnlyHybrid,
+            Self { hybrid: true, .. } => AttemptKind::Hybrid,
+            Self { depth_bound: 0, .. } => AttemptKind::Widened {
+                abort: self.abort_on_untrusted_conflict,
+            },
+            Self { .. } => AttemptKind::Unbounded {
+                abort: self.abort_on_untrusted_conflict,
+            },
+        }
+    }
 }
 
 /// The classification of one decision or precedence class, with what a
@@ -258,6 +275,12 @@ struct Attempt {
     stopped: bool,
     /// Set when the closure of the start state spent the visit budget.
     start_exhausted: bool,
+    /// Set when the closures of the attempt spent the visit budget.
+    exhausted: bool,
+    /// Configs the closures of the attempt visited.
+    visits: u64,
+    /// The visited configs by rule index.
+    rule_visits: Vec<u64>,
     facts: ClosureFacts,
     utrust_resolutions: usize,
     exact_ambiguities: Vec<BitSet>,
@@ -350,6 +373,8 @@ pub(crate) struct DecisionResult {
     /// The escape states that `--static-dfa-only` resolved, set once every
     /// table of the decision predicts without `adaptivePredict`.
     pub(crate) static_only: Option<EscapeResolutions>,
+    /// What the classification of the decision cost.
+    pub(crate) cost: DecisionCost,
 }
 
 impl DecisionResult {
@@ -384,6 +409,7 @@ impl DecisionResult {
             table: None,
             precedence: None,
             static_only: None,
+            cost: DecisionCost::default(),
         }
     }
 
@@ -450,12 +476,6 @@ impl DecisionResult {
 
     /// `true` when the table of the decision never escapes to the adaptive
     /// simulation.
-    ///
-    /// `LL(1)` and non-greedy decisions need no table at all, and a table
-    /// without escapes decides on its own; everything else keeps at least one
-    /// adaptive path. A decision that `--static-dfa-only` resolved never falls
-    /// back. The arm of a shared-descent group still calls `adaptivePredict`
-    /// when the group cannot start (for example in the SLL prediction mode).
     pub(crate) fn is_fully_static(&self) -> bool {
         if self.static_only.is_some() {
             return true;
@@ -506,25 +526,8 @@ pub(crate) struct DecisionClassifier {
     descent: DescentAnalyzer,
     /// The rule invocations of the ATN, shared by every build attempt.
     call_sites: CallSites,
-    /// The decision and the policy of every build attempt so far.
-    #[cfg(test)]
-    attempts: Mutex<Vec<(usize, AttemptKind)>>,
-}
-
-/// The policy of one build attempt, for tests that count the attempts.
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum AttemptKind {
-    /// A static attempt with no depth bound. `abort` is `true` when the
-    /// attempt stops at an untrusted conflict.
-    Unbounded {
-        abort: bool,
-    },
-    /// A static attempt with full widening.
-    Widened {
-        abort: bool,
-    },
-    Hybrid,
+    /// Measure the wall-clock time of each decision and attempt.
+    profile: bool,
 }
 
 impl DecisionClassifier {
@@ -539,8 +542,7 @@ impl DecisionClassifier {
             atn_fallback: AtnFallback::Allowed,
             descent: DescentAnalyzer::new(atn),
             call_sites: CallSites::of(atn),
-            #[cfg(test)]
-            attempts: Mutex::new(Vec::new()),
+            profile: false,
         }
     }
 
@@ -559,24 +561,16 @@ impl DecisionClassifier {
             .clone()
     }
 
-    /// Sets the per-attempt visit budget, for tests that classify a whole
-    /// corpus and only care that no attempt runs away.
-    #[cfg(test)]
-    pub(crate) fn with_visit_budget(mut self, budget: u64) -> Self {
+    /// Sets the per-attempt visit budget. The default is
+    /// [`DEFAULT_VISIT_BUDGET`](super::DEFAULT_VISIT_BUDGET).
+    pub(crate) const fn with_visit_budget(mut self, budget: u64) -> Self {
         self.visit_budget = budget;
         self
     }
 
-    /// The build attempts of one decision so far, in order.
-    #[cfg(test)]
-    pub(super) fn attempts_of(&self, decision: usize) -> Vec<AttemptKind> {
-        self.attempts
-            .lock()
-            .expect("no attempt panicked")
-            .iter()
-            .filter(|(attempted, _)| *attempted == decision)
-            .map(|(_, kind)| *kind)
-            .collect()
+    /// The per-attempt visit budget.
+    pub(crate) const fn visit_budget(&self) -> u64 {
+        self.visit_budget
     }
 
     /// Enables shared-descent groups with the rule facts of the grammar.
@@ -591,10 +585,29 @@ impl DecisionClassifier {
         self
     }
 
-    /// Classifies every decision, in parallel
+    /// Measures the wall-clock time of each decision and each build attempt
+    /// (`--profile-decisions`). The times differ from run to run, so the
+    /// results are no longer reproducible.
+    pub(crate) const fn with_profiling(mut self, profile: bool) -> Self {
+        self.profile = profile;
+        self
+    }
+
+    /// The number of threads that [`Self::classify_all`] runs.
+    pub(crate) fn threads(&self) -> usize {
+        let available = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+        self.workers(available.min(MAX_CLASSIFY_THREADS))
+    }
+
+    /// The number of threads that [`Self::classify_on`] runs when it can run
+    /// `threads` threads: never more than there are decisions.
+    fn workers(&self, threads: usize) -> usize {
+        threads.clamp(1, self.atn.decision_to_state.len().max(1))
+    }
+
+    /// Classifies every decision, in parallel.
     pub(crate) fn classify_all(&self) -> Vec<DecisionResult> {
-        let threads = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
-        self.classify_on(threads.min(MAX_CLASSIFY_THREADS))
+        self.classify_on(self.threads())
     }
 
     /// Classifies every decision on at most `threads` threads.
@@ -605,7 +618,8 @@ impl DecisionClassifier {
     /// computation. Thus the results do not depend on the thread count.
     pub(super) fn classify_on(&self, threads: usize) -> Vec<DecisionResult> {
         let decisions = self.atn.decision_to_state.len();
-        if threads <= 1 || decisions <= 1 {
+        let threads = self.workers(threads);
+        if threads == 1 {
             return (0..decisions)
                 .map(|decision| self.classify(decision))
                 .collect();
@@ -613,7 +627,7 @@ impl DecisionClassifier {
         let next = AtomicUsize::new(0);
         let mut results: Vec<Option<DecisionResult>> = vec![None; decisions];
         std::thread::scope(|scope| {
-            let workers: Vec<_> = (0..threads.min(decisions))
+            let workers: Vec<_> = (0..threads)
                 .map(|_| {
                     scope.spawn(|| {
                         let mut classified = Vec::new();
@@ -642,7 +656,16 @@ impl DecisionClassifier {
             .collect()
     }
 
+    /// Classifies one decision and records what the classification cost.
     fn classify(&self, decision: usize) -> DecisionResult {
+        let started = self.profile.then(Instant::now);
+        let mut log = CostLog::default();
+        let mut result = self.classify_decision(decision, &mut log);
+        result.cost = log.finish(started.map(|started| started.elapsed()));
+        result
+    }
+
+    fn classify_decision(&self, decision: usize, log: &mut CostLog) -> DecisionResult {
         let state = self.atn.decision_to_state[decision];
         let mut result = DecisionResult::new(decision, state);
 
@@ -651,7 +674,7 @@ impl DecisionClassifier {
             return result;
         }
         if self.is_precedence_loop_decision(state) {
-            return self.classify_precedence(result);
+            return self.classify_precedence(result, log);
         }
         if self.ll1_disjoint.get(decision).copied() == Some(true) {
             result.category = Category::LL1;
@@ -663,8 +686,8 @@ impl DecisionClassifier {
             return result;
         }
 
-        let run = self.first_pass(decision, None);
-        self.witness_pass(decision, None, run)
+        let run = self.first_pass(decision, None, log);
+        self.witness_pass(decision, None, run, log)
     }
 
     /// Classifies one decision, or one precedence class of it, and stops the
@@ -674,8 +697,13 @@ impl DecisionClassifier {
     /// gets a hybrid table. When a static attempt stopped and the pass found
     /// no table, [`Self::witness_pass`] classifies again to get the real
     /// conflict witness for the report.
-    fn first_pass(&self, decision: usize, class: Option<PrecedenceClass>) -> ClassRun {
-        let mut run = self.static_chain(decision, class, true, false);
+    fn first_pass(
+        &self,
+        decision: usize,
+        class: Option<PrecedenceClass>,
+        log: &mut CostLog,
+    ) -> ClassRun {
+        let mut run = self.static_chain(decision, class, true, false, log);
         let eligible = run.result.table.is_none()
             && (class.is_some()
                 || !run.result.predicated_start
@@ -694,7 +722,7 @@ impl DecisionClassifier {
             }
             let mut policy = policy;
             policy.trust_exact_ambiguity = class.is_none();
-            let attempt = self.attempt(decision, policy, class);
+            let attempt = self.attempt(decision, policy, class, log);
             let candidate = self.finalize(attempt);
             if candidate.table.is_some() {
                 run.result = candidate;
@@ -717,11 +745,12 @@ impl DecisionClassifier {
         decision: usize,
         class: Option<PrecedenceClass>,
         run: ClassRun,
+        log: &mut CostLog,
     ) -> DecisionResult {
         if run.result.table.is_some() || !(run.unbounded_stopped || run.widened_stopped) {
             return run.result;
         }
-        self.static_chain(decision, class, false, !run.unbounded_stopped)
+        self.static_chain(decision, class, false, !run.unbounded_stopped, log)
             .result
     }
 
@@ -739,6 +768,7 @@ impl DecisionClassifier {
         class: Option<PrecedenceClass>,
         abort_on_untrusted_conflict: bool,
         skip_unbounded: bool,
+        log: &mut CostLog,
     ) -> ClassRun {
         let mut policy = AttemptPolicy::unbounded();
         policy.abort_on_untrusted_conflict = abort_on_untrusted_conflict;
@@ -746,7 +776,7 @@ impl DecisionClassifier {
         let mut run = ClassRun::default();
         let mut retry = true;
         if !skip_unbounded {
-            let attempt = self.attempt(decision, policy, class);
+            let attempt = self.attempt(decision, policy, class, log);
             run.unbounded_stopped = attempt.stopped;
             run.start_exhausted = attempt.start_exhausted;
             let overflow = attempt.overflow;
@@ -764,7 +794,7 @@ impl DecisionClassifier {
                 depth_bound: AttemptPolicy::widened().depth_bound,
                 ..policy
             };
-            let attempt = self.attempt(decision, widened, class);
+            let attempt = self.attempt(decision, widened, class, log);
             run.widened_stopped = attempt.stopped;
             run.result = self.finalize(attempt);
         }
@@ -910,7 +940,7 @@ impl DecisionClassifier {
                 })
     }
 
-    fn classify_precedence(&self, mut result: DecisionResult) -> DecisionResult {
+    fn classify_precedence(&self, mut result: DecisionResult, log: &mut CostLog) -> DecisionResult {
         result.category = Category::LR_PRECEDENCE;
         let state = self.atn.decision_to_state[result.decision];
         let target_rule = state.get_rule_index();
@@ -950,8 +980,9 @@ impl DecisionClassifier {
                 lo: representatives[class_index],
                 hi: cutoffs.get(class_index).copied().unwrap_or(i32::MAX),
             };
-            let run = self.first_pass(result.decision, Some(class));
-            let outcome = self.witness_pass(result.decision, Some(class), run);
+            log.class = Some(class_index);
+            let run = self.first_pass(result.decision, Some(class), log);
+            let outcome = self.witness_pass(result.decision, Some(class), run, log);
 
             result.used_widening |= outcome.used_widening;
             result.saw_predicate |= outcome.saw_predicate;
@@ -1000,6 +1031,40 @@ impl DecisionClassifier {
         result
     }
 
+    /// Runs one build attempt (see [`Self::build_attempt`]) and records its
+    /// cost in `log`.
+    fn attempt(
+        &self,
+        decision: usize,
+        policy: AttemptPolicy,
+        precedence: Option<PrecedenceClass>,
+        log: &mut CostLog,
+    ) -> Attempt {
+        let started = self.profile.then(Instant::now);
+        let mut attempt = self.build_attempt(decision, policy, precedence);
+        let outcome = if attempt.exhausted {
+            AttemptOutcome::VisitBudget
+        } else if attempt.stopped {
+            AttemptOutcome::Stopped
+        } else if attempt.overflow {
+            AttemptOutcome::StateBudget
+        } else {
+            AttemptOutcome::Finished
+        };
+        log.record(
+            AttemptCost {
+                kind: policy.kind(),
+                class: log.class,
+                outcome,
+                visits: attempt.visits,
+                states: attempt.state_count,
+                elapsed: started.map(|started| started.elapsed()),
+            },
+            &std::mem::take(&mut attempt.rule_visits),
+        );
+        attempt
+    }
+
     /// One build attempt: fresh simulator, fresh arena, fresh scratch arena.
     ///
     /// A fresh manager per attempt is deliberate: each attempt needs an empty
@@ -1008,25 +1073,12 @@ impl DecisionClassifier {
     /// the DFA. The states and edges of an earlier attempt break both. A
     /// shared manager also gives all precedence classes of a decision the same
     /// DFA, but one config set can have other successors in another class.
-    fn attempt(
+    fn build_attempt(
         &self,
         decision: usize,
         policy: AttemptPolicy,
         precedence: Option<PrecedenceClass>,
     ) -> Attempt {
-        #[cfg(test)]
-        self.attempts.lock().expect("no attempt panicked").push((
-            decision,
-            match policy {
-                AttemptPolicy { hybrid: true, .. } => AttemptKind::Hybrid,
-                AttemptPolicy { depth_bound: 0, .. } => AttemptKind::Widened {
-                    abort: policy.abort_on_untrusted_conflict,
-                },
-                AttemptPolicy { .. } => AttemptKind::Unbounded {
-                    abort: policy.abort_on_untrusted_conflict,
-                },
-            },
-        ));
         let atn = self.atn;
         let decision_state = atn.decision_to_state[decision];
         let loop_block = precedence.map(|_| self.loop_block(decision));
@@ -1300,6 +1352,9 @@ where
         self.attempt.decision = self.decision;
         self.attempt.state_count = self.states.len();
         self.attempt.facts = std::mem::take(&mut self.closure.facts);
+        self.attempt.exhausted = self.closure.exhausted;
+        self.attempt.visits = self.closure.visits();
+        self.attempt.rule_visits = self.closure.take_rule_visits();
         if self.attempt.descent_group_states > 0 {
             self.attempt.descent = self.descent.take();
         }
@@ -2289,8 +2344,6 @@ where
     }
 }
 
-/// The lowest alternative that already left the decision, over the union of
-/// every path's taint.
 /// `true` when the config set can be replayed without the input.
 ///
 /// Widening, an unevaluated precedence guard, or a predicate each stand for
@@ -2308,7 +2361,6 @@ fn continuation_is_faithful(configs: &ATNConfigSet<'_>, taint: &Taint) -> bool {
     })
 }
 
-/// The wire size of a serialized continuation, in `u32` words.
 fn continuation_words(continuation: &ParserContinuation) -> usize {
     let contexts = continuation
         .contexts

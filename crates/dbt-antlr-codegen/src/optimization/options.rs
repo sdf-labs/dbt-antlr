@@ -36,6 +36,7 @@ pub struct OptimizationOptions {
     pub(crate) static_dfa_only: bool,
     pub(crate) report_decisions: bool,
     pub(crate) dump_dfas: Option<String>,
+    pub(crate) profile_decisions: bool,
     pub(crate) report_only: bool,
 }
 
@@ -125,6 +126,14 @@ impl OptimizationOptions {
         self
     }
 
+    /// Renders the time and the work that the `static-parser-dfa` pass spends
+    /// on each parser decision (`--profile-decisions`) and implies
+    /// [`Self::report_only`]. The times change from run to run.
+    pub const fn profile_decisions(&mut self, enabled: bool) -> &mut Self {
+        self.profile_decisions = enabled;
+        self
+    }
+
     /// Compiles, analyzes, and optimizes the input grammars without writing
     /// output files (`--report-only`, `--dry-run`, `-n`). Default: `false`.
     pub const fn report_only(&mut self, enabled: bool) -> &mut Self {
@@ -134,9 +143,9 @@ impl OptimizationOptions {
 
     /// Whether the selection prints instead of writing files: `--report-only`
     /// or a report mode that implies it (`--report-decisions`,
-    /// `--dump-dfas`).
+    /// `--dump-dfas`, `--profile-decisions`).
     pub(crate) const fn is_report_only(&self) -> bool {
-        self.report_only || self.report_decisions || self.dump_dfas.is_some()
+        self.report_only || self.has_parser_reports()
     }
 
     #[cfg(feature = "download")]
@@ -176,8 +185,7 @@ impl OptimizationOptions {
 
     /// Whether the selection prints parser reports, which only the in-process
     /// generator can render.
-    #[cfg(feature = "download")]
     pub(crate) const fn has_parser_reports(&self) -> bool {
-        self.report_decisions || self.dump_dfas.is_some()
+        self.report_decisions || self.dump_dfas.is_some() || self.profile_decisions
     }
 }

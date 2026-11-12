@@ -144,7 +144,8 @@ pub struct EmittedOutput {
     /// Generated recognizer source files. Empty when
     /// [`OptimizationOptions::report_only`] is enabled or a report mode
     /// implies it ([`OptimizationOptions::report_decisions`],
-    /// [`OptimizationOptions::dump_dfas`]).
+    /// [`OptimizationOptions::dump_dfas`],
+    /// [`OptimizationOptions::profile_decisions`]).
     pub files: Vec<EmittedFile>,
     /// Diagnostics that did not abort the run: warnings (for example
     /// unreachable-rule warnings) and errors a caller must surface (for
@@ -155,8 +156,8 @@ pub struct EmittedOutput {
     /// Rendered `optimizations.txt` manifest, present when the selected
     /// optimizations emit one.
     pub optimization_manifest: Option<String>,
-    /// Rendered stdout reports of the selected passes (`--report-decisions`
-    /// and `--dump-dfas`).
+    /// Rendered stdout reports of the selected passes (`--report-decisions`,
+    /// `--dump-dfas`, and `--profile-decisions`).
     pub reports: Vec<String>,
 }
 

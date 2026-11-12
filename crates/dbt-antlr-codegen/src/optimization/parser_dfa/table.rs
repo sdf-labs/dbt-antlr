@@ -108,7 +108,7 @@ impl StaticDfaTable {
         self.states.iter().filter(|state| state.is_escape()).count()
     }
 
-    /// The number of states a runtime stack guard decides.
+    /// The number of states that requires a runtime stack walk.
     pub(crate) fn guarded(&self) -> usize {
         self.states
             .iter()
@@ -117,11 +117,6 @@ impl StaticDfaTable {
     }
 
     /// How much of the start state's alphabet leads to an accepting state.
-    ///
-    /// A table below [`super::classifier::HYBRID_MIN_COVERAGE_PERCENT`] is not
-    /// worth its bytes: almost every lookahead would escape anyway. Escape
-    /// states do not count as coverage - they are exactly the part of the
-    /// alphabet the table does not decide.
     pub(crate) fn start_coverage(&self) -> f64 {
         let Some(start) = self.states.first() else {
             return 0.0;

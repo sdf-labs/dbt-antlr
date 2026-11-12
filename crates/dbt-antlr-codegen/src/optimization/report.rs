@@ -85,8 +85,8 @@ impl OptimizationPlan {
         ))
     }
 
-    /// Renders the reports the plan prints to stdout (`--report-decisions`
-    /// and `--dump-dfas`), in pass order.
+    /// Renders the reports the plan prints to stdout (`--report-decisions`,
+    /// `--dump-dfas`, and `--profile-decisions`), in pass order.
     pub(crate) fn rendered_reports(&self, report: &OptimizationReport) -> RenderedReports {
         let mut rendered = RenderedReports::default();
         let parser_pass = self.selected.iter().any(|pass| {
@@ -107,6 +107,13 @@ impl OptimizationPlan {
                 StaticParserDfa::render_dfa_dump(&report.static_parser_dfa, spec);
             rendered.reports.push(text);
             rendered.diagnostics.extend(diagnostics);
+        }
+        if self.static_parser_reports.profile_decisions {
+            rendered
+                .reports
+                .push(StaticParserDfa::render_decision_profile(
+                    &report.static_parser_dfa,
+                ));
         }
         rendered
     }

@@ -100,7 +100,7 @@ pub(crate) fn compile_with_plan(
 /// 1. [`load_grammar`] loads, integrates, and validates the requested roots.
 /// 2. [`grammar_transforms`] runs the selected grammar-transform passes.
 /// 3. [`compile_semantics`] compiles and analyzes the transformed grammar.
-/// 4. [`static_dfa_builds`] runs the selected static DFA build passes.
+/// 4. [`build_static_dfas`] runs the selected static DFA build passes.
 pub(crate) fn compile_with_action_reference_parser(
     options: LoadOptions,
     plan: &OptimizationPlan,
@@ -109,11 +109,9 @@ pub(crate) fn compile_with_action_reference_parser(
     let grammar = load_grammar(options, plan)?;
     let grammar = transform_grammar(grammar, plan, action_reference_parser)?;
     let compilation = compile_semantics(grammar, plan, action_reference_parser)?;
-    static_dfa_builds(compilation, plan)
+    build_static_dfas(compilation, plan)
 }
 
-/// The loaded and integrated grammar handed from the load stage to the
-/// grammar-transform stage.
 struct LoadedGrammar {
     sources: SourceSet,
     non_grammar_inputs: Vec<std::path::PathBuf>,
@@ -177,8 +175,6 @@ fn load_grammar(
     })
 }
 
-/// The transformed grammar handed from the grammar-transform stage to the
-/// semantic-compilation stage.
 struct TransformedGrammar {
     loaded: LoadedGrammar,
     authored_diagnostics: Option<Vec<Diagnostic>>,
@@ -248,7 +244,6 @@ fn merge_diagnostics(
     authored
 }
 
-/// Compiles the transformed grammar into recognizer artifacts.
 fn compile_semantics(
     transformed: TransformedGrammar,
     plan: &OptimizationPlan,
@@ -331,14 +326,7 @@ fn compile_semantics(
     })
 }
 
-/// Runs the static DFA build passes selected by the plan.
-///
-/// The stage runs after semantic compilation, so the pass diagnostics it
-/// appends follow the lexer and parser diagnostics. An error of a pass (for
-/// example a `--static-dfa-only` decision without a static table) fails the
-/// compilation. In report-only mode, the error stays a diagnostic of the run,
-/// so that the reports still render.
-fn static_dfa_builds(
+fn build_static_dfas(
     mut compilation: Compilation,
     plan: &OptimizationPlan,
 ) -> Result<Compilation, CompilationError> {
@@ -347,7 +335,9 @@ fn static_dfa_builds(
     for pass in plan.static_dfa_passes() {
         match pass {
             StaticDfaPass::StaticLexerDfa => build_static_lexer_dfas(&mut compilation, fallback),
-            StaticDfaPass::StaticParserDfa => build_static_parser_dfas(&mut compilation, fallback),
+            StaticDfaPass::StaticParserDfa => {
+                build_static_parser_dfas(&mut compilation, fallback, plan.profile_decisions());
+            }
         }
     }
     let failed = compilation.diagnostics[first_pass_diagnostic..]
@@ -362,8 +352,6 @@ fn static_dfa_builds(
     Ok(compilation)
 }
 
-/// Builds the static lexer DFA tables of every root lexer and records their
-/// diagnostics and optimization reports.
 fn build_static_lexer_dfas(compilation: &mut Compilation, fallback: AtnFallback) {
     let lexer_ids = compilation
         .roots
@@ -385,9 +373,7 @@ fn build_static_lexer_dfas(compilation: &mut Compilation, fallback: AtnFallback)
     }
 }
 
-/// Builds the static prediction tables of every root parser, stores them for
-/// the emitter, and records the pass diagnostics and report.
-fn build_static_parser_dfas(compilation: &mut Compilation, fallback: AtnFallback) {
+fn build_static_parser_dfas(compilation: &mut Compilation, fallback: AtnFallback, profile: bool) {
     let parser_ids = compilation
         .roots
         .iter()
@@ -397,7 +383,7 @@ fn build_static_parser_dfas(compilation: &mut Compilation, fallback: AtnFallback
         let Some(compiled) = compilation.parsers.get(&parser_id) else {
             continue;
         };
-        let build = StaticParserDfa::build(compiled, fallback);
+        let build = StaticParserDfa::build(compiled, fallback, profile);
         compilation.diagnostics.extend(build.diagnostics);
         compilation
             .optimization_report
