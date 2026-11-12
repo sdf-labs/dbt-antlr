@@ -1965,3 +1965,161 @@ fn single_token_alternatives_share_one_successor() {
     let extra = many.cost.visits() - few.cost.visits();
     assert!(extra <= 3 * 198, "{extra} extra visits");
 }
+
+/// Builds the pass artifact of a grammar written to a scratch directory.
+fn build_source(
+    name: &str,
+    source: &str,
+) -> crate::optimization::static_parser_dfa::StaticParserDfaArtifact {
+    let directory =
+        std::env::temp_dir().join(format!("dbt-antlr-build-{}-{name}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("scratch directory");
+    let path = directory.join(format!("{name}.g4"));
+    std::fs::write(&path, source).expect("scratch grammar");
+    let build = build_with_budget(&path, super::DEFAULT_VISIT_BUDGET);
+    let _ = std::fs::remove_dir_all(&directory);
+    build
+}
+
+/// A grammar whose rule `word` has `alternatives` as its block, with the
+/// parser rules `rules`, 70 keyword tokens `K0` to `K69`, and `callers` rules
+/// that call `word`.
+fn keyword_grammar(name: &str, alternatives: &str, rules: &str, callers: usize) -> String {
+    let mut source = format!("grammar {name};\nword : {alternatives} ;\n{rules}");
+    for caller in 0..callers {
+        source.push_str(&format!("r{caller} : word X ;\n"));
+    }
+    source.push_str("X : 'x' ; L : '(' ; R : ')' ;\n");
+    for keyword in 0..70 {
+        source.push_str(&format!("K{keyword} : 'k{keyword}' ;\n"));
+    }
+    source
+}
+
+/// The `G4S194` warnings of a keyword grammar, with their spans as
+/// `line:column`.
+fn token_branch_warnings(
+    name: &str,
+    alternatives: &str,
+    rules: &str,
+    callers: usize,
+) -> Vec<(String, String)> {
+    let source = keyword_grammar(name, alternatives, rules, callers);
+    build_source(name, &source)
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "G4S194")
+        .map(|diagnostic| {
+            assert_eq!(diagnostic.severity, Severity::Warning);
+            let offset = diagnostic.primary.bytes.start as usize;
+            let line = source[..offset].matches('\n').count() + 1;
+            let column = offset
+                - source[..offset]
+                    .rfind('\n')
+                    .map_or(0, |newline| newline + 1);
+            (format!("{line}:{column}"), diagnostic.message.clone())
+        })
+        .collect()
+}
+
+/// The causes and the entry count of one `G4S194` message.
+fn token_branch_causes(message: &str) -> &str {
+    let start = message.find("because ").expect("causes") + "because ".len();
+    let end = message.find(" before they read").expect("entries");
+    &message[start..end]
+}
+
+/// A block of many single-token alternatives that do not fold into one token
+/// set gets one `G4S194` warning when many call sites enter its rule. The
+/// warning tells why the block did not fold, and it stops when the tokens are
+/// in one subrule.
+#[test]
+fn unfolded_token_branches_emit_g4s194_warnings() {
+    let keywords = (0..70)
+        .map(|keyword| format!("K{keyword}"))
+        .collect::<Vec<_>>();
+    let mixed = format!("{} | L word R", keywords.join(" | "));
+    assert_eq!(
+        token_branch_warnings("Mixed", &mixed, "", 20),
+        [(
+            "2:7".to_owned(),
+            "rule 'word' has a block with 70 single-token alternatives that do not fold into one \
+             token set. The block does not fold because 1 alternative is not a single token. 21 \
+             call sites enter the rule before they read a token. The analysis of the static \
+             parser DFA follows each alternative at each site. Move the single tokens into one \
+             unlabeled subrule, for example `( A | B | C )`, or into a token-only rule"
+                .to_owned()
+        )]
+    );
+
+    let causes = |name: &str, alternatives: &str, rules: &str, callers: usize| {
+        token_branch_warnings(name, alternatives, rules, callers)
+            .iter()
+            .map(|(span, message)| format!("{span} {}", token_branch_causes(message)))
+            .collect::<Vec<_>>()
+    };
+    let labeled = keywords
+        .iter()
+        .map(|keyword| format!("{keyword} #{}", keyword.to_lowercase()))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    assert_eq!(
+        causes("Labeled", &labeled, "", 20),
+        ["2:7 70 alternatives have a label. 20 call sites enter the rule"]
+    );
+    assert_eq!(causes("Callers", &labeled, "", 19), [] as [String; 0]);
+    let element_labels = keywords
+        .iter()
+        .map(|keyword| format!("k={keyword}"))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    assert_eq!(
+        causes("ElementLabels", &format!("{element_labels} | L"), "", 20),
+        ["2:7 70 tokens have an element label. 20 call sites enter the rule"]
+    );
+
+    let threshold = format!("{} | L word R", keywords[..64].join(" | "));
+    assert_eq!(causes("Threshold", &threshold, "", 20).len(), 1);
+    let few = format!("{} | L word R", keywords[..63].join(" | "));
+    assert_eq!(causes("Few", &few, "", 20), [] as [String; 0]);
+    assert_eq!(
+        causes("Folded", &keywords.join(" | "), "", 20),
+        [] as [String; 0]
+    );
+    let grouped = format!("( {} ) | L word R", keywords.join(" | "));
+    assert_eq!(causes("Grouped", &grouped, "", 20), [] as [String; 0]);
+    let late = format!("L ( {mixed} ) | X");
+    assert_eq!(causes("Late", &late, "", 20), [] as [String; 0]);
+
+    // `inner` is a left corner of `word` behind the nullable rule `opt`.
+    let rules = format!("opt : L | ;\ninner : {mixed} ;\n");
+    assert_eq!(
+        causes("Inner", "opt inner X | L", &rules, 20),
+        ["4:8 1 alternative is not a single token. 22 call sites enter the rule"]
+    );
+    // Only the second nested block comes before a token.
+    let nested = format!("X ( {mixed} )? | ( {mixed} ) X");
+    let column = "word : ".len() + nested.rfind("( ").expect("second block");
+    assert_eq!(
+        causes("Nested", &nested, "", 20),
+        [format!(
+            "2:{column} 1 alternative is not a single token. 22 call sites enter the rule"
+        )]
+    );
+    // A nullable subrule or a call of a nullable rule does not read a token.
+    for (name, prefix) in [("NullableBlock", "( L | )"), ("NullableCall", "opt")] {
+        let behind = format!("{prefix} ( {mixed} ) X");
+        let column = "word : ".len() + behind.rfind("( K0").expect("block");
+        assert_eq!(
+            causes(name, &behind, "opt : L | ;\n", 20),
+            [format!(
+                "2:{column} 1 alternative is not a single token. 21 call sites enter the rule"
+            )]
+        );
+    }
+    let recursive = format!("{} | word L word", keywords.join(" | "));
+    assert_eq!(
+        causes("Recursive", &recursive, "", 20),
+        ["2:7 1 alternative is not a single token. 21 call sites enter the rule"]
+    );
+}

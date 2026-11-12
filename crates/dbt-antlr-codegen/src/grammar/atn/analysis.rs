@@ -248,10 +248,14 @@ fn epsilon_reaches(
     false
 }
 
-pub(super) fn left_recursive_components(
+/// The rules that each rule can call before it reads a token, by rule index.
+///
+/// `nullable_rules` holds the indices of the rules that can match the empty
+/// string. Thus the walk also continues after a call of such a rule.
+pub(crate) fn left_corner_rules(
     graph: &FinalizedAtnGraph,
     nullable_rules: &BTreeSet<usize>,
-) -> Vec<Vec<RuleId>> {
+) -> Vec<BTreeSet<usize>> {
     let transitions = transitions_by_id(graph);
     let mut left_corners = vec![BTreeSet::new(); graph.rule_starts.len()];
     for (rule, start) in graph.rule_starts.iter().copied().enumerate() {
@@ -263,6 +267,14 @@ pub(super) fn left_recursive_components(
             &mut left_corners[rule],
         );
     }
+    left_corners
+}
+
+pub(super) fn left_recursive_components(
+    graph: &FinalizedAtnGraph,
+    nullable_rules: &BTreeSet<usize>,
+) -> Vec<Vec<RuleId>> {
+    let left_corners = left_corner_rules(graph, nullable_rules);
 
     let mut petgraph = DiGraph::<RuleId, ()>::new();
     let nodes = graph

@@ -14,7 +14,7 @@ mod parser;
 mod runtime_build;
 mod state_kind;
 
-pub(crate) use analysis::DecisionLookahead;
+pub(crate) use analysis::{DecisionLookahead, left_corner_rules};
 pub(crate) use build::{FinalizedAtnGraph, FinalizedTransitionKind};
 pub(crate) use interval_set::IntervalSet;
 pub(crate) use lexer::{CompiledLexer, compile_lexer, encode_lexer_atn};
