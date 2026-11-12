@@ -16,7 +16,9 @@
 //!
 //! A decision that spends the visit budget of the analysis gets a warning
 //! (`G4S193`) in every mode, because such a decision makes the code generation
-//! slow.
+//! slow. A rule that many call sites enter gets a warning (`G4S194`) for each
+//! block with many single-token alternatives that do not fold into one token
+//! set. The analysis follows each of these alternatives at each site.
 //!
 //! Under `--static-dfa-only`, the pass resolves the escape states of every
 //! partial table statically (see `parser_dfa::static_only`). A decision that
@@ -39,11 +41,12 @@ use super::parser_dfa::{
     AttemptOutcome, Category, DEFAULT_VISIT_BUDGET, DecisionClassifier, DecisionResult,
     DescentPlan, DescentRules, EscapeResolution, EscapeResolutions, MAX_DFA_STATES, StaticDfaTable,
 };
-use crate::grammar::atn::CompiledParser;
+use crate::grammar::atn::{CompiledParser, FinalizedTransitionKind, left_corner_rules};
 use crate::grammar::diagnostic::Diagnostic;
 use crate::grammar::frontend::SourceSpan;
 use crate::grammar::model::{
     Alternative, Block, Element, ElementKind, ModelNodeId, Quantifier, RecognizerModel, Rule,
+    RuleKind, Terminal,
 };
 use crate::grammar::provenance::Origin;
 use crate::grammar::source::SourceSet;
@@ -59,6 +62,16 @@ const DUMP_SELECTOR_NO_MATCH: &str = "G4S191";
 const STATIC_ONLY_RESOLVED: &str = "G4S192";
 /// The diagnostic code of a decision whose analysis spent the visit budget.
 const VISIT_BUDGET_SPENT: &str = "G4S193";
+/// The diagnostic code of a block of single-token alternatives that do not
+/// fold into one token set, in a rule with many call sites.
+const TOKEN_BRANCHES: &str = "G4S194";
+
+/// The minimum number of call sites that enter a rule, for a `G4S194`
+/// warning.
+const TOKEN_BRANCH_ENTRIES: usize = 20;
+/// The minimum number of single-token alternatives in a block, for a `G4S194`
+/// warning.
+const TOKEN_BRANCH_ALTERNATIVES: usize = 64;
 
 /// The number of rules that a `G4S193` warning and a profile row name.
 const HOT_RULES: usize = 3;
@@ -226,6 +239,7 @@ impl StaticParserDfa {
             AtnFallback::Forbidden => static_only_diagnostics(compiled, &report),
         };
         diagnostics.extend(visit_budget_diagnostics(compiled, &report));
+        diagnostics.extend(token_branch_diagnostics(compiled));
         StaticParserDfaArtifact {
             diagnostics,
             report,
@@ -1502,6 +1516,279 @@ fn visit_budget_diagnostics(
             Some(Diagnostic::warning(VISIT_BUDGET_SPENT, span, message))
         })
         .collect()
+}
+
+/// The `G4S194` warnings: one per block with many single-token alternatives
+/// that do not fold into one token set.
+///
+/// Each of these alternatives is a separate ATN branch. The closure of each
+/// decision that enters the rule follows all of them. The check looks only at
+/// the blocks that the rule can reach before it reads a token, and only at the
+/// rules that many call sites enter.
+fn token_branch_diagnostics(compiled: &CompiledParser) -> Vec<Diagnostic> {
+    let mut candidates = Vec::new();
+    for rule in &compiled.semantic.unit.rules {
+        if rule.kind != RuleKind::Parser {
+            continue;
+        }
+        let mut blocks = Vec::new();
+        leading_blocks(compiled, &rule.block, &mut blocks);
+        candidates.extend(
+            blocks
+                .into_iter()
+                .filter_map(|block| TokenBranches::of(rule, block))
+                .map(|branches| (rule, branches)),
+        );
+    }
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    let entries = rule_entries(compiled);
+    candidates
+        .into_iter()
+        .filter_map(|(rule, branches)| {
+            let entries = compiled
+                .semantic
+                .recognizer
+                .rule_numbers
+                .get(&rule.id)
+                .and_then(|index| entries.get(*index))
+                .copied()?;
+            (entries >= TOKEN_BRANCH_ENTRIES).then(|| branches.diagnostic(rule, entries))
+        })
+        .collect()
+}
+
+/// Adds `block` and, in source order, each nested block that the rule can
+/// reach from the start of `block` before it reads a token. Returns whether
+/// `block` can match the empty string.
+fn leading_blocks<'b>(
+    compiled: &CompiledParser,
+    block: &'b Block,
+    out: &mut Vec<&'b Block>,
+) -> bool {
+    out.push(block);
+    let mut nullable = false;
+    for alternative in &block.alternatives {
+        let mut empty = true;
+        for element in &alternative.elements {
+            let element_nullable = match &element.kind {
+                ElementKind::Block(nested) => leading_blocks(compiled, nested, out),
+                ElementKind::Action { .. }
+                | ElementKind::Predicate { .. }
+                | ElementKind::Epsilon => true,
+                ElementKind::RuleCall(_) => compiled
+                    .semantic
+                    .bindings
+                    .rule_calls
+                    .get(&element.id)
+                    .is_some_and(|call| compiled.analysis.nullable_rules.contains(&call.target)),
+                _ => false,
+            };
+            if !element_nullable
+                && !matches!(
+                    element.quantifier,
+                    Quantifier::Optional { .. } | Quantifier::ZeroOrMore { .. }
+                )
+            {
+                empty = false;
+                break;
+            }
+        }
+        nullable |= empty;
+    }
+    nullable
+}
+
+/// The single-token alternatives of one block that did not fold into one
+/// token set, with the causes.
+struct TokenBranches<'b> {
+    block: &'b Block,
+    count: usize,
+    causes: Vec<String>,
+}
+
+impl<'b> TokenBranches<'b> {
+    /// The single-token alternatives of `block`, when there are enough of them
+    /// for a `G4S194` warning and a cause is known.
+    fn of(rule: &Rule, block: &'b Block) -> Option<Self> {
+        // The left-recursion rewrite moves the operator alternatives out of
+        // the primary block, and puts an empty action in front of the first
+        // primary alternative.
+        let operators = rule
+            .left_recursion
+            .as_ref()
+            .and_then(|_| left_recursion_operators(rule, block))
+            .unwrap_or(0);
+        let single_tokens = block
+            .alternatives
+            .iter()
+            .enumerate()
+            .filter_map(|(index, alternative)| {
+                let mut elements = alternative.elements.iter();
+                if index == 0
+                    && operators > 0
+                    && let [first, _, ..] = alternative.elements.as_slice()
+                    && matches!(&first.kind, ElementKind::Action { body, .. } if body.is_empty())
+                {
+                    elements.next();
+                }
+                match (elements.next(), elements.next()) {
+                    (Some(element), None)
+                        if element.quantifier == Quantifier::One
+                            && matches!(
+                                element.kind,
+                                ElementKind::Terminal(Terminal::Token(_) | Terminal::Literal(_))
+                            ) =>
+                    {
+                        Some((alternative, element))
+                    }
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>();
+        if single_tokens.len() < TOKEN_BRANCH_ALTERNATIVES {
+            return None;
+        }
+        let mut causes = Vec::new();
+        let others = block.alternatives.len() - single_tokens.len() + operators;
+        if others > 0 {
+            causes.push(count_text(
+                others,
+                "alternative is not a single token",
+                "alternatives are not a single token",
+            ));
+        }
+        let labeled = single_tokens
+            .iter()
+            .filter(|(alternative, _)| alternative.label.is_some())
+            .count();
+        if labeled > 0 {
+            causes.push(count_text(
+                labeled,
+                "alternative has a label",
+                "alternatives have a label",
+            ));
+        }
+        let element_labeled = single_tokens
+            .iter()
+            .filter(|(_, element)| element.label.is_some())
+            .count();
+        if element_labeled > 0 {
+            causes.push(count_text(
+                element_labeled,
+                "token has an element label",
+                "tokens have an element label",
+            ));
+        }
+        if !block.options.is_empty()
+            || single_tokens
+                .iter()
+                .any(|(alternative, _)| !alternative.options.is_empty())
+        {
+            causes.push("the block or its alternatives have options".to_owned());
+        }
+        // Without a cause, a transform after the block-set reduction made the
+        // other alternatives single tokens.
+        (!causes.is_empty()).then_some(Self {
+            block,
+            count: single_tokens.len(),
+            causes,
+        })
+    }
+
+    fn diagnostic(&self, rule: &Rule, entries: usize) -> Diagnostic {
+        Diagnostic::warning(
+            TOKEN_BRANCHES,
+            self.block.span.clone(),
+            format!(
+                "rule '{}' has a block with {} single-token alternatives that do not fold into \
+                 one token set. The block does not fold because {}. {entries} call sites enter \
+                 the rule before they read a token. The analysis of the static parser DFA \
+                 follows each alternative at each site. Move the single tokens into one \
+                 unlabeled subrule, for example `( A | B | C )`, or into a token-only rule",
+                rule.name,
+                self.count,
+                self.causes.join(", and "),
+            ),
+        )
+    }
+}
+
+/// The number of operator alternatives of a left-recursive rule, when `block`
+/// is the primary block of its rewrite.
+fn left_recursion_operators(rule: &Rule, block: &Block) -> Option<usize> {
+    let [alternative] = rule.block.alternatives.as_slice() else {
+        return None;
+    };
+    let [primary, operators] = alternative.elements.as_slice() else {
+        return None;
+    };
+    match (&primary.kind, &operators.kind) {
+        (ElementKind::Block(primary), ElementKind::Block(operators))
+            if std::ptr::eq(primary, block) =>
+        {
+            Some(operators.alternatives.len())
+        }
+        _ => None,
+    }
+}
+
+/// The number of call sites that enter each rule before they read a token,
+/// by rule index.
+///
+/// A call site of rule `R` enters `R`. When `R` can call rule `S` before it
+/// reads a token, the call site also enters `S`.
+fn rule_entries(compiled: &CompiledParser) -> Vec<usize> {
+    let graph = &compiled.graph;
+    let rules = graph.rule_starts.len();
+    let mut direct = vec![0_usize; rules];
+    for transition in &graph.transitions {
+        if let FinalizedTransitionKind::Rule { rule_index, .. } = transition.kind
+            && let Some(count) = direct.get_mut(rule_index)
+        {
+            *count += 1;
+        }
+    }
+    let recognizer = &compiled.semantic.recognizer;
+    let nullable = compiled
+        .analysis
+        .nullable_rules
+        .iter()
+        .filter_map(|rule| recognizer.rule_numbers.get(rule).copied())
+        .collect();
+    let mut callers = vec![Vec::new(); rules];
+    for (caller, callees) in left_corner_rules(graph, &nullable).iter().enumerate() {
+        for &callee in callees {
+            if let Some(callers) = callers.get_mut(callee) {
+                callers.push(caller);
+            }
+        }
+    }
+    (0..rules)
+        .map(|rule| {
+            let mut seen = vec![false; rules];
+            seen[rule] = true;
+            let mut pending = vec![rule];
+            let mut entries = 0;
+            while let Some(current) = pending.pop() {
+                entries += direct[current];
+                for &caller in &callers[current] {
+                    if !seen[caller] {
+                        seen[caller] = true;
+                        pending.push(caller);
+                    }
+                }
+            }
+            entries
+        })
+        .collect()
+}
+
+/// `count` with the singular or the plural phrase, for example `1 alternative
+/// has a label`.
+fn count_text(count: usize, singular: &str, plural: &str) -> String {
+    format!("{count} {}", if count == 1 { singular } else { plural })
 }
 
 /// One clause of a `G4S192` warning, for example `2 predicated states report a
