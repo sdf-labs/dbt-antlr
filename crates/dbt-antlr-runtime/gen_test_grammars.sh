@@ -102,13 +102,20 @@ echo "Generating: guardexprparser_static"
 "$GEN_BIN" -no-listener --static-parser-dfa -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/GuardExpr.g4"
 mv "$STATIC_TMP/guardexprparser.rs" "$SCRIPT_DIR/tests/gen/guardexprparser_static.rs"
 
-# The `--static-dfa-only` twin of the guarded-take witness: its guarded takes
-# and the states at its lookahead budget predict alternative 1 (the take), so
-# the test pins the inputs where the static-only parser differs from the
-# adaptive one.
+# The `--static-dfa-only` twin of the guarded-take witness: its guarded states
+# keep the stack guard and skip where the guard defers, so the differential test
+# parses the same corpus without adaptivePredict.
 echo "Generating: guardexprparser_static_only"
 "$GEN_BIN" -no-listener --static-dfa-only -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/GuardExpr.g4"
 mv "$STATIC_TMP/guardexprparser.rs" "$SCRIPT_DIR/tests/gen/guardexprparser_static_only.rs"
+
+# The inline-alias witness of guarded iterates under `--static-dfa-only`: the
+# adaptive parser is the oracle of the static-only twin.
+echo "Generating: parser/InlineAlias"
+"$GEN_BIN" -no-listener -o "$SCRIPT_DIR/tests/gen" "$SCRIPT_DIR/grammars/parser/InlineAlias.g4"
+echo "Generating: inlinealiasparser_static_only"
+"$GEN_BIN" -no-listener --static-dfa-only -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/InlineAlias.g4"
+mv "$STATIC_TMP/inlinealiasparser.rs" "$SCRIPT_DIR/tests/gen/inlinealiasparser_static_only.rs"
 
 # The full-context witness: a call of `send` as the parse entry predicts its
 # operator loop with an empty outer context (tests/full_context.rs).

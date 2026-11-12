@@ -749,10 +749,10 @@ where
                 self.get_interpreter()
                     .adaptive_predict_conflict(decision, min_alt, self)
             }
-            Some(Outcome::Guarded(alt)) => {
-                let defers = self.guard_defers(table);
+            Some(Outcome::Guarded(guard)) => {
+                let defers = self.guard_defers(table, guard.group);
                 self.input.seek(start_index);
-                Ok(if defers { crate::atn::INVALID_ALT } else { alt })
+                Ok(if defers { guard.defer_alt } else { guard.alt })
             }
             _ => {
                 self.input.seek(start_index);
@@ -761,14 +761,18 @@ where
         }
     }
 
-    /// Whether a guarded take defers to the adaptive simulation.
+    /// Whether the stack guard of a guarded state defers.
     ///
     /// A guarded conflict (an optional-postfix take or a precedence loop's
     /// iterate) resolves to the guarded alternative unless the real parse
-    /// stack's epsilon-pop chase can reach a guard root. The walk stops at the
-    /// first invoking state whose follow region cannot reach its own rule's
-    /// stop.
-    fn guard_defers(&self, table: &crate::dfa::static_parser_dfa::StaticParserTable) -> bool {
+    /// stack's epsilon-pop chase can reach a guard root of the state's guard
+    /// group. The walk stops at the first invoking state whose follow region
+    /// cannot reach its own rule's stop.
+    fn guard_defers(
+        &self,
+        table: &crate::dfa::static_parser_dfa::StaticParserTable,
+        group: u32,
+    ) -> bool {
         let mut context = self.ctx();
         while let Some(node) = context {
             let invoking_state = node.get_invoking_state();
@@ -784,20 +788,20 @@ where
             {
                 if call_sites
                     .iter()
-                    .any(|&site| table.guard_step(site) == Some(true))
+                    .any(|&site| table.guard_step(group, site) == Some(true))
                 {
                     return true;
                 }
                 if call_sites
                     .iter()
-                    .all(|&site| table.guard_step(site) == Some(false))
+                    .all(|&site| table.guard_step(group, site) == Some(false))
                 {
                     return false;
                 }
                 context = parent;
                 continue;
             }
-            match table.guard_step(invoking_state) {
+            match table.guard_step(group, invoking_state) {
                 Some(true) => return true,
                 Some(false) => return false,
                 None => context = parent,

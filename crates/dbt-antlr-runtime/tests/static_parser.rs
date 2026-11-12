@@ -3,7 +3,8 @@
 //! Integration tests for `--static-parser-dfa`: the `StaticDFA.g4` static
 //! tables, `LrDfa.g4` precedence dispatch, the `FuzzExpr.g4` static-vs-adaptive
 //! differential, the `SDFA` table image, the D5 escape handoff, and the
-//! `--static-dfa-only` resolution of the `GuardExpr.g4` escape states.
+//! `--static-dfa-only` resolution of the `GuardExpr.g4` and `InlineAlias.g4`
+//! escape and guarded states.
 
 #[rustfmt::skip]
 mod gen {
@@ -19,6 +20,9 @@ mod gen {
     pub mod guardexprparser;
     pub mod guardexprparser_static;
     pub mod guardexprparser_static_only;
+    pub mod inlinealiaslexer;
+    pub mod inlinealiasparser;
+    pub mod inlinealiasparser_static_only;
     pub mod loopfrontierlexer;
     pub mod loopfrontierparser;
     pub mod loopfrontierparser_static;
@@ -851,11 +855,25 @@ fn static_dfa_only_parser_never_calls_adaptive_predict() {
     assert_eq!(src.matches("adaptive_predict(").count(), 0);
 }
 
-/// Outside an assignment target, the take of `pred?` is the right reading, so
-/// the static-only parser matches the adaptive one.
+/// The value after `=` follows the 16-token witness of the lookahead budget
+/// of the `pred?` table.
+const FRONTIER_VALUE: &str = "( b AND NOT ( NOT c < ( d AND NOT e IN ( f ) ) ) )";
+
+/// The guarded states of the static-only table keep their stack guard: where
+/// the guard defers, they skip without adaptivePredict. So the static-only
+/// parser matches the adaptive one inside and outside an assignment target,
+/// also at the lookahead budget.
 #[test]
-fn static_dfa_only_matches_the_adaptive_engine_where_take_wins() {
+fn static_dfa_only_matches_the_adaptive_engine() {
+    let frontier_eval = format!("a = {FRONTIER_VALUE} ;");
+    let frontier_assign = format!("set a = {FRONTIER_VALUE} ;");
     for input in [
+        // The skip wins: the assignment's own '=' must come through.
+        "set a = b ;",
+        "set x = ( a = b ) ;",
+        "set a = NOT b = c ;",
+        frontier_assign.as_str(),
+        // The take wins.
         "a = b ;",
         "a = b AND c = d ;",
         "a IN ( b ) ;",
@@ -863,61 +881,141 @@ fn static_dfa_only_matches_the_adaptive_engine_where_take_wins() {
         "NOT a = b ;",
         "a < b OR c > d ;",
         "a ;",
+        frontier_eval.as_str(),
     ] {
         let [adaptive, static_only] = parse_guard_both(input);
         assert!(adaptive.1.is_empty(), "{input:?}: {adaptive:?}");
         assert_eq!(static_only, adaptive, "{input:?}");
     }
-}
-
-/// The guarded take predicts the take without the stack guard, so an
-/// assignment target reads `a = b` as a comparison and the assignment misses
-/// its own `=`.
-#[test]
-fn static_dfa_only_resolves_the_guarded_take_to_the_take() {
-    let [adaptive, static_only] = parse_guard_both("set a = b ;");
-    assert!(adaptive.1.is_empty(), "{adaptive:?}");
-    assert!(
-        static_only.0.contains("(pred = (value b))"),
-        "the take wins: {static_only:?}"
-    );
-    assert_eq!(
-        static_only.1,
-        ["line 1:10 mismatched input ';' expecting {'=', 'AND', 'OR'}"]
-    );
-}
-
-/// The value after `=` follows the 16-token witness of the lookahead budget
-/// of the `pred?` table. At the budget, the static-only table predicts the
-/// minimum viable alternative, the take.
-const FRONTIER_VALUE: &str = "( b AND NOT ( NOT c < ( d AND NOT e IN ( f ) ) ) )";
-
-/// Outside an assignment target, the take is the right guess at the budget,
-/// so the static-only parser matches the adaptive one.
-#[test]
-fn static_dfa_only_guesses_right_at_the_lookahead_budget() {
-    let input = format!("a = {FRONTIER_VALUE} ;");
-    let [adaptive, static_only] = parse_guard_both(&input);
-    assert!(adaptive.1.is_empty(), "{adaptive:?}");
-    assert_eq!(static_only, adaptive);
-}
-
-/// In an assignment target, the skip is right. The guess at the budget takes,
-/// so the static-only parser reports a syntax error.
-#[test]
-fn static_dfa_only_reports_a_syntax_error_after_a_wrong_guess() {
-    let input = format!("set a = {FRONTIER_VALUE} ;");
-    let [adaptive, static_only] = parse_guard_both(&input);
-    assert!(adaptive.1.is_empty(), "{adaptive:?}");
+    let [_, static_only] = parse_guard_both("set a = b ;");
     assert!(
         static_only
             .0
+            .contains("set (expr (value a)) = (expr (value b)) ;"),
+        "the guarded skip lets the assignment through: {static_only:?}"
+    );
+}
+
+/// `set a = b = c ;` is ambiguous: both `set (a = b) = c ;` and
+/// `set a = (b = c) ;` parse. Full-context prediction takes the minimum
+/// alternative (the take). The static-only guard sees the assignment on the
+/// stack and skips. Both parses are free of errors.
+#[test]
+fn static_dfa_only_skips_in_an_ambiguous_assignment_target() {
+    let [adaptive, static_only] = parse_guard_both("set a = b = c ;");
+    assert!(adaptive.1.is_empty(), "{adaptive:?}");
+    assert!(static_only.1.is_empty(), "{static_only:?}");
+    assert!(
+        adaptive.0.contains("(pred = (value b))"),
+        "the take wins: {adaptive:?}"
+    );
+    assert!(
+        static_only
+            .0
+            .starts_with("(prog (stmt set (expr (value a)) ="),
+        "the skip wins: {static_only:?}"
+    );
+}
+
+/// The guard sees the assignment on the stack, but not the input after the
+/// lookahead of the table. In `set a = ( b ) = c = d ;`, the token that
+/// rules out the skip is the second `=` after `c`. So the guard skips, and the
+/// static-only parser reports a syntax error where the adaptive one takes.
+#[test]
+fn static_dfa_only_reports_a_syntax_error_after_a_wrong_skip() {
+    let [adaptive, static_only] = parse_guard_both("set a = ( b ) = c = d ;");
+    assert!(adaptive.1.is_empty(), "{adaptive:?}");
+    assert!(
+        adaptive
+            .0
             .starts_with("(prog (stmt set (expr (value a) (pred = (value ("),
-        "the take wins: {static_only:?}"
+        "the take wins: {adaptive:?}"
+    );
+    assert!(
+        static_only
+            .0
+            .starts_with("(prog (stmt set (expr (value a)) ="),
+        "the skip wins: {static_only:?}"
     );
     assert_eq!(
         static_only.1,
-        ["line 1:59 mismatched input ';' expecting {'=', 'AND', 'OR', '<', '>', 'IN', ')'}"]
+        ["line 1:18 mismatched input '=' expecting {';', 'AND', 'OR'}"]
+    );
+}
+
+/// Parses `input` with one generated `InlineAlias` parser module, and returns
+/// the tree and the syntax errors.
+macro_rules! parse_alias_with {
+    ($parser:ident, $input:expr) => {
+        Arena::with(|arena| {
+            let lexer = gen::inlinealiaslexer::InlineAliasLexer::<_, CommonTokenFactory>::new(
+                arena,
+                InputStream::new($input),
+            );
+            let tokens = CommonTokenStream::new(lexer);
+            let mut parser = gen::$parser::InlineAliasParser::new(arena, tokens);
+            let listener = CollectingErrorListener::default();
+            let messages = listener.messages.clone();
+            parser.remove_error_listeners();
+            parser.add_error_listener(Box::new(listener));
+            let tree = match parser.stmt() {
+                Ok(ctx) => string_tree(ctx, parser.get_rule_names()),
+                Err(error) => format!("ERR {error}"),
+            };
+            let messages = messages.borrow().clone();
+            (tree, messages)
+        })
+    };
+}
+
+/// Parses `input` with the adaptive and the `--static-dfa-only` `InlineAlias`
+/// parsers, and returns the tree and the syntax errors of each.
+fn parse_alias_both(input: &str) -> [(String, Vec<String>); 2] {
+    [
+        parse_alias_with!(inlinealiasparser, input),
+        parse_alias_with!(inlinealiasparser_static_only, input),
+    ]
+}
+
+#[test]
+fn inline_alias_static_dfa_only_parser_never_calls_adaptive_predict() {
+    let src = include_str!("gen/inlinealiasparser_static_only.rs");
+    assert!(src.contains("dfa_predict("), "expected table prediction");
+    assert_eq!(src.matches("adaptive_predict(").count(), 0);
+}
+
+/// The alias is a postfix operator of the recursive expression, and `AS` also
+/// follows the operand of `CAST`. The static-only guard of the operator loop
+/// exits where the `CAST` operand is on the stack, and keeps the alias
+/// everywhere else. The `AND` states have their own guard group, so the
+/// `CAST` operand does not make an `AND` exit.
+#[test]
+fn inline_alias_static_dfa_only_matches_the_adaptive_engine() {
+    for input in [
+        "SELECT x AS a , y = z AS b FROM t",
+        "SELECT x AS INT64",
+        "SELECT ( x AS INT64 )",
+        "SELECT CAST ( x AS INT64 )",
+        "SELECT CAST ( x AS y AS INT64 )",
+        "SELECT CAST ( ( x AS inner ) AS INT64 ) AS outer",
+        "SELECT CAST ( CAST ( x AS t ) AS INT64 )",
+        "SELECT CAST ( a AND b AS INT64 )",
+        "SELECT ( CAST ( a AS t ) AND b ) AS c",
+        "SELECT a ROWS BETWEEN x AND y",
+        "SELECT a ROWS BETWEEN CAST ( x AS INT64 ) AND y",
+        "SELECT a ROWS BETWEEN x AS b AND y",
+        "CREATE VIEW v ORDER BY d AS SELECT x FROM t",
+        "CREATE VIEW v ORDER BY d AS a , e AS SELECT x",
+        "CREATE VIEW v ORDER BY CAST ( d AS t ) AS SELECT x",
+    ] {
+        let [adaptive, static_only] = parse_alias_both(input);
+        assert!(adaptive.1.is_empty(), "{input:?}: {adaptive:?}");
+        assert_eq!(static_only, adaptive, "{input:?}");
+    }
+    let [_, cast] = parse_alias_both("SELECT CAST ( x AS INT64 )");
+    assert!(
+        cast.0.contains("(expr CAST ( (expr x) AS (type INT64) ))"),
+        "the cast closes: {cast:?}"
     );
 }
 
@@ -1185,14 +1283,25 @@ fn guarded_obligations_match_the_adaptive_engine() {
             "both hybrid precedence classes carry guards"
         );
         for table in guarded {
-            // `prior` (9) and the first `p` of `trim` (15) trip the guard.
-            assert_eq!(table.guard_step(9), Some(true));
-            assert_eq!(table.guard_step(15), Some(true));
-            // The right operand of `p '+' p` (40) is in `guard_pass`.
-            assert_eq!(table.guard_step(40), None);
-            // The slice bound of `'[' ID ':' p ']'` (22, 31) is sealed by `']'`.
-            assert_eq!(table.guard_step(22), Some(false));
-            assert_eq!(table.guard_step(31), Some(false));
+            // `prior` (9) and the first `p` of `trim` (15) trip the guard,
+            // each in its own guard group.
+            let groups = table.num_guard_groups() as u32;
+            assert_eq!(groups, 2);
+            let trips = |state| {
+                (0..groups)
+                    .filter(|&group| table.guard_step(group, state) == Some(true))
+                    .count()
+            };
+            assert_eq!(trips(9), 1);
+            assert_eq!(trips(15), 1);
+            for group in 0..groups {
+                // The right operand of `p '+' p` (40) is in `guard_pass`.
+                assert_eq!(table.guard_step(group, 40), None);
+                // The slice bound of `'[' ID ':' p ']'` (22, 31) is sealed by
+                // `']'`.
+                assert_eq!(table.guard_step(group, 22), Some(false));
+                assert_eq!(table.guard_step(group, 31), Some(false));
+            }
         }
     });
 

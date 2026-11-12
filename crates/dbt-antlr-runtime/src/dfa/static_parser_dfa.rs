@@ -66,7 +66,7 @@
 //! - `outcomes`: `num_states` `i32` entries: `0` for a state that continues
 //!   the walk, the predicted alternative of an accept state, or a tagged
 //!   terminal (escape, continuation slot, conflict escape with its lowest
-//!   conflicting alternative, or guarded take with its alternative).
+//!   conflicting alternative, or guarded state with its [`Guard`]).
 //! - `fallbacks`: `fallbacks_len` `i32` entries, either none or one per state:
 //!   the lowest alternative that already left the decision, `0` for none.
 //! - `row_of`: `num_states` `u16` entries: the row of the state, `NO_ROW` for
@@ -75,8 +75,12 @@
 //! - `rows`: `num_rows * row_width` `u16` entries: the distinct rows. Column
 //!   `c` is the token `min_token + c`. An entry is `NO_EDGE` or the target
 //!   state, with [`TERMINAL_BIT`] set when the target's outcome is not `0`.
-//! - `guard_danger`, `guard_pass`: sorted, distinct invoking states of the
-//!   guard of a guarded table.
+//! - `guard_danger`: the danger sets of all guard groups, back to back. Each
+//!   set is a sorted list of distinct invoking states.
+//! - `guard_pass`: the sorted, distinct invoking states that the guard walk of
+//!   every group continues through.
+//! - `guard_groups`: `0` or `G + 1` `u32` entries for `G` guard groups. Group
+//!   `g` is the span `guard_groups[g]..guard_groups[g + 1]` of `guard_danger`.
 //! - `continuations`: `ContinuationRecord`s, one per frontier escape state.
 //! - `continuation_ctxs`: the context DAG nodes of all continuations, as
 //!   spans of `continuation_ctx_edges`.
@@ -95,9 +99,10 @@ pub const STATIC_PARSER_DFA_MAGIC: u32 = 0x5344_4641;
 
 /// Version of the table image format.
 ///
-/// Version 3 is the packed zero-copy image; version 2 was a word stream that
-/// decoded into owned tables.
-pub const FORMAT_VERSION: u32 = 3;
+/// Version 4 adds the defer alternative and the guard group of a guarded
+/// state. Version 3 is the packed zero-copy image. Version 2 was a word stream
+/// that decoded into owned tables.
+pub const FORMAT_VERSION: u32 = 4;
 
 /// Accept marker of a state whose decision must be recomputed by the adaptive
 /// simulation: the static construction stopped here.
@@ -108,9 +113,11 @@ pub const ESCAPE: i32 = -1;
 pub const CONFLICT_ESCAPE: i32 = -2;
 
 /// Accept marker of a state whose alternative is decided by a runtime stack
-/// guard: the tree is resolved to the guarded alternative unless the real parse
-/// stack can reach one of the decision's guard roots, in which case the walker
-/// defers to the adaptive simulation.
+/// guard: the walk resolves to the guarded alternative unless the real parse
+/// stack can reach one of the guard roots of the state. If the stack can
+/// reach a root, the walk returns the defer alternative of the state. A defer
+/// alternative of [`crate::atn::INVALID_ALT`] hands the decision to the
+/// adaptive simulation.
 pub const GUARDED: i32 = -3;
 
 /// First virtual alternative of a decision.
@@ -148,8 +155,15 @@ const OUTCOME_PAYLOAD: u32 = 0x1FFF_FFFF;
 const OUTCOME_CONTINUATION: u32 = 0x8000_0000;
 /// Outcome tag of a conflict escape with its lowest conflicting alternative.
 const OUTCOME_CONFLICT: u32 = 0xA000_0000;
-/// Outcome tag of a guarded take with its alternative.
+/// Outcome tag of a guarded state with its [`Guard`].
 const OUTCOME_GUARDED: u32 = 0xC000_0000;
+/// Bits of the guarded alternative and of the defer alternative in the payload
+/// of a guarded outcome.
+const GUARD_ALT_BITS: u32 = 8;
+/// Largest guarded or defer alternative.
+pub const MAX_GUARD_ALT: i32 = (1 << GUARD_ALT_BITS) - 1;
+/// Largest number of guard groups of one table.
+pub const MAX_GUARD_GROUPS: usize = 1 << (29 - 2 * GUARD_ALT_BITS);
 /// Outcome of a plain escape.
 const OUTCOME_ESCAPE: i32 = -1;
 
@@ -311,6 +325,20 @@ impl Display for StaticParserDfaError {
 
 impl std::error::Error for StaticParserDfaError {}
 
+/// The runtime stack guard of a guarded state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Guard {
+    /// The alternative of the state when the guard does not defer: the take
+    /// of an optional postfix, or the iterate of a precedence loop.
+    pub alt: i32,
+    /// The alternative of the state when the guard defers: the skip or the
+    /// exit, or [`crate::atn::INVALID_ALT`] to hand the decision to the
+    /// adaptive simulation.
+    pub defer_alt: i32,
+    /// The guard group that holds the danger set of the state.
+    pub group: u32,
+}
+
 /// The terminal outcome of a table state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Outcome {
@@ -323,8 +351,8 @@ pub(crate) enum Outcome {
     Escape(Option<u32>),
     /// A trusted SLL conflict with its lowest conflicting alternative.
     Conflict(i32),
-    /// A guarded take with its alternative.
-    Guarded(i32),
+    /// A state that a runtime stack guard decides.
+    Guarded(Guard),
 }
 
 impl Outcome {
@@ -346,7 +374,16 @@ impl Outcome {
         match raw & OUTCOME_TAG {
             OUTCOME_CONTINUATION => Some(Self::Escape(Some(payload))),
             OUTCOME_CONFLICT if payload > 0 => Some(Self::Conflict(payload as i32)),
-            OUTCOME_GUARDED if payload > 0 => Some(Self::Guarded(payload as i32)),
+            OUTCOME_GUARDED => {
+                let alt = (payload & MAX_GUARD_ALT as u32) as i32;
+                let defer_alt = ((payload >> GUARD_ALT_BITS) & MAX_GUARD_ALT as u32) as i32;
+                let group = payload >> (2 * GUARD_ALT_BITS);
+                (alt > 0 && defer_alt != alt).then_some(Self::Guarded(Guard {
+                    alt,
+                    defer_alt,
+                    group,
+                }))
+            }
             _ => None,
         }
     }
@@ -360,7 +397,12 @@ impl Outcome {
             Self::Escape(None) => OUTCOME_ESCAPE,
             Self::Escape(Some(slot)) => (OUTCOME_CONTINUATION | slot) as i32,
             Self::Conflict(alt) => (OUTCOME_CONFLICT | alt as u32) as i32,
-            Self::Guarded(alt) => (OUTCOME_GUARDED | alt as u32) as i32,
+            Self::Guarded(guard) => {
+                (OUTCOME_GUARDED
+                    | guard.alt as u32
+                    | (guard.defer_alt as u32) << GUARD_ALT_BITS
+                    | guard.group << (2 * GUARD_ALT_BITS)) as i32
+            }
         }
     }
 
@@ -451,6 +493,10 @@ struct Header {
     guard_pass: u32,
     /// Number of invoking states in the guard pass set.
     guard_pass_len: u32,
+    /// Byte offset of the guard group spans.
+    guard_groups: u32,
+    /// Number of guard group span entries: `0`, or the group count plus one.
+    guard_groups_len: u32,
     /// Byte offset of the continuation records.
     continuations: u32,
     /// Number of continuation records.
@@ -794,6 +840,21 @@ impl StaticParserTable {
         self.section(header.guard_danger, header.guard_danger_len)
     }
 
+    fn guard_groups(&self) -> &[u32] {
+        let header = self.header();
+        self.section(header.guard_groups, header.guard_groups_len)
+    }
+
+    /// The danger set of a guard group.
+    ///
+    /// Panics when `group` is not a guard group of the table.
+    #[inline]
+    fn guard_group_danger(&self, group: u32) -> &[i32] {
+        let groups = self.guard_groups();
+        let group = group as usize;
+        &self.guard_danger()[groups[group] as usize..groups[group + 1] as usize]
+    }
+
     fn guard_pass(&self) -> &[i32] {
         let header = self.header();
         self.section(header.guard_pass, header.guard_pass_len)
@@ -912,8 +973,15 @@ impl StaticParserTable {
     ///
     /// Panics when `state` is not a state of the table.
     pub fn guarded_alt(&self, state: i32) -> Option<i32> {
+        self.guard(state).map(|guard| guard.alt)
+    }
+
+    /// The stack guard of a state, if the state is guarded.
+    ///
+    /// Panics when `state` is not a state of the table.
+    pub fn guard(&self, state: i32) -> Option<Guard> {
         match self.outcome(state) {
-            Outcome::Guarded(alt) => Some(alt),
+            Outcome::Guarded(guard) => Some(guard),
             _ => None,
         }
     }
@@ -925,14 +993,25 @@ impl StaticParserTable {
             .any(|&raw| matches!(Outcome::decode(raw), Some(Outcome::Guarded(_))))
     }
 
-    /// The guard step of one invoking state. `Some(true)` means the follow
-    /// region of the state reaches a guard root, so the take defers.
-    /// `Some(false)` means a mandatory token seals the frame off, so the take is
-    /// resolved. `None` means the frame can pop out of its rule, so the stack
-    /// walk continues upwards.
+    /// The number of guard groups of the table.
+    pub fn num_guard_groups(&self) -> usize {
+        self.guard_groups().len().saturating_sub(1)
+    }
+
+    /// The guard step of one invoking state for a guard group. `Some(true)`
+    /// means that the follow region of the state reaches a guard root of the
+    /// group, so the guard defers. `Some(false)` means that a mandatory token
+    /// seals the frame off, so the guard does not defer. `None` means that the
+    /// frame can pop out of its rule, so the stack walk continues upwards.
+    ///
+    /// Panics when `group` is not a guard group of the table.
     #[inline]
-    pub fn guard_step(&self, invoking_state: i32) -> Option<bool> {
-        if self.guard_danger().binary_search(&invoking_state).is_ok() {
+    pub fn guard_step(&self, group: u32, invoking_state: i32) -> Option<bool> {
+        if self
+            .guard_group_danger(group)
+            .binary_search(&invoking_state)
+            .is_ok()
+        {
             return Some(true);
         }
         if self.guard_pass().binary_search(&invoking_state).is_err() {
@@ -1072,11 +1151,37 @@ impl StaticParserTable {
         }
         debug_assert_eq!(self.rows().len(), num_cells);
 
-        for set in [self.guard_danger(), self.guard_pass()] {
+        let groups = self.guard_groups();
+        let danger_len = self.guard_danger().len();
+        if !groups.is_empty()
+            && (groups.len() < 2
+                || groups.len() - 1 > MAX_GUARD_GROUPS
+                || groups[0] != 0
+                || groups[groups.len() - 1] as usize != danger_len
+                || groups.windows(2).any(|pair| pair[0] > pair[1]))
+        {
+            return Err(malformed("the guard groups"));
+        }
+        if groups.is_empty() && danger_len != 0 {
+            return Err(malformed("the guard groups"));
+        }
+        let danger_sets = groups
+            .windows(2)
+            .map(|pair| &self.guard_danger()[pair[0] as usize..pair[1] as usize]);
+        for set in danger_sets.chain([self.guard_pass()]) {
             if set.first().is_some_and(|&state| state < 0)
                 || set.windows(2).any(|pair| pair[0] >= pair[1])
             {
                 return Err(malformed("a guard set"));
+            }
+        }
+        let num_groups = groups.len().saturating_sub(1);
+        for &raw in outcomes {
+            let Some(Outcome::Guarded(guard)) = Outcome::decode(raw) else {
+                continue;
+            };
+            if guard.group as usize >= num_groups {
+                return Err(reference("guard group", i64::from(guard.group), num_groups));
             }
         }
 
@@ -1186,7 +1291,7 @@ impl Header {
         let total = words as u64 * 4;
         let records = |len: u32, size: usize| u64::from(len) * size as u64;
         let packed = |entries: u64| entries.div_ceil(2) * 4;
-        let sections: [(&'static str, u32, u64); 11] = [
+        let sections: [(&'static str, u32, u64); 12] = [
             ("outcomes", self.outcomes, records(self.num_states, 4)),
             ("fallbacks", self.fallbacks, records(self.fallbacks_len, 4)),
             ("row_of", self.row_of, packed(num_states as u64)),
@@ -1200,6 +1305,11 @@ impl Header {
                 "guard_pass",
                 self.guard_pass,
                 records(self.guard_pass_len, 4),
+            ),
+            (
+                "guard_groups",
+                self.guard_groups,
+                records(self.guard_groups_len, 4),
             ),
             (
                 "continuations",
@@ -1784,7 +1894,11 @@ mod build {
         /// Per state, the canonical sorted disjoint `(lo, hi, target)` runs.
         edges: Vec<Vec<(i32, i32, u32)>>,
         continuations: Vec<ParserContinuation>,
+        /// The danger sets of all guard groups, back to back.
         guard_danger: Vec<i32>,
+        /// The span bounds of the guard groups in `guard_danger`: empty, or
+        /// `0` and then the end of every group.
+        guard_group_ends: Vec<u32>,
         guard_pass: Vec<i32>,
     }
 
@@ -1841,6 +1955,7 @@ mod build {
                 edges: edges.iter().map(|ranges| canonical_runs(ranges)).collect(),
                 continuations: Vec::new(),
                 guard_danger: Vec::new(),
+                guard_group_ends: Vec::new(),
                 guard_pass: Vec::new(),
             };
             for continuation in continuations {
@@ -1868,35 +1983,52 @@ mod build {
             }
         }
 
-        /// Attaches the guard section: the alternative of every guarded
-        /// state, plus the decision's guard danger and pass sets (invoking
-        /// state numbers).
+        /// Attaches the guard section: the guard of every guarded state, the
+        /// danger set of every guard group, and the pass set of the table
+        /// (invoking state numbers).
         #[must_use]
         pub fn with_guards(
             mut self,
-            guarded_alts: Vec<i32>,
-            mut guard_danger: Vec<i32>,
+            guards: Vec<Option<Guard>>,
+            guard_groups: Vec<Vec<i32>>,
             mut guard_pass: Vec<i32>,
         ) -> Self {
-            assert_eq!(
-                guarded_alts.len(),
-                self.outcomes.len(),
-                "one guarded alternative per state"
+            assert_eq!(guards.len(), self.outcomes.len(), "one guard per state");
+            assert!(
+                guard_groups.len() <= MAX_GUARD_GROUPS,
+                "a table has at most {MAX_GUARD_GROUPS} guard groups"
             );
-            for (state, &alt) in guarded_alts.iter().enumerate() {
-                if alt > 0 {
-                    assert!(alt as u32 <= OUTCOME_PAYLOAD);
-                    if let Outcome::Escape(Some(_)) = self.outcomes[state] {
-                        panic!("guarded state {state} carries a continuation");
-                    }
-                    self.outcomes[state] = Outcome::Guarded(alt);
+            for (state, guard) in guards.into_iter().enumerate() {
+                let Some(guard) = guard else { continue };
+                assert!(
+                    (1..=MAX_GUARD_ALT).contains(&guard.alt)
+                        && (0..=MAX_GUARD_ALT).contains(&guard.defer_alt)
+                        && guard.defer_alt != guard.alt,
+                    "invalid guard {guard:?} of state {state}"
+                );
+                assert!(
+                    (guard.group as usize) < guard_groups.len(),
+                    "guard group {} of state {state} is not a group of the table",
+                    guard.group
+                );
+                if let Outcome::Escape(Some(_)) = self.outcomes[state] {
+                    panic!("guarded state {state} carries a continuation");
                 }
+                self.outcomes[state] = Outcome::Guarded(guard);
             }
-            guard_danger.sort_unstable();
-            guard_danger.dedup();
+            self.guard_danger.clear();
+            self.guard_group_ends.clear();
+            if !guard_groups.is_empty() {
+                self.guard_group_ends.push(0);
+            }
+            for mut danger in guard_groups {
+                danger.sort_unstable();
+                danger.dedup();
+                self.guard_danger.extend(danger);
+                self.guard_group_ends.push(self.guard_danger.len() as u32);
+            }
             guard_pass.sort_unstable();
             guard_pass.dedup();
-            self.guard_danger = guard_danger;
             self.guard_pass = guard_pass;
             self
         }
@@ -2032,6 +2164,8 @@ mod build {
                 guard_danger_len: self.guard_danger.len() as u32,
                 guard_pass: 0,
                 guard_pass_len: self.guard_pass.len() as u32,
+                guard_groups: 0,
+                guard_groups_len: self.guard_group_ends.len() as u32,
                 continuations: 0,
                 continuations_len: records.len() as u32,
                 continuation_ctxs: 0,
@@ -2054,6 +2188,7 @@ mod build {
             header.guard_danger =
                 push_words(&mut words, self.guard_danger.iter().map(|&s| s as u32));
             header.guard_pass = push_words(&mut words, self.guard_pass.iter().map(|&s| s as u32));
+            header.guard_groups = push_words(&mut words, self.guard_group_ends.iter().copied());
             header.continuations = push_words(
                 &mut words,
                 records.iter().flat_map(|record| {
@@ -2383,31 +2518,131 @@ mod tests {
     }
 
     #[test]
-    fn guarded_takes_round_trip_through_the_guard_section() {
+    fn guarded_states_round_trip_through_the_guard_section() {
+        let guard = |alt, defer_alt, group| {
+            Some(Guard {
+                alt,
+                defer_alt,
+                group,
+            })
+        };
         let built = single(
             StaticParserTableBuilder::from_state_edges(
                 0,
-                vec![0, GUARDED],
-                vec![0, 0],
-                vec![0, 0],
+                vec![0, GUARDED, GUARDED],
+                vec![0, 0, 0],
+                vec![0, 0, 0],
                 Vec::new(),
-                &[vec![(1, 1, 1)], Vec::new()],
+                &[vec![(1, 1, 1), (2, 2, 2)], Vec::new(), Vec::new()],
             )
-            .with_guards(vec![0, 1], vec![9, 4], vec![7, 2]),
+            .with_guards(
+                vec![None, guard(1, 0, 0), guard(1, 2, 1)],
+                vec![vec![9, 4], vec![11]],
+                vec![7, 2],
+            ),
         );
         let table = reload(&built);
         let table = table.table(0, 0).expect("the table");
         assert!(table.has_guards());
-        // `4` reaches a guard root (defer), `9` too; `2` is a pass state, so
-        // the walk continues past it; `5` is sealed (resolve the take).
-        assert_eq!(table.guard_step(4), Some(true));
-        assert_eq!(table.guard_step(9), Some(true));
-        assert_eq!(table.guard_step(2), None);
-        assert_eq!(table.guard_step(7), None);
-        assert_eq!(table.guard_step(5), Some(false));
+        assert_eq!(table.num_guard_groups(), 2);
+        // `4` and `9` reach a guard root of group 0, so the guard defers. `2`
+        // is a pass state, so the walk continues past it. `5` is sealed, so
+        // the state resolves to the guarded alternative.
+        assert_eq!(table.guard_step(0, 4), Some(true));
+        assert_eq!(table.guard_step(0, 9), Some(true));
+        assert_eq!(table.guard_step(0, 2), None);
+        assert_eq!(table.guard_step(0, 7), None);
+        assert_eq!(table.guard_step(0, 5), Some(false));
+        assert_eq!(table.guard_step(0, 11), Some(false));
+        // Each group has its own danger set.
+        assert_eq!(table.guard_step(1, 11), Some(true));
+        assert_eq!(table.guard_step(1, 4), Some(false));
+        assert_eq!(table.guard_step(1, 2), None);
         assert_eq!(table.guarded_alt(1), Some(1));
+        assert_eq!(table.guard(1), guard(1, 0, 0));
+        assert_eq!(table.guard(2), guard(1, 2, 1));
         assert_eq!(table.guarded_alt(0), None);
         assert_eq!(table.accept(1), GUARDED);
+        assert_eq!(table.accept(2), GUARDED);
+    }
+
+    #[test]
+    fn malformed_guards_are_rejected() {
+        let guarded = |groups: Vec<Vec<i32>>| {
+            StaticParserTableBuilder::from_state_edges(
+                0,
+                vec![GUARDED],
+                vec![0],
+                vec![0],
+                Vec::new(),
+                &[Vec::new()],
+            )
+            .with_guards(
+                vec![Some(Guard {
+                    alt: 1,
+                    defer_alt: 2,
+                    group: 0,
+                })],
+                groups,
+                Vec::new(),
+            )
+        };
+        // The word index of a section of the table image in its container.
+        let section = |words: &[u32], start: usize, field: fn(&Header) -> u32| {
+            // SAFETY: the table image starts with its header.
+            let header = unsafe { *(words[start..].as_ptr() as *const Header) };
+            start + field(&header) as usize / 4
+        };
+        let (words, _) = container(&guarded(vec![vec![3, 1]]));
+        assert!(reload_owned(words).is_ok());
+
+        // A guarded state names a group that the table does not have.
+        let (mut words, start) = container(&guarded(vec![vec![3]]));
+        let outcomes = section(&words, start, |h| h.outcomes);
+        words[outcomes] |= 1 << 16;
+        assert!(matches!(
+            reload_owned(words),
+            Err(StaticParserDfaError::InvalidReference {
+                what: "guard group",
+                ..
+            })
+        ));
+
+        // The defer alternative equals the guarded alternative.
+        let (mut words, start) = container(&guarded(vec![vec![3]]));
+        let outcomes = section(&words, start, |h| h.outcomes);
+        words[outcomes] = (words[outcomes] & !0xFF00) | (1 << 8);
+        assert!(matches!(
+            reload_owned(words),
+            Err(StaticParserDfaError::Malformed {
+                what: "a state outcome",
+                ..
+            })
+        ));
+
+        // The group spans do not cover the danger sets.
+        let (mut words, start) = container(&guarded(vec![vec![3, 5]]));
+        let groups = section(&words, start, |h| h.guard_groups);
+        words[groups + 1] = 1;
+        assert!(matches!(
+            reload_owned(words),
+            Err(StaticParserDfaError::Malformed {
+                what: "the guard groups",
+                ..
+            })
+        ));
+
+        // A danger set is not sorted.
+        let (mut words, start) = container(&guarded(vec![vec![3, 5]]));
+        let danger = section(&words, start, |h| h.guard_danger);
+        words.swap(danger, danger + 1);
+        assert!(matches!(
+            reload_owned(words),
+            Err(StaticParserDfaError::Malformed {
+                what: "a guard set",
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -2698,7 +2933,11 @@ mod tests {
         ));
         let guarded = StaticParserTables::new(
             Vec::new(),
-            vec![table(-1, vec![1], &[Vec::new()]).with_guards(vec![0], vec![3], Vec::new())],
+            vec![table(-1, vec![1], &[Vec::new()]).with_guards(
+                vec![None],
+                vec![vec![3]],
+                Vec::new(),
+            )],
         );
         assert!(matches!(
             guarded.validate_for_atn(&atn),

@@ -57,6 +57,15 @@ const ITERATE_EXIT_ALT: i32 = 2;
 /// `(ATN state number, alternative)`.
 pub(super) type Taint = HashMap<(i32, i32), i32>;
 
+/// Union of the guard roots of every path that reached a closed config, keyed
+/// like [`Taint`]. A config without roots has no entry.
+///
+/// A root rides on the lineage of the configuration that consumed outside the
+/// decision's discipline. When that lineage dies on a later token, its roots
+/// die with it, so a guarded state only carries the roots of the readings that
+/// are still alive there.
+pub(super) type GuardRoots = HashMap<(i32, i32), BTreeSet<i32>>;
+
 /// A closed config set with the taints of the paths that produced it.
 ///
 /// The configs are *not* merged here: like the reference classifier, the
@@ -68,6 +77,7 @@ pub(super) type Taint = HashMap<(i32, i32), i32>;
 pub(super) struct ClosedSet<'a> {
     pub(super) configs: Vec<ATNConfig<'a>>,
     pub(super) taint: Taint,
+    pub(super) roots: GuardRoots,
 }
 
 impl ClosedSet<'_> {
@@ -212,6 +222,36 @@ impl CallSites {
     }
 }
 
+/// The interned guard-root sets of one closure, so that the closure can pass
+/// a root set down its recursion as one number. Set `0` is the empty set.
+struct RootPool {
+    sets: Vec<BTreeSet<i32>>,
+    ids: HashMap<BTreeSet<i32>, u32>,
+}
+
+impl RootPool {
+    fn new() -> Self {
+        Self {
+            sets: vec![BTreeSet::new()],
+            ids: HashMap::from([(BTreeSet::new(), 0)]),
+        }
+    }
+
+    fn intern(&mut self, set: BTreeSet<i32>) -> u32 {
+        if let Some(&id) = self.ids.get(&set) {
+            return id;
+        }
+        let id = self.sets.len() as u32;
+        self.sets.push(set.clone());
+        self.ids.insert(set, id);
+        id
+    }
+
+    fn get(&self, id: u32) -> &BTreeSet<i32> {
+        &self.sets[id as usize]
+    }
+}
+
 /// One config that a successor set starts from: a rule-stop config that
 /// reads EOF, or the config after a token transition.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -222,7 +262,8 @@ struct Step<'a> {
     /// `ATNConfig` ignores most bits of that field.
     outer: i32,
     taint: i32,
-    roots: BTreeSet<i32>,
+    /// The [`RootPool`] set of the guard roots of the step.
+    roots: u32,
 }
 
 /// The configs produced by one closure root, in insertion order.
@@ -230,7 +271,10 @@ struct SetBuilder<'a> {
     configs: Vec<ATNConfig<'a>>,
     seen: HashSet<ATNConfig<'a>>,
     taint: Taint,
-    busy: HashSet<(ATNConfig<'a>, i32, bool)>,
+    roots: GuardRoots,
+    /// The explored `(config, taint, chasing)` keys with the depth of their
+    /// first exploration and the guard roots they were explored with.
+    busy: HashMap<(ATNConfig<'a>, i32, bool), (i32, BTreeSet<i32>)>,
 }
 
 impl<'a> SetBuilder<'a> {
@@ -239,11 +283,12 @@ impl<'a> SetBuilder<'a> {
             configs: Vec::new(),
             seen: HashSet::new(),
             taint: Taint::new(),
-            busy: HashSet::new(),
+            roots: GuardRoots::new(),
+            busy: HashMap::new(),
         }
     }
 
-    fn record(&mut self, config: &ATNConfig<'a>, taint: i32) {
+    fn record(&mut self, config: &ATNConfig<'a>, taint: i32, roots: &BTreeSet<i32>) {
         let key = (config.get_state().get_state_number(), config.get_alt());
         let slot = self.taint.entry(key).or_insert(0);
         *slot |= taint;
@@ -253,10 +298,16 @@ impl<'a> SetBuilder<'a> {
             // usage into "all configs crossed the boundary".
             *slot |= INTERIOR_TAINT;
         }
+        if !roots.is_empty() {
+            self.roots
+                .entry(key)
+                .or_default()
+                .extend(roots.iter().copied());
+        }
     }
 
-    fn insert(&mut self, config: ATNConfig<'a>, taint: i32) {
-        self.record(&config, taint);
+    fn insert(&mut self, config: ATNConfig<'a>, taint: i32, roots: &BTreeSet<i32>) {
+        self.record(&config, taint, roots);
         if self.seen.insert(config.clone()) {
             self.configs.push(config);
         }
@@ -266,6 +317,7 @@ impl<'a> SetBuilder<'a> {
         ClosedSet {
             configs: self.configs,
             taint: self.taint,
+            roots: self.roots,
         }
     }
 }
@@ -313,6 +365,14 @@ pub(super) struct Closure<'atn, 'a> {
     /// Set when the visit budget ran out: the config sets built from here on
     /// are incomplete, so the attempt has to be discarded as an overflow.
     pub(super) exhausted: bool,
+    /// The guard-root sets of the closure.
+    roots: RootPool,
+    /// The [`RootPool`] set of the closure root that runs now: every config
+    /// that the root reaches gets its roots.
+    current_roots: u32,
+    /// `true` while the closure explores known configs again only to give
+    /// them more guard roots.
+    propagating_roots: bool,
 }
 
 impl<'atn, 'a> Closure<'atn, 'a> {
@@ -344,6 +404,9 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             rule_visits: vec![0; atn.rule_to_start_state.len()],
             visit_budget,
             exhausted: false,
+            roots: RootPool::new(),
+            current_roots: 0,
+            propagating_roots: false,
         }
     }
 
@@ -375,6 +438,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                 (index + 1) as i32,
                 Some(PredictionContextRef::new_empty()),
             );
+            self.current_roots = 0;
             self.closure(config, 0, 0, &mut out);
         }
         self.precedence_start = false;
@@ -395,7 +459,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
     pub(super) fn successors(
         &mut self,
         closed: &ClosedSet<'a>,
-    ) -> Vec<(IntervalSetBuf, ClosedSet<'a>, BTreeSet<i32>)> {
+    ) -> Vec<(IntervalSetBuf, ClosedSet<'a>)> {
         let all_tokens = self.all_tokens();
         let mut labels: Vec<IntervalSetBuf> = Vec::new();
         let mut step_of: Vec<usize> = Vec::new();
@@ -422,6 +486,13 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                 // the interior paths mark the config as mixed usage.
                 taint &= !INTERIOR_TAINT;
             }
+            let roots = match closed
+                .roots
+                .get(&(config.get_state().get_state_number(), config.get_alt()))
+            {
+                Some(roots) => self.roots.intern(roots.clone()),
+                None => 0,
+            };
             let state = config.get_state();
             if state.state_type() == ATNStateType::RuleStop {
                 let mut eof = IntervalSetBuf::new();
@@ -433,7 +504,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                         config: config.clone(),
                         outer: config.reaches_into_outer_context,
                         taint,
-                        roots: BTreeSet::new(),
+                        roots,
                     },
                 );
                 continue;
@@ -459,7 +530,10 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                 if label.as_interval_set().as_slice().is_empty() {
                     continue;
                 }
-                add_step(label, self.consume(config, transition.get_target(), taint));
+                add_step(
+                    label,
+                    self.consume(config, transition.get_target(), taint, roots),
+                );
             }
         }
 
@@ -495,7 +569,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             }
         }
 
-        let mut successors: Vec<(IntervalSetBuf, ClosedSet<'a>, BTreeSet<i32>)> =
+        let mut successors: Vec<(IntervalSetBuf, ClosedSet<'a>)> =
             Vec::with_capacity(classes.len());
         let mut successor_of: HashMap<Vec<usize>, usize> = HashMap::new();
         let mut seen = BitSet::with_capacity(steps.len());
@@ -514,26 +588,33 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                 continue;
             }
             let mut out = SetBuilder::new();
-            let mut roots: BTreeSet<i32> = BTreeSet::new();
             for &number in &sequence {
                 let step = &steps[number];
-                roots.extend(step.roots.iter().copied());
+                self.current_roots = step.roots;
                 if step.stop {
-                    out.insert(step.config.clone(), step.taint);
+                    out.insert(step.config.clone(), step.taint, self.roots.get(step.roots));
                 } else {
                     self.closure(step.config.clone(), step.taint, 0, &mut out);
                 }
             }
+            self.current_roots = 0;
             successor_of.insert(sequence, successors.len());
-            successors.push((label, out.into_closed_set(), roots));
+            successors.push((label, out.into_closed_set()));
         }
         successors
     }
 
-    /// Builds the step after `source` reads a token into `target`.
-    fn consume(&self, source: &ATNConfig<'a>, target: ATNStateRef, mut taint: i32) -> Step<'a> {
+    /// Builds the step after `source` reads a token into `target`. The step
+    /// keeps the guard roots of `source` (the [`RootPool`] set `roots`).
+    fn consume(
+        &mut self,
+        source: &ATNConfig<'a>,
+        target: ATNStateRef,
+        mut taint: i32,
+        roots: u32,
+    ) -> Step<'a> {
         let sites = &self.call_sites.site_by_follow_state;
-        let mut roots: BTreeSet<i32> = BTreeSet::new();
+        let mut new_roots: BTreeSet<i32> = BTreeSet::new();
         // A boundary-popped configuration consumes on behalf of "some caller".
         // When that caller is an enclosing invocation of this loop, the
         // consumption is the loop's own and the enter/exit substitution still
@@ -552,7 +633,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                     source.get_context(),
                     &|state| in_loop && block.is_loop_state(state),
                     sites,
-                    &mut roots,
+                    &mut new_roots,
                 );
             }
         }
@@ -568,9 +649,15 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                 source.get_context(),
                 &|state| in_take && state == postfix.block_end_state,
                 sites,
-                &mut roots,
+                &mut new_roots,
             );
         }
+        let roots = if new_roots.is_empty() {
+            roots
+        } else {
+            new_roots.extend(self.roots.get(roots).iter().copied());
+            self.roots.intern(new_roots)
+        };
         Step {
             stop: false,
             config: source.clone().with_state(target),
@@ -596,6 +683,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
         ClosedSet {
             configs,
             taint: closed.taint,
+            roots: closed.roots,
         }
     }
 
@@ -629,34 +717,70 @@ impl<'atn, 'a> Closure<'atn, 'a> {
         set
     }
 
-    fn closure(
+    /// Closes one config into `out`, with the guard roots of the closure root
+    /// that runs now.
+    ///
+    /// A config that the set already explored with the same taint is only
+    /// explored again for the roots that it did not carry yet. The configs
+    /// such a pass reaches are the configs that the first pass reached, so
+    /// the pass does not count visits on configs that are already known.
+    fn closure(&mut self, config: ATNConfig<'a>, taint: i32, depth: i32, out: &mut SetBuilder<'a>) {
+        if self.exhausted {
+            return;
+        }
+        let chasing = depth < 0;
+        let current = self.roots.get(self.current_roots);
+        let missing = match out.busy.get_mut(&(config.clone(), taint, chasing)) {
+            None => {
+                out.busy
+                    .insert((config.clone(), taint, chasing), (depth, current.clone()));
+                None
+            }
+            Some((first_depth, explored)) => {
+                let missing: BTreeSet<i32> = current.difference(explored).copied().collect();
+                explored.extend(missing.iter().copied());
+                Some((*first_depth, missing))
+            }
+        };
+        if missing.is_none() || !self.propagating_roots {
+            self.visits = self.visits.saturating_add(1);
+            if self.visits > self.visit_budget {
+                self.exhausted = true;
+                return;
+            }
+            if let Some(visits) = usize::try_from(config.get_state().get_rule_index())
+                .ok()
+                .and_then(|rule| self.rule_visits.get_mut(rule))
+            {
+                *visits += 1;
+            }
+        }
+        match missing {
+            None => self.closure_body(config, taint, depth, out),
+            // The config is already explored with this taint and these roots.
+            // The taint of the config is already recorded, or the config never
+            // joins the set.
+            Some((_, missing)) if missing.is_empty() => {}
+            // The pass repeats the first exploration, at its depth, so that it
+            // reaches the same configs.
+            Some((first_depth, missing)) => {
+                let saved = (self.current_roots, self.propagating_roots);
+                self.current_roots = self.roots.intern(missing);
+                self.propagating_roots = true;
+                self.closure_body(config, taint, first_depth, out);
+                (self.current_roots, self.propagating_roots) = saved;
+            }
+        }
+    }
+
+    fn closure_body(
         &mut self,
         config: ATNConfig<'a>,
         mut taint: i32,
         depth: i32,
         out: &mut SetBuilder<'a>,
     ) {
-        if self.exhausted {
-            return;
-        }
-        self.visits = self.visits.saturating_add(1);
-        if self.visits > self.visit_budget {
-            self.exhausted = true;
-            return;
-        }
         let state = config.get_state();
-        if let Some(visits) = usize::try_from(state.get_rule_index())
-            .ok()
-            .and_then(|rule| self.rule_visits.get_mut(rule))
-        {
-            *visits += 1;
-        }
-        let chasing = depth < 0;
-        if !out.busy.insert((config.clone(), taint, chasing)) {
-            // Already explored with this taint; the taint of the config is
-            // already recorded (or the config never joins the set).
-            return;
-        }
         if taint & MIDWAY_TAINT != 0
             && state == self.decision_state
             && in_popped_frame(config.get_context())
@@ -694,9 +818,9 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             // below inherits the taint, exactly like the runtime closure, where
             // the marker lives on the config that keeps being passed down.
             taint = (taint & !INTERIOR_TAINT) | BOUNDARY_TAINT;
-            out.insert(config.clone(), taint);
+            out.insert(config.clone(), taint, self.roots.get(self.current_roots));
         } else if !state.has_epsilon_only_transitions() {
-            out.insert(config.clone(), taint);
+            out.insert(config.clone(), taint, self.roots.get(self.current_roots));
         }
 
         let boundary_chase = state.state_type() == ATNStateType::RuleStop;
@@ -966,12 +1090,10 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             }
             let mut kept = config;
             kept.set_precedence_filter_suppressed(false);
-            let taint = closed
-                .taint
-                .get(&(kept.get_state().get_state_number(), kept.get_alt()))
-                .copied()
-                .unwrap_or(0);
-            out.insert(kept, taint);
+            let key = (kept.get_state().get_state_number(), kept.get_alt());
+            let taint = closed.taint.get(&key).copied().unwrap_or(0);
+            let roots = closed.roots.get(&key).cloned().unwrap_or_default();
+            out.insert(kept, taint, &roots);
         }
         out.into_closed_set()
     }

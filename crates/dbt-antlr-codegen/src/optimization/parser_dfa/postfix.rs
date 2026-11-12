@@ -388,56 +388,92 @@ fn collect_roots_in(
         }
     }
 }
-/// The danger and pass sets of a guard-root set, as sorted invoking state
-/// numbers.
+
+/// The follow regions of the rule invocations of an ATN, from which the guard
+/// sets of a stack guard come.
 ///
-/// `danger[state]`: the state invokes a rule whose follow region can reach a
-/// guard root, so the take defers at such a frame. `pass[state]`: the follow
-/// region can reach its own rule's stop without reaching a root, so the take is
-/// resolved there. A state with several rule transitions is danger when any
-/// follow is dangerous, and pass only when every follow can pop (conservative in
-/// both directions).
-pub(super) fn compute_guard_data(atn: &ATN, roots: &BTreeSet<i32>) -> (Vec<i32>, Vec<i32>) {
-    let mut danger = Vec::new();
-    let mut pass = Vec::new();
-    let mut reachable: HashMap<i32, BitSet> = HashMap::new();
-    for state in atn.iter_states() {
-        let rule_index = state.get_rule_index();
-        let rule_stop = if rule_index >= 0 {
-            atn.rule_to_stop_state[rule_index as usize]
-        } else {
-            ATNStateRef::invalid()
-        };
-        let mut any_danger = false;
-        let mut all_pass = true;
-        let mut has_call = false;
-        for transition in state.get_transitions() {
-            let Some(rule) = transition.try_as::<RuleTransition>() else {
-                continue;
+/// A guard group has a danger set, and all guard groups of a table share one
+/// pass set (sorted invoking state numbers):
+///
+/// - Danger: the state invokes a rule whose follow region can reach a guard
+///   root of the group, so the guard defers at such a frame.
+/// - Pass: the follow region can reach the stop of its own rule, so the stack
+///   walk continues to the caller. The walk tests danger before pass.
+///
+/// A state with several rule transitions is danger when any follow is
+/// dangerous, and pass only when every follow can pop (conservative in both
+/// directions).
+pub(super) struct GuardRegions {
+    /// Per invoking state, the indexes of its follow regions in `regions`.
+    calls: Vec<(i32, Vec<usize>)>,
+    /// The epsilon closure of every follow state.
+    regions: Vec<BitSet>,
+    pass: Vec<i32>,
+}
+
+impl GuardRegions {
+    pub(super) fn of(atn: &ATN) -> Self {
+        let mut calls = Vec::new();
+        let mut regions = Vec::new();
+        let mut region_of: HashMap<i32, usize> = HashMap::new();
+        let mut pass = Vec::new();
+        for state in atn.iter_states() {
+            let rule_index = state.get_rule_index();
+            let rule_stop = if rule_index >= 0 {
+                atn.rule_to_stop_state[rule_index as usize]
+            } else {
+                ATNStateRef::invalid()
             };
-            has_call = true;
-            let follow = rule.follow_state.get_state_number();
-            let region = reachable
-                .entry(follow)
-                .or_insert_with(|| epsilon_closure(rule.follow_state));
-            if roots.iter().any(|root| region.contains(*root as usize)) {
-                any_danger = true;
+            let mut all_pass = true;
+            let mut follows = Vec::new();
+            for transition in state.get_transitions() {
+                let Some(rule) = transition.try_as::<RuleTransition>() else {
+                    continue;
+                };
+                let follow = rule.follow_state.get_state_number();
+                let index = *region_of.entry(follow).or_insert_with(|| {
+                    regions.push(epsilon_closure(rule.follow_state));
+                    regions.len() - 1
+                });
+                if rule_stop.get_state_number() < 0
+                    || !regions[index].contains(rule_stop.get_state_number() as usize)
+                {
+                    all_pass = false;
+                }
+                follows.push(index);
             }
-            if rule_stop.get_state_number() < 0
-                || !region.contains(rule_stop.get_state_number() as usize)
-            {
-                all_pass = false;
+            if follows.is_empty() {
+                continue;
             }
+            if all_pass {
+                pass.push(state.get_state_number());
+            }
+            calls.push((state.get_state_number(), follows));
         }
-        if !has_call {
-            continue;
-        }
-        if any_danger {
-            danger.push(state.get_state_number());
-        }
-        if all_pass {
-            pass.push(state.get_state_number());
+        Self {
+            calls,
+            regions,
+            pass,
         }
     }
-    (danger, pass)
+
+    /// The sorted danger set of a guard-root set.
+    pub(super) fn danger(&self, roots: &BTreeSet<i32>) -> Vec<i32> {
+        self.calls
+            .iter()
+            .filter(|(_, follows)| {
+                follows.iter().any(|&index| {
+                    roots
+                        .iter()
+                        .any(|&root| self.regions[index].contains(root as usize))
+                })
+            })
+            .map(|&(state, _)| state)
+            .collect()
+    }
+
+    /// The sorted pass set.
+    pub(super) fn pass(&self) -> &[i32] {
+        &self.pass
+    }
 }

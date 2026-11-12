@@ -6,9 +6,14 @@
 //! construction stopped. Without that fallback, each escape state gets a
 //! static verdict:
 //!
-//! - A state with an SLL conflict (a conflict escape or a guarded state)
-//!   accepts its minimum conflicting alternative. This is the choice of the
-//!   SLL prediction mode.
+//! - A guarded state keeps its runtime stack guard. When the guard defers, the
+//!   state returns the skip of its optional postfix or the exit of its
+//!   precedence loop instead of the adaptive simulation. The guard walks only
+//!   the parse stack, so this needs no ATN simulation. This is also a guess:
+//!   the guard sees the guard roots on the stack, but not the input after the
+//!   lookahead of the table.
+//! - A state with an SLL conflict (a conflict escape) accepts its minimum
+//!   conflicting alternative. This is the choice of the SLL prediction mode.
 //! - A state where the lookahead budget stopped the construction accepts its
 //!   minimum viable alternative. This is a guess: if the input continues in
 //!   a different alternative, the parse reports a syntax error later.
@@ -22,6 +27,9 @@ use super::{CONFLICT_ESCAPE, Category, DecisionResult, ESCAPE, GUARDED, StaticDf
 /// How `--static-dfa-only` replaced one escape state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum EscapeResolution {
+    /// The state keeps its stack guard, and returns its defer alternative
+    /// when the guard defers.
+    Guarded,
     /// The state accepts its minimum conflicting alternative.
     MinAlt,
     /// The lookahead budget stopped the construction at the state. The state
@@ -36,12 +44,17 @@ pub(crate) enum EscapeResolution {
 /// decision.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct EscapeResolutions {
+    /// The number of guarded states that return their defer alternative when
+    /// the guard defers.
+    pub(crate) guarded: usize,
     /// The number of states that accept their minimum conflicting alternative.
     pub(crate) min_alt: usize,
     /// The number of states that accept their minimum viable alternative.
     pub(crate) min_viable_alt: usize,
     /// The number of states that report a syntax error.
     pub(crate) syntax_error: usize,
+    /// A shortest lookahead path to a [`EscapeResolution::Guarded`] state.
+    pub(crate) guarded_witness: Option<Vec<i32>>,
     /// A shortest lookahead path to a [`EscapeResolution::MinAlt`] state.
     pub(crate) min_alt_witness: Option<Vec<i32>>,
     /// A shortest lookahead path to a [`EscapeResolution::MinViableAlt`]
@@ -53,9 +66,13 @@ pub(crate) struct EscapeResolutions {
 
 impl EscapeResolutions {
     fn merge(&mut self, other: Self) {
+        self.guarded += other.guarded;
         self.min_alt += other.min_alt;
         self.min_viable_alt += other.min_viable_alt;
         self.syntax_error += other.syntax_error;
+        if self.guarded_witness.is_none() {
+            self.guarded_witness = other.guarded_witness;
+        }
         if self.min_alt_witness.is_none() {
             self.min_alt_witness = other.min_alt_witness;
         }
@@ -69,15 +86,23 @@ impl EscapeResolutions {
 }
 
 impl StaticDfaTable {
-    /// Gives every escape and guarded state a static verdict, so that the
-    /// table never defers to the adaptive simulation.
+    /// Gives every escape state a static verdict and every guarded state a
+    /// defer alternative, so that the table never defers to the adaptive
+    /// simulation.
     pub(crate) fn resolve_escapes(&mut self) -> EscapeResolutions {
         let mut resolutions = EscapeResolutions::default();
+        let mut first_guarded = None;
         let mut first_min_alt = None;
         let mut first_min_viable_alt = None;
         let mut first_syntax_error = None;
         for (index, state) in self.states.iter_mut().enumerate() {
             if !matches!(state.accept, ESCAPE | CONFLICT_ESCAPE | GUARDED) {
+                continue;
+            }
+            if state.accept == GUARDED && state.guarded_alt > 0 && state.guard_defer_alt > 0 {
+                state.resolution = Some(EscapeResolution::Guarded);
+                resolutions.guarded += 1;
+                first_guarded.get_or_insert(index);
                 continue;
             }
             let conflict_alt = if state.accept == GUARDED && state.guarded_alt > 0 {
@@ -113,10 +138,15 @@ impl StaticDfaTable {
             state.resolution = Some(resolution);
             state.conflict_min_alt = 0;
             state.guarded_alt = 0;
+            state.guard_defer_alt = 0;
+            state.guard_group = 0;
             state.continuation = None;
         }
-        self.guard_danger.clear();
-        self.guard_pass.clear();
+        if resolutions.guarded == 0 {
+            self.guard_groups.clear();
+            self.guard_pass.clear();
+        }
+        resolutions.guarded_witness = first_guarded.and_then(|state| self.witness(state));
         resolutions.min_alt_witness = first_min_alt.and_then(|state| self.witness(state));
         resolutions.min_viable_alt_witness =
             first_min_viable_alt.and_then(|state| self.witness(state));
@@ -156,8 +186,6 @@ impl DecisionResult {
             }
         }
         self.escapes = 0;
-        self.guarded_takes = 0;
-        self.guarded_iterates = 0;
         self.static_only = Some(resolutions);
         true
     }
