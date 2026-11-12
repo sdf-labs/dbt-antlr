@@ -9,9 +9,14 @@
 //! runtime ATN of the compiled unit directly, so the analysis never serializes
 //! or deserializes words.
 //!
-//! `--report-decisions` renders the decision inventory of the pass to stdout
-//! and `--dump-dfas` renders the tables of the selected decisions. Both flags
-//! imply `--report-only`.
+//! `--report-decisions` renders the decision inventory of the pass to stdout,
+//! `--dump-dfas` renders the tables of the selected decisions, and
+//! `--profile-decisions` renders the time and the work that the classification
+//! of each decision took. These flags imply `--report-only`.
+//!
+//! A decision that spends the visit budget of the analysis gets a warning
+//! (`G4S193`) in every mode, because such a decision makes the code generation
+//! slow.
 //!
 //! Under `--static-dfa-only`, the pass resolves the escape states of every
 //! partial table statically (see `parser_dfa::static_only`). A decision that
@@ -19,6 +24,7 @@
 //! resolved escape states gets a warning (`G4S192`).
 
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 use minijinja::Value;
 
@@ -30,8 +36,8 @@ use dbt_antlr_runtime::dfa::static_parser_dfa::{
 };
 
 use super::parser_dfa::{
-    Category, DecisionClassifier, DecisionResult, DescentPlan, DescentRules, EscapeResolution,
-    EscapeResolutions, StaticDfaTable,
+    AttemptOutcome, Category, DEFAULT_VISIT_BUDGET, DecisionClassifier, DecisionResult,
+    DescentPlan, DescentRules, EscapeResolution, EscapeResolutions, MAX_DFA_STATES, StaticDfaTable,
 };
 use crate::grammar::atn::CompiledParser;
 use crate::grammar::diagnostic::Diagnostic;
@@ -51,6 +57,15 @@ const DUMP_SELECTOR_NO_MATCH: &str = "G4S191";
 /// The diagnostic code of a decision whose escape states `--static-dfa-only`
 /// resolved statically.
 const STATIC_ONLY_RESOLVED: &str = "G4S192";
+/// The diagnostic code of a decision whose analysis spent the visit budget.
+const VISIT_BUDGET_SPENT: &str = "G4S193";
+
+/// The number of rules that a `G4S193` warning and a profile row name.
+const HOT_RULES: usize = 3;
+/// The number of decisions in the table of `--profile-decisions`.
+const PROFILE_ROWS: usize = 20;
+/// A decision whose classification takes this long is slow.
+const SLOW_DECISION: Duration = Duration::from_millis(500);
 
 /// The static tables of one parser unit, as the emitter and the embedded
 /// table image need them.
@@ -142,17 +157,38 @@ impl StaticParserDfa {
     /// With [`AtnFallback::Forbidden`], the escape states of every partial
     /// table are resolved statically, and every decision that still needs
     /// `adaptivePredict` is an error.
+    ///
+    /// With `profile`, the report also records the wall-clock times of the
+    /// classification (`--profile-decisions`).
     pub(crate) fn build(
         compiled: &CompiledParser,
         atn_fallback: AtnFallback,
+        profile: bool,
+    ) -> StaticParserDfaArtifact {
+        Self::build_with_budget(compiled, atn_fallback, profile, DEFAULT_VISIT_BUDGET)
+    }
+
+    /// [`Self::build`] with an explicit visit budget for each build attempt.
+    pub(crate) fn build_with_budget(
+        compiled: &CompiledParser,
+        atn_fallback: AtnFallback,
+        profile: bool,
+        visit_budget: u64,
     ) -> StaticParserDfaArtifact {
         let atn = compiled.atn;
         let recognizer = &compiled.semantic.recognizer;
         let ll1_disjoint = ll1_disjointness(compiled);
-        let mut results = DecisionClassifier::new(atn, ll1_disjoint)
+        let classifier = DecisionClassifier::new(atn, ll1_disjoint)
             .with_atn_fallback(atn_fallback)
             .with_descent_rules(descent_rules(compiled))
-            .classify_all();
+            .with_visit_budget(visit_budget)
+            .with_profiling(profile);
+        let started = profile.then(Instant::now);
+        let mut results = classifier.classify_all();
+        let profile = started.map(|started| ClassificationProfile {
+            elapsed: started.elapsed(),
+            threads: classifier.threads(),
+        });
         if atn_fallback == AtnFallback::Forbidden {
             for result in &mut results {
                 result.resolve_static_only();
@@ -182,12 +218,16 @@ impl StaticParserDfa {
             rule_names: recognizer.rule_names.clone(),
             decisions,
             atn_fallback,
+            visit_budget: classifier.visit_budget(),
+            profile,
         };
+        let mut diagnostics = match atn_fallback {
+            AtnFallback::Allowed => not_fully_static_diagnostics(compiled, &report),
+            AtnFallback::Forbidden => static_only_diagnostics(compiled, &report),
+        };
+        diagnostics.extend(visit_budget_diagnostics(compiled, &report));
         StaticParserDfaArtifact {
-            diagnostics: match atn_fallback {
-                AtnFallback::Allowed => not_fully_static_diagnostics(compiled, &report),
-                AtnFallback::Forbidden => static_only_diagnostics(compiled, &report),
-            },
+            diagnostics,
             report,
             tables,
         }
@@ -251,6 +291,16 @@ impl StaticParserDfa {
         render_blocks(&reports.iter().map(decision_report_text).collect::<Vec<_>>())
     }
 
+    /// Renders the `--profile-decisions` report of every parser unit.
+    pub(crate) fn render_decision_profile(reports: &[StaticParserDfaReport]) -> String {
+        render_blocks(
+            &reports
+                .iter()
+                .map(decision_profile_text)
+                .collect::<Vec<_>>(),
+        )
+    }
+
     /// Renders the `--dump-dfas` dump of every parser unit, together with the
     /// diagnostics of the selectors that match no decision.
     pub(crate) fn render_dfa_dump(
@@ -276,11 +326,21 @@ pub(crate) struct StaticParserDfaArtifact {
     pub(crate) tables: StaticParserTables,
 }
 
-/// The report modes `--report-decisions` and `--dump-dfas` select.
+/// The report modes `--report-decisions`, `--dump-dfas`, and
+/// `--profile-decisions` select.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct StaticParserDfaSelection {
     pub(crate) report_decisions: bool,
     pub(crate) dump_dfas: Option<String>,
+    pub(crate) profile_decisions: bool,
+}
+
+/// The wall-clock time of the classification of one parser unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ClassificationProfile {
+    pub(crate) elapsed: Duration,
+    /// The threads that classified the decisions.
+    pub(crate) threads: usize,
 }
 
 /// What the pass reports about one parser unit.
@@ -296,6 +356,10 @@ pub(crate) struct StaticParserDfaReport {
     pub(crate) decisions: Vec<StaticParserDecisionReport>,
     /// Whether the generated parser can defer to the adaptive simulation.
     pub(crate) atn_fallback: AtnFallback,
+    /// The visit budget of each build attempt.
+    pub(crate) visit_budget: u64,
+    /// The times of the classification, for `--profile-decisions`.
+    pub(crate) profile: Option<ClassificationProfile>,
 }
 
 impl StaticParserDfaReport {
@@ -517,6 +581,172 @@ fn decision_report_text(report: &StaticParserDfaReport) -> String {
     lines.extend(decision_rows(&report.decisions));
     lines.extend(k_summary(&report.decisions));
     finish_block(lines)
+}
+
+/// The `--profile-decisions` report of one parser unit: the totals, then the
+/// slowest decisions.
+fn decision_profile_text(report: &StaticParserDfaReport) -> String {
+    let decisions = &report.decisions;
+    let mut lines = vec![format!(
+        "=== parser decision profile: {} ({} decisions) ===",
+        report.grammar,
+        decisions.len()
+    )];
+    let elapsed =
+        |decision: &StaticParserDecisionReport| decision.result.cost.elapsed.unwrap_or_default();
+    let summed: Duration = decisions.iter().map(elapsed).sum();
+    if let Some(profile) = &report.profile {
+        lines.push(format!(
+            "classification: {} on {} {}; {} summed over the decisions",
+            duration_text(profile.elapsed),
+            profile.threads,
+            if profile.threads == 1 {
+                "thread"
+            } else {
+                "threads"
+            },
+            duration_text(summed),
+        ));
+    }
+    let attempts: usize = decisions
+        .iter()
+        .map(|decision| decision.result.cost.attempts.len())
+        .sum();
+    let visits: u64 = decisions
+        .iter()
+        .map(|decision| decision.result.cost.visits())
+        .sum();
+    let states: usize = decisions
+        .iter()
+        .map(|decision| decision.result.cost.states())
+        .sum();
+    lines.push(format!(
+        "work: {attempts} build attempts; {visits} configs visited; {states} DFA states built"
+    ));
+    let spent = |outcome| {
+        decisions
+            .iter()
+            .filter(|decision| decision.result.cost.count(outcome) > 0)
+            .count()
+    };
+    lines.push(format!(
+        "budgets: {} decisions spent the visit budget ({} configs); {} decisions spent the \
+         state budget ({MAX_DFA_STATES} states)",
+        spent(AttemptOutcome::VisitBudget),
+        report.visit_budget,
+        spent(AttemptOutcome::StateBudget),
+    ));
+    lines.push(format!(
+        "slow: {} decisions took {} ms or more",
+        decisions
+            .iter()
+            .filter(|decision| elapsed(decision) >= SLOW_DECISION)
+            .count(),
+        SLOW_DECISION.as_millis(),
+    ));
+    lines.push(
+        "attempts: U unbounded, W widened, H hybrid, S static-only hybrid, u and w witness \
+         pass, (N) milliseconds, cN: precedence class N"
+            .to_owned(),
+    );
+    lines.push(
+        "outcomes: ! stopped at an untrusted conflict, $ spent the visit budget, ^ spent the \
+         state budget"
+            .to_owned(),
+    );
+
+    let mut slowest: Vec<&StaticParserDecisionReport> = decisions.iter().collect();
+    slowest.sort_by(|left, right| {
+        elapsed(right)
+            .cmp(&elapsed(left))
+            .then(right.result.cost.visits().cmp(&left.result.cost.visits()))
+            .then(left.decision.cmp(&right.decision))
+    });
+    slowest.truncate(PROFILE_ROWS);
+    lines.push(format!("slowest {} decisions:", slowest.len()));
+    lines.extend(profile_rows(report, &slowest, elapsed));
+    finish_block(lines)
+}
+
+/// The rows of the slowest decisions in the `--profile-decisions` report.
+fn profile_rows(
+    report: &StaticParserDfaReport,
+    decisions: &[&StaticParserDecisionReport],
+    elapsed: impl Fn(&StaticParserDecisionReport) -> Duration,
+) -> Vec<String> {
+    let rows: Vec<[String; 9]> = decisions
+        .iter()
+        .map(|decision| {
+            let cost = &decision.result.cost;
+            [
+                decision.decision.to_string(),
+                decision.rule.clone(),
+                decision.state.to_string(),
+                decision.result.category.as_str().to_owned(),
+                format!("{:.1}", elapsed(decision).as_secs_f64() * 1000.0),
+                cost.visits().to_string(),
+                cost.states().to_string(),
+                cost.attempts_text(),
+                cost.hot_rules_text(&report.rule_names, HOT_RULES),
+            ]
+        })
+        .collect();
+    let headers = [
+        "#",
+        "rule",
+        "state",
+        "category",
+        "ms",
+        "visits",
+        "statesBuilt",
+        "attempts",
+        "most visited rules",
+    ];
+    let right_aligned = [true, false, true, false, true, true, true, false, false];
+    let widths: Vec<usize> = headers
+        .iter()
+        .enumerate()
+        .map(|(column, header)| {
+            rows.iter()
+                .map(|row| row[column].len())
+                .max()
+                .unwrap_or(0)
+                .max(header.len())
+        })
+        .collect();
+    let line = |cells: Vec<&str>| {
+        let mut text = String::from(" ");
+        for (column, cell) in cells.iter().enumerate() {
+            let width = widths[column];
+            text.push(' ');
+            if right_aligned[column] {
+                text.push_str(&format!("{cell:>width$}"));
+            } else if column + 1 < cells.len() {
+                text.push_str(&format!("{cell:<width$}"));
+            } else {
+                text.push_str(cell);
+            }
+            if column + 1 < cells.len() {
+                text.push(' ');
+            }
+        }
+        text.trim_end().to_owned()
+    };
+    let mut lines = vec![line(headers.to_vec())];
+    lines.extend(
+        rows.iter()
+            .map(|row| line(row.iter().map(String::as_str).collect())),
+    );
+    lines
+}
+
+/// A duration in milliseconds below one second, else in seconds.
+fn duration_text(duration: Duration) -> String {
+    if duration < Duration::from_secs(1) {
+        format!("{:.1} ms", duration.as_secs_f64() * 1000.0)
+    } else {
+        format!("{:.2} s", duration.as_secs_f64())
+    }
 }
 
 /// The category histogram of a grammar, as one line.
@@ -766,9 +996,15 @@ fn decision_dump_lines(
             lines.extend(table_dump_lines(report, table, with_paths));
         }
         (None, None) if matches!(result.category, Category::LL1 | Category::NON_GREEDY) => {
-            lines.push(format!("  no table needed: {}", adaptive_reason(result)));
+            lines.push(format!(
+                "  no table needed: {}",
+                adaptive_reason(result, report.visit_budget)
+            ));
         }
-        (None, None) => lines.push(format!("  no static table: {}", adaptive_reason(result))),
+        (None, None) => lines.push(format!(
+            "  no static table: {}",
+            adaptive_reason(result, report.visit_budget)
+        )),
     }
     lines
 }
@@ -919,7 +1155,7 @@ fn path_text(vocabulary: &[String], path: &[i32]) -> String {
         .join(" ")
 }
 
-fn adaptive_reason(result: &DecisionResult) -> String {
+fn adaptive_reason(result: &DecisionResult, visit_budget: u64) -> String {
     match result.category {
         Category::LL1 => {
             "the alternatives have disjoint first tokens, so plain LL(1) prediction decides"
@@ -965,8 +1201,7 @@ fn adaptive_reason(result: &DecisionResult) -> String {
         }
         Category::OVERFLOW => format!(
             "the SLL DFA exceeded the analysis budget ({} states or {} visited configs)",
-            super::parser_dfa::MAX_DFA_STATES,
-            super::parser_dfa::DEFAULT_VISIT_BUDGET
+            MAX_DFA_STATES, visit_budget
         ),
         Category::HYBRID if result.escapes > 0 && result.guarded_takes > 0 => format!(
             "{} of {} states escape to adaptivePredict, and {} take/skip conflicts are decided by a runtime stack guard",
@@ -1135,7 +1370,7 @@ fn not_fully_static_diagnostics(
                 "parser decision {} of rule '{}' is not fully static: {}",
                 decision.decision,
                 decision.rule,
-                adaptive_reason(result)
+                adaptive_reason(result, report.visit_budget)
             );
             if let Some(witness) = witness_text(
                 &report.vocabulary,
@@ -1173,7 +1408,7 @@ fn static_only_diagnostics(
                      --static-dfa-only requires a static table for every decision",
                     decision.decision,
                     decision.rule,
-                    static_only_failure_reason(result)
+                    static_only_failure_reason(result, report.visit_budget)
                 );
                 if let Some(witness) = witness_text(
                     &report.vocabulary,
@@ -1231,6 +1466,44 @@ fn static_only_diagnostics(
         .collect()
 }
 
+/// The `G4S193` warnings: one per decision with a build attempt that spent the
+/// visit budget. The counts in the message are the same on every machine.
+fn visit_budget_diagnostics(
+    compiled: &CompiledParser,
+    report: &StaticParserDfaReport,
+) -> Vec<Diagnostic> {
+    report
+        .decisions
+        .iter()
+        .filter_map(|decision| {
+            let result = &decision.result;
+            let cost = &result.cost;
+            let spent = cost.count(AttemptOutcome::VisitBudget);
+            if spent == 0 {
+                return None;
+            }
+            let mut message = format!(
+                "the analysis of parser decision {} of rule '{}' is slow: {spent} of {} build \
+                 attempts spent the visit budget ({} configs); {} configs visited, {} DFA states \
+                 built",
+                decision.decision,
+                decision.rule,
+                cost.attempts.len(),
+                report.visit_budget,
+                cost.visits(),
+                cost.states(),
+            );
+            let hot_rules = cost.hot_rules_text(&report.rule_names, HOT_RULES);
+            if !hot_rules.is_empty() {
+                message.push_str(&format!("; most visited rules: {hot_rules}"));
+            }
+            let span =
+                decision_span(compiled, result).unwrap_or_else(|| report.source_span.clone());
+            Some(Diagnostic::warning(VISIT_BUDGET_SPENT, span, message))
+        })
+        .collect()
+}
+
 /// One clause of a `G4S192` warning, for example `2 predicated states report a
 /// syntax error (witness: ID EOF)`.
 fn resolution_text(
@@ -1249,7 +1522,7 @@ fn resolution_text(
 }
 
 /// Why `--static-dfa-only` cannot give the decision a static prediction.
-fn static_only_failure_reason(result: &DecisionResult) -> String {
+fn static_only_failure_reason(result: &DecisionResult, visit_budget: u64) -> String {
     match result.category {
         Category::NON_GREEDY => "the decision is a non-greedy subrule, and the generated parser \
              predicts non-greedy subrules only with adaptivePredict"
@@ -1257,7 +1530,7 @@ fn static_only_failure_reason(result: &DecisionResult) -> String {
         Category::LR_PRECEDENCE if result.precedence.is_none() => {
             "the precedence loop has no precedence predicates to build class tables from".to_owned()
         }
-        _ => adaptive_reason(result),
+        _ => adaptive_reason(result, visit_budget),
     }
 }
 

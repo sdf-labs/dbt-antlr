@@ -17,10 +17,11 @@ use std::path::{Path, PathBuf};
 use dbt_antlr_runtime::analysis::{BOUNDARY_TAINT, FOREIGN_LINEAGE_TAINT};
 
 use crate::grammar::compiler::compile;
+use crate::grammar::diagnostic::Severity;
 use crate::grammar::loader::LoadOptions;
 use crate::optimization::AtnFallback;
 
-use super::classifier::AttemptKind;
+use super::cost::{AttemptKind, AttemptOutcome};
 use super::loop_block::LoopBlock;
 use super::table::{StaticDfaState, StaticDfaTable};
 use super::{Category, DecisionClassifier, DecisionResult};
@@ -503,6 +504,7 @@ fn build_tables(path: &Path) -> (Vec<DecisionResult>, super::super::StaticParser
             .parser(compilation.roots[0].parser.expect("parser root"))
             .expect("parser artifact"),
         AtnFallback::Allowed,
+        false,
     );
     let results = classify(path);
     (results, build.tables)
@@ -621,7 +623,8 @@ fn emitted_tables_validate_against_the_packed_atn() {
         let parser = compilation
             .parser(compilation.roots[0].parser.expect("parser root"))
             .expect("parser artifact");
-        let build = crate::optimization::StaticParserDfa::build(parser, AtnFallback::Allowed);
+        let build =
+            crate::optimization::StaticParserDfa::build(parser, AtnFallback::Allowed, false);
         let packed = crate::grammar::atn::encode_packed_atn(parser.atn);
         let atn = PackedATNDeserializer::new()
             .deserialize(&packed)
@@ -1600,21 +1603,14 @@ fn shared_descent_excludes_rules_whose_shared_rule_conflicts_with_member_tails()
     );
 }
 
-/// Classifies the first root parser of one grammar and returns the classifier
-/// with its attempt log.
-fn classify_logged(path: &Path, budget: u64) -> (Vec<DecisionResult>, DecisionClassifier) {
-    let compilation = compile(LoadOptions {
-        roots: vec![path.to_path_buf()],
-        library_directories: Vec::new(),
-    })
-    .expect("grammar compiles");
-    let root = compilation.roots.first().expect("one root");
-    let parser = compilation
-        .parser(root.parser.expect("parser root"))
-        .expect("parser artifact");
-    let classifier = classifier(parser).with_visit_budget(budget);
-    let results = classifier.classify_all();
-    (results, classifier)
+/// The build attempts of one decision, in order.
+fn attempts_of(results: &[DecisionResult], decision: usize) -> Vec<AttemptKind> {
+    results[decision]
+        .cost
+        .attempts
+        .iter()
+        .map(|attempt| attempt.kind)
+        .collect()
 }
 
 /// A first pass that stops at an untrusted conflict does not try the widened
@@ -1624,11 +1620,11 @@ fn classify_logged(path: &Path, budget: u64) -> (Vec<DecisionResult>, DecisionCl
 #[test]
 fn witness_pass_repeats_only_the_stopped_attempt() {
     let path = fixture("vscode-split").join("TParser.g4");
-    let (results, classifier) = classify_logged(&path, super::DEFAULT_VISIT_BUDGET);
+    let results = classify_with_budget(&path, super::DEFAULT_VISIT_BUDGET);
     assert_eq!(results[5].category, Category::PREDICATED);
     assert!(results[5].table.is_none());
     assert_eq!(
-        classifier.attempts_of(5),
+        attempts_of(&results, 5),
         [
             AttemptKind::Unbounded { abort: true },
             AttemptKind::Hybrid,
@@ -1642,11 +1638,11 @@ fn witness_pass_repeats_only_the_stopped_attempt() {
 #[test]
 fn unstopped_first_pass_needs_no_witness_pass() {
     let path = grammars_dir().join("parser").join("LowCoverage.g4");
-    let (results, classifier) = classify_logged(&path, super::DEFAULT_VISIT_BUDGET);
+    let results = classify_with_budget(&path, super::DEFAULT_VISIT_BUDGET);
     assert_eq!(results[0].category, Category::PREDICATED);
     assert!(results[0].table.is_none());
     assert_eq!(
-        classifier.attempts_of(0),
+        attempts_of(&results, 0),
         [AttemptKind::Unbounded { abort: true }, AttemptKind::Hybrid]
     );
 }
@@ -1656,10 +1652,10 @@ fn unstopped_first_pass_needs_no_witness_pass() {
 #[test]
 fn exhausted_start_state_skips_the_hybrid_attempts() {
     let path = grammars_dir().join("ReferenceToATN.g4");
-    let (results, classifier) = classify_logged(&path, 1);
+    let results = classify_with_budget(&path, 1);
     assert_eq!(results[0].category, Category::OVERFLOW);
     assert_eq!(
-        classifier.attempts_of(0),
+        attempts_of(&results, 0),
         [
             AttemptKind::Unbounded { abort: true },
             AttemptKind::Widened { abort: true }
@@ -1674,10 +1670,10 @@ fn exhausted_start_state_skips_the_hybrid_attempts() {
 fn witness_pass_skips_the_unstopped_unbounded_attempt() {
     let path =
         fixture("testcompositegrammars-testimportlargegrammar-110006096d").join("NewJava.g4");
-    let (results, classifier) = classify_logged(&path, 2_000);
+    let results = classify_with_budget(&path, 2_000);
     assert_eq!(results[7].category, Category::OVERFLOW);
     assert_eq!(
-        classifier.attempts_of(7),
+        attempts_of(&results, 7),
         [
             AttemptKind::Unbounded { abort: true },
             AttemptKind::Widened { abort: true },
@@ -1692,7 +1688,7 @@ fn witness_pass_skips_the_unstopped_unbounded_attempt() {
 #[test]
 fn precedence_classes_with_tables_need_no_witness_pass() {
     let path = grammars_dir().join("parser").join("LoopFrontier.g4");
-    let (results, classifier) = classify_logged(&path, 2_000);
+    let results = classify_with_budget(&path, 2_000);
     let precedence = results[4].precedence.as_ref().expect("precedence tables");
     let adaptive = [
         AttemptKind::Unbounded { abort: true },
@@ -1709,7 +1705,7 @@ fn precedence_classes_with_tables_need_no_witness_pass() {
     }
     assert_eq!(precedence.adaptive_classes, 3);
     assert_eq!(precedence.tables.len(), 5);
-    assert_eq!(classifier.attempts_of(4), expected);
+    assert_eq!(attempts_of(&results, 4), expected);
 }
 
 /// An unbounded attempt that stops at an untrusted conflict does not fall
@@ -1769,4 +1765,170 @@ fn parallel_classification_matches_serial_classification() {
         }
     }
     assert!(decisions > 800, "decisions classified: {decisions}");
+}
+
+/// Builds the pass artifact of the first root parser of one grammar under a
+/// visit budget.
+fn build_with_budget(
+    path: &Path,
+    budget: u64,
+) -> crate::optimization::static_parser_dfa::StaticParserDfaArtifact {
+    let compilation = compile(LoadOptions {
+        roots: vec![path.to_path_buf()],
+        library_directories: Vec::new(),
+    })
+    .expect("grammar compiles");
+    let parser = compilation
+        .parser(compilation.roots[0].parser.expect("parser root"))
+        .expect("parser artifact");
+    crate::optimization::StaticParserDfa::build_with_budget(
+        parser,
+        AtnFallback::Allowed,
+        false,
+        budget,
+    )
+}
+
+/// A decision with an attempt that spends the visit budget gets one `G4S193`
+/// warning, with the counts of the attempts and the most visited rules.
+#[test]
+fn spent_visit_budgets_emit_g4s193_warnings() {
+    let build = build_with_budget(&grammars_dir().join("Perf.g4"), 100);
+    let warnings: Vec<_> = build
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "G4S193")
+        .map(|diagnostic| {
+            assert_eq!(diagnostic.severity, Severity::Warning);
+            diagnostic.message.as_str()
+        })
+        .collect();
+    assert_eq!(
+        warnings,
+        [
+            "the analysis of parser decision 0 of rule 'stat' is slow: 3 of 4 build attempts \
+             spent the visit budget (100 configs); 316 configs visited, 12 DFA states built; \
+             most visited rules: expr 94%, stat 5%",
+            "the analysis of parser decision 3 of rule 'expr' is slow: 9 of 13 build attempts \
+             spent the visit budget (100 configs); 1148 configs visited, 77 DFA states built; \
+             most visited rules: expr 89%, stat 10%",
+        ]
+    );
+
+    let build = build_with_budget(&grammars_dir().join("Perf.g4"), super::DEFAULT_VISIT_BUDGET);
+    assert!(
+        build
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "G4S193"),
+        "{:?}",
+        build.diagnostics
+    );
+}
+
+/// The cost of a decision adds up: each attempt visits at most the budget,
+/// and the visits by rule sum to the visits of the attempts.
+#[test]
+fn decision_costs_account_for_every_visit() {
+    for budget in [100, super::DEFAULT_VISIT_BUDGET] {
+        let results = classify_with_budget(&grammars_dir().join("Perf.g4"), budget);
+        for result in &results {
+            let cost = &result.cost;
+            assert!(cost.elapsed.is_none(), "no times without profiling");
+            for attempt in &cost.attempts {
+                assert!(attempt.visits <= budget, "{attempt:?}");
+                assert!(attempt.elapsed.is_none());
+                if attempt.outcome == AttemptOutcome::VisitBudget {
+                    assert_eq!(attempt.visits, budget, "{attempt:?}");
+                }
+            }
+            let by_rule: u64 = cost.rule_visits.iter().map(|(_, visits)| visits).sum();
+            assert_eq!(by_rule, cost.visits(), "decision {}", result.decision);
+        }
+        assert_eq!(attempts_of(&results, 1), []);
+        assert_eq!(
+            attempts_of(&results, 2),
+            [AttemptKind::Unbounded { abort: true }]
+        );
+    }
+}
+
+/// The attempt codes name the precedence class of each attempt, the witness
+/// pass, and the static-only hybrid attempts of `--static-dfa-only`.
+#[test]
+fn attempt_codes_follow_the_classes_and_the_fallback_policy() {
+    let results = classify_with_budget(
+        &grammars_dir().join("parser").join("LoopFrontier.g4"),
+        2_000,
+    );
+    assert_eq!(
+        results[4].cost.attempts_text(),
+        "c0: U! H$ u$ w$; c1: U! H$ u$ w$; c2: U! H$ u$ w$; c3: U; c4: U"
+    );
+
+    let path = grammars_dir().join("ReferenceToATN.g4");
+    assert_eq!(classify(&path)[0].cost.attempts_text(), "U! H");
+    assert_eq!(
+        classify_with(&path, AtnFallback::Forbidden)[0]
+            .cost
+            .attempts_text(),
+        "U! S"
+    );
+}
+
+/// With profiling, every decision and every attempt carries its time, and the
+/// profile lists the 20 slowest decisions.
+#[test]
+fn profiled_builds_time_every_decision_and_list_the_slowest() {
+    let directory = std::env::temp_dir().join(format!("dbt-antlr-profile-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("scratch directory");
+    let path = directory.join("Many.g4");
+    let mut source = String::from("grammar Many;\n");
+    for rule in 0..25 {
+        source.push_str(&format!("r{rule} : A B | A C ;\n"));
+    }
+    source.push_str("A : 'a' ; B : 'b' ; C : 'c' ;\n");
+    std::fs::write(&path, source).expect("scratch grammar");
+    let compilation = compile(LoadOptions {
+        roots: vec![path],
+        library_directories: Vec::new(),
+    })
+    .expect("grammar compiles");
+    let _ = std::fs::remove_dir_all(&directory);
+    let parser = compilation
+        .parser(compilation.roots[0].parser.expect("parser root"))
+        .expect("parser artifact");
+    let build = crate::optimization::StaticParserDfa::build_with_budget(
+        parser,
+        AtnFallback::Allowed,
+        true,
+        super::DEFAULT_VISIT_BUDGET,
+    );
+
+    assert_eq!(build.report.decisions.len(), 25);
+    for decision in &build.report.decisions {
+        let cost = &decision.result.cost;
+        assert!(cost.elapsed.is_some(), "{cost:?}");
+        assert_eq!(cost.attempts.len(), 1, "{cost:?}");
+        assert!(
+            cost.attempts
+                .iter()
+                .all(|attempt| attempt.elapsed.is_some())
+        );
+    }
+    let profile = crate::optimization::StaticParserDfa::render_decision_profile(&[build.report]);
+    let lines: Vec<&str> = profile.lines().collect();
+    let slowest = lines
+        .iter()
+        .position(|line| *line == "slowest 20 decisions:")
+        .unwrap_or_else(|| panic!("{profile}"));
+    assert!(
+        lines[slowest + 1].trim_start().starts_with("#  rule"),
+        "{profile}"
+    );
+    let rows = lines[slowest + 2..]
+        .iter()
+        .filter(|line| !line.is_empty())
+        .count();
+    assert_eq!(rows, 20, "{profile}");
 }

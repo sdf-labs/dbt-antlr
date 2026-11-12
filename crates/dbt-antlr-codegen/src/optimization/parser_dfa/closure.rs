@@ -294,6 +294,8 @@ pub(super) struct Closure<'atn, 'a> {
     decision_state: ATNStateRef,
     /// Configs visited by this closure, across all roots of the attempt.
     visits: u64,
+    /// The visited configs by the rule index of their ATN state.
+    rule_visits: Vec<u64>,
     visit_budget: u64,
     /// Set when the visit budget ran out: the config sets built from here on
     /// are incomplete, so the attempt has to be discarded as an overflow.
@@ -326,6 +328,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             postfix,
             decision_state: ATNStateRef::invalid(),
             visits: 0,
+            rule_visits: vec![0; atn.rule_to_start_state.len()],
             visit_budget,
             exhausted: false,
         }
@@ -335,6 +338,16 @@ impl<'atn, 'a> Closure<'atn, 'a> {
     /// decision is a precedence loop.
     pub(super) fn loop_block(&self) -> Option<&LoopBlock> {
         self.loop_block.as_ref()
+    }
+
+    /// The configs this closure visited, at most the visit budget.
+    pub(super) fn visits(&self) -> u64 {
+        self.visits.min(self.visit_budget)
+    }
+
+    /// Moves out the visited configs by the rule index of their ATN state.
+    pub(super) fn take_rule_visits(&mut self) -> Vec<u64> {
+        std::mem::take(&mut self.rule_visits)
     }
 
     /// Closes the start configurations of `decision_state`: one config per
@@ -590,13 +603,19 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             self.exhausted = true;
             return;
         }
+        let state = config.get_state();
+        if let Some(visits) = usize::try_from(state.get_rule_index())
+            .ok()
+            .and_then(|rule| self.rule_visits.get_mut(rule))
+        {
+            *visits += 1;
+        }
         let chasing = depth < 0;
         if !out.busy.insert((config.clone(), taint, chasing)) {
             // Already explored with this taint; the taint of the config is
             // already recorded (or the config never joins the set).
             return;
         }
-        let state = config.get_state();
         if taint & MIDWAY_TAINT != 0
             && state == self.decision_state
             && in_popped_frame(config.get_context())

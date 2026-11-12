@@ -18,6 +18,8 @@
 //!   --report-decisions            print the parser decision report (implies report-only)
 //!   --dump-dfas <SPEC>            print the static parser DFA tables matching SPEC
 //!                                 (implies report-only)
+//!   --profile-decisions           print the time and work of each parser decision
+//!                                 analysis (implies report-only)
 //!   --entry-rule <NAME>           mark NAME as a parser entry rule (repeatable)
 //!   --prune-unreachable-rules     delete parser rules unreachable from the entry rules
 //!   --inline-trivial-rules        inline trivial pure parser rules into their callers
@@ -44,6 +46,8 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   --report-decisions            print the parser decision report (implies report-only)
   --dump-dfas <SPEC>            print the static parser DFA tables matching SPEC
                                 (implies report-only)
+  --profile-decisions           print the time and work of each parser decision
+                                analysis (implies report-only)
   --entry-rule <NAME>           mark NAME as a parser entry rule (repeatable)
   --prune-unreachable-rules     delete parser rules unreachable from the entry rules
   --inline-trivial-rules        inline trivial pure parser rules into their callers
@@ -63,6 +67,7 @@ struct CliArgs {
     static_dfa_only: bool,
     report_decisions: bool,
     dump_dfas: Option<String>,
+    profile_decisions: bool,
     entry_rules: Vec<String>,
     prune_unreachable: bool,
     inline_trivial: bool,
@@ -81,6 +86,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let mut static_dfa_only = false;
     let mut report_decisions = false;
     let mut dump_dfas = None;
+    let mut profile_decisions = false;
     let mut entry_rules = Vec::new();
     let mut prune_unreachable = false;
     let mut inline_trivial = false;
@@ -107,6 +113,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
             "--static-parser-dfa" => static_parser_dfa = true,
             "--static-dfa-only" => static_dfa_only = true,
             "--report-decisions" => report_decisions = true,
+            "--profile-decisions" => profile_decisions = true,
             "--dump-dfas" => {
                 dump_dfas = Some(value_after(arg, args, &mut index)?);
             }
@@ -152,6 +159,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         static_dfa_only,
         report_decisions,
         dump_dfas,
+        profile_decisions,
         entry_rules,
         prune_unreachable,
         inline_trivial,
@@ -218,6 +226,7 @@ pub fn run(
         .static_parser_dfa(cli.static_parser_dfa)
         .static_dfa_only(cli.static_dfa_only)
         .report_decisions(cli.report_decisions)
+        .profile_decisions(cli.profile_decisions)
         .prune_unreachable_rules(cli.prune_unreachable)
         .inline_trivial_rules(cli.inline_trivial)
         .optimize_precedence_ladders(cli.optimize_ladders)
@@ -295,10 +304,17 @@ mod tests {
         assert!(cli.static_parser_dfa);
         assert!(!cli.report_decisions);
         assert_eq!(cli.dump_dfas, None);
+        assert!(!cli.profile_decisions);
 
-        let cli =
-            parse(&["--report-decisions", "--dump-dfas=all", "T.g4"]).expect("report flags parse");
+        let cli = parse(&[
+            "--report-decisions",
+            "--dump-dfas=all",
+            "--profile-decisions",
+            "T.g4",
+        ])
+        .expect("report flags parse");
         assert!(cli.report_decisions);
+        assert!(cli.profile_decisions);
         assert_eq!(cli.dump_dfas.as_deref(), Some("all"));
 
         let cli = parse(&["--dump-dfas", "paths,row:2", "T.g4"]).expect("spaced value parses");

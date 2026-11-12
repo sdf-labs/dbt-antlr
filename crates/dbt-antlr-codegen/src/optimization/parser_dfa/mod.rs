@@ -5,7 +5,8 @@
 //! [`DecisionClassifier`] answers one question per prediction decision of a
 //! compiled parser unit: can an SLL DFA be built for it statically, and what
 //! does that DFA cost? The answer drives `--static-parser-dfa`,
-//! `--report-decisions`, `--dump-dfas`, and the `G4S190` diagnostics.
+//! `--report-decisions`, `--dump-dfas`, `--profile-decisions`, and the
+//! `G4S190` and `G4S193` diagnostics.
 //!
 //! # Where the machinery lives
 //!
@@ -48,6 +49,7 @@ mod tests;
 mod category;
 mod classifier;
 mod closure;
+mod cost;
 mod descent;
 mod loop_block;
 mod postfix;
@@ -58,6 +60,7 @@ mod tables;
 pub(crate) use category::Category;
 pub(crate) use classifier::{DecisionClassifier, DecisionResult, MAX_DFA_STATES};
 pub(crate) use closure::DEFAULT_VISIT_BUDGET;
+pub(crate) use cost::AttemptOutcome;
 pub(crate) use descent::{DescentGroup, DescentPlan, DescentRules, TailArm};
 pub(crate) use static_only::{EscapeResolution, EscapeResolutions};
 pub(crate) use table::StaticDfaTable;
