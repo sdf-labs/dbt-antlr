@@ -192,8 +192,8 @@ fn render_diagnostic(diagnostic: &crate::Diagnostic) -> String {
 /// Runs the command line against the process arguments and streams.
 pub fn run_cli() -> miette::Result<()> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
-    let mut stdout = std::io::stdout().lock();
-    let mut stderr = std::io::stderr().lock();
+    let mut stdout = std::io::stdout();
+    let mut stderr = std::io::stderr();
     run(&args, &mut stdout, &mut stderr)
 }
 

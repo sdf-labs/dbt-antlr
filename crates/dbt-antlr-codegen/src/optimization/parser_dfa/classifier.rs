@@ -3,6 +3,11 @@
 //! The SLL DFA classifier: subset construction, budgets, and trust rules.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::num::NonZeroUsize;
+#[cfg(test)]
+use std::sync::Mutex;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use dbt_antlr_runtime::analysis::DFA;
 use dbt_antlr_runtime::analysis::{
@@ -56,6 +61,14 @@ pub(crate) const HYBRID_MIN_COVERAGE_PERCENT: u32 = 10;
 /// largest continuation that still beats a restart on our corpora
 /// (`FuzzExpr.g4`'s `item` frontier).
 pub(crate) const MAX_CONTINUATION_WORDS: usize = 64;
+
+/// Maximum number of threads that classify the decisions of one parser.
+///
+/// One build attempt can use several hundred megabytes of scratch memory, and
+/// each thread can run an attempt at the same time. On our SQL benchmark
+/// grammars, 16 threads give most of the speedup at less than half the memory
+/// of 60 threads. The slowest decisions set the wall time.
+const MAX_CLASSIFY_THREADS: usize = 16;
 
 /// Taint bits that invalidate a trusted verdict when a second path adds them
 /// to an already interned state. A decision state that gets one of them is
@@ -475,14 +488,16 @@ impl DecisionResult {
 pub(crate) struct DecisionClassifier {
     atn: &'static ATN,
     ll1_disjoint: Vec<bool>,
-    completion_depths: HashMap<i32, BitSet>,
+    /// The token counts from each alternative start state to the stop state
+    /// of its rule, by ATN state number, computed on first use.
+    completion_depths: Box<[OnceLock<BitSet>]>,
     /// Configs one build attempt may visit before it is treated as overflow.
     visit_budget: u64,
     /// The operator-loop analysis of each precedence-loop decision, built at
     /// most once and shared by every class attempt.
-    loop_blocks: HashMap<i32, LoopBlock>,
+    loop_blocks: Box<[OnceLock<LoopBlock>]>,
     /// The optional-postfix shape of each decision, built at most once.
-    postfix_shapes: HashMap<i32, Option<PostfixShape>>,
+    postfix_shapes: Box<[OnceLock<Option<PostfixShape>>]>,
     /// Whether the generated parser can defer to the adaptive simulation. When
     /// it cannot (`--static-dfa-only`), a partial table is kept regardless of
     /// its coverage, because the alternative is no table at all.
@@ -493,7 +508,7 @@ pub(crate) struct DecisionClassifier {
     call_sites: CallSites,
     /// The decision and the policy of every build attempt so far.
     #[cfg(test)]
-    attempts: Vec<(usize, AttemptKind)>,
+    attempts: Mutex<Vec<(usize, AttemptKind)>>,
 }
 
 /// The policy of one build attempt, for tests that count the attempts.
@@ -517,39 +532,31 @@ impl DecisionClassifier {
         Self {
             atn,
             ll1_disjoint,
-            completion_depths: HashMap::new(),
+            completion_depths: once_locks(atn.states_count()),
             visit_budget: super::closure::DEFAULT_VISIT_BUDGET,
-            loop_blocks: HashMap::new(),
-            postfix_shapes: HashMap::new(),
+            loop_blocks: once_locks(atn.decision_to_state.len()),
+            postfix_shapes: once_locks(atn.decision_to_state.len()),
             atn_fallback: AtnFallback::Allowed,
             descent: DescentAnalyzer::new(atn),
             call_sites: CallSites::of(atn),
             #[cfg(test)]
-            attempts: Vec::new(),
+            attempts: Mutex::new(Vec::new()),
         }
     }
 
     /// The loop-block analysis of one precedence-loop decision, built on first
     /// use and shared by every class attempt of that decision.
-    fn loop_block(&mut self, decision_state: ATNStateRef) -> LoopBlock {
-        if let Some(cached) = self.loop_blocks.get(&decision_state.get_state_number()) {
-            return cached.clone();
-        }
-        let block = LoopBlock::of(self.atn, decision_state);
-        self.loop_blocks
-            .insert(decision_state.get_state_number(), block.clone());
-        block
+    fn loop_block(&self, decision: usize) -> LoopBlock {
+        self.loop_blocks[decision]
+            .get_or_init(|| LoopBlock::of(self.atn, self.atn.decision_to_state[decision]))
+            .clone()
     }
 
     /// The optional-postfix shape of one decision, detected on first use.
-    fn postfix_shape(&mut self, decision_state: ATNStateRef) -> Option<PostfixShape> {
-        if let Some(cached) = self.postfix_shapes.get(&decision_state.get_state_number()) {
-            return cached.clone();
-        }
-        let shape = PostfixShape::analyze(self.atn, decision_state);
-        self.postfix_shapes
-            .insert(decision_state.get_state_number(), shape.clone());
-        shape
+    fn postfix_shape(&self, decision: usize) -> Option<PostfixShape> {
+        self.postfix_shapes[decision]
+            .get_or_init(|| PostfixShape::analyze(self.atn, self.atn.decision_to_state[decision]))
+            .clone()
     }
 
     /// Sets the per-attempt visit budget, for tests that classify a whole
@@ -564,6 +571,8 @@ impl DecisionClassifier {
     #[cfg(test)]
     pub(super) fn attempts_of(&self, decision: usize) -> Vec<AttemptKind> {
         self.attempts
+            .lock()
+            .expect("no attempt panicked")
             .iter()
             .filter(|(attempted, _)| *attempted == decision)
             .map(|(_, kind)| *kind)
@@ -582,14 +591,58 @@ impl DecisionClassifier {
         self
     }
 
-    /// Classifies every decision.
-    pub(crate) fn classify_all(&mut self) -> Vec<DecisionResult> {
-        (0..self.atn.decision_to_state.len())
-            .map(|decision| self.classify(decision))
+    /// Classifies every decision, in parallel
+    pub(crate) fn classify_all(&self) -> Vec<DecisionResult> {
+        let threads = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+        self.classify_on(threads.min(MAX_CLASSIFY_THREADS))
+    }
+
+    /// Classifies every decision on at most `threads` threads.
+    ///
+    /// Each thread takes the next unclassified decision until none is left.
+    /// The classification of one decision does not depend on the others. The
+    /// shared caches hold values that do not depend on the order of the
+    /// computation. Thus the results do not depend on the thread count.
+    pub(super) fn classify_on(&self, threads: usize) -> Vec<DecisionResult> {
+        let decisions = self.atn.decision_to_state.len();
+        if threads <= 1 || decisions <= 1 {
+            return (0..decisions)
+                .map(|decision| self.classify(decision))
+                .collect();
+        }
+        let next = AtomicUsize::new(0);
+        let mut results: Vec<Option<DecisionResult>> = vec![None; decisions];
+        std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..threads.min(decisions))
+                .map(|_| {
+                    scope.spawn(|| {
+                        let mut classified = Vec::new();
+                        loop {
+                            let decision = next.fetch_add(1, Ordering::Relaxed);
+                            if decision >= decisions {
+                                break classified;
+                            }
+                            classified.push((decision, self.classify(decision)));
+                        }
+                    })
+                })
+                .collect();
+            for worker in workers {
+                let classified = worker
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+                for (decision, result) in classified {
+                    results[decision] = Some(result);
+                }
+            }
+        });
+        results
+            .into_iter()
+            .map(|result| result.expect("every decision is classified"))
             .collect()
     }
 
-    fn classify(&mut self, decision: usize) -> DecisionResult {
+    fn classify(&self, decision: usize) -> DecisionResult {
         let state = self.atn.decision_to_state[decision];
         let mut result = DecisionResult::new(decision, state);
 
@@ -621,7 +674,7 @@ impl DecisionClassifier {
     /// gets a hybrid table. When a static attempt stopped and the pass found
     /// no table, [`Self::witness_pass`] classifies again to get the real
     /// conflict witness for the report.
-    fn first_pass(&mut self, decision: usize, class: Option<PrecedenceClass>) -> ClassRun {
+    fn first_pass(&self, decision: usize, class: Option<PrecedenceClass>) -> ClassRun {
         let mut run = self.static_chain(decision, class, true, false);
         let eligible = run.result.table.is_none()
             && (class.is_some()
@@ -660,7 +713,7 @@ impl DecisionClassifier {
     /// stopped attempt gives an overflow, so the first pass already tried the
     /// hybrid constructions, and they do not use the shortcut.
     fn witness_pass(
-        &mut self,
+        &self,
         decision: usize,
         class: Option<PrecedenceClass>,
         run: ClassRun,
@@ -681,7 +734,7 @@ impl DecisionClassifier {
     /// class overflowed without a stop. The abort policy does not change that
     /// attempt, so it does not run again.
     fn static_chain(
-        &mut self,
+        &self,
         decision: usize,
         class: Option<PrecedenceClass>,
         abort_on_untrusted_conflict: bool,
@@ -720,7 +773,7 @@ impl DecisionClassifier {
 
     /// Turns what one attempt observed into a decision result: the category,
     /// and the table when the attempt earns one.
-    fn finalize(&mut self, outcome: Attempt) -> DecisionResult {
+    fn finalize(&self, outcome: Attempt) -> DecisionResult {
         let decision = outcome.decision;
         let mut result = DecisionResult::new(decision, self.atn.decision_to_state[decision]);
         apply_facts(&mut result, &outcome);
@@ -857,7 +910,7 @@ impl DecisionClassifier {
                 })
     }
 
-    fn classify_precedence(&mut self, mut result: DecisionResult) -> DecisionResult {
+    fn classify_precedence(&self, mut result: DecisionResult) -> DecisionResult {
         result.category = Category::LR_PRECEDENCE;
         let state = self.atn.decision_to_state[result.decision];
         let target_rule = state.get_rule_index();
@@ -956,13 +1009,13 @@ impl DecisionClassifier {
     /// shared manager also gives all precedence classes of a decision the same
     /// DFA, but one config set can have other successors in another class.
     fn attempt(
-        &mut self,
+        &self,
         decision: usize,
         policy: AttemptPolicy,
         precedence: Option<PrecedenceClass>,
     ) -> Attempt {
         #[cfg(test)]
-        self.attempts.push((
+        self.attempts.lock().expect("no attempt panicked").push((
             decision,
             match policy {
                 AttemptPolicy { hybrid: true, .. } => AttemptKind::Hybrid,
@@ -976,8 +1029,8 @@ impl DecisionClassifier {
         ));
         let atn = self.atn;
         let decision_state = atn.decision_to_state[decision];
-        let loop_block = precedence.map(|_| self.loop_block(decision_state));
-        let postfix = self.postfix_shape(decision_state);
+        let loop_block = precedence.map(|_| self.loop_block(decision));
+        let postfix = self.postfix_shape(decision);
         let has_postfix_shape = postfix.is_some();
         // Shared-descent groups resolve escapes, so only hybrid attempts use
         // them; a precedence class table is selected by the precedence, which a
@@ -987,9 +1040,8 @@ impl DecisionClassifier {
         } else {
             None
         };
-        let mut completion_depths = std::mem::take(&mut self.completion_depths);
         let manager = ParserATNSimulatorManager::new(atn);
-        let attempt = Arena::with(|arena| {
+        Arena::with(|arena| {
             let simulator = ParserATNSimulator::new(manager.get_simulator(arena));
             let scratch = Bump::new();
             let mut build = DecisionBuild {
@@ -1023,7 +1075,7 @@ impl DecisionClassifier {
                 info: HashMap::new(),
                 states: Vec::new(),
                 queue: VecDeque::new(),
-                completion_depths: &mut completion_depths,
+                completion_depths: &self.completion_depths,
                 attempt: Attempt {
                     decision,
                     hybrid: policy.hybrid,
@@ -1032,10 +1084,13 @@ impl DecisionClassifier {
                 },
             };
             build.run()
-        });
-        self.completion_depths = completion_depths;
-        attempt
+        })
     }
+}
+
+/// `len` empty cells.
+fn once_locks<T>(len: usize) -> Box<[OnceLock<T>]> {
+    (0..len).map(|_| OnceLock::new()).collect()
 }
 
 /// The groups of `plan` that some state of `table` accepts with.
@@ -1121,7 +1176,7 @@ struct DecisionBuild<'b, 'sim, 'a> {
     /// DFA states in creation order; the index is the state number.
     states: Vec<&'sim DFAState<'sim, ATNConfigSet<'sim>>>,
     queue: VecDeque<i32>,
-    completion_depths: &'a mut HashMap<i32, BitSet>,
+    completion_depths: &'a [OnceLock<BitSet>],
     attempt: Attempt,
 }
 
@@ -2116,7 +2171,7 @@ where
     /// `true` when the conflicting alternatives leave the decision after the
     /// same number of tokens: the ambiguity is then faithful to the runtime.
     fn uniform_pop_depths(
-        &mut self,
+        &self,
         conflicting: &BitSet,
         any_boundary: bool,
         all_boundary: bool,
@@ -2155,16 +2210,14 @@ where
         true
     }
 
-    fn completion_depths(&mut self, alt_start: ATNStateRef) -> BitSet {
-        let state_number = alt_start.get_state_number();
-        if let Some(cached) = self.completion_depths.get(&state_number) {
-            return cached.clone();
-        }
-        let mut visiting = BTreeSet::new();
-        let mut budget = 100_000_i32;
-        let depths = token_counts_to_stop(alt_start, &mut visiting, &mut budget);
-        self.completion_depths.insert(state_number, depths.clone());
-        depths
+    fn completion_depths(&self, alt_start: ATNStateRef) -> &'a BitSet {
+        let state_number = usize::try_from(alt_start.get_state_number())
+            .expect("an alternative start is a real ATN state");
+        self.completion_depths[state_number].get_or_init(|| {
+            let mut visiting = BTreeSet::new();
+            let mut budget = 100_000_i32;
+            token_counts_to_stop(alt_start, &mut visiting, &mut budget)
+        })
     }
 
     /// The "untrusted-but-uniform" resolution: when every conflicting state is

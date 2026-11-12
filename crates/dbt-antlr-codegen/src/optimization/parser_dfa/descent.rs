@@ -31,6 +31,7 @@
 //!    and [`DescentAnalyzer::exit_continue_tokens`]).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::OnceLock;
 
 use dbt_antlr_runtime::analysis::{
     ATN, ATNConfig, ATNStateRef, ATNStateType, BOUNDARY_TAINT, BasicBlockStartState, BitSet, EOF,
@@ -218,15 +219,14 @@ pub(super) struct DescentAnalyzer {
     atn: &'static ATN,
     rules: Option<DescentRules>,
     /// Per rule, whether it can serve as a shared rule.
-    shareable: Option<Vec<bool>>,
-    /// Per rule, the rules it calls.
-    callees: Option<Vec<BTreeSet<usize>>>,
+    shareable: OnceLock<Vec<bool>>,
     /// The grammar-wide FOLLOW set of every rule, EOF included.
-    follow: Option<Vec<BTreeSet<i32>>>,
+    follow: OnceLock<Vec<BTreeSet<i32>>>,
     /// Per rule `R`, the tokens that a derivation of `R` can consume at a
     /// point where `R` can also exit.
-    exit_continue: HashMap<usize, BTreeSet<i32>>,
-    plans: HashMap<usize, Option<DescentPlan>>,
+    exit_continue: Box<[OnceLock<BTreeSet<i32>>]>,
+    /// Per decision, its plan.
+    plans: Box<[OnceLock<Option<DescentPlan>>]>,
 }
 
 impl DescentAnalyzer {
@@ -234,11 +234,14 @@ impl DescentAnalyzer {
         Self {
             atn,
             rules: None,
-            shareable: None,
-            callees: None,
-            follow: None,
-            exit_continue: HashMap::new(),
-            plans: HashMap::new(),
+            shareable: OnceLock::new(),
+            follow: OnceLock::new(),
+            exit_continue: (0..atn.rule_to_start_state.len())
+                .map(|_| OnceLock::new())
+                .collect(),
+            plans: (0..atn.decision_to_state.len())
+                .map(|_| OnceLock::new())
+                .collect(),
         }
     }
 
@@ -250,16 +253,14 @@ impl DescentAnalyzer {
     }
 
     /// The plan of a decision, `None` when it has no codegenable group.
-    pub(super) fn plan(&mut self, decision: usize) -> Option<DescentPlan> {
-        if let Some(cached) = self.plans.get(&decision) {
-            return cached.clone();
-        }
-        let plan = self.build(decision);
-        self.plans.insert(decision, plan.clone());
-        plan
+    pub(super) fn plan(&self, decision: usize) -> Option<DescentPlan> {
+        self.plans
+            .get(decision)?
+            .get_or_init(|| self.build(decision))
+            .clone()
     }
 
-    fn build(&mut self, decision: usize) -> Option<DescentPlan> {
+    fn build(&self, decision: usize) -> Option<DescentPlan> {
         self.rules.as_ref()?;
         let decision_state = *self.atn.decision_to_state.get(decision)?;
         let end_state = block_end_state(self.atn, decision_state)?;
@@ -346,7 +347,7 @@ impl DescentAnalyzer {
     /// disambiguate the members or when the shared rule can continue on a token
     /// of those follow sets at a point where it can exit.
     fn dispatch(
-        &mut self,
+        &self,
         decision_rule: i32,
         shared_rule: usize,
         members: &[Member],
@@ -417,52 +418,44 @@ impl DescentAnalyzer {
 
     /// The tokens that a derivation of `shared_rule` can consume at a point
     /// where `shared_rule` can also exit.
-    fn exit_continue_tokens(&mut self, shared_rule: usize) -> &BTreeSet<i32> {
-        let atn = self.atn;
-        self.exit_continue
-            .entry(shared_rule)
-            .or_insert_with(|| compute_exit_continue(atn, shared_rule))
+    fn exit_continue_tokens(&self, shared_rule: usize) -> &BTreeSet<i32> {
+        self.exit_continue[shared_rule].get_or_init(|| compute_exit_continue(self.atn, shared_rule))
     }
 
     /// Whether `rule` can be the shared rule of a group.
-    fn shareable(&mut self, rule: usize) -> bool {
-        if self.shareable.is_none() {
-            self.shareable = Some(self.compute_shareable());
-        }
+    fn shareable(&self, rule: usize) -> bool {
         self.shareable
-            .as_ref()
-            .is_some_and(|shareable| shareable.get(rule).copied().unwrap_or(false))
+            .get_or_init(|| self.compute_shareable())
+            .get(rule)
+            .copied()
+            .unwrap_or(false)
     }
 
     /// The rules each rule calls.
-    fn callees(&mut self) -> &[BTreeSet<usize>] {
-        let atn = self.atn;
-        self.callees.get_or_insert_with(|| {
-            let num_rules = atn.rule_to_start_state.len();
-            let mut callees: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); num_rules];
-            for state in atn.iter_states() {
-                let Ok(rule) = usize::try_from(state.get_rule_index()) else {
-                    continue;
-                };
-                if rule >= num_rules {
-                    continue;
-                }
-                for transition in state.get_transitions() {
-                    if matches!(transition.transition_type(), TransitionType::Rule)
-                        && let Ok(callee) =
-                            usize::try_from(transition.get_target().get_rule_index())
-                    {
-                        callees[rule].insert(callee);
-                    }
+    fn callees(&self) -> Vec<BTreeSet<usize>> {
+        let num_rules = self.atn.rule_to_start_state.len();
+        let mut callees: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); num_rules];
+        for state in self.atn.iter_states() {
+            let Ok(rule) = usize::try_from(state.get_rule_index()) else {
+                continue;
+            };
+            if rule >= num_rules {
+                continue;
+            }
+            for transition in state.get_transitions() {
+                if matches!(transition.transition_type(), TransitionType::Rule)
+                    && let Ok(callee) = usize::try_from(transition.get_target().get_rule_index())
+                {
+                    callees[rule].insert(callee);
                 }
             }
-            callees
-        })
+        }
+        callees
     }
 
     /// A rule is shareable when it takes no arguments and no rule reachable
     /// from it (itself included) has an action or a semantic predicate.
-    fn compute_shareable(&mut self) -> Vec<bool> {
+    fn compute_shareable(&self) -> Vec<bool> {
         let num_rules = self.atn.rule_to_start_state.len();
         let rules = self.rules.clone().unwrap_or_default();
         let mut tainted: Vec<bool> = (0..num_rules)
@@ -480,7 +473,7 @@ impl DescentAnalyzer {
                 tainted[rule] = true;
             }
         }
-        let callees = self.callees().to_vec();
+        let callees = self.callees();
         let mut changed = true;
         while changed {
             changed = false;
@@ -498,13 +491,15 @@ impl DescentAnalyzer {
 
     /// The grammar-wide FOLLOW set of `rule`, EOF included: any rule can be
     /// the start rule of a parse.
-    fn follow(&mut self, rule: i32) -> BTreeSet<i32> {
-        if self.follow.is_none() {
-            self.follow = Some(compute_follow(self.atn));
-        }
+    fn follow(&self, rule: i32) -> BTreeSet<i32> {
         usize::try_from(rule)
             .ok()
-            .and_then(|rule| self.follow.as_ref()?.get(rule).cloned())
+            .and_then(|rule| {
+                self.follow
+                    .get_or_init(|| compute_follow(self.atn))
+                    .get(rule)
+                    .cloned()
+            })
             .unwrap_or_else(|| BTreeSet::from([EOF]))
     }
 }
