@@ -1612,7 +1612,7 @@ fn classify_logged(path: &Path, budget: u64) -> (Vec<DecisionResult>, DecisionCl
     let parser = compilation
         .parser(root.parser.expect("parser root"))
         .expect("parser artifact");
-    let mut classifier = classifier(parser).with_visit_budget(budget);
+    let classifier = classifier(parser).with_visit_budget(budget);
     let results = classifier.classify_all();
     (results, classifier)
 }
@@ -1729,4 +1729,44 @@ fn stopped_unbounded_attempt_does_not_fall_back_to_widening() {
     assert_eq!(decision.category, Category::HYBRID);
     assert_eq!(decision.conflicts, [vec![1, 2]]);
     assert!(decision.table.is_some());
+}
+
+/// The results of a parallel classification do not depend on the thread
+/// count.
+#[test]
+fn parallel_classification_matches_serial_classification() {
+    let mut grammars = Vec::new();
+    collect_grammars(&grammars_dir(), &mut grammars);
+    grammars.push(fixture("vscode-cpp14/CPP14.g4"));
+    grammars.sort();
+    let mut decisions = 0_usize;
+    for path in grammars {
+        let Ok(compilation) = compile(LoadOptions {
+            roots: vec![path.clone()],
+            library_directories: Vec::new(),
+        }) else {
+            continue;
+        };
+        for root in &compilation.roots {
+            let Some(parser_id) = root.parser else {
+                continue;
+            };
+            let parser = compilation.parser(parser_id).expect("parser artifact");
+            for atn_fallback in [AtnFallback::Allowed, AtnFallback::Forbidden] {
+                let classify_on = |threads| {
+                    classifier(parser)
+                        .with_atn_fallback(atn_fallback)
+                        .with_visit_budget(5_000)
+                        .classify_on(threads)
+                };
+                // The parallel run comes first, so that it fills the caches of
+                // the ATN states from more than one thread.
+                let parallel = classify_on(8);
+                let serial = classify_on(1);
+                decisions += serial.len();
+                assert_eq!(serial, parallel, "{}", path.display());
+            }
+        }
+    }
+    assert!(decisions > 800, "decisions classified: {decisions}");
 }
