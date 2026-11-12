@@ -17,6 +17,9 @@ mod custom_descriptors;
 /// Vendored case tree (`<Group>/<Name>.txt`) inside the testsuite package.
 const VENDORED_CORPUS: &str = "tests/runtime-testsuite/corpus";
 const RUNTIME_PACKAGE: &str = "dbt-antlr-runtime";
+/// Cargo target name of the runtime lib: hyphens of [`RUNTIME_PACKAGE`] become
+/// underscores, and the build messages report targets, not packages.
+const RUNTIME_CRATE: &str = "dbt_antlr_runtime";
 /// Guard against a single pathological case stalling the whole sweep; the
 /// upstream JVM harness bounds execution the same way.
 const RUN_TIMEOUT: Duration = Duration::from_secs(300);
@@ -266,30 +269,22 @@ impl std::fmt::Display for Failures {
 
 /// Per-sweep artifacts prepared once so per-case work stays minimal: the
 /// prebuilt `dbt-antlr` executable and the prebuilt `dbt-antlr-runtime` runtime
-/// rlib that every case compiles against.
+/// that every case compiles against.
 struct SweepContext<'a> {
     args: &'a Args,
     generator: PathBuf,
-    runtime_rlib: PathBuf,
+    runtime: RuntimeArtifact,
 }
 
 impl<'a> SweepContext<'a> {
     fn prepare(args: &'a Args) -> io::Result<Self> {
         let generator = prebuild_generator(args)?;
-        let runtime_rlib = prebuild_runtime(args)?;
+        let runtime = prebuild_runtime(args)?;
         Ok(Self {
             args,
             generator,
-            runtime_rlib,
+            runtime,
         })
-    }
-
-    /// Directory of `target/debug/deps` holding the runtime rlib and its
-    /// transitive dependencies, passed to rustc as `-L dependency=`.
-    fn deps_dir(&self) -> &Path {
-        self.runtime_rlib
-            .parent()
-            .expect("runtime rlib lives in a deps directory")
     }
 }
 
@@ -336,7 +331,7 @@ fn prebuild_generator(args: &Args) -> io::Result<PathBuf> {
 /// `dfa::static_parser_dfa` and `BaseParser::dfa_predict`). The
 /// generation-time builders behind `static-dfa-build` live inside the
 /// generator binary, not in the rlib the cases link.
-fn prebuild_runtime(args: &Args) -> io::Result<PathBuf> {
+fn prebuild_runtime(args: &Args) -> io::Result<RuntimeArtifact> {
     let output = run_output(
         Command::new("cargo")
             .arg("build")
@@ -353,67 +348,107 @@ fn prebuild_runtime(args: &Args) -> io::Result<PathBuf> {
         )));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines().rev() {
-        if !line.contains("\"reason\":\"compiler-artifact\"")
-            || json_string_value(line, "name").as_deref() != Some(RUNTIME_PACKAGE)
-        {
-            continue;
-        }
-        if let Some(rlib) = json_first_array_string(line, "filenames")
-            && Path::new(&rlib)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("rlib"))
-        {
-            return Ok(PathBuf::from(rlib));
-        }
-    }
-    // Fallback for cargo versions that do not list filenames: pick the
-    // newest runtime rlib from the target dir, like `findLibName`.
-    let target_dir = env::var_os("CARGO_TARGET_DIR").map_or_else(
-        || args.workspace_root.join("target"),
-        |dir| absolutize(&args.workspace_root, PathBuf::from(dir)),
-    );
-    let deps = target_dir.join("debug/deps");
-    let mut newest: Option<(PathBuf, std::time::SystemTime)> = None;
-    for entry in fs::read_dir(&deps)? {
-        let path = entry?.path();
-        let Some(name) = path.file_name().and_then(OsStr::to_str) else {
-            continue;
-        };
-        if !(name.starts_with("libdbt_antlr_runtime-")
-            && Path::new(name)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("rlib")))
-        {
-            continue;
-        }
-        let modified = fs::metadata(&path).and_then(|m| m.modified()).ok();
-        if let Some(modified) = modified
-            && newest.as_ref().is_none_or(|(_, time)| modified > *time)
-        {
-            newest = Some((path, modified));
-        }
-    }
-    newest.map(|(path, _)| path).ok_or_else(|| {
+    parse_runtime_artifact(&stdout).ok_or_else(|| {
         io::Error::other(format!(
-            "no libdbt_antlr_runtime-*.rlib under {}",
-            deps.display()
+            "cargo reported no {RUNTIME_CRATE} rlib in its build messages"
         ))
     })
 }
 
-/// Decodes the JSON string value of `key` from one cargo message line.
+/// The runtime rlib the cases link, plus every directory holding an artifact
+/// rustc must resolve while linking it.
+struct RuntimeArtifact {
+    rlib: PathBuf,
+    /// Passed to rustc as `-L dependency=`, one entry per directory cargo
+    /// reported. Cargo keeps dependency artifacts out of `target/<profile>`:
+    /// each unit's rlib lands in its own `build/<crate>/<hash>/out` directory,
+    /// so the search path is harvested from the build messages instead of
+    /// assumed to be the single `target/<profile>/deps`.
+    search_dirs: Vec<PathBuf>,
+}
+
+/// Resolves the runtime artifact from one `cargo build --message-format=json`
+/// transcript, or `None` when cargo reported no runtime rlib.
+fn parse_runtime_artifact(messages: &str) -> Option<RuntimeArtifact> {
+    let mut rlib = None;
+    let mut search_dirs: Vec<PathBuf> = Vec::new();
+    for line in messages.lines() {
+        if !line.contains("\"reason\":\"compiler-artifact\"") {
+            continue;
+        }
+        let filenames: Vec<PathBuf> = json_array_strings(line, "filenames")
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
+        if json_string_value(line, "name").as_deref() == Some(RUNTIME_CRATE)
+            && let Some(found) = filenames.iter().find(|path| is_rlib(path))
+        {
+            rlib = Some(found.clone());
+        }
+        for dir in filenames.iter().filter_map(|path| path.parent()) {
+            if !search_dirs.iter().any(|seen| seen.as_path() == dir) {
+                search_dirs.push(dir.to_path_buf());
+            }
+        }
+    }
+    Some(RuntimeArtifact {
+        rlib: rlib?,
+        search_dirs,
+    })
+}
+
+fn is_rlib(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("rlib"))
+}
+
+/// Decodes every string element of the JSON array value of `key` from one
+/// cargo message line (an artifact's `filenames` lists its rlib first, then
+/// the rmeta).
 ///
 /// A raw byte slice between quotes would keep JSON escapes — Windows path
-/// separators arrive as `\\` — so the value is properly unescaped here. A
+/// separators arrive as `\\` — so the values are properly unescaped here. A
 /// hand-rolled decoder is deliberate: the harness stays dependency-light
-/// rather than carrying `serde_json` for one build message.
-/// Decodes the first string element of the JSON array value of `key` from
-/// one cargo message line (artifact `filenames` lists the rlib first).
-fn json_first_array_string(line: &str, key: &str) -> Option<String> {
-    let marker = format!("\"{key}\":[\"");
-    let start = line.find(&marker)? + marker.len();
-    decode_json_string(&line[start..])
+/// rather than carrying `serde_json` for a few build messages.
+fn json_array_strings(line: &str, key: &str) -> Vec<String> {
+    let marker = format!("\"{key}\":[");
+    let Some(mut rest) = line
+        .find(&marker)
+        .map(|start| &line[start + marker.len()..])
+    else {
+        return Vec::new();
+    };
+    let mut values = Vec::new();
+    loop {
+        rest = rest.trim_start_matches([' ', ',']);
+        if !rest.starts_with('"') {
+            return values;
+        }
+        let body = &rest[1..];
+        let Some(end) = string_end(body) else {
+            return values;
+        };
+        let Some(value) = decode_json_string(&body[..=end]) else {
+            return values;
+        };
+        values.push(value);
+        rest = &body[end + 1..];
+    }
+}
+
+/// Byte index of the first unescaped quote in `text`.
+fn string_end(text: &str) -> Option<usize> {
+    let mut chars = text.char_indices();
+    while let Some((index, ch)) = chars.next() {
+        match ch {
+            '\\' => {
+                chars.next();
+            }
+            '"' => return Some(index),
+            _ => {}
+        }
+    }
+    None
 }
 
 fn json_string_value(line: &str, key: &str) -> Option<String> {
@@ -1070,21 +1105,26 @@ fn render_main_rs(descriptor: &Descriptor) -> Result<String, Failure> {
 
 /// Compiles the case crate exactly like the fork's `RustRunner.compile`:
 /// `rustc` over `src/main.rs` (the generated modules sit next to it) with the
-/// prebuilt runtime rlib and its deps directory on the search path.
+/// prebuilt runtime rlib and the dependency search path cargo reported.
 fn compile_case(context: &SweepContext<'_>, case_dir: &Path) -> Result<(), Failure> {
-    let output = Command::new("rustc")
+    let mut command = Command::new("rustc");
+    command
         .arg("--crate-name")
         .arg("Rust")
         .arg("--edition=2024")
         .arg("src/main.rs")
         .arg("--out-dir")
-        .arg("target/debug")
-        .arg("-L")
-        .arg(format!("dependency={}", context.deps_dir().display()))
+        .arg("target/debug");
+    for dir in &context.runtime.search_dirs {
+        command
+            .arg("-L")
+            .arg(format!("dependency={}", dir.display()));
+    }
+    let output = command
         .arg("--extern")
         .arg(format!(
             "dbt_antlr_runtime={}",
-            context.runtime_rlib.display()
+            context.runtime.rlib.display()
         ))
         .current_dir(case_dir)
         .output()
@@ -1221,11 +1261,11 @@ mod tests {
     use std::ffi::OsStr;
     use std::fs;
     use std::io;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use super::{
-        Descriptor, ensure_descriptors_loaded, json_first_array_string, json_string_value,
-        parse_descriptor, render_main_rs, skip_reason, sorted_children,
+        Descriptor, ensure_descriptors_loaded, json_array_strings, json_string_value,
+        parse_descriptor, parse_runtime_artifact, render_main_rs, skip_reason, sorted_children,
     };
 
     #[test]
@@ -1255,12 +1295,47 @@ mod tests {
     }
 
     #[test]
-    fn json_string_value_reads_first_artifact_filename() {
-        let line = r#"{"reason":"compiler-artifact","target":{"name":"dbt-antlr-runtime"},"filenames":["/target/debug/deps/libdbt_antlr_runtime-a4d76dfb3e9898fa.rlib"],"executable":null}"#;
+    fn json_array_strings_lists_every_artifact_filename() {
+        let line = r#"{"reason":"compiler-artifact","target":{"name":"dbt_antlr_runtime"},"filenames":["/target/debug/libdbt_antlr_runtime.rlib","/target/debug/build/tmp/out/libdbt_antlr_runtime-a4d.rlib"]}"#;
         assert_eq!(
-            json_first_array_string(line, "filenames").as_deref(),
-            Some("/target/debug/deps/libdbt_antlr_runtime-a4d76dfb3e9898fa.rlib")
+            json_array_strings(line, "filenames"),
+            [
+                "/target/debug/libdbt_antlr_runtime.rlib",
+                "/target/debug/build/tmp/out/libdbt_antlr_runtime-a4d.rlib",
+            ]
         );
+        assert!(json_array_strings("{}", "filenames").is_empty());
+        assert!(json_array_strings(r#"{"filenames":[]}"#, "filenames").is_empty());
+    }
+
+    #[test]
+    fn parse_runtime_artifact_matches_the_crate_target_name() {
+        let messages = concat!(
+            r#"{"reason":"compiler-artifact","target":{"name":"byteorder"},"filenames":["/w/target/debug/build/byteorder/89e76f12be08f3b0/out/libbyteorder-89e76f12be08f3b0.rlib","/w/target/debug/build/byteorder/89e76f12be08f3b0/out/libbyteorder-89e76f12be08f3b0.rmeta"],"executable":null,"fresh":true}"#,
+            "\n",
+            r#"{"reason":"compiler-artifact","target":{"name":"dbt_antlr_runtime"},"filenames":["/w/target/debug/libdbt_antlr_runtime.rlib","/w/target/debug/build/dbt-antlr-runtime/1ddbafe6ca9155e4/out/libdbt_antlr_runtime-1ddbafe6ca9155e4.rmeta"],"executable":null,"fresh":true}"#,
+            "\n",
+            r#"{"reason":"build-finished","success":true}"#,
+        );
+        let artifact = parse_runtime_artifact(messages).expect("runtime artifact resolves");
+        assert_eq!(
+            artifact.rlib,
+            Path::new("/w/target/debug/libdbt_antlr_runtime.rlib")
+        );
+        assert_eq!(
+            artifact.search_dirs,
+            [
+                PathBuf::from("/w/target/debug/build/byteorder/89e76f12be08f3b0/out"),
+                PathBuf::from("/w/target/debug"),
+                PathBuf::from("/w/target/debug/build/dbt-antlr-runtime/1ddbafe6ca9155e4/out"),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_runtime_artifact_rejects_a_missing_runtime() {
+        let line = r#"{"reason":"compiler-artifact","target":{"name":"byteorder"},"filenames":["/w/libbyteorder.rlib"]}"#;
+        assert!(parse_runtime_artifact(line).is_none());
     }
 
     #[test]
