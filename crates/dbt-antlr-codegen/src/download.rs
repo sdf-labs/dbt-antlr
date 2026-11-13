@@ -293,6 +293,9 @@ pub(crate) fn generate_with_pinned_binary(
     if optimization.static_dfa_only_enabled() {
         command.arg("--static-dfa-only");
     }
+    if optimization.strict_enabled() {
+        command.arg("--strict");
+    }
     if optimization.is_report_only() {
         command.arg("--report-only");
     }
