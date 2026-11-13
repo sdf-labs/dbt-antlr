@@ -1,0 +1,23 @@
+---
+source: crates/dbt-antlr-codegen/tests/dbt_explain.rs
+expression: report
+---
+=== explain: BudgetParser (start rule: prog, mode: --static-dfa-only) ===
+input: <inline> (3 tokens)
+
+[VERDICT: GRAMMAR REJECTS INPUT]
+  Full LL(*) also rejects this input at the same place. The grammar itself does not accept it: this is not a --static-dfa-only artifact.
+  --static-dfa-only: syntax error at token 2 ';' (line 1:5)
+  full LL(*):        syntax error at token 2 ';' (line 1:5)
+
+[SYNTAX ERROR (--static-dfa-only) @ token 2 ';' (line 1:5)]
+  mismatched input
+  1 | a b ;
+    |     ^
+  expected: ID
+  rule stack:
+    prog (from token 0 'a' (line 1:1))
+    stat (from token 0 'a' (line 1:1))
+
+[STATIC GUESSES BEFORE THE ERROR: 1 (1 on the rule stack, 0 in completed subtrees)]
+  step 0, token 0 'a' (line 1:1): decision 1 in rule 'stat' s2 -> alt 1 via MinViableAlt [rule stack]

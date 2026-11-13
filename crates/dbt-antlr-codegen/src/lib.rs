@@ -34,6 +34,8 @@ mod download;
 pub mod emission;
 mod error;
 #[cfg(feature = "generator")]
+mod explain;
+#[cfg(feature = "generator")]
 #[allow(dead_code)]
 pub(crate) mod grammar;
 mod optimization;

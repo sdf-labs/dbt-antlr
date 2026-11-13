@@ -50,7 +50,7 @@ fn compile_grammar(
     compile_grammar_with(grammar_path, library_dirs, &OptimizationPlan::default())
 }
 
-fn compile_grammar_with(
+pub(crate) fn compile_grammar_with(
     grammar_path: &Path,
     library_dirs: &[PathBuf],
     plan: &OptimizationPlan,
