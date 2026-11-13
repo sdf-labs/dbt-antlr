@@ -14,7 +14,7 @@
 
 use std::path::{Path, PathBuf};
 
-use dbt_antlr_runtime::analysis::{BOUNDARY_TAINT, FOREIGN_LINEAGE_TAINT};
+use dbt_antlr_runtime::analysis::{BOUNDARY_TAINT, EOF, FOREIGN_LINEAGE_TAINT};
 
 use crate::grammar::compiler::compile;
 use crate::grammar::diagnostic::Severity;
@@ -1839,6 +1839,89 @@ fn stopped_unbounded_attempt_does_not_fall_back_to_widening() {
     assert_eq!(decision.category, Category::HYBRID);
     assert_eq!(decision.conflicts, [vec![1, 2]]);
     assert!(decision.table.is_some());
+}
+
+/// When the state budget sends the witness pass to the widened attempt, the
+/// widened attempt does not resolve a conflict that only widening makes. In
+/// `WidenedTrust.g4`, both alternatives of decision 1 meet after
+/// `'b' 'b' 'b' 'b' 'a'` with an empty context, but only the second alternative
+/// can read `c b b b b a d e d x`.
+#[test]
+fn widened_competitors_get_no_uniform_trust() {
+    let path = grammars_dir().join("parser").join("WidenedTrust.g4");
+    let results = classify(&path);
+    let decision = &results[1];
+    assert_eq!(
+        attempts_of(&results, 1),
+        [
+            AttemptKind::Unbounded { abort: true },
+            AttemptKind::Hybrid,
+            AttemptKind::Unbounded { abort: false },
+            AttemptKind::Widened { abort: false },
+        ]
+    );
+    assert_eq!(
+        decision.cost.attempts[2].outcome,
+        AttemptOutcome::StateBudget
+    );
+    assert_eq!(decision.category, Category::CONTEXT_SENSITIVE);
+    assert_eq!(decision.utrust_resolutions, 0);
+    assert!(decision.table.is_none());
+    assert!(!decision.is_fully_static());
+
+    let static_only = classify_with(&path, AtnFallback::Forbidden);
+    let decision = &static_only[1];
+    assert_eq!(decision.category, Category::HYBRID);
+    let types = token_types(&path, &["'a'", "'b'", "'d'", "'e'"]);
+    let (a, b, d, e) = (types[0], types[1], types[2], types[3]);
+    let table = decision.table.as_ref().expect("static-only table");
+    let conflict = walk(table, &[b, b, b, b, a, d, e]).expect("conflict state");
+    assert!(conflict.is_escape(), "the conflict is a reported escape");
+    assert!(
+        walk(table, &[b, b, b, b, a]).is_some_and(|state| state.accept == 0),
+        "the table does not decide after `'b' 'b' 'b' 'b' 'a'`"
+    );
+}
+
+/// The precedence filter of a widened precedence class keeps an exit config
+/// that widening made equal to an iterate config. In `WidenedPrecedence.g4`,
+/// above class 0 (`p <= 2`), the loop cannot iterate through `e op`. The other
+/// iterate reading of `'+' 'q' 'r'` owes `'a'`, so every class table above
+/// class 0 must predict the exit for `'+' 'q' 'r' EOF`.
+#[test]
+fn widened_precedence_filter_keeps_the_exit() {
+    let path = grammars_dir().join("parser").join("WidenedPrecedence.g4");
+    let types = token_types(&path, &["'+'", "'q'", "'r'"]);
+    let tokens = [types[0], types[1], types[2], EOF];
+    for atn_fallback in [AtnFallback::Allowed, AtnFallback::Forbidden] {
+        let mut results = classify_with(&path, atn_fallback);
+        let decision = &mut results[1];
+        assert_eq!(decision.category, Category::LR_PRECEDENCE);
+        assert!(
+            decision
+                .cost
+                .attempts
+                .iter()
+                .any(|attempt| matches!(attempt.kind, AttemptKind::Widened { .. })),
+            "{atn_fallback:?}: a class falls back to the widened attempt"
+        );
+        if atn_fallback == AtnFallback::Forbidden {
+            assert!(decision.resolve_static_only(), "every class has a table");
+        }
+        let precedence = decision.precedence.as_ref().expect("precedence tables");
+        assert_eq!(precedence.cutoffs[0], 2);
+        assert_eq!(precedence.adaptive_classes, 0, "{atn_fallback:?}");
+        for (class, table) in precedence.tables.iter().enumerate().skip(1) {
+            let table = table.as_ref().expect("class table");
+            let prediction = (0..=tokens.len())
+                .filter_map(|length| walk(table, &tokens[..length]))
+                .find(|state| state.accept != 0);
+            assert!(
+                prediction.is_some_and(|state| state.accept == 2),
+                "{atn_fallback:?}: class {class} does not exit on `'+' 'q' 'r' EOF`"
+            );
+        }
+    }
 }
 
 /// The results of a parallel classification do not depend on the thread
