@@ -1021,6 +1021,10 @@ fn static_dfa_only_resolves_hybrid_tables_without_adaptive_predict() {
         inventory.contains("\"fallback\": \"1m\"") && inventory.contains("\"rule\": \"a\""),
         "the inventory shows the resolved decision: {inventory}"
     );
+    assert!(
+        inventory.contains("ReferenceToATN.g4:3:4\","),
+        "the inventory locates the decision in one string: {inventory}"
+    );
     assert_eq!(
         manifest.matches("\"minAltStates\": 1,").count(),
         3,

@@ -39,7 +39,7 @@ use minijinja::Value;
 
 use super::config::AtnFallback;
 use super::descriptor::PassDescriptor;
-use super::manifest::{object, option, source_value};
+use super::manifest::{object, option, source_location_value, source_value};
 use dbt_antlr_runtime::dfa::static_parser_dfa::{
     StaticParserTables as RuntimeTables, VIRTUAL_ALT_BASE,
 };
@@ -574,7 +574,10 @@ fn decision_report_value(decision: &StaticParserDecisionReport, sources: &Source
         ("decision", Value::from(decision.decision)),
         ("rule", Value::from(decision.rule.as_str())),
         ("state", Value::from(decision.state)),
-        ("source", source_value(&decision.source_span, sources)),
+        (
+            "source",
+            source_location_value(&decision.source_span, sources),
+        ),
         ("category", Value::from(result.category.as_str())),
         ("k", option(usize::try_from(result.k).ok(), Value::from)),
         ("fullyStatic", Value::from(result.is_fully_static())),
