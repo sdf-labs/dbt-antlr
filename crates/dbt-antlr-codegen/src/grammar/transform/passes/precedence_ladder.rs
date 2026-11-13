@@ -21,6 +21,7 @@ use crate::grammar::transform::{
     TransformCandidateStatus, TransformContext, TransformGrammar, TransformLabelMapping,
     TransformProjection, TransformRemovedRule, TransformReport,
 };
+use crate::optimization::parser_dfa::has_non_budget_option;
 
 pub(crate) struct CollapsePrecedenceLadders;
 
@@ -733,7 +734,7 @@ fn operator_symbols(
     }
     match &element.kind {
         ElementKind::Block(block) => {
-            if !block.options.is_empty() {
+            if has_non_budget_option(&block.options) {
                 return Err("options on an operator group are not supported".to_owned());
             }
             if block.alternatives.is_empty() {

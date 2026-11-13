@@ -20,6 +20,7 @@ use super::mutual_recursion::eliminate_mutual_left_recursion_with_action_referen
 use super::provenance::ProvenanceIndex;
 use super::rule_reachability::{EntryRuleConfig, analyze as analyze_rule_reachability};
 use super::source::SourceSet;
+use crate::optimization::parser_dfa::{BUDGET_OPTIONS, budget_option_problem};
 
 mod attributes;
 mod bindings;
@@ -314,7 +315,12 @@ fn check_unit_basics(sources: &SourceSet, unit: &GrammarUnit, diagnostics: &mut 
     let mut alternative_label_owners = BTreeMap::new();
     for rule in &unit.rules {
         check_rule_options(unit, rule, diagnostics);
-        check_block_options(&rule.block, &rule.name, diagnostics);
+        check_block_options(
+            &rule.block,
+            &rule.name,
+            rule.kind == RuleKind::Parser,
+            diagnostics,
+        );
         visit_elements(&rule.block, &mut |_, _, element| {
             if let ElementKind::RuleCall(call) = &element.kind {
                 if !rule_names.contains(call.name.as_str()) {
@@ -446,7 +452,16 @@ fn check_source_prequels(unit: &GrammarUnit, diagnostics: &mut Vec<Diagnostic>) 
         match prequel {
             GrammarPrequel::Options { declarations, .. } => {
                 let options = &unit.options[declarations.clone()];
-                check_options(options, GRAMMAR_OPTIONS, diagnostics);
+                if unit.kind == GrammarKind::Lexer {
+                    check_options(options, GRAMMAR_OPTIONS, diagnostics);
+                } else {
+                    check_options(
+                        options,
+                        &[GRAMMAR_OPTIONS, BUDGET_OPTIONS].concat(),
+                        diagnostics,
+                    );
+                    check_budget_values(options, diagnostics);
+                }
                 for option in options {
                     check_case_insensitive_value(option, diagnostics);
                     check_target_language(option, diagnostics);
@@ -503,10 +518,13 @@ fn check_repeated_prequels(prequels: &[GrammarPrequel], diagnostics: &mut Vec<Di
 
 fn check_rule_options(unit: &GrammarUnit, rule: &Rule, diagnostics: &mut Vec<Diagnostic>) {
     let legal = match rule.kind {
-        RuleKind::Parser => &[][..],
+        RuleKind::Parser => BUDGET_OPTIONS,
         RuleKind::Lexer => &["caseInsensitive", "p", "tokenIndex"][..],
     };
     check_options(&rule.options, legal, diagnostics);
+    if rule.kind == RuleKind::Parser {
+        check_budget_values(&rule.options, diagnostics);
+    }
     let global_case_insensitive = unit
         .options
         .iter()
@@ -573,8 +591,18 @@ fn parse_boolean_option(value: &str) -> Option<bool> {
     }
 }
 
-fn check_block_options(block: &Block, rule_name: &str, diagnostics: &mut Vec<Diagnostic>) {
-    check_options(&block.options, &[], diagnostics);
+fn check_block_options(
+    block: &Block,
+    rule_name: &str,
+    parser_rule: bool,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if parser_rule {
+        check_options(&block.options, BUDGET_OPTIONS, diagnostics);
+        check_budget_values(&block.options, diagnostics);
+    } else {
+        check_options(&block.options, &[], diagnostics);
+    }
     for alternative in &block.alternatives {
         for element in &alternative.elements {
             check_misplaced_assoc_option(&element.options, rule_name, diagnostics);
@@ -608,7 +636,7 @@ fn check_block_options(block: &Block, rule_name: &str, diagnostics: &mut Vec<Dia
                     }
                 }
                 ElementKind::Block(nested) => {
-                    check_block_options(nested, rule_name, diagnostics);
+                    check_block_options(nested, rule_name, parser_rule, diagnostics);
                 }
                 ElementKind::Range(..)
                 | ElementKind::Action { .. }
@@ -657,6 +685,23 @@ fn check_options(
     for option in options {
         if !legal.contains(&option.name.value.as_str()) {
             unsupported_option(option, diagnostics);
+        }
+    }
+}
+
+/// The `G4S015` warnings of the budget options with a value that is not
+/// correct. The static parser DFA pass ignores these options.
+fn check_budget_values(options: &[super::model::OptionDecl], diagnostics: &mut Vec<Diagnostic>) {
+    for option in options {
+        if let Some(problem) = budget_option_problem(&option.name.value, &option.value.value) {
+            diagnostics.push(Diagnostic::warning(
+                "G4S015",
+                option.value.span.clone(),
+                format!(
+                    "unsupported option value {}={}: {problem}",
+                    option.name.value, option.value.value
+                ),
+            ));
         }
     }
 }

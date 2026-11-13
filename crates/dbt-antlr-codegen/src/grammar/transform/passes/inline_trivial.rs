@@ -42,6 +42,7 @@ use crate::grammar::transform::{
     TransformCandidateStatus, TransformContext, TransformGrammar, TransformRemovedRule,
     TransformReport, TransformRuleRemoval,
 };
+use crate::optimization::parser_dfa::has_non_budget_option;
 
 pub(crate) struct InlineTrivialRules {
     entries: EntryRuleConfig,
@@ -339,7 +340,7 @@ fn eligibility(
 /// prospective set members. `EOF`, wildcard, and any observable surface
 /// disqualify the shape.
 fn token_set_body(rule: &Rule) -> Option<Vec<SetElement>> {
-    if !rule.block.options.is_empty() {
+    if has_non_budget_option(&rule.block.options) {
         return None;
     }
     let mut members = Vec::new();

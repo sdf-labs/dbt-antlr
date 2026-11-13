@@ -13,7 +13,7 @@ mod manifest;
 mod metrics;
 mod options;
 #[cfg(feature = "generator")]
-mod parser_dfa;
+pub(crate) mod parser_dfa;
 #[cfg(feature = "generator")]
 mod report;
 #[cfg(feature = "generator")]

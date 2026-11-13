@@ -24,6 +24,9 @@
 //! partial table statically (see `parser_dfa::static_only`). A decision that
 //! still needs `adaptivePredict` is an error (`G4S190`), and a decision with
 //! resolved escape states gets a warning (`G4S192`).
+//!
+//! Each decision has an analysis budget (see `parser_dfa::budget`). The
+//! budget options of the grammar, its rules, and its blocks set it.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -38,8 +41,9 @@ use dbt_antlr_runtime::dfa::static_parser_dfa::{
 };
 
 use super::parser_dfa::{
-    AttemptOutcome, Category, DEFAULT_VISIT_BUDGET, DecisionClassifier, DecisionResult,
-    DescentPlan, DescentRules, EscapeResolution, EscapeResolutions, MAX_DFA_STATES, StaticDfaTable,
+    AttemptOutcome, BudgetLimits, Category, DecisionBudget, DecisionClassifier, DecisionResult,
+    DescentPlan, DescentRules, EscapeResolution, EscapeResolutions, ParserDfaBudgets,
+    StaticDfaTable, has_non_budget_option,
 };
 use crate::grammar::atn::{CompiledParser, FinalizedTransitionKind, left_corner_rules};
 use crate::grammar::diagnostic::Diagnostic;
@@ -173,28 +177,23 @@ impl StaticParserDfa {
     ///
     /// With `profile`, the report also records the wall-clock times of the
     /// classification (`--profile-decisions`).
+    ///
+    /// `budgets` holds the base analysis budgets, which the options of the
+    /// grammar, its rules, and its blocks change (see [`ParserDfaBudgets`]).
     pub(crate) fn build(
         compiled: &CompiledParser,
         atn_fallback: AtnFallback,
         profile: bool,
-    ) -> StaticParserDfaArtifact {
-        Self::build_with_budget(compiled, atn_fallback, profile, DEFAULT_VISIT_BUDGET)
-    }
-
-    /// [`Self::build`] with an explicit visit budget for each build attempt.
-    pub(crate) fn build_with_budget(
-        compiled: &CompiledParser,
-        atn_fallback: AtnFallback,
-        profile: bool,
-        visit_budget: u64,
+        budgets: &ParserDfaBudgets,
     ) -> StaticParserDfaArtifact {
         let atn = compiled.atn;
         let recognizer = &compiled.semantic.recognizer;
         let ll1_disjoint = ll1_disjointness(compiled);
+        let (budget, decision_budgets) = decision_budgets(compiled, budgets);
         let classifier = DecisionClassifier::new(atn, ll1_disjoint)
             .with_atn_fallback(atn_fallback)
             .with_descent_rules(descent_rules(compiled))
-            .with_visit_budget(visit_budget)
+            .with_budgets(decision_budgets)
             .with_profiling(profile);
         let started = profile.then(Instant::now);
         let mut results = classifier.classify_all();
@@ -231,7 +230,7 @@ impl StaticParserDfa {
             rule_names: recognizer.rule_names.clone(),
             decisions,
             atn_fallback,
-            visit_budget: classifier.visit_budget(),
+            budget,
             profile,
         };
         let mut diagnostics = match atn_fallback {
@@ -371,8 +370,9 @@ pub(crate) struct StaticParserDfaReport {
     pub(crate) decisions: Vec<StaticParserDecisionReport>,
     /// Whether the generated parser can defer to the adaptive simulation.
     pub(crate) atn_fallback: AtnFallback,
-    /// The visit budget of each build attempt.
-    pub(crate) visit_budget: u64,
+    /// The budget of a decision that no rule, block, or selector budget
+    /// changes.
+    pub(crate) budget: DecisionBudget,
     /// The times of the classification, for `--profile-decisions`.
     pub(crate) profile: Option<ClassificationProfile>,
 }
@@ -650,10 +650,11 @@ fn decision_profile_text(report: &StaticParserDfaReport) -> String {
     };
     lines.push(format!(
         "budgets: {} decisions spent the visit budget ({} configs); {} decisions spent the \
-         state budget ({MAX_DFA_STATES} states)",
+         state budget ({} states)",
         spent(AttemptOutcome::VisitBudget),
-        report.visit_budget,
+        report.budget.max_visits,
         spent(AttemptOutcome::StateBudget),
+        report.budget.max_states,
     ));
     lines.push(format!(
         "slow: {} decisions took {} ms or more",
@@ -1015,15 +1016,9 @@ fn decision_dump_lines(
             lines.extend(table_dump_lines(report, table, with_paths));
         }
         (None, None) if matches!(result.category, Category::LL1 | Category::NON_GREEDY) => {
-            lines.push(format!(
-                "  no table needed: {}",
-                adaptive_reason(result, report.visit_budget)
-            ));
+            lines.push(format!("  no table needed: {}", adaptive_reason(result)));
         }
-        (None, None) => lines.push(format!(
-            "  no static table: {}",
-            adaptive_reason(result, report.visit_budget)
-        )),
+        (None, None) => lines.push(format!("  no static table: {}", adaptive_reason(result))),
     }
     lines
 }
@@ -1187,7 +1182,18 @@ fn path_text(vocabulary: &[String], path: &[i32]) -> String {
         .join(" ")
 }
 
-fn adaptive_reason(result: &DecisionResult, visit_budget: u64) -> String {
+fn adaptive_reason(result: &DecisionResult) -> String {
+    let reason = category_reason(result);
+    let escapes =
+        matches!(result.category, Category::HYBRID | Category::LR_PRECEDENCE) && result.escapes > 0;
+    if result.budget_cutoff && escapes {
+        format!("{reason}; {}", budget_cutoff_text(result))
+    } else {
+        reason
+    }
+}
+
+fn category_reason(result: &DecisionResult) -> String {
     match result.category {
         Category::LL1 => {
             "the alternatives have disjoint first tokens, so plain LL(1) prediction decides"
@@ -1233,7 +1239,7 @@ fn adaptive_reason(result: &DecisionResult, visit_budget: u64) -> String {
         }
         Category::OVERFLOW => format!(
             "the SLL DFA exceeded the analysis budget ({} states or {} visited configs)",
-            MAX_DFA_STATES, visit_budget
+            result.budget.max_states, result.budget.max_visits
         ),
         Category::HYBRID if result.escapes > 0 && result.guarded_takes > 0 => format!(
             "{} of {} states escape to adaptivePredict, and {} take/skip conflicts are decided by a runtime stack guard",
@@ -1249,6 +1255,16 @@ fn adaptive_reason(result: &DecisionResult, visit_budget: u64) -> String {
         ),
         _ => "no static table".to_owned(),
     }
+}
+
+/// The text that tells how to raise the budget that cut a hybrid table.
+fn budget_cutoff_text(result: &DecisionResult) -> String {
+    format!(
+        "the analysis budget ({} states or {} visited configs) stopped the lookahead; \
+         raise it with the max_dfa_states and max_dfa_visits options of the grammar, \
+         the rule, or the block",
+        result.budget.max_states, result.budget.max_visits
+    )
 }
 
 /// The text of a witness path, `None` when there is no witness or the path is
@@ -1402,7 +1418,7 @@ fn not_fully_static_diagnostics(
                 "parser decision {} of rule '{}' is not fully static: {}",
                 decision.decision,
                 decision.rule,
-                adaptive_reason(result, report.visit_budget)
+                adaptive_reason(result)
             );
             if let Some(witness) = witness_text(
                 &report.vocabulary,
@@ -1440,7 +1456,7 @@ fn static_only_diagnostics(
                      --static-dfa-only requires a static table for every decision",
                     decision.decision,
                     decision.rule,
-                    static_only_failure_reason(result, report.visit_budget)
+                    static_only_failure_reason(result)
                 );
                 if let Some(witness) = witness_text(
                     &report.vocabulary,
@@ -1491,17 +1507,17 @@ fn static_only_diagnostics(
                 ));
             }
             (!parts.is_empty()).then(|| {
-                Diagnostic::warning(
-                    STATIC_ONLY_RESOLVED,
-                    span,
-                    format!(
-                        "parser decision {} of rule '{}' resolves its escape states without \
-                         adaptivePredict: {}",
-                        decision.decision,
-                        decision.rule,
-                        parts.join(", ")
-                    ),
-                )
+                let mut message = format!(
+                    "parser decision {} of rule '{}' resolves its escape states without \
+                     adaptivePredict: {}",
+                    decision.decision,
+                    decision.rule,
+                    parts.join(", ")
+                );
+                if result.budget_cutoff {
+                    message.push_str(&format!("; {}", budget_cutoff_text(result)));
+                }
+                Diagnostic::warning(STATIC_ONLY_RESOLVED, span, message)
             })
         })
         .collect()
@@ -1530,7 +1546,7 @@ fn visit_budget_diagnostics(
                 decision.decision,
                 decision.rule,
                 cost.attempts.len(),
-                report.visit_budget,
+                result.budget.max_visits,
                 cost.visits(),
                 cost.states(),
             );
@@ -1708,7 +1724,7 @@ impl<'b> TokenBranches<'b> {
                 "tokens have an element label",
             ));
         }
-        if !block.options.is_empty()
+        if has_non_budget_option(&block.options)
             || single_tokens
                 .iter()
                 .any(|(alternative, _)| !alternative.options.is_empty())
@@ -1836,7 +1852,7 @@ fn resolution_text(
 }
 
 /// Why `--static-dfa-only` cannot give the decision a static prediction.
-fn static_only_failure_reason(result: &DecisionResult, visit_budget: u64) -> String {
+fn static_only_failure_reason(result: &DecisionResult) -> String {
     match result.category {
         Category::NON_GREEDY => "the decision is a non-greedy subrule, and the generated parser \
              predicts non-greedy subrules only with adaptivePredict"
@@ -1844,7 +1860,7 @@ fn static_only_failure_reason(result: &DecisionResult, visit_budget: u64) -> Str
         Category::LR_PRECEDENCE if result.precedence.is_none() => {
             "the precedence loop has no precedence predicates to build class tables from".to_owned()
         }
-        _ => adaptive_reason(result, visit_budget),
+        _ => adaptive_reason(result),
     }
 }
 
@@ -1875,6 +1891,97 @@ fn decision_span(compiled: &CompiledParser, result: &DecisionResult) -> Option<S
     }
     let rule = compiled.semantic.unit.rules.get(result.rule_index)?;
     Some(rule.span.clone())
+}
+
+/// The budget of a decision that no rule or block budget changes,
+/// and the budget of each decision, by decision number.
+fn decision_budgets(
+    compiled: &CompiledParser,
+    budgets: &ParserDfaBudgets,
+) -> (DecisionBudget, Vec<DecisionBudget>) {
+    let atn = compiled.atn;
+    let unit = &compiled.semantic.unit;
+    let grammar = BudgetLimits::from_options(&unit.options).or(budgets.global);
+    let decisions = atn
+        .decision_to_state
+        .iter()
+        .map(|state| {
+            let rule_index = usize::try_from(state.get_rule_index()).unwrap_or(usize::MAX);
+            let rule = unit.rules.get(rule_index);
+            let block = rule
+                .zip(usize::try_from(state.get_state_number()).ok())
+                .map(|(rule, state)| block_limits(compiled, state, rule))
+                .unwrap_or_default();
+            let rule = rule
+                .map(|rule| BudgetLimits::from_options(&rule.options))
+                .unwrap_or_default();
+            let limits = block.or(rule).or(grammar);
+            DecisionBudget::resolve(limits, atn.max_token_type)
+        })
+        .collect();
+    (
+        DecisionBudget::resolve(grammar, atn.max_token_type),
+        decisions,
+    )
+}
+
+/// The limits that the options of the blocks around the decision at ATN state
+/// `state` of rule `rule` set. An inner block wins over an outer block.
+fn block_limits(compiled: &CompiledParser, state: usize, rule: &Rule) -> BudgetLimits {
+    let Some(state) = compiled.graph.states.get(state) else {
+        return BudgetLimits::default();
+    };
+    // The immediate owner of a state is its last synthetic origin.
+    let owner = compiled
+        .provenance
+        .state_origins(state.original)
+        .iter()
+        .rev()
+        .find_map(|origin| match origin {
+            Origin::Synthetic {
+                owner: ModelNodeId::Element(element),
+                ..
+            } => Some(*element),
+            _ => None,
+        });
+    let mut blocks = Vec::new();
+    if owner.is_none_or(|owner| !enclosing_blocks(&rule.block, owner, &mut blocks)) {
+        return BudgetLimits::default();
+    }
+    blocks
+        .iter()
+        .rev()
+        .fold(BudgetLimits::default(), |limits, block| {
+            limits.or(BudgetLimits::from_options(&block.options))
+        })
+}
+
+/// Pushes the blocks from `block` down to the element `target` onto `path`,
+/// the block of `target` included. Returns `false` when `block` does not
+/// contain `target`.
+fn enclosing_blocks<'a>(
+    block: &'a Block,
+    target: crate::grammar::model::ElementId,
+    path: &mut Vec<&'a Block>,
+) -> bool {
+    for element in block
+        .alternatives
+        .iter()
+        .flat_map(|alternative| &alternative.elements)
+    {
+        let ElementKind::Block(inner) = &element.kind else {
+            if element.id == target {
+                return true;
+            }
+            continue;
+        };
+        path.push(inner);
+        if element.id == target || enclosing_blocks(inner, target, path) {
+            return true;
+        }
+        path.pop();
+    }
+    false
 }
 
 /// The span of a model node that has grammar syntax behind it.

@@ -152,6 +152,49 @@ impl LoopBlock {
         attestation
     }
 
+    /// Whether the iterate lineage of a frontier state covers its exit
+    /// lineage, so that the substitution to iterate stays sound when the
+    /// construction stops before the alternatives separate.
+    ///
+    /// In a higher precedence class, the iterate lineage drops the operators
+    /// of a lower precedence. The exit lineage pops the recursive invocation
+    /// and can enter these operators again. A multi-token operator, or a
+    /// shared operator rule, can then keep both lineages at the same ATN state
+    /// with different stacks. So each call-stack path of an exit config must
+    /// also be a path of a real iterate config at the same state. For a
+    /// foreign exit config, only the paths that return into the operator loop
+    /// count: the stack guard decides the other paths. A widened exit config
+    /// does not show its paths, and its guard roots can be in a frame that the
+    /// widening removed, so it is never covered.
+    pub(super) fn iterate_covers_exit(&self, configs: &[ATNConfig<'_>], taint: &Taint) -> bool {
+        let mut budget = PATH_BUDGET;
+        configs
+            .iter()
+            .filter(|config| config.get_alt() == EXIT_ALT)
+            .all(|exit| {
+                let exit_taint = taint_of(taint, exit);
+                if exit_taint & WIDENED_TAINT != 0 {
+                    return false;
+                }
+                let iterate: Vec<_> = configs
+                    .iter()
+                    .filter(|config| {
+                        config.get_alt() == ITERATE_ALT
+                            && config.get_state() == exit.get_state()
+                            && taint_of(taint, config) & (WIDENED_TAINT | FOREIGN_CONSUME_TAINT)
+                                == 0
+                    })
+                    .map(ATNConfig::get_context)
+                    .collect();
+                let walk = PathWalk {
+                    block: self,
+                    state: exit.get_state(),
+                    loop_only: exit_taint & FOREIGN_CONSUME_TAINT != 0,
+                };
+                walk.covered(exit.get_context(), iterate, None, &mut budget)
+            })
+    }
+
     /// Whether every guarded alternative of the rule is simple (see the module
     /// documentation).
     pub(super) fn guards_are_simple(&self) -> bool {
@@ -294,6 +337,80 @@ impl LoopBlock {
 /// loop decision.
 pub(super) fn is_iterate_exit_pair(alts: &BitSet) -> bool {
     alts.len() == 2 && alts.contains(ITERATE_ALT as usize) && alts.contains(EXIT_ALT as usize)
+}
+
+/// The path steps that [`LoopBlock::iterate_covers_exit`] can take for one
+/// frontier state. A context node that many paths share counts once for each
+/// path. Past this limit, the exit lineage is not covered.
+const PATH_BUDGET: usize = 4096;
+
+/// A walk over the call-stack paths of one exit config.
+struct PathWalk<'b> {
+    block: &'b LoopBlock,
+    /// The ATN state of the exit config.
+    state: ATNStateRef,
+    /// Only the paths that return into the operator loop count.
+    loop_only: bool,
+}
+
+impl PathWalk<'_> {
+    /// Whether each path of `exit` that counts is also a path of one of
+    /// `iterate`. All contexts start below the same frames, and `last` is the
+    /// return state of the lowest of these frames.
+    fn covered<'a>(
+        &self,
+        exit: Option<PredictionContextRef<'a>>,
+        iterate: Vec<Option<PredictionContextRef<'a>>>,
+        last: Option<ATNStateRef>,
+        budget: &mut usize,
+    ) -> bool {
+        let Some(left) = budget.checked_sub(1) else {
+            return false;
+        };
+        *budget = left;
+        let Some(exit) = exit.filter(|context| !context.is_empty()) else {
+            return self.path_end_covered(&iterate, last);
+        };
+        for index in 0..exit.length() {
+            let return_state = exit.get_return_state(index);
+            if return_state == ATNStateRef::empty_return() {
+                if !self.path_end_covered(&iterate, last) {
+                    return false;
+                }
+                continue;
+            }
+            let next = iterate
+                .iter()
+                .flatten()
+                .filter(|context| !context.is_empty())
+                .flat_map(|context| {
+                    (0..context.length())
+                        .filter(move |&other| context.get_return_state(other) == return_state)
+                        .map(move |other| context.get_parent(other))
+                })
+                .collect();
+            if !self.covered(exit.get_parent(index), next, Some(return_state), budget) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Whether a path that ends below the frame of `last` either does not
+    /// count or also ends in one of `iterate`.
+    fn path_end_covered(
+        &self,
+        iterate: &[Option<PredictionContextRef<'_>>],
+        last: Option<ATNStateRef>,
+    ) -> bool {
+        let counts = !self.loop_only || self.block.is_loop_state(last.unwrap_or(self.state));
+        !counts
+            || iterate.iter().any(|context| {
+                context
+                    .as_ref()
+                    .is_none_or(|context| context.has_empty_path())
+            })
+    }
 }
 
 /// A context node's identity, for cycle-safe recursion over a shared DAG.

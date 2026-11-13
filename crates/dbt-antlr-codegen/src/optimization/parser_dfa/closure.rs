@@ -322,17 +322,6 @@ impl<'a> SetBuilder<'a> {
     }
 }
 
-/// The default number of configs one attempt may visit.
-///
-/// The DFA state budget alone does not bound the analysis time: a single state
-/// of a large grammar can close over tens of thousands of configs, because the
-/// build-time closure explores every path the runtime would only explore on
-/// demand. An attempt that spends this budget is treated like one that spends
-/// the state budget - the decision falls back to a wider widening or a hybrid
-/// table - so classification time stays proportional to the grammar rather
-/// than to its recursion depth.
-pub(crate) const DEFAULT_VISIT_BUDGET: u64 = 2_000_000;
-
 /// The build-time closure of one ATN.
 pub(super) struct Closure<'atn, 'a> {
     atn: &'atn ATN,
@@ -362,8 +351,10 @@ pub(super) struct Closure<'atn, 'a> {
     /// The visited configs by the rule index of their ATN state.
     rule_visits: Vec<u64>,
     visit_budget: u64,
-    /// Set when the visit budget ran out: the config sets built from here on
-    /// are incomplete, so the attempt has to be discarded as an overflow.
+    /// Set when the visit budget ran out. The config sets that the closure
+    /// builds after this are not complete. A static attempt then fails, and a
+    /// hybrid attempt escapes the state that it expands (see
+    /// `DecisionBuild::run`).
     pub(super) exhausted: bool,
     /// The guard-root sets of the closure.
     roots: RootPool,

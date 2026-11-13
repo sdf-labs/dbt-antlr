@@ -60,6 +60,7 @@ use super::model::{
     Terminal,
 };
 use super::provenance::{Origin, ProvenanceIndex, SyntheticReason};
+use crate::optimization::parser_dfa::has_non_budget_option;
 
 /// Rewrite the tractable mutual-left-recursion cycles in `units` into direct
 /// left recursion, in place. Returns `true` when at least one cycle was
@@ -770,7 +771,7 @@ fn satellite_is_inlinable(satellite: &Rule) -> bool {
         && satellite.actions.is_empty()
         && satellite.catches.is_empty()
         && satellite.finally_action.is_none()
-        && satellite.options.is_empty()
+        && !has_non_budget_option(&satellite.options)
         && satellite
             .block
             .alternatives
