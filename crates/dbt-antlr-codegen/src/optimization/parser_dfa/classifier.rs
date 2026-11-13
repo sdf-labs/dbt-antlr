@@ -1066,6 +1066,11 @@ impl DecisionClassifier {
             result.take_rule_fires += outcome.take_rule_fires;
             result.has_postfix_shape |= outcome.has_postfix_shape;
             result.budget_cutoff |= outcome.table.is_some() && outcome.budget_cutoff;
+            for conflict in &outcome.conflicts {
+                if !result.conflicts.contains(conflict) {
+                    result.conflicts.push(conflict.clone());
+                }
+            }
             if result.conflict_witness.is_none() {
                 result.conflict_witness = outcome.conflict_witness.clone();
             }

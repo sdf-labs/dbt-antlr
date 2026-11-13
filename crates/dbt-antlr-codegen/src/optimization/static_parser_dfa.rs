@@ -41,9 +41,9 @@ use dbt_antlr_runtime::dfa::static_parser_dfa::{
 };
 
 use super::parser_dfa::{
-    AttemptOutcome, BudgetLimits, Category, DecisionBudget, DecisionClassifier, DecisionResult,
-    DescentPlan, DescentRules, EscapeResolution, EscapeResolutions, ParserDfaBudgets,
-    StaticDfaTable, has_non_budget_option, minimized_states,
+    AttemptOutcome, BudgetLimits, CONFLICT_ESCAPE, Category, DecisionBudget, DecisionClassifier,
+    DecisionResult, DescentPlan, DescentRules, ESCAPE, EscapeResolution, EscapeResolutions,
+    ParserDfaBudgets, StaticDfaTable, has_non_budget_option, minimized_states,
 };
 use crate::grammar::atn::{CompiledParser, FinalizedTransitionKind, left_corner_rules};
 use crate::grammar::diagnostic::Diagnostic;
@@ -55,6 +55,7 @@ use crate::grammar::model::{
 use crate::grammar::provenance::Origin;
 use crate::grammar::source::SourceSet;
 use crate::grammar::transform::SafetyClass;
+use crate::optimization::{AlternativeNames, alternative_names};
 
 /// The diagnostic code of the "decision is not fully static" warnings, and of
 /// the errors that replace them under `--static-dfa-only`.
@@ -69,6 +70,8 @@ const VISIT_BUDGET_SPENT: &str = "G4S193";
 /// The diagnostic code of a block of single-token alternatives that do not
 /// fold into one token set, in a rule with many call sites.
 const TOKEN_BRANCHES: &str = "G4S194";
+/// The tie-break groups that a `G4S192` warning names at most.
+const TIE_BREAK_GROUPS: usize = 3;
 
 /// The minimum number of call sites that enter a rule, for a `G4S194`
 /// warning.
@@ -182,6 +185,7 @@ impl StaticParserDfa {
     /// grammar, its rules, and its blocks change (see [`ParserDfaBudgets`]).
     pub(crate) fn build(
         compiled: &CompiledParser,
+        sources: &SourceSet,
         atn_fallback: AtnFallback,
         profile: bool,
         budgets: &ParserDfaBudgets,
@@ -217,6 +221,7 @@ impl StaticParserDfa {
                     .get(result.rule_index)
                     .cloned()
                     .unwrap_or_default(),
+                alternatives: alternative_names(compiled, sources, result.decision),
                 result: result.clone(),
             })
             .collect::<Vec<_>>();
@@ -477,6 +482,8 @@ pub(crate) struct StaticParserDecisionReport {
     /// ATN state number of the decision state.
     pub(crate) state: usize,
     pub(crate) rule: String,
+    /// The names of the alternatives of the decision, for the diagnostics.
+    pub(crate) alternatives: AlternativeNames,
     pub(crate) result: DecisionResult,
 }
 
@@ -996,6 +1003,12 @@ fn decision_dump_lines(
         )
     };
     let mut lines = vec![String::new(), headline];
+    if !decision.alternatives.all().is_empty() {
+        lines.push(format!(
+            "alternatives: {}",
+            decision.alternatives.all().join("; ")
+        ));
+    }
     match (&result.table, &result.precedence) {
         (_, Some(precedence)) => {
             lines.push(format!("precedence classes: {:?}", precedence.cutoffs));
@@ -1057,6 +1070,7 @@ fn table_dump_lines(
     }
     for (index, state) in table.states.iter().enumerate() {
         let mut line = format!("    s{index}: ");
+        let mut note = None;
         if state.accept >= VIRTUAL_ALT_BASE {
             line.push_str(&format!("GROUP {}", state.accept));
         } else if state.accept > 0 {
@@ -1069,6 +1083,21 @@ fn table_dump_lines(
                     line.push_str(" (static-dfa-only: minimum viable alternative)");
                 }
                 _ => {}
+            }
+            let dropped: &[i32] = match state.resolution {
+                Some(EscapeResolution::MinAlt) => &state.conflicts,
+                Some(EscapeResolution::MinViableAlt) => &state.viable_alts,
+                _ => &[],
+            };
+            let dropped: Vec<String> = dropped
+                .iter()
+                .filter(|alt| **alt > 0 && **alt != state.accept)
+                .map(ToString::to_string)
+                .collect();
+            match dropped.as_slice() {
+                [] => {}
+                [alt] => note = Some(format!("; over alt {alt}")),
+                alts => note = Some(format!("; over alts {}", alts.join(", "))),
             }
         } else if state.is_guarded() {
             let deferred = if state.resolution == Some(EscapeResolution::Guarded) {
@@ -1087,6 +1116,11 @@ fn table_dump_lines(
             ));
         } else if state.is_escape() {
             line.push_str("ESCAPE");
+            if state.viable_alts.len() > 1 {
+                let viable: Vec<String> =
+                    state.viable_alts.iter().map(ToString::to_string).collect();
+                note = Some(format!("; viable alts {}", viable.join(", ")));
+            }
         } else if state.resolution == Some(EscapeResolution::SyntaxError) {
             line.push_str("SYNTAX ERROR (static-dfa-only: predicated lookahead)");
         } else {
@@ -1094,6 +1128,9 @@ fn table_dump_lines(
         }
         if state.fallback > 0 {
             line.push_str(&format!("; error-recovery fallback alt={}", state.fallback));
+        }
+        if let Some(note) = note {
+            line.push_str(&note);
         }
         if with_paths && let Some(path) = table.witness(index).filter(|path| !path.is_empty()) {
             line.push_str(&format!("; path: {}", path_text(&report.vocabulary, &path)));
@@ -1435,6 +1472,7 @@ fn not_fully_static_diagnostics(
             ) {
                 message.push_str(&format!("; witness: {witness}"));
             }
+            message.push_str(&conflict_text(decision));
             let span =
                 decision_span(compiled, result).unwrap_or_else(|| report.source_span.clone());
             Some(Diagnostic::warning(NOT_FULLY_STATIC, span, message))
@@ -1473,6 +1511,7 @@ fn static_only_diagnostics(
                 ) {
                     message.push_str(&format!("; witness: {witness}"));
                 }
+                message.push_str(&conflict_text(decision));
                 return Some(Diagnostic::error(NOT_FULLY_STATIC, span, message));
             };
             let mut parts = Vec::new();
@@ -1520,6 +1559,7 @@ fn static_only_diagnostics(
                     decision.rule,
                     parts.join(", ")
                 );
+                message.push_str(&tie_break_text(report, decision));
                 if result.budget_cutoff {
                     message.push_str(&format!("; {}", budget_cutoff_text(result)));
                 }
@@ -1838,6 +1878,93 @@ fn rule_entries(compiled: &CompiledParser) -> Vec<usize> {
 /// has a label`.
 fn count_text(count: usize, singular: &str, plural: &str) -> String {
     format!("{count} {}", if count == 1 { singular } else { plural })
+}
+
+/// The text that names the alternatives behind the witness of a decision:
+/// the alternatives of its first conflict, or else the viable alternatives of
+/// its first escape state. The text is empty when the decision has neither.
+fn conflict_text(decision: &StaticParserDecisionReport) -> String {
+    let result = &decision.result;
+    let conflicting = |alts: &[i32]| {
+        format!(
+            "; conflicting alternatives: {}",
+            decision.alternatives.list(alts)
+        )
+    };
+    if let Some(alts) = result.conflicts.first().filter(|alts| alts.len() > 1) {
+        return conflicting(alts);
+    }
+    let tables = || {
+        result.table.iter().chain(
+            result
+                .precedence
+                .iter()
+                .flat_map(|precedence| precedence.tables.iter().flatten()),
+        )
+    };
+    let first_state = |marker| {
+        tables().find_map(|table| {
+            table
+                .first_escape(marker)
+                .and_then(|index| table.states.get(index))
+        })
+    };
+    if let Some(state) = first_state(CONFLICT_ESCAPE) {
+        return if state.conflicts.len() > 1 {
+            conflicting(&state.conflicts)
+        } else {
+            String::new()
+        };
+    }
+    match first_state(ESCAPE) {
+        Some(state) if state.viable_alts.len() > 1 => format!(
+            "; viable alternatives: {}",
+            decision.alternatives.list(&state.viable_alts)
+        ),
+        _ => String::new(),
+    }
+}
+
+/// The text of the tie-break groups of a decision with the most states, at
+/// most [`TIE_BREAK_GROUPS`] of them.
+fn tie_break_text(report: &StaticParserDfaReport, decision: &StaticParserDecisionReport) -> String {
+    let Some(resolved) = &decision.result.static_only else {
+        return String::new();
+    };
+    let groups = &resolved.tie_breaks;
+    let mut parts: Vec<String> = groups
+        .iter()
+        .take(TIE_BREAK_GROUPS)
+        .map(|group| {
+            let states = if group.states == 1 {
+                "1 state chooses".to_owned()
+            } else {
+                format!("{} states choose", group.states)
+            };
+            let mut text = format!(
+                "{states} {} over {}",
+                decision.alternatives.name(group.chosen),
+                decision.alternatives.list(&group.dropped)
+            );
+            // The summary of the resolutions already shows these witnesses.
+            let shown = [&resolved.min_alt_witness, &resolved.min_viable_alt_witness];
+            if !shown.contains(&&group.witness)
+                && let Some(witness) = witness_text(&report.vocabulary, group.witness.as_deref())
+            {
+                text.push_str(&format!(" (witness: {witness})"));
+            }
+            text
+        })
+        .collect();
+    if parts.is_empty() {
+        return String::new();
+    }
+    match groups.len().saturating_sub(TIE_BREAK_GROUPS) {
+        0 => {}
+        1 => parts.push("and 1 more tie-break group".to_owned()),
+        more => parts.push(format!("and {more} more tie-break groups")),
+    }
+    format!("; tie-breaks: {}", parts.join("; "))
 }
 
 /// One clause of a `G4S192` warning, for example `2 predicated states report a

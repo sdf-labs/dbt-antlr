@@ -62,6 +62,62 @@ pub(crate) struct EscapeResolutions {
     pub(crate) min_viable_alt_witness: Option<Vec<i32>>,
     /// A shortest lookahead path to a [`EscapeResolution::SyntaxError`] state.
     pub(crate) syntax_error_witness: Option<Vec<i32>>,
+    /// The states that resolved to one alternative over others, grouped by
+    /// the chosen alternative and the dropped alternatives. The groups with
+    /// the most states come first.
+    pub(crate) tie_breaks: Vec<TieBreak>,
+}
+
+/// The states of one decision where `--static-dfa-only` chose one
+/// alternative over other viable or conflicting alternatives.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TieBreak {
+    /// The alternative that the states predict.
+    pub(crate) chosen: i32,
+    /// The sorted alternatives that the states drop.
+    pub(crate) dropped: Vec<i32>,
+    /// The number of states.
+    pub(crate) states: usize,
+    /// A shortest lookahead path to one of the states.
+    pub(crate) witness: Option<Vec<i32>>,
+}
+
+impl TieBreak {
+    fn key(&self) -> (i32, &[i32]) {
+        (self.chosen, &self.dropped)
+    }
+
+    /// Adds `other` to the group: the states, and the shorter witness.
+    fn absorb(&mut self, other: Self) {
+        self.states += other.states;
+        let shorter = match (&self.witness, &other.witness) {
+            (None, Some(_)) => true,
+            (Some(known), Some(new)) => new.len() < known.len(),
+            _ => false,
+        };
+        if shorter {
+            self.witness = other.witness;
+        }
+    }
+}
+
+/// Adds `group` to `groups`, merged into the group with the same key.
+fn add_tie_break(groups: &mut Vec<TieBreak>, group: TieBreak) {
+    match groups.iter_mut().find(|known| known.key() == group.key()) {
+        Some(known) => known.absorb(group),
+        None => groups.push(group),
+    }
+}
+
+/// Orders tie-break groups: the most states first, then by alternatives.
+fn sort_tie_breaks(groups: &mut [TieBreak]) {
+    groups.sort_by(|left, right| {
+        right
+            .states
+            .cmp(&left.states)
+            .then_with(|| left.chosen.cmp(&right.chosen))
+            .then_with(|| left.dropped.cmp(&right.dropped))
+    });
 }
 
 impl EscapeResolutions {
@@ -82,6 +138,10 @@ impl EscapeResolutions {
         if self.syntax_error_witness.is_none() {
             self.syntax_error_witness = other.syntax_error_witness;
         }
+        for group in other.tie_breaks {
+            add_tie_break(&mut self.tie_breaks, group);
+        }
+        sort_tie_breaks(&mut self.tie_breaks);
     }
 }
 
@@ -95,6 +155,9 @@ impl StaticDfaTable {
         let mut first_min_alt = None;
         let mut first_min_viable_alt = None;
         let mut first_syntax_error = None;
+        let depths = self.depths();
+        // The tie-break groups, each with the shallowest state that is in it.
+        let mut groups: Vec<(TieBreak, usize)> = Vec::new();
         for (index, state) in self.states.iter_mut().enumerate() {
             if !matches!(state.accept, ESCAPE | CONFLICT_ESCAPE | GUARDED) {
                 continue;
@@ -117,6 +180,11 @@ impl StaticDfaTable {
             } else {
                 state.viable_alts.first().copied()
             };
+            let mut dropped: Vec<i32> = if conflict_alt.is_some() {
+                state.conflicts.clone()
+            } else {
+                state.viable_alts.clone()
+            };
             let resolution = if let Some(alt) = conflict_alt {
                 state.accept = alt;
                 resolutions.min_alt += 1;
@@ -136,6 +204,29 @@ impl StaticDfaTable {
                 EscapeResolution::SyntaxError
             };
             state.resolution = Some(resolution);
+            dropped.retain(|alt| *alt > 0 && *alt != state.accept);
+            dropped.sort_unstable();
+            dropped.dedup();
+            if resolution != EscapeResolution::SyntaxError && !dropped.is_empty() {
+                let group = TieBreak {
+                    chosen: state.accept,
+                    dropped,
+                    states: 1,
+                    witness: None,
+                };
+                match groups
+                    .iter_mut()
+                    .find(|(known, _)| known.key() == group.key())
+                {
+                    Some((known, shallowest)) => {
+                        known.states += 1;
+                        if depths[index] < depths[*shallowest] {
+                            *shallowest = index;
+                        }
+                    }
+                    None => groups.push((group, index)),
+                }
+            }
             state.conflict_min_alt = 0;
             state.guarded_alt = 0;
             state.guard_defer_alt = 0;
@@ -151,6 +242,14 @@ impl StaticDfaTable {
         resolutions.min_viable_alt_witness =
             first_min_viable_alt.and_then(|state| self.witness(state));
         resolutions.syntax_error_witness = first_syntax_error.and_then(|state| self.witness(state));
+        resolutions.tie_breaks = groups
+            .into_iter()
+            .map(|(mut group, shallowest)| {
+                group.witness = self.witness(shallowest);
+                group
+            })
+            .collect();
+        sort_tie_breaks(&mut resolutions.tie_breaks);
         resolutions
     }
 }
@@ -188,5 +287,42 @@ impl DecisionResult {
         self.escapes = 0;
         self.static_only = Some(resolutions);
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EscapeResolutions, TieBreak};
+
+    fn group(chosen: i32, dropped: &[i32], states: usize, witness: &[i32]) -> TieBreak {
+        TieBreak {
+            chosen,
+            dropped: dropped.to_vec(),
+            states,
+            witness: Some(witness.to_vec()),
+        }
+    }
+
+    /// The tie-break groups of several tables, such as the precedence
+    /// classes of one decision, merge by alternatives. A merged group keeps
+    /// the shorter witness, and the largest group comes first.
+    #[test]
+    fn tie_break_groups_merge_over_tables() {
+        let mut resolutions = EscapeResolutions {
+            tie_breaks: vec![group(1, &[2], 2, &[5, 6, 7]), group(3, &[4], 1, &[8])],
+            ..EscapeResolutions::default()
+        };
+        resolutions.merge(EscapeResolutions {
+            tie_breaks: vec![group(1, &[2], 3, &[5]), group(1, &[3], 4, &[9])],
+            ..EscapeResolutions::default()
+        });
+        assert_eq!(
+            resolutions.tie_breaks,
+            [
+                group(1, &[2], 5, &[5]),
+                group(1, &[3], 4, &[9]),
+                group(3, &[4], 1, &[8]),
+            ]
+        );
     }
 }

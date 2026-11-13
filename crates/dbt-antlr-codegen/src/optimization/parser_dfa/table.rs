@@ -179,6 +179,26 @@ impl StaticDfaTable {
         }
     }
 
+    /// The number of tokens on a shortest path from the start state to each
+    /// state, `usize::MAX` for a state that the start state does not reach.
+    pub(crate) fn depths(&self) -> Vec<usize> {
+        let mut depths = vec![usize::MAX; self.states.len()];
+        let Some(first) = depths.first_mut() else {
+            return depths;
+        };
+        *first = 0;
+        let mut queue = VecDeque::from([0_usize]);
+        while let Some(current) = queue.pop_front() {
+            for edge in &self.states[current].edges {
+                if depths[edge.target] == usize::MAX {
+                    depths[edge.target] = depths[current] + 1;
+                    queue.push_back(edge.target);
+                }
+            }
+        }
+        depths
+    }
+
     /// A shortest lookahead path from the start state to `target`, one token
     /// per edge (the lowest token of the edge interval).
     pub(crate) fn witness(&self, target: usize) -> Option<Vec<i32>> {
