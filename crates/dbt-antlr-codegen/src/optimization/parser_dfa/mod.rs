@@ -71,7 +71,7 @@ pub(crate) use cost::AttemptOutcome;
 pub(crate) use descent::{DescentGroup, DescentPlan, DescentRules, TailArm};
 pub(crate) use static_only::{EscapeResolution, EscapeResolutions};
 pub(crate) use table::StaticDfaTable;
-pub(crate) use tables::build_tables;
+pub(crate) use tables::{build_tables, minimized_states};
 
 /// Table marker of a state whose decision must be recomputed by the adaptive
 /// simulation: the static construction stopped here.
