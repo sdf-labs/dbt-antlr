@@ -23,7 +23,9 @@
 //! Under `--static-dfa-only`, the pass resolves the escape states of every
 //! partial table statically (see `parser_dfa::static_only`). A decision that
 //! still needs `adaptivePredict` is an error (`G4S190`), and a decision with
-//! resolved escape states gets a warning (`G4S192`).
+//! resolved escape states gets a warning (`G4S192`). The warning names the
+//! alternatives that each guess chooses and drops, and ranks the guesses by
+//! their prefix-hijack hazard (see `parser_dfa::hazard`).
 //!
 //! Each decision has an analysis budget (see `parser_dfa::budget`). The
 //! budget options of the grammar, its rules, and its blocks set it.
@@ -43,7 +45,8 @@ use dbt_antlr_runtime::dfa::static_parser_dfa::{
 use super::parser_dfa::{
     AttemptOutcome, BudgetLimits, CONFLICT_ESCAPE, Category, DecisionBudget, DecisionClassifier,
     DecisionResult, DescentPlan, DescentRules, ESCAPE, EscapeResolution, EscapeResolutions,
-    ParserDfaBudgets, StaticDfaTable, has_non_budget_option, minimized_states,
+    HazardLevel, HijackVerdict, ParserDfaBudgets, StaticDfaTable, TieBreak, has_non_budget_option,
+    minimized_states,
 };
 use crate::grammar::atn::{CompiledParser, FinalizedTransitionKind, left_corner_rules};
 use crate::grammar::diagnostic::Diagnostic;
@@ -276,6 +279,7 @@ impl StaticParserDfa {
                 Value::from(totals.min_viable_alt_states),
             ),
             ("syntaxErrorStates", Value::from(totals.syntax_error_states)),
+            ("hijackHazards", Value::from(totals.hijack_hazards)),
             (
                 "descentGroupStates",
                 Value::from(totals.descent_group_states),
@@ -427,6 +431,17 @@ impl StaticParserDfaReport {
             .sum()
     }
 
+    /// The tie-break groups of `--static-dfa-only` with a high prefix-hijack
+    /// hazard.
+    fn hijack_hazards(&self) -> usize {
+        self.decisions
+            .iter()
+            .filter_map(|decision| decision.result.static_only.as_ref())
+            .flat_map(|resolved| &resolved.tie_breaks)
+            .filter(|group| group.level() == HazardLevel::High)
+            .count()
+    }
+
     /// The escape states that `--static-dfa-only` resolved, summed over the
     /// decisions.
     fn resolved_states(&self) -> EscapeResolutions {
@@ -456,6 +471,7 @@ struct ReportMetrics {
     min_alt_states: usize,
     min_viable_alt_states: usize,
     syntax_error_states: usize,
+    hijack_hazards: usize,
     descent_group_states: usize,
 }
 
@@ -471,6 +487,7 @@ impl ReportMetrics {
         self.min_alt_states += resolved.min_alt;
         self.min_viable_alt_states += resolved.min_viable_alt;
         self.syntax_error_states += resolved.syntax_error;
+        self.hijack_hazards += parser.hijack_hazards();
         self.descent_group_states += parser.descent_group_states();
     }
 }
@@ -504,6 +521,7 @@ fn parser_report_value(parser: &StaticParserDfaReport, sources: &SourceSet) -> V
         ("minAltStates", Value::from(resolved.min_alt)),
         ("minViableAltStates", Value::from(resolved.min_viable_alt)),
         ("syntaxErrorStates", Value::from(resolved.syntax_error)),
+        ("hijackHazards", Value::from(parser.hijack_hazards())),
         (
             "descentGroupStates",
             Value::from(parser.descent_group_states()),
@@ -1925,8 +1943,8 @@ fn conflict_text(decision: &StaticParserDecisionReport) -> String {
     }
 }
 
-/// The text of the tie-break groups of a decision with the most states, at
-/// most [`TIE_BREAK_GROUPS`] of them.
+/// The text of the first [`TIE_BREAK_GROUPS`] tie-break groups of a
+/// decision: the most harmful groups, then the groups with the most states.
 fn tie_break_text(report: &StaticParserDfaReport, decision: &StaticParserDecisionReport) -> String {
     let Some(resolved) = &decision.result.static_only else {
         return String::new();
@@ -1946,13 +1964,20 @@ fn tie_break_text(report: &StaticParserDfaReport, decision: &StaticParserDecisio
                 decision.alternatives.name(group.chosen),
                 decision.alternatives.list(&group.dropped)
             );
-            // The summary of the resolutions already shows these witnesses.
+            // The summary of the resolutions already shows these witnesses,
+            // and a hijack shows its own path.
             let shown = [&resolved.min_alt_witness, &resolved.min_viable_alt_witness];
-            if !shown.contains(&&group.witness)
+            let hijack = group
+                .hazard
+                .as_ref()
+                .is_some_and(|hazard| matches!(hazard.verdict, HijackVerdict::Hijack { .. }));
+            if !hijack
+                && !shown.contains(&&group.witness)
                 && let Some(witness) = witness_text(&report.vocabulary, group.witness.as_deref())
             {
                 text.push_str(&format!(" (witness: {witness})"));
             }
+            text.push_str(&hazard_text(report, decision, group));
             text
         })
         .collect();
@@ -1965,6 +1990,46 @@ fn tie_break_text(report: &StaticParserDfaReport, decision: &StaticParserDecisio
         more => parts.push(format!("and {more} more tie-break groups")),
     }
     format!("; tie-breaks: {}", parts.join("; "))
+}
+
+/// The prefix-hijack verdict of a tie-break group, in brackets.
+fn hazard_text(
+    report: &StaticParserDfaReport,
+    decision: &StaticParserDecisionReport,
+    group: &TieBreak,
+) -> String {
+    let Some(hazard) = &group.hazard else {
+        return " [unverified: no analysis of the hijack hazard]".to_owned();
+    };
+    let chosen = format!("alt {}", group.chosen);
+    match &hazard.verdict {
+        HijackVerdict::Hijack { alt, extension } => {
+            let (prefix, token) = extension.split_at(extension.len().saturating_sub(1));
+            let kind = if hazard.greedy {
+                "greedy choice"
+            } else {
+                "prefix-hijack hazard"
+            };
+            let after = if prefix.is_empty() {
+                String::new()
+            } else {
+                format!(" after {}", path_text(&report.vocabulary, prefix))
+            };
+            format!(
+                " [{kind}: {} reads {}{after}, and {chosen} cannot]",
+                decision.alternatives.name(*alt),
+                path_text(&report.vocabulary, token)
+            )
+        }
+        HijackVerdict::Covered if hazard.greedy => " [benign greedy choice]".to_owned(),
+        HijackVerdict::Covered => {
+            format!(" [benign: {chosen} reads each continuation of the dropped alternatives]")
+        }
+        HijackVerdict::Unknown if hazard.greedy => " [greedy choice, not verified]".to_owned(),
+        HijackVerdict::Unknown => {
+            " [unverified: the analysis did not separate the alternatives]".to_owned()
+        }
+    }
 }
 
 /// One clause of a `G4S192` warning, for example `2 predicated states report a

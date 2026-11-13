@@ -26,6 +26,7 @@ use super::closure::{
 };
 use super::cost::{AttemptCost, AttemptKind, AttemptOutcome, CostLog, DecisionCost};
 use super::descent::{DescentAnalyzer, DescentPlan, DescentRules};
+use super::hazard::{self, StateHazard};
 use super::loop_block::{
     EXIT_ALT, EXIT_FOREIGN, ITERATE_ALT, ITERATE_REAL, LoopBlock, is_iterate_exit_pair,
 };
@@ -64,6 +65,13 @@ pub(crate) const MAX_CONTINUATION_WORDS: usize = 64;
 /// grammars, 16 threads give most of the speedup at less than half the memory
 /// of 60 threads. The slowest decisions set the wall time.
 const MAX_CLASSIFY_THREADS: usize = 16;
+
+/// The escape states of one table that the prefix-hijack analysis analyzes
+/// at most, the shallowest first.
+const HAZARD_STATES: usize = 48;
+/// The escape states of one tie-break group that the prefix-hijack analysis
+/// analyzes at most. The analysis of a group stops at its first hijack.
+const HAZARD_STATES_PER_GROUP: usize = 4;
 
 /// Taint bits that invalidate a trusted verdict when a second path adds them
 /// to an already interned state. A decision state that gets one of them is
@@ -1446,7 +1454,18 @@ where
         if !self.attempt.overflow {
             self.finalize_guards();
             self.attach_continuations();
-            self.attempt.table = Some(self.snapshot());
+            // `finalize` drops a table with a taint conflict or an escaping
+            // start state, so its hazards are not needed.
+            let start_decides = self
+                .info
+                .get(&0)
+                .is_some_and(|facts| !matches!(facts.verdict, Verdict::Escape(_)));
+            let hazards = if self.static_only && !self.attempt.taint_conflict && start_decides {
+                self.state_hazards()
+            } else {
+                HashMap::new()
+            };
+            self.attempt.table = Some(self.snapshot(&hazards));
         }
         self.take_attempt()
     }
@@ -2421,7 +2440,94 @@ where
         }
     }
 
-    fn snapshot(&self) -> StaticDfaTable {
+    /// The prefix-hijack hazards of the escape states that
+    /// `--static-dfa-only` resolves to an alternative, for at most
+    /// [`HAZARD_STATES`] of the shallowest of them.
+    fn state_hazards(&mut self) -> HashMap<i32, StateHazard> {
+        let mut candidates: Vec<(usize, i32)> = self
+            .info
+            .iter()
+            .filter(|(_, facts)| {
+                matches!(facts.verdict, Verdict::Escape(ESCAPE | CONFLICT_ESCAPE))
+                    && !facts.predicated
+            })
+            .map(|(number, facts)| (facts.depth, *number))
+            .collect();
+        candidates.sort_unstable();
+        let mut hazards = HashMap::new();
+        // The analyzed states of each tie-break group, and whether one of
+        // them is a hijack.
+        let mut groups: HashMap<(i32, Vec<i32>), (usize, bool)> = HashMap::new();
+        let mut analyzed = 0;
+        for (_, number) in candidates {
+            if analyzed == HAZARD_STATES {
+                break;
+            }
+            let Some(facts) = self.info.get(&number).cloned() else {
+                continue;
+            };
+            let configs: Vec<_> = self.states[number as usize]
+                .configs()
+                .get_items()
+                .cloned()
+                .collect();
+            let alts: BTreeSet<i32> = configs
+                .iter()
+                .map(|config| config.get_alt())
+                .filter(|alt| *alt > 0)
+                .collect();
+            let conflicts: BTreeSet<i32> = facts
+                .conflicts
+                .iter()
+                .copied()
+                .filter(|alt| *alt > 0)
+                .collect();
+            // The same choice as `StaticDfaTable::resolve_escapes`.
+            let candidates = if conflicts.is_empty() {
+                &alts
+            } else {
+                &conflicts
+            };
+            let Some(&chosen) = candidates.first() else {
+                continue;
+            };
+            let dropped: Vec<i32> = candidates.iter().copied().skip(1).collect();
+            if dropped.is_empty() {
+                continue;
+            }
+            let group = groups.entry((chosen, dropped.clone())).or_default();
+            if group.1 || group.0 == HAZARD_STATES_PER_GROUP {
+                continue;
+            }
+            group.0 += 1;
+            analyzed += 1;
+            let verdict =
+                hazard::analyze(&mut self.closure, &configs, &facts.taint, chosen, &dropped);
+            group.1 = matches!(verdict, hazard::HijackVerdict::Hijack { .. });
+            let greedy = self.is_greedy_choice(&dropped);
+            hazards.insert(number, StateHazard { verdict, greedy });
+        }
+        hazards
+    }
+
+    /// Whether a guess that drops `dropped` is the greedy choice of the
+    /// decision: it drops the exit of a loop, or the skip of an optional block
+    /// or element.
+    fn is_greedy_choice(&self, dropped: &[i32]) -> bool {
+        let transitions = self.decision_state.get_transitions();
+        match self.decision_state.state_type() {
+            ATNStateType::StarLoopEntry | ATNStateType::PlusLoopBack => dropped == [2],
+            _ => {
+                let last = transitions.len();
+                dropped == [last as i32]
+                    && transitions.last().is_some_and(|transition| {
+                        transition.get_target().state_type() == ATNStateType::BlockEnd
+                    })
+            }
+        }
+    }
+
+    fn snapshot(&self, hazards: &HashMap<i32, StateHazard>) -> StaticDfaTable {
         let mut states: Vec<StaticDfaState> = self
             .states
             .iter()
@@ -2455,6 +2561,7 @@ where
                     viable_alts,
                     predicated: facts.is_some_and(|facts| facts.predicated),
                     resolution: None,
+                    hazard: hazards.get(&number).cloned(),
                     edges: Vec::new(),
                 }
             })

@@ -2436,9 +2436,10 @@ fn state_caps_cut_hybrid_tables_instead_of_failing_them() {
             "parser decision 0 of rule 'a' resolves its escape states without adaptivePredict: \
              1 undecided state predicts the minimum viable alternative (witness: 'a'); \
              tie-breaks: 1 state chooses alt 1 (A B X, line 3) over alt 2 (A C X, line 3), \
-             alt 3 (A D X, line 3), alt 4 (A B Y, line 3); the analysis budget (4 states or \
-             2000000 visited configs) stopped the lookahead; raise it with the max_dfa_states \
-             and max_dfa_visits options of the grammar, the rule, or the block"
+             alt 3 (A D X, line 3), alt 4 (A B Y, line 3) [prefix-hijack hazard: alt 2 \
+             (A C X, line 3) reads 'c' after 'a', and alt 1 cannot]; the analysis budget (4 \
+             states or 2000000 visited configs) stopped the lookahead; raise it with the \
+             max_dfa_states and max_dfa_visits options of the grammar, the rule, or the block"
         )]
     );
 
@@ -2883,8 +2884,8 @@ OVER : 'over' ; DOT : '.' ;
 }
 
 /// `--static-dfa-only` groups the resolved states of a decision by the chosen
-/// and the dropped alternatives, over all precedence classes, with the most
-/// states first.
+/// and the dropped alternatives, over all precedence classes. The most harmful
+/// groups come first, then the groups with the most states.
 #[test]
 fn static_only_groups_its_tie_breaks() {
     let mut results = resolve_static_only(&grammars_dir().join("parser").join("GuardExpr.g4"));
@@ -2902,7 +2903,7 @@ fn static_only_groups_its_tie_breaks() {
         assert_eq!(grouped, resolved.min_alt + resolved.min_viable_alt);
         for pair in resolved.tie_breaks.windows(2) {
             assert!(
-                pair[0].states >= pair[1].states,
+                (pair[0].level(), pair[0].states) >= (pair[1].level(), pair[1].states),
                 "{:?}",
                 resolved.tie_breaks
             );
@@ -2995,10 +2996,13 @@ fn static_only_warnings_show_the_largest_tie_break_groups() {
         .message;
     assert!(
         message.contains(
-            "tie-breaks: 1 state chooses alt 1 (X Y P, line 3) over alt 2 (X Y Q, line 3); \
-             1 state chooses alt 3 (X Z P, line 3) over alt 4 (X Z Q, line 3) (witness: 'x' 'z'); \
-             1 state chooses alt 5 (W Y P, line 3) over alt 6 (W Y Q, line 3) (witness: 'w' 'y'); \
-             and 1 more tie-break group"
+            "tie-breaks: 1 state chooses alt 1 (X Y P, line 3) over alt 2 (X Y Q, line 3) \
+             [prefix-hijack hazard: alt 2 (X Y Q, line 3) reads 'q' after 'x' 'y', and alt 1 \
+             cannot]; 1 state chooses alt 3 (X Z P, line 3) over alt 4 (X Z Q, line 3) \
+             [prefix-hijack hazard: alt 4 (X Z Q, line 3) reads 'q' after 'x' 'z', and alt 3 \
+             cannot]; 1 state chooses alt 5 (W Y P, line 3) over alt 6 (W Y Q, line 3) \
+             [prefix-hijack hazard: alt 6 (W Y Q, line 3) reads 'q' after 'w' 'y', and alt 5 \
+             cannot]; and 1 more tie-break group"
         ),
         "{message}"
     );
@@ -3066,4 +3070,254 @@ A : 'a' ; B : 'b' ; C : 'c' ; D : 'd' ; E : 'e' ; F : 'f' ; G : 'g' ;
         "alt 1 (skip), alt 2 (A, line 2), alt 1 (skip), alt 2 (A, line 2), \
          and 1 more alternative"
     );
+}
+
+/// The tie-break groups of the decisions of rule `rule` under
+/// `--static-dfa-only` with the hybrid depth cap `max_k`.
+fn hazards_of(name: &str, source: &str, rule: &str, max_k: usize) -> Vec<(i32, Vec<i32>, String)> {
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits {
+            max_k: Some(max_k),
+            max_states: Some(3),
+            ..BudgetLimits::default()
+        },
+    };
+    let (_, build) = build_source_with(name, source, AtnFallback::Forbidden, &budgets);
+    build
+        .report
+        .decisions
+        .iter()
+        .filter(|decision| decision.rule == rule)
+        .filter_map(|decision| decision.result.static_only.as_ref())
+        .flat_map(|resolved| resolved.tie_breaks.iter())
+        .map(|group| {
+            let verdict = match &group.hazard {
+                Some(hazard) => format!("{:?} {:?}", hazard.level, hazard.verdict),
+                None => "none".to_owned(),
+            };
+            (group.chosen, group.dropped.clone(), verdict)
+        })
+        .collect()
+}
+
+const SUBQUERY_GRAMMAR: &str = "grammar Sub;
+s : e EOF ;
+e : LP q RP #sub | LP e (COMMA e)* RP #tuple | INT #lit ;
+q : SELECT INT | LP q RP ;
+LP : '(' ; RP : ')' ; COMMA : ',' ; SELECT : 'select' ; INT : [0-9]+ ;
+";
+
+/// A subquery before a tuple that starts with the same parentheses hijacks
+/// the tuple: after `(`, the tuple reads `INT` and the subquery cannot.
+#[test]
+fn narrow_alternatives_before_broad_ones_are_prefix_hijacks() {
+    assert_eq!(
+        hazards_of("Sub", SUBQUERY_GRAMMAR, "e", 2),
+        [(
+            1,
+            vec![2],
+            "High Hijack { alt: 2, extension: [1, 5] }".to_owned()
+        )]
+    );
+    let index = "grammar Index;
+s : el EOF ;
+el : identifier dtype #col | INDEX identifier TYPE identifier GRANULARITY INT #idx ;
+identifier : ID | INDEX | TYPE ;
+dtype : ID ;
+INDEX : 'index' ; TYPE : 'type' ; GRANULARITY : 'granularity' ; INT : [0-9]+ ; ID : [a-z]+ ;
+";
+    assert_eq!(
+        hazards_of("Index", index, "el", 2),
+        [(
+            1,
+            vec![2],
+            "High Hijack { alt: 2, extension: [1, 1] }".to_owned()
+        )]
+    );
+}
+
+/// A hijack of a greedy loop is only a medium hazard, and an exact ambiguity
+/// is covered.
+#[test]
+fn greedy_choices_and_exact_ambiguities_rank_lower() {
+    let comma = "grammar Comma;
+s : list FROM id EOF ;
+list : id (COMMA id)* COMMA? ;
+id : ID | FROM ;
+FROM : 'from' ; COMMA : ',' ; ID : [a-z]+ ;
+";
+    assert_eq!(
+        hazards_of("Comma", comma, "list", 1),
+        [(
+            1,
+            vec![2],
+            "Medium Hijack { alt: 2, extension: [2, 1, 3] }".to_owned()
+        )]
+    );
+    let ambiguous = "grammar Ambig;
+s : a EOF ;
+a : X Y Z | X Y Z ;
+X : 'x' ; Y : 'y' ; Z : 'z' ;
+";
+    assert_eq!(
+        hazards_of("Ambig", ambiguous, "a", 1),
+        [(1, vec![2], "Low Covered".to_owned())]
+    );
+}
+
+/// A `G4S192` warning shows the hazard of each tie-break group.
+#[test]
+fn static_only_warnings_show_the_hijack_hazards() {
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits {
+            max_k: Some(2),
+            max_states: Some(3),
+            ..BudgetLimits::default()
+        },
+    };
+    let (_, build) = build_source_with("Sub", SUBQUERY_GRAMMAR, AtnFallback::Forbidden, &budgets);
+    let message = &build
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "G4S192")
+        .expect("a G4S192 warning")
+        .message;
+    assert!(
+        message.contains(
+            "chooses alt 1 (#sub, line 3) over alt 2 (#tuple, line 3) [prefix-hijack hazard: \
+             alt 2 (#tuple, line 3) reads INT after '(', and alt 1 cannot]"
+        ),
+        "{message}"
+    );
+}
+
+/// The most harmful tie-break group comes first, before a group with a lower
+/// alternative.
+#[test]
+fn tie_breaks_rank_by_hazard() {
+    let source = "grammar Rank;
+s : a EOF ;
+a : X Y Z | X Y Z | W Y P | W Y Q ;
+X : 'x' ; Y : 'y' ; Z : 'z' ; W : 'w' ; P : 'p' ; Q : 'q' ;
+";
+    let groups: Vec<_> = hazards_of("Rank", source, "a", 2)
+        .into_iter()
+        .map(|(chosen, dropped, verdict)| {
+            (
+                chosen,
+                dropped,
+                verdict.split(' ').next().map(str::to_owned),
+            )
+        })
+        .collect();
+    assert_eq!(
+        groups,
+        [
+            (3, vec![4], Some("High".to_owned())),
+            (1, vec![2], Some("Low".to_owned())),
+        ]
+    );
+}
+
+/// A dropped path that pops a widened rule continues where the runtime stack
+/// cannot, so it is no hijack evidence.
+#[test]
+fn widened_paths_are_no_hijack_evidence() {
+    let source = "grammar Widened;
+s : target EOF ;
+target : A LP expr RP X | A parens X ;
+expr : LP expr RP | ID ;
+parens : LP parens RP | ID ;
+A : 'a' ; LP : '(' ; RP : ')' ; X : 'x' ; ID : [a-z]+ ;
+";
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits {
+            max_states: Some(4),
+            max_k: Some(2),
+            ..BudgetLimits::default()
+        },
+    };
+    let (_, build) = build_source_with("Widened", source, AtnFallback::Forbidden, &budgets);
+    let groups: Vec<_> = build
+        .report
+        .decisions
+        .iter()
+        .filter_map(|decision| decision.result.static_only.as_ref())
+        .flat_map(|resolved| &resolved.tie_breaks)
+        .collect();
+    assert!(!groups.is_empty());
+    assert!(
+        groups
+            .iter()
+            .all(|group| group.level() != super::HazardLevel::High),
+        "{groups:?}"
+    );
+}
+
+/// A group with states that the analysis did not reach is not covered.
+#[test]
+fn partially_analyzed_groups_are_not_covered() {
+    let source = "grammar Partial;
+s : r EOF ;
+r : (A X Y W | B X Y W | C X Y W | D X Y W | P X Q) #one
+  | (A X Y W | B X Y W | C X Y W | D X Y W | P X Z) #two
+  ;
+A : 'a' ; B : 'b' ; C : 'c' ; D : 'd' ; P : 'p' ; Q : 'q' ; W : 'w' ; X : 'x' ; Y : 'y' ;
+Z : 'z' ;
+";
+    for states in [9, 12] {
+        let budgets = ParserDfaBudgets {
+            global: BudgetLimits {
+                max_states: Some(states),
+                ..BudgetLimits::default()
+            },
+        };
+        let (_, build) = build_source_with("Partial", source, AtnFallback::Forbidden, &budgets);
+        let groups: Vec<_> = build
+            .report
+            .decisions
+            .iter()
+            .filter_map(|decision| decision.result.static_only.as_ref())
+            .flat_map(|resolved| &resolved.tie_breaks)
+            .collect();
+        assert!(!groups.is_empty());
+        for group in groups {
+            let hazard = group.hazard.as_ref().expect("analyzed");
+            assert_ne!(
+                hazard.verdict,
+                super::HijackVerdict::Covered,
+                "{states}: {group:?}"
+            );
+        }
+    }
+}
+
+/// A chosen path that reads a token in an assumed caller does not cover a
+/// dropped path, and neither does a chosen path across a predicate.
+#[test]
+fn unsure_chosen_paths_do_not_cover() {
+    for (name, source) in [
+        (
+            "Boundary",
+            "grammar Boundary;
+s : r EOF ;
+r : A | (X r | A) B ;
+A : 'a' ; B : 'b' ; X : 'x' ;
+",
+        ),
+        (
+            "PredChosen",
+            "grammar PredChosen;
+s : r EOF ;
+r : A X {false}? B | A X B ;
+A : 'a' ; B : 'b' ; X : 'x' ;
+",
+        ),
+    ] {
+        let groups = hazards_of(name, source, "r", 1);
+        assert!(!groups.is_empty(), "{name}");
+        for (_, _, verdict) in groups {
+            assert!(!verdict.contains("Covered"), "{name}: {verdict}");
+        }
+    }
 }
