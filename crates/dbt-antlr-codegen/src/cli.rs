@@ -33,6 +33,8 @@
 //!   --lexer <Lexer.g4>            the lexer grammar that tokenizes the --explain input
 //!   --strict                      report implicit token definitions in parser grammars
 //!                                 (G4S030) as errors
+//!   -q, --quiet                   print only error diagnostics on stderr: no warnings
+//!                                 and no transform notes
 //! ```
 
 use std::io::Write;
@@ -70,6 +72,8 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   --lexer <Lexer.g4>            the lexer grammar that tokenizes the --explain input
   --strict                      report implicit token definitions in parser grammars
                                 (G4S030) as errors
+  -q, --quiet                   print only error diagnostics on stderr: no warnings
+                                and no transform notes
 ";
 
 /// Parsed command line.
@@ -95,6 +99,7 @@ struct CliArgs {
     start_rule: Option<String>,
     lexer: Option<PathBuf>,
     strict: bool,
+    quiet: bool,
 }
 
 /// Where the `--explain` input comes from.
@@ -125,6 +130,8 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let mut start_rule = None;
     let mut lexer = None;
     let mut strict = false;
+    let mut quiet = false;
+    let mut ignored = Vec::new();
 
     let mut index = 0;
     while index < args.len() {
@@ -189,10 +196,9 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
                 }
             }
             "--strict" => strict = true,
+            "-q" | "--quiet" => quiet = true,
             "-h" | "-help" | "--help" => return Err(miette::miette!("{USAGE}")),
-            _ if arg.starts_with("-D") => {
-                writeln!(stderr, "warning: ignoring option {arg}").into_diagnostic()?;
-            }
+            _ if arg.starts_with("-D") => ignored.push(arg),
             _ if arg.starts_with('-') && arg.len() > 1 => {
                 miette::bail!("unknown option {arg}\n{USAGE}");
             }
@@ -204,6 +210,11 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         }
     }
 
+    if !quiet {
+        for arg in ignored {
+            writeln!(stderr, "warning: ignoring option {arg}").into_diagnostic()?;
+        }
+    }
     let Some(grammar) = grammar else {
         miette::bail!("missing grammar file\n{USAGE}");
     };
@@ -231,6 +242,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         start_rule,
         lexer,
         strict,
+        quiet,
     })
 }
 
@@ -295,16 +307,12 @@ pub fn run(
         .generate_detailed()
         .into_diagnostic()
         .wrap_err_with(|| format!("cannot emit {}", cli.grammar.display()))?;
-    let mut errors = 0;
-    for diagnostic in generation.diagnostics() {
-        if diagnostic.severity() == crate::Severity::Error {
-            errors += 1;
-        }
-        writeln!(stderr, "{diagnostic}").into_diagnostic()?;
-    }
-    for message in generation.optimization_messages() {
-        writeln!(stderr, "{message}").into_diagnostic()?;
-    }
+    let errors = write_diagnostics(
+        stderr,
+        generation.diagnostics(),
+        generation.optimization_messages(),
+        cli.quiet,
+    )?;
     for report in generation.reports() {
         write!(stdout, "{report}").into_diagnostic()?;
     }
@@ -320,6 +328,32 @@ pub fn run(
     }
     Ok(())
 }
+
+/// Writes the diagnostics and the transform notes of a run to `stderr` and
+/// returns the number of errors. When `quiet` is set, only the errors are
+/// written.
+fn write_diagnostics(
+    stderr: &mut impl Write,
+    diagnostics: &[crate::Diagnostic],
+    optimization_messages: &[String],
+    quiet: bool,
+) -> miette::Result<usize> {
+    let mut errors = 0;
+    for diagnostic in diagnostics {
+        let error = diagnostic.severity() == crate::Severity::Error;
+        errors += usize::from(error);
+        if error || !quiet {
+            writeln!(stderr, "{diagnostic}").into_diagnostic()?;
+        }
+    }
+    if !quiet {
+        for message in optimization_messages {
+            writeln!(stderr, "{message}").into_diagnostic()?;
+        }
+    }
+    Ok(errors)
+}
+
 /// Runs `--explain` / `--explain-file`.
 fn run_explain(
     cli: &CliArgs,
@@ -369,16 +403,12 @@ fn run_explain(
     let output = crate::explain::explain(&cli.grammar, &cli.lib_dirs, &options, &request)
         .into_diagnostic()
         .wrap_err_with(|| format!("cannot explain {}", cli.grammar.display()))?;
-    let mut errors = 0;
-    for diagnostic in &output.diagnostics {
-        if diagnostic.severity() == crate::Severity::Error {
-            errors += 1;
-        }
-        writeln!(stderr, "{diagnostic}").into_diagnostic()?;
-    }
-    for message in &output.optimization_messages {
-        writeln!(stderr, "{message}").into_diagnostic()?;
-    }
+    let errors = write_diagnostics(
+        stderr,
+        &output.diagnostics,
+        &output.optimization_messages,
+        cli.quiet,
+    )?;
     for report in &output.reports {
         write!(stdout, "{report}").into_diagnostic()?;
     }
@@ -457,6 +487,24 @@ mod tests {
         assert!(cli.strict);
         let cli = parse(&["T.g4"]).expect("minimal command line parses");
         assert!(!cli.strict);
+    }
+
+    #[test]
+    fn quiet_flag_and_alias_parse() {
+        for flag in ["-q", "--quiet"] {
+            let cli = parse(&[flag, "T.g4"]).expect("flag parses");
+            assert!(cli.quiet, "{flag} sets quiet");
+        }
+        let cli = parse(&["T.g4"]).expect("minimal command line parses");
+        assert!(!cli.quiet);
+    }
+
+    #[test]
+    fn quiet_hides_the_ignored_option_warning() {
+        let mut stderr = Vec::new();
+        let args = ["-Dlanguage=Rust", "T.g4", "-q"].map(str::to_owned);
+        parse_args(&args, &mut stderr).expect("-D option parses");
+        assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
     }
 
     #[test]

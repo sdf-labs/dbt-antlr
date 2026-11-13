@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use crate::OptimizationOptions;
 #[cfg(feature = "generator")]
 use crate::emission::emit_files_with_options;
-use crate::error::{Diagnostic, EmitError};
+use crate::error::{Diagnostic, EmitError, Severity};
 
 /// Generator configuration, primarily for use from a `build.rs` build script.
 ///
@@ -50,7 +50,8 @@ use crate::error::{Diagnostic, EmitError};
 /// so the build script reruns exactly when grammar inputs change. It also
 /// prints each compiler diagnostic as a `cargo:warning` directive, so that
 /// cargo shows the warnings of the grammar (for example `G4S030` for a token
-/// that the lexer never emits) in the build output.
+/// that the lexer never emits) in the build output. Call
+/// [`quiet`](Config::quiet) to print only the errors.
 #[derive(Clone, Debug)]
 pub struct Config {
     grammars: Vec<PathBuf>,
@@ -59,6 +60,7 @@ pub struct Config {
     gen_listener: bool,
     gen_visitor: bool,
     cargo_directives: bool,
+    quiet: bool,
     optimization: OptimizationOptions,
     pinned_release_version: Option<String>,
     pinned_release_sha256: Option<String>,
@@ -75,6 +77,7 @@ impl Config {
             gen_listener: true,
             gen_visitor: false,
             cargo_directives: true,
+            quiet: false,
             optimization: OptimizationOptions::default(),
             pinned_release_version: None,
             pinned_release_sha256: None,
@@ -119,6 +122,19 @@ impl Config {
     /// Default: `true`.
     pub const fn cargo_directives(&mut self, print: bool) -> &mut Self {
         self.cargo_directives = print;
+        self
+    }
+
+    /// Stops [`generate`](Config::generate) from printing warning diagnostics
+    /// as `cargo:warning` directives (`--quiet`, `-q`). Error diagnostics
+    /// are still printed. Default: `false`.
+    ///
+    /// This setting changes only what is printed:
+    /// [`Generation::diagnostics`] still contains all the diagnostics.
+    /// Pinned-release generation prints no `cargo:warning` directives, so
+    /// this setting has no effect on it.
+    pub const fn quiet(&mut self, enabled: bool) -> &mut Self {
+        self.quiet = enabled;
         self
     }
 
@@ -269,6 +285,7 @@ impl Config {
     ///
     /// When [`cargo_directives`](Config::cargo_directives) is on, each
     /// diagnostic of the run is also printed as a `cargo:warning` directive.
+    /// With [`quiet`](Config::quiet), only the error diagnostics are printed.
     /// Use [`generate_detailed`](Config::generate_detailed) to get the
     /// diagnostics instead.
     ///
@@ -283,7 +300,7 @@ impl Config {
     pub fn generate(&self) -> Result<Vec<PathBuf>, EmitError> {
         let generation = self.generate_detailed()?;
         if self.cargo_directives {
-            for directive in cargo_warnings(generation.diagnostics()) {
+            for directive in cargo_warnings(generation.diagnostics(), self.quiet) {
                 println!("{directive}");
             }
         }
@@ -458,10 +475,11 @@ impl Config {
 
 /// The `cargo:warning` directives that show `diagnostics` in the cargo build
 /// output. A directive holds one line, so each line of a diagnostic gets its
-/// own directive.
-fn cargo_warnings(diagnostics: &[Diagnostic]) -> Vec<String> {
+/// own directive. When `quiet` is set, only the errors get directives.
+fn cargo_warnings(diagnostics: &[Diagnostic], quiet: bool) -> Vec<String> {
     diagnostics
         .iter()
+        .filter(|diagnostic| !quiet || diagnostic.severity() == Severity::Error)
         .flat_map(|diagnostic| {
             diagnostic
                 .to_string()
@@ -603,11 +621,39 @@ mod tests {
             ),
         ];
         assert_eq!(
-            cargo_warnings(&diagnostics),
+            cargo_warnings(&diagnostics, false),
             [
                 "cargo:warning=warning[G4S030]: P.g4:3:24: implicit definition of token CACHE in parser",
                 "cargo:warning=warning[G4S192]: P.g4: first line",
                 "cargo:warning=second line",
+            ]
+        );
+    }
+
+    #[test]
+    fn quiet_cargo_warnings_keep_only_the_errors() {
+        let diagnostics = [
+            Diagnostic::new(
+                "G4S192",
+                Severity::Warning,
+                "lookahead budget".to_owned(),
+                PathBuf::from("P.g4"),
+                Some((7, 1)),
+                None,
+            ),
+            Diagnostic::new(
+                "G4S030",
+                Severity::Error,
+                "implicit definition of token CACHE in parser".to_owned(),
+                PathBuf::from("P.g4"),
+                Some((3, 24)),
+                None,
+            ),
+        ];
+        assert_eq!(
+            cargo_warnings(&diagnostics, true),
+            [
+                "cargo:warning=error[G4S030]: P.g4:3:24: implicit definition of token CACHE in parser"
             ]
         );
     }

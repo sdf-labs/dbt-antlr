@@ -103,6 +103,35 @@ fn cli_report_only_runs_static_lexer_dfa_without_writing_files() {
 }
 
 #[test]
+fn quiet_prints_only_the_errors() {
+    let grammar = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/explain/Predicated.g4")
+        .to_string_lossy()
+        .into_owned();
+    let stderr_of = |quiet: &[&str]| {
+        let args = [quiet, &["--static-dfa-only", "--report-only", &grammar]]
+            .concat()
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        cli::run(&args, &mut stdout, &mut stderr)
+            .expect_err("--static-dfa-only rejects the predicated decision");
+        String::from_utf8(stderr).expect("stderr is utf-8")
+    };
+
+    let loud = stderr_of(&[]);
+    assert!(loud.contains("error[G4S190]"), "{loud}");
+    assert!(loud.contains("warning[G4S192]"), "{loud}");
+    for flag in ["-q", "--quiet"] {
+        let quiet = stderr_of(&[flag]);
+        assert!(quiet.contains("error[G4S190]"), "{flag}: {quiet}");
+        assert!(!quiet.contains("warning["), "{flag}: {quiet}");
+    }
+}
+
+#[test]
 fn help_text_lists_the_static_lexer_dfa_flag() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -115,6 +144,7 @@ fn help_text_lists_the_static_lexer_dfa_flag() {
         "--report-decisions",
         "--dump-dfas",
         "--profile-decisions",
+        "-q, --quiet",
     ] {
         assert!(
             error.to_string().contains(flag),

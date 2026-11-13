@@ -3,7 +3,8 @@
 // Copyright (c) 2026 Bo Lin
 //! Integration test for the build-script API ([`Config`]): it must write the
 //! same files the emission API produces, fail cleanly without an output
-//! directory, and report the implicit parser tokens that `strict` rejects.
+//! directory, report the implicit parser tokens that `strict` rejects, and
+//! keep the diagnostics of a `quiet` run.
 
 mod common;
 
@@ -111,4 +112,24 @@ fn strict_rejects_parser_tokens_that_the_lexer_never_emits() {
     assert_eq!(errors, [Severity::Error, Severity::Error]);
 
     std::fs::remove_dir_all(&out_dir).expect("cleanup");
+}
+
+#[test]
+fn quiet_keeps_the_diagnostics_of_the_generation() {
+    let grammar = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/grammar-semantics/implicit-parser-tokens/SplitParser.g4");
+    let generation = Config::new(&grammar)
+        .report_only(true)
+        .cargo_directives(false)
+        .quiet(true)
+        .generate_detailed()
+        .expect("implicit tokens are warnings by default");
+    assert!(
+        generation
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code() == "G4S030"),
+        "{:?}",
+        generation.diagnostics()
+    );
 }
