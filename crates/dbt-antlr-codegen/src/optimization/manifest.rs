@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Bo Lin
-//! Rendering of the `optimizations.txt` manifest.
+//! Rendering of the `<grammar>.optimizations.txt` manifest.
 //!
 //! The manifest lists every selected pass that emits a report, in plan order.
 //! Each pass renders its own entry from the shared [`OptimizationReport`], so
@@ -304,6 +304,21 @@ pub(super) fn source_value(span: &SourceSpan, sources: &SourceSet) -> Value {
             ),
         ),
     ])
+}
+
+/// The start of `span` as one `path:line:column` string, in the format of the
+/// diagnostics. Lists with an entry for each decision use it, because the
+/// object of [`source_value`] takes 13 lines for each entry.
+pub(super) fn source_location_value(span: &SourceSpan, sources: &SourceSet) -> Value {
+    let path = sources.logical_path(span.source).map_or_else(
+        || "<grammar>".to_owned(),
+        |path| path.to_string_lossy().into_owned(),
+    );
+    let location = match sources.line_column(span.source, span.bytes.start) {
+        Some((line, column)) => format!("{path}:{line}:{column}"),
+        None => path,
+    };
+    Value::from(location)
 }
 
 fn line_column_value((line, column): (usize, usize)) -> Value {

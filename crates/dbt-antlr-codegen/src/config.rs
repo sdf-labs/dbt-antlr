@@ -145,7 +145,8 @@ impl Config {
 
     /// Renders the parser decision report of the static parser DFA pass into
     /// [`Generation::reports`] (`--report-decisions`, printed to stdout by the
-    /// CLI). Implies report-only mode.
+    /// CLI). Implies report-only mode. A run that writes files has the same
+    /// decisions in the `decisionInventory` of its optimization manifest.
     pub const fn report_decisions(&mut self, enabled: bool) -> &mut Self {
         self.optimization.report_decisions(enabled);
         self
@@ -400,7 +401,12 @@ impl Config {
                     })?;
                     written.push(path);
                 }
-                write_optimization_manifest(out_dir, output.optimization_manifest, &mut written)?;
+                write_optimization_manifest(
+                    out_dir,
+                    grammar,
+                    output.optimization_manifest,
+                    &mut written,
+                )?;
             }
             diagnostics.extend(output.diagnostics);
             optimization_messages.extend(output.optimization_messages);
@@ -435,19 +441,23 @@ fn create_out_dir(out_dir: &std::path::Path) -> Result<(), EmitError> {
     })
 }
 
-/// Writes `optimizations.txt` next to the generated files when the
-/// selected transforms produced a manifest, and removes a stale manifest
-/// from an earlier optimized run when they did not. Legacy
-/// `optimizations.json` manifests (written by releases that rendered JSON)
-/// are removed as well.
+/// Writes the optimization manifest of `grammar` next to the generated files
+/// when the selected transforms produced one, and removes a stale manifest
+/// from an earlier optimized run when they did not.
+///
+/// The manifest file name starts with the lowercase grammar file stem
+/// (`clickhouselexer.optimizations.txt`), so that the grammars of a split
+/// grammar or of one [`Config`] do not overwrite the manifests of the others.
+/// The shared `optimizations.txt` and `optimizations.json` manifests of
+/// earlier releases are removed.
 #[cfg(feature = "generator")]
 fn write_optimization_manifest(
     out_dir: &std::path::Path,
+    grammar: &std::path::Path,
     manifest: Option<String>,
     written: &mut Vec<PathBuf>,
 ) -> Result<(), EmitError> {
-    let path = out_dir.join("optimizations.txt");
-    let legacy_path = out_dir.join("optimizations.json");
+    let path = out_dir.join(optimization_manifest_name(grammar));
     match manifest {
         Some(manifest) => {
             std::fs::write(&path, manifest).map_err(|source| EmitError::Write {
@@ -458,8 +468,20 @@ fn write_optimization_manifest(
         }
         None => remove_stale_manifest(&path)?,
     }
-    remove_stale_manifest(&legacy_path)?;
+    for legacy in ["optimizations.txt", "optimizations.json"] {
+        remove_stale_manifest(&out_dir.join(legacy))?;
+    }
     Ok(())
+}
+
+/// The file name of the optimization manifest of `grammar`, for example
+/// `clickhouseparser.optimizations.txt` for `ClickHouseParser.g4`.
+#[cfg(feature = "generator")]
+fn optimization_manifest_name(grammar: &std::path::Path) -> String {
+    let stem = grammar
+        .file_stem()
+        .map_or_else(String::new, |stem| stem.to_string_lossy().to_lowercase());
+    format!("{stem}.optimizations.txt")
 }
 
 #[cfg(feature = "generator")]

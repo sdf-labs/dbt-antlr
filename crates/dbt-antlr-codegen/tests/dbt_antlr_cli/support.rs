@@ -154,7 +154,7 @@ pub(super) fn fixture(relative: &str) -> PathBuf {
 /// output files. Returns the three output directories.
 ///
 /// `grammar` is a path relative to the crate manifest directory, which the
-/// CLI runs in: rendered source paths in `optimizations.txt` are then
+/// CLI runs in: rendered source paths in the manifest are then
 /// constant on every platform, keeping the manifest snapshots stable.
 pub(super) fn run_optimization_matrix(
     root: &Path,
@@ -181,7 +181,12 @@ pub(super) fn run_optimization_matrix(
             utf8(&output.stderr)
         );
     }
-    assert!(!baseline.join("optimizations.txt").exists());
+    let stem = Path::new(grammar)
+        .file_stem()
+        .expect("grammar should have a file stem")
+        .to_string_lossy()
+        .to_lowercase();
+    assert!(!baseline.join(format!("{stem}.optimizations.txt")).exists());
     assert!(!report.exists());
     (baseline, optimized, report)
 }
