@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Bo Lin
-//! Rendering of the `optimizations.txt` manifest.
+//! Rendering of the `<grammar>.optimizations.txt` manifest.
 //!
 //! The manifest lists every selected pass that emits a report, in plan order.
 //! Each pass renders its own entry from the shared [`OptimizationReport`], so

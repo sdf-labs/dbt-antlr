@@ -153,8 +153,10 @@ pub struct EmittedOutput {
     pub diagnostics: Vec<Diagnostic>,
     /// Optimization notes for the user (for example `pruned: ...` lines).
     pub optimization_messages: Vec<String>,
-    /// Rendered `optimizations.txt` manifest, present when the selected
-    /// optimizations emit one.
+    /// Rendered optimization manifest, present when the selected
+    /// optimizations emit one. [`Config`](crate::Config) writes it to
+    /// `<grammar>.optimizations.txt`, where `<grammar>` is the lowercase file
+    /// stem of the grammar.
     pub optimization_manifest: Option<String>,
     /// Rendered stdout reports of the selected passes (`--report-decisions`,
     /// `--dump-dfas`, and `--profile-decisions`).

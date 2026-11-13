@@ -55,10 +55,10 @@ fn cli_accepts_the_static_lexer_dfa_flag() {
         "the flag puts the table statics into the emitted lexer"
     );
     let manifest =
-        std::fs::read_to_string(out_dir.join("optimizations.txt")).expect("manifest written");
+        std::fs::read_to_string(out_dir.join("spike.optimizations.txt")).expect("manifest written");
     assert!(
         manifest.contains("\"name\": \"static-lexer-dfa\""),
-        "the flag writes the static-lexer-dfa entry into optimizations.txt"
+        "the flag writes the static-lexer-dfa entry into spike.optimizations.txt"
     );
 
     let warnings = String::from_utf8(stderr).expect("stderr is utf-8");
@@ -433,7 +433,7 @@ fn static_parser_dfa_writes_the_manifest_entry() {
     });
     let manifest = output
         .optimization_manifest
-        .expect("the flag writes optimizations.txt");
+        .expect("the flag renders the manifest");
     assert!(manifest.contains("\"name\": \"static-parser-dfa\""));
     assert!(manifest.contains("\"safetyClass\": \"tree-and-api-preserving\""));
     assert!(manifest.contains("\"decisions\": 4"));
@@ -1014,6 +1014,18 @@ fn static_dfa_only_resolves_hybrid_tables_without_adaptive_predict() {
         "the resolved decision still counts as hybrid: {manifest}"
     );
     assert!(manifest.contains("\"staticDfaOnly\": True"), "{manifest}");
+    let inventory = &manifest[manifest
+        .find("\"decisionInventory\": [")
+        .unwrap_or_else(|| panic!("the manifest lists the decisions: {manifest}"))..];
+    assert!(
+        inventory.contains("\"fallback\": \"1m\"") && inventory.contains("\"rule\": \"a\""),
+        "the inventory shows the resolved decision: {inventory}"
+    );
+    assert_eq!(
+        manifest.matches("\"minAltStates\": 1,").count(),
+        3,
+        "the pass, the parser, and the one resolved decision count the state: {manifest}"
+    );
 }
 
 #[test]

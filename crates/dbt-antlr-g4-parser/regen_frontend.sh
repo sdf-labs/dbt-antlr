@@ -3,8 +3,8 @@
 # The checked-in recognizers are the bootstrap fixpoint: rerunning this
 # script must reproduce them with zero diff. The base listener is emitted for
 # Java-tool parity but is not part of the compiled facade, and the
-# per-grammar `optimizations.txt` manifest would only describe the last run,
-# so neither is checked in.
+# per-grammar `*.optimizations.txt` manifests are build reports, so neither is
+# checked in.
 #
 # The front-end dogfoods the static DFA tables (7.1): the lexer generated
 # from ANTLRv4Lexer.g4 walks static lexer tables plus the lazy simulator for
@@ -28,4 +28,5 @@ echo "Generating: ANTLRv4Parser (--static-parser-dfa)"
     "$SCRIPT_DIR/grammars/ANTLRv4Parser.g4"
 
 rm -f "$SCRIPT_DIR/src/generated/antlrv4parserbaselistener.rs" \
-    "$SCRIPT_DIR/src/generated/optimizations.txt"
+    "$SCRIPT_DIR/src/generated/antlrv4lexer.optimizations.txt" \
+    "$SCRIPT_DIR/src/generated/antlrv4parser.optimizations.txt"

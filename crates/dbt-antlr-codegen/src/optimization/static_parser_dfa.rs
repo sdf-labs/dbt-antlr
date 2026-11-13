@@ -12,7 +12,9 @@
 //! `--report-decisions` renders the decision inventory of the pass to stdout,
 //! `--dump-dfas` renders the tables of the selected decisions, and
 //! `--profile-decisions` renders the time and the work that the classification
-//! of each decision took. These flags imply `--report-only`.
+//! of each decision took. These flags imply `--report-only`. The optimization
+//! manifest of every run lists the same decisions (`decisionInventory`), so a
+//! build that writes the generated files also writes the inventory.
 //!
 //! A decision that spends the visit budget of the analysis gets a warning
 //! (`G4S193`) in every mode, because such a decision makes the code generation
@@ -37,7 +39,7 @@ use minijinja::Value;
 
 use super::config::AtnFallback;
 use super::descriptor::PassDescriptor;
-use super::manifest::{object, source_value};
+use super::manifest::{object, option, source_value};
 use dbt_antlr_runtime::dfa::static_parser_dfa::{
     StaticParserTables as RuntimeTables, VIRTUAL_ALT_BASE,
 };
@@ -224,6 +226,8 @@ impl StaticParserDfa {
                     .get(result.rule_index)
                     .cloned()
                     .unwrap_or_default(),
+                source_span: decision_span(compiled, result)
+                    .unwrap_or_else(|| compiled.semantic.unit.span.clone()),
                 alternatives: alternative_names(compiled, sources, result.decision),
                 result: result.clone(),
             })
@@ -242,10 +246,10 @@ impl StaticParserDfa {
             profile,
         };
         let mut diagnostics = match atn_fallback {
-            AtnFallback::Allowed => not_fully_static_diagnostics(compiled, &report),
-            AtnFallback::Forbidden => static_only_diagnostics(compiled, &report),
+            AtnFallback::Allowed => not_fully_static_diagnostics(&report),
+            AtnFallback::Forbidden => static_only_diagnostics(&report),
         };
-        diagnostics.extend(visit_budget_diagnostics(compiled, &report));
+        diagnostics.extend(visit_budget_diagnostics(&report));
         diagnostics.extend(token_branch_diagnostics(compiled));
         StaticParserDfaArtifact {
             diagnostics,
@@ -419,8 +423,7 @@ impl StaticParserDfaReport {
     fn descent_group_states(&self) -> usize {
         self.decisions
             .iter()
-            .filter(|decision| decision.result.descent.is_some())
-            .map(|decision| decision.result.descent_group_states)
+            .map(StaticParserDecisionReport::descent_group_states)
             .sum()
     }
 
@@ -436,10 +439,8 @@ impl StaticParserDfaReport {
     fn hijack_hazards(&self) -> usize {
         self.decisions
             .iter()
-            .filter_map(|decision| decision.result.static_only.as_ref())
-            .flat_map(|resolved| &resolved.tie_breaks)
-            .filter(|group| group.level() == HazardLevel::High)
-            .count()
+            .map(StaticParserDecisionReport::hijack_hazards)
+            .sum()
     }
 
     /// The escape states that `--static-dfa-only` resolved, summed over the
@@ -499,9 +500,35 @@ pub(crate) struct StaticParserDecisionReport {
     /// ATN state number of the decision state.
     pub(crate) state: usize,
     pub(crate) rule: String,
+    /// The grammar text of the decision, or of its rule when the decision
+    /// state has no grammar text of its own.
+    pub(crate) source_span: SourceSpan,
     /// The names of the alternatives of the decision, for the diagnostics.
     pub(crate) alternatives: AlternativeNames,
     pub(crate) result: DecisionResult,
+}
+
+impl StaticParserDecisionReport {
+    /// The tie-break groups of `--static-dfa-only` with a high prefix-hijack
+    /// hazard.
+    fn hijack_hazards(&self) -> usize {
+        self.result
+            .static_only
+            .iter()
+            .flat_map(|resolved| &resolved.tie_breaks)
+            .filter(|group| group.level() == HazardLevel::High)
+            .count()
+    }
+
+    /// The states that accept with the virtual alternative of a shared-descent
+    /// group, when the decision keeps its table.
+    fn descent_group_states(&self) -> usize {
+        if self.result.descent.is_some() {
+            self.result.descent_group_states
+        } else {
+            0
+        }
+    }
 }
 
 fn parser_report_value(parser: &StaticParserDfaReport, sources: &SourceSet) -> Value {
@@ -525,6 +552,43 @@ fn parser_report_value(parser: &StaticParserDfaReport, sources: &SourceSet) -> V
         (
             "descentGroupStates",
             Value::from(parser.descent_group_states()),
+        ),
+        (
+            "decisionInventory",
+            Value::from_iter(
+                parser
+                    .decisions
+                    .iter()
+                    .map(|decision| decision_report_value(decision, sources)),
+            ),
+        ),
+    ])
+}
+
+/// One entry of the decision inventory in the manifest. The counts of the
+/// entries add up to the counts of their parser.
+fn decision_report_value(decision: &StaticParserDecisionReport, sources: &SourceSet) -> Value {
+    let result = &decision.result;
+    let resolved = result.static_only.clone().unwrap_or_default();
+    object(vec![
+        ("decision", Value::from(decision.decision)),
+        ("rule", Value::from(decision.rule.as_str())),
+        ("state", Value::from(decision.state)),
+        ("source", source_value(&decision.source_span, sources)),
+        ("category", Value::from(result.category.as_str())),
+        ("k", option(usize::try_from(result.k).ok(), Value::from)),
+        ("fullyStatic", Value::from(result.is_fully_static())),
+        ("dfaStates", Value::from(result.num_dfa_states)),
+        ("escapeStates", Value::from(result.escapes)),
+        ("fallback", Value::from(result.fallback_text())),
+        ("guardedStates", Value::from(resolved.guarded)),
+        ("minAltStates", Value::from(resolved.min_alt)),
+        ("minViableAltStates", Value::from(resolved.min_viable_alt)),
+        ("syntaxErrorStates", Value::from(resolved.syntax_error)),
+        ("hijackHazards", Value::from(decision.hijack_hazards())),
+        (
+            "descentGroupStates",
+            Value::from(decision.descent_group_states()),
         ),
     ])
 }
@@ -1463,10 +1527,7 @@ fn decision_number(text: &str) -> Option<usize> {
 
 /// The `G4S190` warnings: one per decision that keeps at least one adaptive
 /// path, with the reason and, when the construction has one, the witness.
-fn not_fully_static_diagnostics(
-    compiled: &CompiledParser,
-    report: &StaticParserDfaReport,
-) -> Vec<Diagnostic> {
+fn not_fully_static_diagnostics(report: &StaticParserDfaReport) -> Vec<Diagnostic> {
     report
         .decisions
         .iter()
@@ -1491,8 +1552,7 @@ fn not_fully_static_diagnostics(
                 message.push_str(&format!("; witness: {witness}"));
             }
             message.push_str(&conflict_text(decision));
-            let span =
-                decision_span(compiled, result).unwrap_or_else(|| report.source_span.clone());
+            let span = decision.source_span.clone();
             Some(Diagnostic::warning(NOT_FULLY_STATIC, span, message))
         })
         .collect()
@@ -1501,17 +1561,13 @@ fn not_fully_static_diagnostics(
 /// The `--static-dfa-only` diagnostics: a `G4S190` error for each decision that
 /// still needs `adaptivePredict`, and a `G4S192` warning for each decision with
 /// resolved escape states.
-fn static_only_diagnostics(
-    compiled: &CompiledParser,
-    report: &StaticParserDfaReport,
-) -> Vec<Diagnostic> {
+fn static_only_diagnostics(report: &StaticParserDfaReport) -> Vec<Diagnostic> {
     report
         .decisions
         .iter()
         .filter_map(|decision| {
             let result = &decision.result;
-            let span =
-                decision_span(compiled, result).unwrap_or_else(|| report.source_span.clone());
+            let span = decision.source_span.clone();
             let Some(resolved) = &result.static_only else {
                 let mut message = format!(
                     "parser decision {} of rule '{}' is not fully static: {}; \
@@ -1589,10 +1645,7 @@ fn static_only_diagnostics(
 
 /// The `G4S193` warnings: one per decision with a build attempt that spent the
 /// visit budget. The counts in the message are the same on every machine.
-fn visit_budget_diagnostics(
-    compiled: &CompiledParser,
-    report: &StaticParserDfaReport,
-) -> Vec<Diagnostic> {
+fn visit_budget_diagnostics(report: &StaticParserDfaReport) -> Vec<Diagnostic> {
     report
         .decisions
         .iter()
@@ -1618,8 +1671,7 @@ fn visit_budget_diagnostics(
             if !hot_rules.is_empty() {
                 message.push_str(&format!("; most visited rules: {hot_rules}"));
             }
-            let span =
-                decision_span(compiled, result).unwrap_or_else(|| report.source_span.clone());
+            let span = decision.source_span.clone();
             Some(Diagnostic::warning(VISIT_BUDGET_SPENT, span, message))
         })
         .collect()

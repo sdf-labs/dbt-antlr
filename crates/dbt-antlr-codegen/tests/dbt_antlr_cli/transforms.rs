@@ -17,7 +17,7 @@ fn precedence_ladder_optimization_is_explicit_auditable_and_recognition_preservi
     );
     assert!(!report.exists());
 
-    let manifest = fs::read_to_string(optimized.join("optimizations.txt"))
+    let manifest = fs::read_to_string(optimized.join("ladder.optimizations.txt"))
         .expect("applied optimization manifest should be emitted");
     insta::assert_snapshot!("precedence_ladder_optimization_manifest", manifest);
 
@@ -364,9 +364,11 @@ fn unoptimized_regeneration_removes_stale_precedence_manifest() {
         utf8(&optimized.stdout),
         utf8(&optimized.stderr)
     );
-    assert!(out.join("optimizations.txt").is_file());
+    assert!(out.join("ladder.optimizations.txt").is_file());
     let legacy = out.join("optimizations.json");
     fs::write(&legacy, "{}").expect("legacy manifest should be writable");
+    let shared = out.join("optimizations.txt");
+    fs::write(&shared, "{}").expect("shared manifest should be writable");
 
     let baseline = run_dbt_antlr(&[grammar.as_os_str(), OsStr::new("-o"), out.as_os_str()]);
     assert!(
@@ -375,8 +377,9 @@ fn unoptimized_regeneration_removes_stale_precedence_manifest() {
         utf8(&baseline.stdout),
         utf8(&baseline.stderr)
     );
-    assert!(!out.join("optimizations.txt").exists());
+    assert!(!out.join("ladder.optimizations.txt").exists());
     assert!(!legacy.exists());
+    assert!(!shared.exists());
     let parser = fs::read_to_string(out.join("ladderparser.rs"))
         .expect("unoptimized parser should be emitted");
     assert!(generated_parser_has_rule(&parser, "conditionalOr"));
@@ -414,7 +417,7 @@ fn embedded_actions_keep_potentially_referenced_ladder_rules() {
     let parser =
         fs::read_to_string(out.join("actionladderparser.rs")).expect("parser should be emitted");
     assert!(generated_parser_has_rule(&parser, "low"));
-    let manifest = fs::read_to_string(out.join("optimizations.txt"))
+    let manifest = fs::read_to_string(out.join("actionladder.optimizations.txt"))
         .expect("optimization manifest should be emitted");
     assert!(manifest.contains("\"changed\": False"), "{manifest}");
     assert_generated_modules_compile(temp.path(), &out);
@@ -453,7 +456,7 @@ fn embedded_rule_attributes_keep_potentially_referenced_ladder_contexts() {
     let parser =
         fs::read_to_string(out.join("attributeladderparser.rs")).expect("parser should be emitted");
     assert!(generated_parser_has_rule(&parser, "low"));
-    let manifest = fs::read_to_string(out.join("optimizations.txt"))
+    let manifest = fs::read_to_string(out.join("attributeladder.optimizations.txt"))
         .expect("optimization manifest should be emitted");
     assert!(manifest.contains("\"changed\": False"), "{manifest}");
     // No compile check here: the `returns` clause type is outside the
@@ -474,7 +477,7 @@ fn trivial_rule_inlining_is_explicit_auditable_and_recognition_preserving() {
     );
     assert!(!report.exists());
 
-    let manifest = fs::read_to_string(optimized.join("optimizations.txt"))
+    let manifest = fs::read_to_string(optimized.join("inline.optimizations.txt"))
         .expect("applied optimization manifest should be emitted");
     insta::assert_snapshot!("trivial_inline_optimization_manifest", manifest);
 
@@ -917,7 +920,7 @@ fn static_lexer_dfa_emits_auditable_optimization_manifest() {
     );
     assert!(!report.exists());
 
-    let manifest = fs::read_to_string(optimized.join("optimizations.txt"))
+    let manifest = fs::read_to_string(optimized.join("lexerrecursion.optimizations.txt"))
         .expect("static-lexer-dfa optimization manifest should be emitted");
     insta::assert_snapshot!("static_lexer_dfa_optimization_manifest", manifest);
 }
@@ -945,7 +948,7 @@ fn optimization_manifest_lists_passes_in_plan_order() {
         utf8(&output.stderr)
     );
 
-    let manifest = fs::read_to_string(out.join("optimizations.txt"))
+    let manifest = fs::read_to_string(out.join("ladder.optimizations.txt"))
         .expect("every selected manifest pass should emit an entry");
     let mut cursor = 0;
     for (id, name) in [
@@ -992,7 +995,7 @@ fn static_lexer_dfa_manifest_reports_no_lexers_for_parser_grammars() {
         utf8(&output.stderr)
     );
 
-    let manifest = fs::read_to_string(out.join("optimizations.txt"))
+    let manifest = fs::read_to_string(out.join("labels.optimizations.txt"))
         .expect("static-lexer-dfa should still emit a manifest entry");
     assert!(manifest.contains("\"name\": \"static-lexer-dfa\""));
     assert!(manifest.contains("\"changed\": False"));

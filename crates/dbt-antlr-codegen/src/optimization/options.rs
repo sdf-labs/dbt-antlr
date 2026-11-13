@@ -20,8 +20,11 @@ use std::collections::BTreeSet;
 /// generated parser can reject input that the grammar accepts. A part of the
 /// grammar that the static tables cannot decide stops the generation.
 ///
-/// Selected optimization passes write their reports to an `optimizations.txt`
-/// manifest next to the generated files.
+/// Selected optimization passes write their reports to a manifest next to the
+/// generated files. The manifest of `ClickHouseParser.g4` is
+/// `clickhouseparser.optimizations.txt`. For the `static-parser-dfa` pass, the
+/// manifest lists each parser decision (`decisionInventory`) with the counts
+/// that add up to the totals of the pass.
 ///
 /// When [`Self::report_only`] is enabled, the generator compiles, analyzes,
 /// and optimizes the input grammars without emitting recognizer files.
