@@ -13,3 +13,11 @@ dbt-antlr-codegen = { workspace = true, features = ["generator"] }
 
 [lints]
 workspace = true
+
+# Ensure the build.rs itself is always built in release mode, as it directly
+# affects the speed of `dbt-antlr-codegen`:
+[profile.release.build-override]
+opt-level = 3
+
+[profile.dev.build-override]
+opt-level = 3
