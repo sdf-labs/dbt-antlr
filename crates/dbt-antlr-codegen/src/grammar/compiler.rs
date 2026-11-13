@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Konstantin Vyatkin
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::optimization::parser_dfa::ParserDfaBudgets;
 use crate::optimization::{
     AtnFallback, OptimizationPlan, OptimizationReport, StaticDfaPass, StaticLexerDfa,
     StaticLexerTables, StaticParserDfa, StaticParserTables,
@@ -374,6 +375,7 @@ fn build_static_lexer_dfas(compilation: &mut Compilation, fallback: AtnFallback)
 }
 
 fn build_static_parser_dfas(compilation: &mut Compilation, fallback: AtnFallback, profile: bool) {
+    let budgets = ParserDfaBudgets::default();
     let parser_ids = compilation
         .roots
         .iter()
@@ -383,7 +385,8 @@ fn build_static_parser_dfas(compilation: &mut Compilation, fallback: AtnFallback
         let Some(compiled) = compilation.parsers.get(&parser_id) else {
             continue;
         };
-        let build = StaticParserDfa::build(compiled, fallback, profile);
+        let build =
+            StaticParserDfa::build(compiled, &compilation.sources, fallback, profile, &budgets);
         compilation.diagnostics.extend(build.diagnostics);
         compilation
             .optimization_report

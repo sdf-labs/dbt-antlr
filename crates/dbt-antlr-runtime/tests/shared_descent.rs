@@ -415,7 +415,10 @@ fn paren_table_accepts_with_the_group() {
             .flat_map(|table| (0..table.num_states() as i32).map(move |state| table.accept(state)))
             .filter(|accept| *accept >= VIRTUAL_ALT_BASE)
             .count();
-        assert_eq!(groups, 8, "the group-accept states of the primary block");
+        assert_eq!(
+            groups, 1,
+            "the minimized table of the primary block has one group-accept state"
+        );
     });
 }
 

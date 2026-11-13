@@ -168,11 +168,11 @@ pub const MAX_GUARD_GROUPS: usize = 1 << (29 - 2 * GUARD_ALT_BITS);
 const OUTCOME_ESCAPE: i32 = -1;
 
 /// Cap on the states of one table: a row entry holds a 15-bit state.
-const MAX_TABLE_STATES: usize = STATE_MASK as usize;
+pub const MAX_TABLE_STATES: usize = STATE_MASK as usize;
 /// Cap on the token columns of one table.
 const MAX_TABLE_COLUMNS: usize = 1 << 16;
 /// Cap on the row cells of one table (32 MiB of `u16`).
-const MAX_TABLE_CELLS: usize = 1 << 24;
+pub const MAX_TABLE_CELLS: usize = 1 << 24;
 /// Largest precedence value a dispatch resolves through its dense table.
 #[cfg(feature = "static-dfa-build")]
 const MAX_DENSE_PRECEDENCE: i32 = 1024;

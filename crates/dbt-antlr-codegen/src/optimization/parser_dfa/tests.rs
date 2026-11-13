@@ -24,7 +24,7 @@ use crate::optimization::AtnFallback;
 use super::cost::{AttemptKind, AttemptOutcome};
 use super::loop_block::LoopBlock;
 use super::table::{StaticDfaState, StaticDfaTable};
-use super::{Category, DecisionClassifier, DecisionResult};
+use super::{BudgetLimits, Category, DecisionClassifier, DecisionResult, ParserDfaBudgets};
 
 fn grammars_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -503,8 +503,10 @@ fn build_tables(path: &Path) -> (Vec<DecisionResult>, super::super::StaticParser
         compilation
             .parser(compilation.roots[0].parser.expect("parser root"))
             .expect("parser artifact"),
+        &compilation.sources,
         AtnFallback::Allowed,
         false,
+        &ParserDfaBudgets::default(),
     );
     let results = classify(path);
     (results, build.tables)
@@ -623,8 +625,13 @@ fn emitted_tables_validate_against_the_packed_atn() {
         let parser = compilation
             .parser(compilation.roots[0].parser.expect("parser root"))
             .expect("parser artifact");
-        let build =
-            crate::optimization::StaticParserDfa::build(parser, AtnFallback::Allowed, false);
+        let build = crate::optimization::StaticParserDfa::build(
+            parser,
+            &compilation.sources,
+            AtnFallback::Allowed,
+            false,
+            &ParserDfaBudgets::default(),
+        );
         let packed = crate::grammar::atn::encode_packed_atn(parser.atn);
         let atn = PackedATNDeserializer::new()
             .deserialize(&packed)
@@ -756,9 +763,10 @@ fn simple_guarded_alternatives_need_no_escape() {
 }
 
 /// A follow that starts a new invocation of the loop's rule (`expr+`), or that
-/// consumes an operator outside the loop (`'set' expr '||' INT EOF`), puts all
-/// 39 iterate/exit states (20 conflict states and 19 budget-frontier states)
-/// under a stack guard.
+/// consumes an operator outside the loop (`'set' expr '||' INT EOF`), puts the
+/// 32 iterate/exit conflict states under a stack guard. The 3 budget-frontier
+/// states escape: their exit configs are widened, so their guard roots can be
+/// in a frame that the widening removed.
 #[test]
 fn foreign_consumption_guards_the_iterate_reading() {
     let results = classify(&grammars_dir().join("parser").join("LoopFrontier.g4"));
@@ -767,12 +775,9 @@ fn foreign_consumption_guards_the_iterate_reading() {
         .find(|result| result.category == Category::LR_PRECEDENCE)
         .expect("the arithmetic loop decision");
     assert_eq!(result.k, 4);
-    assert_eq!(result.num_dfa_states, 228);
-    assert_eq!(
-        result.escapes, 0,
-        "both conflict and frontier states are guarded, not escaped"
-    );
-    assert_eq!(result.guarded_iterates, 39);
+    assert_eq!(result.num_dfa_states, 88);
+    assert_eq!(result.escapes, 3, "the frontier states escape");
+    assert_eq!(result.guarded_iterates, 32);
     assert_eq!(result.iterate_accepts, 0);
     assert!(!result.is_fully_static(), "a guard may defer");
     let classes = result.precedence.as_ref().expect("precedence tables");
@@ -794,7 +799,7 @@ fn foreign_consumption_guards_the_iterate_reading() {
         .copied()
         .filter(|state| state.is_guarded())
         .collect();
-    assert_eq!(guarded.len(), 39);
+    assert_eq!(guarded.len(), 32);
     let conflict_guards = guarded
         .iter()
         .filter(|state| state.conflicts == [1, 2])
@@ -803,7 +808,7 @@ fn foreign_consumption_guards_the_iterate_reading() {
         .iter()
         .filter(|state| state.conflicts.is_empty())
         .count();
-    assert_eq!((conflict_guards, frontier_guards), (20, 19));
+    assert_eq!((conflict_guards, frontier_guards), (32, 0));
     for state in guarded {
         assert_eq!(state.guarded_alt, 1, "a guarded iterate takes alt 1");
     }
@@ -919,7 +924,7 @@ fn foreign_rooted_obligations_guard_the_iterate_reading() {
         .find(|result| result.category == Category::LR_PRECEDENCE)
         .expect("the loop decision of `p`");
     assert_eq!(result.k, 4);
-    assert_eq!(result.num_dfa_states, 36);
+    assert_eq!(result.num_dfa_states, 27);
     assert_eq!(result.escapes, 0);
     assert_eq!(result.guarded_iterates, 10);
     assert_eq!(result.iterate_accepts, 0);
@@ -1234,7 +1239,7 @@ fn static_only_turns_predicated_states_into_syntax_errors() {
 
     let decoded = decoded_tables(&results);
     let runtime = decoded.table(1, 0).expect("decision 1 has a table");
-    let dead_end = table
+    let dead_end = super::tables::minimized(table)
         .states
         .iter()
         .position(|state| state.resolution.is_some())
@@ -1779,49 +1784,42 @@ fn exhausted_start_state_skips_the_hybrid_attempts() {
     );
 }
 
-/// The witness pass does not repeat an unbounded attempt that overflowed
-/// without a stop: only the widened attempt stopped, so only the widened
-/// attempt runs again.
+/// A hybrid attempt that spends the visit budget after the start state keeps
+/// a table: the states that it cannot expand escape. Only a start state that
+/// spends the budget leaves the decision without a table.
 #[test]
-fn witness_pass_skips_the_unstopped_unbounded_attempt() {
+fn hybrid_attempts_escape_where_the_visit_budget_runs_out() {
     let path =
         fixture("testcompositegrammars-testimportlargegrammar-110006096d").join("NewJava.g4");
     let results = classify_with_budget(&path, 2_000);
-    assert_eq!(results[7].category, Category::OVERFLOW);
+    assert_eq!(results[7].category, Category::HYBRID);
+    assert!(results[7].budget_cutoff);
+    assert!(results[7].escapes > 0);
     assert_eq!(
         attempts_of(&results, 7),
         [
             AttemptKind::Unbounded { abort: true },
             AttemptKind::Widened { abort: true },
             AttemptKind::Hybrid,
-            AttemptKind::Widened { abort: false },
         ]
     );
+
+    let results = classify_with_budget(&path, 100);
+    assert_eq!(results[7].category, Category::OVERFLOW);
+    assert!(results[7].table.is_none());
 }
 
-/// Each precedence class gets its own witness pass: a class with a table keeps
-/// it, and only the classes without a table run again.
+/// Each precedence class keeps a hybrid table when its construction spends
+/// the visit budget after the start state.
 #[test]
-fn precedence_classes_with_tables_need_no_witness_pass() {
+fn precedence_classes_keep_tables_where_the_visit_budget_runs_out() {
     let path = grammars_dir().join("parser").join("LoopFrontier.g4");
     let results = classify_with_budget(&path, 2_000);
     let precedence = results[4].precedence.as_ref().expect("precedence tables");
-    let adaptive = [
-        AttemptKind::Unbounded { abort: true },
-        AttemptKind::Hybrid,
-        AttemptKind::Unbounded { abort: false },
-        AttemptKind::Widened { abort: false },
-    ];
-    let mut expected = Vec::new();
-    for table in &precedence.tables {
-        match table {
-            Some(_) => expected.push(AttemptKind::Unbounded { abort: true }),
-            None => expected.extend(adaptive),
-        }
-    }
-    assert_eq!(precedence.adaptive_classes, 3);
+    assert_eq!(precedence.adaptive_classes, 0);
     assert_eq!(precedence.tables.len(), 5);
-    assert_eq!(attempts_of(&results, 4), expected);
+    assert!(precedence.tables.iter().all(Option::is_some));
+    assert!(results[4].budget_cutoff);
 }
 
 /// An unbounded attempt that stops at an untrusted conflict does not fall
@@ -1966,6 +1964,16 @@ fn parallel_classification_matches_serial_classification() {
     assert!(decisions > 800, "decisions classified: {decisions}");
 }
 
+/// Budget settings with the global visit budget `budget`.
+fn visit_budget(budget: u64) -> ParserDfaBudgets {
+    ParserDfaBudgets {
+        global: BudgetLimits {
+            max_visits: Some(budget),
+            ..BudgetLimits::default()
+        },
+    }
+}
+
 /// Builds the pass artifact of the first root parser of one grammar under a
 /// visit budget.
 fn build_with_budget(
@@ -1980,11 +1988,12 @@ fn build_with_budget(
     let parser = compilation
         .parser(compilation.roots[0].parser.expect("parser root"))
         .expect("parser artifact");
-    crate::optimization::StaticParserDfa::build_with_budget(
+    crate::optimization::StaticParserDfa::build(
         parser,
+        &compilation.sources,
         AtnFallback::Allowed,
         false,
-        budget,
+        &visit_budget(budget),
     )
 }
 
@@ -2005,11 +2014,11 @@ fn spent_visit_budgets_emit_g4s193_warnings() {
     assert_eq!(
         warnings,
         [
-            "the analysis of parser decision 0 of rule 'stat' is slow: 3 of 4 build attempts \
-             spent the visit budget (100 configs); 316 configs visited, 12 DFA states built; \
-             most visited rules: expr 94%, stat 5%",
-            "the analysis of parser decision 3 of rule 'expr' is slow: 9 of 13 build attempts \
-             spent the visit budget (100 configs); 1148 configs visited, 77 DFA states built; \
+            "the analysis of parser decision 0 of rule 'stat' is slow: 2 of 3 build attempts \
+             spent the visit budget (100 configs); 216 configs visited, 11 DFA states built; \
+             most visited rules: expr 95%, stat 4%",
+            "the analysis of parser decision 3 of rule 'expr' is slow: 6 of 10 build attempts \
+             spent the visit budget (100 configs); 848 configs visited, 34 DFA states built; \
              most visited rules: expr 89%, stat 10%",
         ]
     );
@@ -2062,7 +2071,7 @@ fn attempt_codes_follow_the_classes_and_the_fallback_policy() {
     );
     assert_eq!(
         results[4].cost.attempts_text(),
-        "c0: U! H$ u$ w$; c1: U! H$ u$ w$; c2: U! H$ u$ w$; c3: U; c4: U"
+        "c0: U! H$; c1: U! H$; c2: U! H$; c3: U; c4: U"
     );
 
     let path = grammars_dir().join("ReferenceToATN.g4");
@@ -2097,11 +2106,12 @@ fn profiled_builds_time_every_decision_and_list_the_slowest() {
     let parser = compilation
         .parser(compilation.roots[0].parser.expect("parser root"))
         .expect("parser artifact");
-    let build = crate::optimization::StaticParserDfa::build_with_budget(
+    let build = crate::optimization::StaticParserDfa::build(
         parser,
+        &compilation.sources,
         AtnFallback::Allowed,
         true,
-        super::DEFAULT_VISIT_BUDGET,
+        &ParserDfaBudgets::default(),
     );
 
     assert_eq!(build.report.decisions.len(), 25);
@@ -2321,4 +2331,1076 @@ fn unfolded_token_branches_emit_g4s194_warnings() {
         causes("Recursive", &recursive, "", 20),
         ["2:7 1 alternative is not a single token. 21 call sites enter the rule"]
     );
+}
+
+/// The compiler diagnostics and the pass artifact of a grammar written to a
+/// scratch directory, under `budgets`.
+fn build_source_with(
+    name: &str,
+    source: &str,
+    atn_fallback: AtnFallback,
+    budgets: &ParserDfaBudgets,
+) -> (
+    Vec<crate::grammar::diagnostic::Diagnostic>,
+    crate::optimization::static_parser_dfa::StaticParserDfaArtifact,
+) {
+    static SCRATCH: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let scratch = SCRATCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let directory = std::env::temp_dir().join(format!(
+        "dbt-antlr-budget-{}-{scratch}-{name}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("scratch directory");
+    let path = directory.join(format!("{name}.g4"));
+    std::fs::write(&path, source).expect("scratch grammar");
+    let compilation = compile(LoadOptions {
+        roots: vec![path],
+        library_directories: Vec::new(),
+    })
+    .expect("grammar compiles");
+    let _ = std::fs::remove_dir_all(&directory);
+    let parser = compilation
+        .parser(compilation.roots[0].parser.expect("parser root"))
+        .expect("parser artifact");
+    let build = crate::optimization::StaticParserDfa::build(
+        parser,
+        &compilation.sources,
+        atn_fallback,
+        false,
+        budgets,
+    );
+    (compilation.diagnostics.clone(), build)
+}
+
+/// The budgets of the decisions of rule `rule`, in decision order.
+fn rule_budgets(
+    build: &crate::optimization::static_parser_dfa::StaticParserDfaArtifact,
+    rule: &str,
+) -> Vec<super::DecisionBudget> {
+    build
+        .report
+        .decisions
+        .iter()
+        .filter(|decision| decision.rule == rule)
+        .map(|decision| decision.result.budget)
+        .collect()
+}
+
+const BUDGET_GRAMMAR: &str = "grammar Budgets;
+options { max_dfa_states = 7; }
+s : a b EOF ;
+a options { max_k = 3; } : A B | A C ;
+b : ( options { max_dfa_visits = 5000; } : X Y | X Z ) | W ;
+A : 'a' ; B : 'b' ; C : 'c' ; X : 'x' ; Y : 'y' ; Z : 'z' ; W : 'w' ;
+";
+
+/// The grammar, rule, and block options set the budgets of the decisions, a
+/// block budget wins over a rule budget, which wins over a grammar budget, and
+/// each limit resolves on its own.
+#[test]
+fn budget_options_set_the_budgets_of_their_decisions() {
+    let (diagnostics, build) = build_source_with(
+        "Budgets",
+        BUDGET_GRAMMAR,
+        AtnFallback::Allowed,
+        &ParserDfaBudgets::default(),
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| !matches!(diagnostic.code, "G4S014" | "G4S015")),
+        "{diagnostics:?}"
+    );
+    let budget = |max_states, max_k, max_visits| super::DecisionBudget {
+        max_states,
+        max_k,
+        max_visits,
+        explicit_max_states: true,
+    };
+    assert_eq!(rule_budgets(&build, "a"), [budget(7, Some(3), 2_000_000)]);
+    assert_eq!(
+        rule_budgets(&build, "b"),
+        [budget(7, None, 5_000), budget(7, None, 2_000_000)]
+    );
+    assert_eq!(build.report.budget, budget(7, None, 2_000_000));
+}
+
+/// The base limits apply only where no option sets a limit.
+#[test]
+fn budget_options_win_over_the_base_limits() {
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits {
+            max_states: Some(50),
+            max_k: Some(2),
+            max_visits: Some(9_000),
+        },
+    };
+    let (_, build) = build_source_with("Budgets", BUDGET_GRAMMAR, AtnFallback::Allowed, &budgets);
+    let budget = |max_states, max_k, max_visits| super::DecisionBudget {
+        max_states,
+        max_k,
+        max_visits,
+        explicit_max_states: true,
+    };
+    assert_eq!(rule_budgets(&build, "a"), [budget(7, Some(3), 9_000)]);
+    assert_eq!(
+        rule_budgets(&build, "b"),
+        [budget(7, Some(2), 5_000), budget(7, Some(2), 9_000)]
+    );
+}
+
+/// A budget option with a value that is not a positive integer gets a
+/// `G4S015` warning, and the pass ignores it.
+#[test]
+fn incorrect_budget_option_values_emit_g4s015_warnings() {
+    let source = "grammar Wrong;
+options { max_dfa_states = 0; }
+s options { max_k = many; } : A B | A C ;
+A : 'a' ; B : 'b' ; C : 'c' ;
+";
+    let (diagnostics, build) = build_source_with(
+        "Wrong",
+        source,
+        AtnFallback::Allowed,
+        &ParserDfaBudgets::default(),
+    );
+    let warnings: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "G4S015")
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert_eq!(
+        warnings,
+        [
+            "unsupported option value max_dfa_states=0: the value must be at least 1",
+            "unsupported option value max_k=many: 'many' is not a positive integer",
+        ]
+    );
+    assert_eq!(
+        rule_budgets(&build, "s"),
+        [super::DecisionBudget::default()]
+    );
+}
+
+const FANOUT_GRAMMAR: &str = "grammar Fanout;
+s : a EOF ;
+a : A B X | A C X | A D X | A B Y | E ;
+A : 'a' ; B : 'b' ; C : 'c' ; D : 'd' ; E : 'e' ; X : 'x' ; Y : 'y' ;
+";
+
+/// A hybrid table escapes the state whose expansion would run past the state
+/// cap, also below depth 2, instead of losing the whole table. Under
+/// `--static-dfa-only`, the escape is a guess and not an error.
+#[test]
+fn state_caps_cut_hybrid_tables_instead_of_failing_them() {
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits {
+            max_states: Some(4),
+            ..BudgetLimits::default()
+        },
+    };
+    let (_, build) = build_source_with("Fanout", FANOUT_GRAMMAR, AtnFallback::Allowed, &budgets);
+    let decision = &build.report.decisions[0];
+    assert_eq!(decision.rule, "a");
+    assert_eq!(decision.result.category, Category::HYBRID);
+    assert!(decision.result.budget_cutoff);
+    assert_eq!(decision.result.num_dfa_states, 3);
+
+    let (_, build) = build_source_with("Fanout", FANOUT_GRAMMAR, AtnFallback::Forbidden, &budgets);
+    let messages: Vec<_> = build
+        .diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.code, diagnostic.message.as_str()))
+        .collect();
+    assert_eq!(
+        messages,
+        [(
+            "G4S192",
+            "parser decision 0 of rule 'a' resolves its escape states without adaptivePredict: \
+             1 undecided state predicts the minimum viable alternative (witness: 'a'); \
+             tie-breaks: 1 state chooses alt 1 (A B X, line 3) over alt 2 (A C X, line 3), \
+             alt 3 (A D X, line 3), alt 4 (A B Y, line 3) [prefix-hijack hazard: alt 2 \
+             (A C X, line 3) reads 'c' after 'a', and alt 1 cannot]; the analysis budget (4 \
+             states or 2000000 visited configs) stopped the lookahead; raise it with the \
+             max_dfa_states and max_dfa_visits options of the grammar, the rule, or the block"
+        )]
+    );
+
+    let (_, build) = build_source_with(
+        "Fanout",
+        FANOUT_GRAMMAR,
+        AtnFallback::Forbidden,
+        &ParserDfaBudgets::default(),
+    );
+    assert!(build.diagnostics.is_empty(), "{:?}", build.diagnostics);
+}
+
+const SPLIT_OPERATOR_GRAMMAR: &str = "grammar Split;
+s : e EOF ;
+e : e '+' 'q' 'a' | e '*' e | e '+' 'q' 'b' | 'x' ;
+";
+
+/// The accept of the state that `tokens` reach from the start of `table`.
+fn accept_after(table: &StaticDfaTable, tokens: &[i32]) -> Option<i32> {
+    let mut state = 0;
+    for token in tokens {
+        state = table.states[state]
+            .edges
+            .iter()
+            .find(|edge| edge.lo <= *token && *token <= edge.hi)?
+            .target;
+    }
+    Some(table.states[state].accept)
+}
+
+/// A frontier state where a multi-token operator has not yet separated the
+/// alternatives does not resolve to iterate. In the class of the right operand
+/// of `*`, only the first `+` operator iterates, and the exit lineage enters
+/// the second `+` operator again: after `+ q`, the input can still be `b`.
+#[test]
+fn frontier_iterates_need_every_exit_position_in_the_iterate_lineage() {
+    let accepts = split_operator_accepts("Split", SPLIT_OPERATOR_GRAMMAR, 4);
+    assert_eq!(accepts.len(), 4, "the cutoffs are 2, 3, and 4");
+    // The class `p=4` escapes after `+ q` instead of predicting the iterate.
+    assert_eq!(accepts[2], Some(super::ESCAPE), "{accepts:?}");
+}
+
+/// The accepts after `+ q` in each precedence class, for a grammar built with
+/// the state cap `max_states`.
+fn split_operator_accepts(name: &str, source: &str, max_states: usize) -> Vec<Option<i32>> {
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits {
+            max_states: Some(max_states),
+            ..BudgetLimits::default()
+        },
+    };
+    let (_, build) = build_source_with(name, source, AtnFallback::Allowed, &budgets);
+    let token = |name: &str| {
+        build
+            .report
+            .vocabulary
+            .iter()
+            .position(|display| display == name)
+            .map(|index| index as i32 + 1)
+            .expect("token in vocabulary")
+    };
+    let path = [token("'+'"), token("'q'")];
+    let decision = build
+        .report
+        .decisions
+        .iter()
+        .find(|decision| decision.result.category == Category::LR_PRECEDENCE)
+        .expect("a precedence loop decision");
+    let precedence = decision.result.precedence.as_ref().expect("classes");
+    precedence
+        .tables
+        .iter()
+        .map(|table| table.as_ref().and_then(|table| accept_after(table, &path)))
+        .collect()
+}
+
+/// A foreign exit config does not make the frontier state a guard candidate
+/// when another exit config of the state is not in the iterate lineage. The
+/// stack guard only sees the roots of the foreign lineage, so it would predict
+/// the iterate on `x * x + q b`.
+#[test]
+fn frontier_iterate_guards_need_every_loop_exit_in_the_iterate_lineage() {
+    let source = "grammar SplitGuard;
+s : e EOF | 'between' e '+' 'q' 'z' ;
+e : e '+' 'q' 'a' | e '*' e | e '+' 'q' 'b' | 'x' ;
+";
+    let accepts = split_operator_accepts("SplitGuard", source, 4);
+    assert_eq!(accepts[2], Some(super::ESCAPE), "{accepts:?}");
+}
+
+/// The decisions inside a block get the budget options of the blocks around
+/// them, and an inner block wins over an outer block. Only the budget option
+/// names set a budget: `k` is not one of them.
+#[test]
+fn nested_blocks_inherit_the_budget_options_of_outer_blocks() {
+    let source = "grammar Nested;
+options { k = 2; }
+s : ( options { max_k = 5; max_dfa_visits = 7000; } :
+      ( options { max_k = 6; } : A B | A C ) D
+    | E
+    ) EOF ;
+A : 'a' ; B : 'b' ; C : 'c' ; D : 'd' ; E : 'e' ;
+";
+    let (diagnostics, build) = build_source_with(
+        "Nested",
+        source,
+        AtnFallback::Allowed,
+        &ParserDfaBudgets::default(),
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "G4S014"
+                && diagnostic.message == "unsupported option k"),
+        "{diagnostics:?}"
+    );
+    let limits: Vec<_> = rule_budgets(&build, "s")
+        .iter()
+        .map(|budget| (budget.max_k, budget.max_visits))
+        .collect();
+    assert_eq!(limits, [(Some(6), 7_000), (Some(5), 7_000)]);
+}
+
+/// A lexer grammar or a lexer rule has no parser decisions, so the budget
+/// options are not supported there.
+#[test]
+fn lexer_grammars_do_not_support_budget_options() {
+    let directory =
+        std::env::temp_dir().join(format!("dbt-antlr-budget-lexer-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("scratch directory");
+    let path = directory.join("Words.g4");
+    std::fs::write(
+        &path,
+        "lexer grammar Words;\noptions { max_k = 2; }\nA options { max_k = 3; } : 'a' | 'b' ;\n",
+    )
+    .expect("scratch grammar");
+    let compilation = compile(LoadOptions {
+        roots: vec![path],
+        library_directories: Vec::new(),
+    })
+    .expect("grammar compiles");
+    let _ = std::fs::remove_dir_all(&directory);
+    let unsupported = compilation
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.message == "unsupported option max_k")
+        .count();
+    assert_eq!(unsupported, 2, "{:?}", compilation.diagnostics);
+}
+
+/// The accepts of one alternative that have a single viable alternative share
+/// one state, so they use one state of the state cap.
+#[test]
+fn single_alternative_accepts_share_one_state() {
+    let source = "grammar Sinks;
+s : a EOF ;
+a : ( A B | C D | E F ) X | A G Y ;
+A : 'a' ; B : 'b' ; C : 'c' ; D : 'd' ; E : 'e' ; F : 'f' ; G : 'g' ; X : 'x' ; Y : 'y' ;
+";
+    let results = classify_source("Sinks", source);
+    let decision = results
+        .iter()
+        .find(|result| result.table.is_some() && result.k == 2)
+        .expect("the LL(2) decision of `a`");
+    let table = decision.table.as_ref().expect("table");
+    let accepts: Vec<_> = table
+        .states
+        .iter()
+        .filter(|state| state.is_accept())
+        .map(|state| state.accept)
+        .collect();
+    assert_eq!(accepts, [1, 2], "{table:?}");
+    let first_alt = table
+        .states
+        .iter()
+        .position(|state| state.accept == 1)
+        .expect("an accept of alternative 1");
+    let into_first_alt = table
+        .states
+        .iter()
+        .flat_map(|state| &state.edges)
+        .filter(|edge| edge.target == first_alt)
+        .count();
+    assert_eq!(into_first_alt, 3, "`a b`, `c`, and `e` lead to one state");
+}
+
+/// A predicated path and a path without a predicate can reach the same config
+/// set. The shared accept state has its own config set, so neither path takes
+/// the verdict of the other, in each order of the token types.
+#[test]
+fn shared_accept_states_do_not_absorb_predicated_paths() {
+    for order in ["Y W X", "X Y W", "X W Y", "W Y X"] {
+        let mut source = String::from(
+            "grammar Order;\ns : a EOF ;\na : P ( Y | W Q | X {false}? ) B | P Z ;\nP : 'p' ;\n",
+        );
+        for token in order.split(' ') {
+            source.push_str(&format!("{token} : '{}' ;\n", token.to_lowercase()));
+        }
+        source.push_str("Q : 'q' ; B : 'b' ; Z : 'z' ;\n");
+        let results = resolve_static_only_source("Order", &source);
+        let decision = results
+            .iter()
+            .find(|result| result.table.is_some() && result.k >= 2)
+            .unwrap_or_else(|| panic!("{order}: the decision of `a`"));
+        let table = decision.table.as_ref().expect("table");
+        let token = |name: char| {
+            2 + order
+                .split(' ')
+                .position(|token| token.starts_with(name))
+                .expect("token") as i32
+        };
+        let after = |second: i32| accept_after(table, &[1, second]);
+        assert_eq!(after(token('Y')), Some(1), "{order}: `p y` predicts 1");
+        assert_eq!(after(token('W')), Some(1), "{order}: `p w` predicts 1");
+        let x = table.states[0]
+            .edges
+            .iter()
+            .find(|edge| edge.lo <= 1 && 1 <= edge.hi)
+            .map(|edge| &table.states[edge.target])
+            .and_then(|state| {
+                state
+                    .edges
+                    .iter()
+                    .find(|edge| edge.lo <= token('X') && token('X') <= edge.hi)
+            })
+            .map(|edge| &table.states[edge.target])
+            .expect("an edge for `p x`");
+        assert_eq!(
+            x.resolution,
+            Some(super::EscapeResolution::SyntaxError),
+            "{order}: `p x` stops at the predicate"
+        );
+    }
+}
+
+/// Classifies and resolves for `--static-dfa-only` a grammar written to a
+/// scratch directory.
+fn resolve_static_only_source(name: &str, source: &str) -> Vec<DecisionResult> {
+    static SCRATCH: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let scratch = SCRATCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let directory = std::env::temp_dir().join(format!(
+        "dbt-antlr-static-only-{}-{scratch}-{name}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("scratch directory");
+    let path = directory.join(format!("{name}.g4"));
+    std::fs::write(&path, source).expect("scratch grammar");
+    let results = resolve_static_only(&path);
+    let _ = std::fs::remove_dir_all(&directory);
+    results
+}
+
+/// Walks a table and its runtime minimization in lockstep from their start
+/// states, and checks that the runtime cannot distinguish them.
+fn assert_runtime_equivalent(table: &StaticDfaTable, minimized: &StaticDfaTable) {
+    let outcome = |state: &StaticDfaState| {
+        let accept = if state.accept == super::CONFLICT_ESCAPE && state.conflict_min_alt <= 0 {
+            super::ESCAPE
+        } else {
+            state.accept
+        };
+        (
+            accept,
+            if accept == 0 { state.fallback } else { 0 },
+            if accept == super::CONFLICT_ESCAPE {
+                state.conflict_min_alt
+            } else {
+                0
+            },
+            state.guarded_alt,
+            if state.resolution == Some(super::EscapeResolution::Guarded) {
+                state.guard_defer_alt
+            } else {
+                0
+            },
+            state.guard_group,
+            state
+                .continuation
+                .as_ref()
+                .filter(|_| accept == super::ESCAPE)
+                .map(|continuation| (continuation.contexts.clone(), continuation.configs.clone())),
+        )
+    };
+    let target = |state: &StaticDfaState, token: i32| {
+        state
+            .edges
+            .iter()
+            .find(|edge| edge.lo <= token && token <= edge.hi)
+            .map(|edge| edge.target)
+    };
+    let mut tokens: Vec<i32> = table
+        .states
+        .iter()
+        .chain(&minimized.states)
+        .flat_map(|state| &state.edges)
+        .flat_map(|edge| [edge.lo - 1, edge.lo, edge.hi, edge.hi + 1])
+        .collect();
+    tokens.sort_unstable();
+    tokens.dedup();
+    let mut seen = std::collections::HashSet::new();
+    let mut queue = std::collections::VecDeque::from([(0_usize, 0_usize)]);
+    while let Some((left, right)) = queue.pop_front() {
+        if !seen.insert((left, right)) {
+            continue;
+        }
+        let (left_state, right_state) = (&table.states[left], &minimized.states[right]);
+        assert_eq!(
+            outcome(left_state),
+            outcome(right_state),
+            "states {left} and {right}"
+        );
+        if left_state.accept != 0 {
+            continue;
+        }
+        for &token in &tokens {
+            match (target(left_state, token), target(right_state, token)) {
+                (Some(left), Some(right)) => queue.push_back((left, right)),
+                (None, None) => {}
+                pair => panic!("token {token} from {left}/{right}: {pair:?}"),
+            }
+        }
+    }
+}
+
+/// The runtime table of a decision is its minimization, which the runtime
+/// cannot distinguish from the built table. The image of the minimized tables
+/// loads and validates.
+#[test]
+fn runtime_tables_are_minimized_and_equivalent() {
+    let mut merged = 0;
+    for (grammar, fallback) in [
+        ("parser/FuzzExpr.g4", AtnFallback::Allowed),
+        ("parser/LoopFrontier.g4", AtnFallback::Allowed),
+        ("parser/GuardExpr.g4", AtnFallback::Forbidden),
+        ("parser/InlineAlias.g4", AtnFallback::Forbidden),
+    ] {
+        let path = grammars_dir().join(grammar);
+        let results = match fallback {
+            AtnFallback::Allowed => classify(&path),
+            AtnFallback::Forbidden => resolve_static_only(&path),
+        };
+        for result in &results {
+            let tables = result.table.iter().chain(
+                result
+                    .precedence
+                    .iter()
+                    .flat_map(|precedence| precedence.tables.iter().flatten()),
+            );
+            for table in tables {
+                let minimized = super::tables::minimized(table);
+                assert!(minimized.states.len() <= table.states.len());
+                merged += table.states.len() - minimized.states.len();
+                assert_runtime_equivalent(table, &minimized);
+            }
+        }
+        decoded_tables(&results);
+    }
+    assert!(merged > 0, "some states merge");
+}
+
+/// The alternative names of each decision of a grammar written to a scratch
+/// directory, by rule, in decision order.
+fn names_of(name: &str, source: &str) -> Vec<(String, Vec<String>)> {
+    let (_, build) = build_source_with(
+        name,
+        source,
+        AtnFallback::Allowed,
+        &ParserDfaBudgets::default(),
+    );
+    build
+        .report
+        .decisions
+        .iter()
+        .map(|decision| (decision.rule.clone(), decision.alternatives.all().to_vec()))
+        .collect()
+}
+
+/// Each decision names its alternatives by label, or by their first elements,
+/// with the line where they start. Loops, optional elements, and optional
+/// blocks name their implicit alternatives.
+#[test]
+fn decisions_name_their_alternatives() {
+    let source = "grammar Names;
+s : e (COMMA e)* COMMA? EOF ;
+e : e STAR e     #mul
+  | e PLUS e     #add
+  | p            #prim
+  ;
+p : ID LP e RP OVER LP RP
+  | ID LP e RP
+  | ( ID | INT ) ( DOT ID )?
+  ;
+COMMA : ',' ; STAR : '*' ; PLUS : '+' ; ID : [a-z]+ ; INT : [0-9]+ ; LP : '(' ; RP : ')' ;
+OVER : 'over' ; DOT : '.' ;
+";
+    let names = names_of("Names", source);
+    let find = |rule: &str, first: &str| {
+        names
+            .iter()
+            .find(|(owner, alternatives)| {
+                owner == rule
+                    && alternatives
+                        .first()
+                        .is_some_and(|name| name.starts_with(first))
+            })
+            .map_or_else(
+                || panic!("no decision of {rule} starts with {first}: {names:?}"),
+                |(_, alternatives)| alternatives.clone(),
+            )
+    };
+    assert_eq!(
+        find("s", "alt 1 (repeat"),
+        ["alt 1 (repeat COMMA e, line 2)", "alt 2 (exit the loop)"]
+    );
+    assert_eq!(
+        find("s", "alt 1 (COMMA,"),
+        ["alt 1 (COMMA, line 2)", "alt 2 (skip)"]
+    );
+    assert_eq!(
+        find("e", "alt 1 (#mul"),
+        ["alt 1 (#mul, line 3)", "alt 2 (#add, line 4)"]
+    );
+    assert_eq!(
+        find("p", "alt 1 (ID LP e ..."),
+        [
+            "alt 1 (ID LP e ..., line 7)",
+            "alt 2 (ID LP e ..., line 8)",
+            "alt 3 ((ID | INT) ( ... )?, line 9)",
+        ]
+    );
+    assert_eq!(
+        find("p", "alt 1 (DOT ID"),
+        ["alt 1 (DOT ID, line 9)", "alt 2 (skip the block)"]
+    );
+    assert_eq!(
+        find("e", "alt 1 (repeat ( #mul"),
+        [
+            "alt 1 (repeat ( #mul | #add ), line 3)",
+            "alt 2 (exit the loop)"
+        ]
+    );
+}
+
+/// `--static-dfa-only` groups the resolved states of a decision by the chosen
+/// and the dropped alternatives, over all precedence classes. The most harmful
+/// groups come first, then the groups with the most states.
+#[test]
+fn static_only_groups_its_tie_breaks() {
+    let mut results = resolve_static_only(&grammars_dir().join("parser").join("GuardExpr.g4"));
+    results.extend(resolve_static_only(
+        &grammars_dir().join("ReferenceToATN.g4"),
+    ));
+    results.extend(resolve_static_only(
+        &grammars_dir().join("parser").join("LoopFrontier.g4"),
+    ));
+    for result in &results {
+        let Some(resolved) = &result.static_only else {
+            continue;
+        };
+        let grouped: usize = resolved.tie_breaks.iter().map(|group| group.states).sum();
+        assert_eq!(grouped, resolved.min_alt + resolved.min_viable_alt);
+        for pair in resolved.tie_breaks.windows(2) {
+            assert!(
+                (pair[0].level(), pair[0].states) >= (pair[1].level(), pair[1].states),
+                "{:?}",
+                resolved.tie_breaks
+            );
+            assert_ne!(
+                (pair[0].chosen, &pair[0].dropped),
+                (pair[1].chosen, &pair[1].dropped)
+            );
+        }
+        for group in &resolved.tie_breaks {
+            assert!(!group.dropped.is_empty());
+            assert!(!group.dropped.contains(&group.chosen));
+            assert!(group.dropped.iter().all(|alt| *alt > 0));
+            assert!(group.witness.is_some());
+        }
+    }
+    assert!(
+        results.iter().any(|result| result
+            .static_only
+            .as_ref()
+            .is_some_and(|resolved| !resolved.tie_breaks.is_empty())),
+        "the grammars have tie-breaks"
+    );
+}
+
+/// A non-greedy decision puts its exit or skip first, and its names follow.
+#[test]
+fn non_greedy_decisions_name_the_exit_first() {
+    let source = "grammar Lazy;
+s : ID*? INT ( ID ID | INT INT )?? EOF ;
+ID : [a-z]+ ; INT : [0-9]+ ;
+";
+    let names = names_of("Lazy", source);
+    let alternatives: Vec<_> = names.iter().map(|(_, names)| names.clone()).collect();
+    assert!(
+        alternatives.contains(&vec![
+            "alt 1 (exit the loop)".to_owned(),
+            "alt 2 (repeat ID, line 2)".to_owned(),
+        ]),
+        "{alternatives:?}"
+    );
+    assert!(
+        alternatives.contains(&vec![
+            "alt 1 (skip the block)".to_owned(),
+            "alt 2 (ID ID, line 2)".to_owned(),
+            "alt 3 (INT INT, line 2)".to_owned(),
+        ]),
+        "{alternatives:?}"
+    );
+}
+
+const TIE_GRAMMAR: &str = "grammar Ties;
+s : a EOF ;
+a : X Y P | X Y Q | X Z P | X Z Q | W Y P | W Y Q | W Z P | W Z Q ;
+X : 'x' ; Y : 'y' ; Z : 'z' ; W : 'w' ; P : 'p' ; Q : 'q' ;
+";
+
+/// A decision with more tie-break groups than a `G4S192` warning shows
+/// orders them and counts the others.
+#[test]
+fn static_only_warnings_show_the_largest_tie_break_groups() {
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits {
+            max_states: Some(8),
+            max_k: Some(2),
+            ..BudgetLimits::default()
+        },
+    };
+    let (_, build) = build_source_with("Ties", TIE_GRAMMAR, AtnFallback::Forbidden, &budgets);
+    let decision = &build.report.decisions[0];
+    let resolved = decision.result.static_only.as_ref().expect("resolved");
+    let groups: Vec<_> = resolved
+        .tie_breaks
+        .iter()
+        .map(|group| (group.chosen, group.dropped.clone(), group.states))
+        .collect();
+    assert_eq!(
+        groups,
+        [
+            (1, vec![2], 1),
+            (3, vec![4], 1),
+            (5, vec![6], 1),
+            (7, vec![8], 1)
+        ]
+    );
+    let message = &build
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "G4S192")
+        .expect("a G4S192 warning")
+        .message;
+    assert!(
+        message.contains(
+            "tie-breaks: 1 state chooses alt 1 (X Y P, line 3) over alt 2 (X Y Q, line 3) \
+             [prefix-hijack hazard: alt 2 (X Y Q, line 3) reads 'q' after 'x' 'y', and alt 1 \
+             cannot]; 1 state chooses alt 3 (X Z P, line 3) over alt 4 (X Z Q, line 3) \
+             [prefix-hijack hazard: alt 4 (X Z Q, line 3) reads 'q' after 'x' 'z', and alt 3 \
+             cannot]; 1 state chooses alt 5 (W Y P, line 3) over alt 6 (W Y Q, line 3) \
+             [prefix-hijack hazard: alt 6 (W Y Q, line 3) reads 'q' after 'w' 'y', and alt 5 \
+             cannot]; and 1 more tie-break group"
+        ),
+        "{message}"
+    );
+}
+
+/// A `G4S190` warning for a frontier escape names the viable alternatives of
+/// the escape state when the decision has no conflict.
+#[test]
+fn not_fully_static_warnings_name_the_viable_alternatives() {
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits {
+            max_states: Some(12),
+            max_k: Some(2),
+            ..BudgetLimits::default()
+        },
+    };
+    // The direct accept of `e` gives the hybrid table enough coverage.
+    let source = TIE_GRAMMAR
+        .replace("W Z Q ;", "W Z Q | E ;")
+        .replace("Q : 'q' ;", "Q : 'q' ; E : 'e' ;");
+    let (_, build) = build_source_with("Ties", &source, AtnFallback::Allowed, &budgets);
+    let message = &build
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "G4S190")
+        .expect("a G4S190 warning")
+        .message;
+    assert!(
+        message.ends_with("; viable alternatives: alt 1 (X Y P, line 3), alt 2 (X Y Q, line 3)"),
+        "{message}"
+    );
+}
+
+/// A non-greedy optional element names its skip first, and a list of names
+/// in a diagnostic stops after four names.
+#[test]
+fn optional_elements_and_long_lists_have_short_names() {
+    let source = "grammar Short;
+s : A?? (B | C | D | E | F | G) EOF ;
+A : 'a' ; B : 'b' ; C : 'c' ; D : 'd' ; E : 'e' ; F : 'f' ; G : 'g' ;
+";
+    let (_, build) = build_source_with(
+        "Short",
+        source,
+        AtnFallback::Allowed,
+        &ParserDfaBudgets::default(),
+    );
+    let lazy = build
+        .report
+        .decisions
+        .iter()
+        .find(|decision| decision.alternatives.all().len() == 2)
+        .expect("the decision of `A??`");
+    assert_eq!(
+        lazy.alternatives.all(),
+        ["alt 1 (skip)", "alt 2 (A, line 2)"]
+    );
+    assert_eq!(
+        lazy.alternatives.list(&[1, 2, 1, 2, 1, 2]),
+        "alt 1 (skip), alt 2 (A, line 2), alt 1 (skip), alt 2 (A, line 2), \
+         and 2 more alternatives"
+    );
+    assert_eq!(
+        lazy.alternatives.list(&[1, 2, 1, 2, 1]),
+        "alt 1 (skip), alt 2 (A, line 2), alt 1 (skip), alt 2 (A, line 2), \
+         and 1 more alternative"
+    );
+}
+
+/// The tie-break groups of the decisions of rule `rule` under
+/// `--static-dfa-only` with the hybrid depth cap `max_k`.
+fn hazards_of(name: &str, source: &str, rule: &str, max_k: usize) -> Vec<(i32, Vec<i32>, String)> {
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits {
+            max_k: Some(max_k),
+            max_states: Some(3),
+            ..BudgetLimits::default()
+        },
+    };
+    let (_, build) = build_source_with(name, source, AtnFallback::Forbidden, &budgets);
+    build
+        .report
+        .decisions
+        .iter()
+        .filter(|decision| decision.rule == rule)
+        .filter_map(|decision| decision.result.static_only.as_ref())
+        .flat_map(|resolved| resolved.tie_breaks.iter())
+        .map(|group| {
+            let verdict = match &group.hazard {
+                Some(hazard) => format!("{:?} {:?}", hazard.level, hazard.verdict),
+                None => "none".to_owned(),
+            };
+            (group.chosen, group.dropped.clone(), verdict)
+        })
+        .collect()
+}
+
+const SUBQUERY_GRAMMAR: &str = "grammar Sub;
+s : e EOF ;
+e : LP q RP #sub | LP e (COMMA e)* RP #tuple | INT #lit ;
+q : SELECT INT | LP q RP ;
+LP : '(' ; RP : ')' ; COMMA : ',' ; SELECT : 'select' ; INT : [0-9]+ ;
+";
+
+/// A subquery before a tuple that starts with the same parentheses hijacks
+/// the tuple: after `(`, the tuple reads `INT` and the subquery cannot.
+#[test]
+fn narrow_alternatives_before_broad_ones_are_prefix_hijacks() {
+    assert_eq!(
+        hazards_of("Sub", SUBQUERY_GRAMMAR, "e", 2),
+        [(
+            1,
+            vec![2],
+            "High Hijack { alt: 2, extension: [1, 5] }".to_owned()
+        )]
+    );
+    let index = "grammar Index;
+s : el EOF ;
+el : identifier dtype #col | INDEX identifier TYPE identifier GRANULARITY INT #idx ;
+identifier : ID | INDEX | TYPE ;
+dtype : ID ;
+INDEX : 'index' ; TYPE : 'type' ; GRANULARITY : 'granularity' ; INT : [0-9]+ ; ID : [a-z]+ ;
+";
+    assert_eq!(
+        hazards_of("Index", index, "el", 2),
+        [(
+            1,
+            vec![2],
+            "High Hijack { alt: 2, extension: [1, 1] }".to_owned()
+        )]
+    );
+}
+
+/// A hijack of a greedy loop is only a medium hazard, and an exact ambiguity
+/// is covered.
+#[test]
+fn greedy_choices_and_exact_ambiguities_rank_lower() {
+    let comma = "grammar Comma;
+s : list FROM id EOF ;
+list : id (COMMA id)* COMMA? ;
+id : ID | FROM ;
+FROM : 'from' ; COMMA : ',' ; ID : [a-z]+ ;
+";
+    assert_eq!(
+        hazards_of("Comma", comma, "list", 1),
+        [(
+            1,
+            vec![2],
+            "Medium Hijack { alt: 2, extension: [2, 1, 3] }".to_owned()
+        )]
+    );
+    let ambiguous = "grammar Ambig;
+s : a EOF ;
+a : X Y Z | X Y Z ;
+X : 'x' ; Y : 'y' ; Z : 'z' ;
+";
+    assert_eq!(
+        hazards_of("Ambig", ambiguous, "a", 1),
+        [(1, vec![2], "Low Covered".to_owned())]
+    );
+}
+
+/// A `G4S192` warning shows the hazard of each tie-break group.
+#[test]
+fn static_only_warnings_show_the_hijack_hazards() {
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits {
+            max_k: Some(2),
+            max_states: Some(3),
+            ..BudgetLimits::default()
+        },
+    };
+    let (_, build) = build_source_with("Sub", SUBQUERY_GRAMMAR, AtnFallback::Forbidden, &budgets);
+    let message = &build
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "G4S192")
+        .expect("a G4S192 warning")
+        .message;
+    assert!(
+        message.contains(
+            "chooses alt 1 (#sub, line 3) over alt 2 (#tuple, line 3) [prefix-hijack hazard: \
+             alt 2 (#tuple, line 3) reads INT after '(', and alt 1 cannot]"
+        ),
+        "{message}"
+    );
+}
+
+/// The most harmful tie-break group comes first, before a group with a lower
+/// alternative.
+#[test]
+fn tie_breaks_rank_by_hazard() {
+    let source = "grammar Rank;
+s : a EOF ;
+a : X Y Z | X Y Z | W Y P | W Y Q ;
+X : 'x' ; Y : 'y' ; Z : 'z' ; W : 'w' ; P : 'p' ; Q : 'q' ;
+";
+    let groups: Vec<_> = hazards_of("Rank", source, "a", 2)
+        .into_iter()
+        .map(|(chosen, dropped, verdict)| {
+            (
+                chosen,
+                dropped,
+                verdict.split(' ').next().map(str::to_owned),
+            )
+        })
+        .collect();
+    assert_eq!(
+        groups,
+        [
+            (3, vec![4], Some("High".to_owned())),
+            (1, vec![2], Some("Low".to_owned())),
+        ]
+    );
+}
+
+/// A dropped path that pops a widened rule continues where the runtime stack
+/// cannot, so it is no hijack evidence.
+#[test]
+fn widened_paths_are_no_hijack_evidence() {
+    let source = "grammar Widened;
+s : target EOF ;
+target : A LP expr RP X | A parens X ;
+expr : LP expr RP | ID ;
+parens : LP parens RP | ID ;
+A : 'a' ; LP : '(' ; RP : ')' ; X : 'x' ; ID : [a-z]+ ;
+";
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits {
+            max_states: Some(4),
+            max_k: Some(2),
+            ..BudgetLimits::default()
+        },
+    };
+    let (_, build) = build_source_with("Widened", source, AtnFallback::Forbidden, &budgets);
+    let groups: Vec<_> = build
+        .report
+        .decisions
+        .iter()
+        .filter_map(|decision| decision.result.static_only.as_ref())
+        .flat_map(|resolved| &resolved.tie_breaks)
+        .collect();
+    assert!(!groups.is_empty());
+    assert!(
+        groups
+            .iter()
+            .all(|group| group.level() != super::HazardLevel::High),
+        "{groups:?}"
+    );
+}
+
+/// A group with states that the analysis did not reach is not covered.
+#[test]
+fn partially_analyzed_groups_are_not_covered() {
+    let source = "grammar Partial;
+s : r EOF ;
+r : (A X Y W | B X Y W | C X Y W | D X Y W | P X Q) #one
+  | (A X Y W | B X Y W | C X Y W | D X Y W | P X Z) #two
+  ;
+A : 'a' ; B : 'b' ; C : 'c' ; D : 'd' ; P : 'p' ; Q : 'q' ; W : 'w' ; X : 'x' ; Y : 'y' ;
+Z : 'z' ;
+";
+    for states in [9, 12] {
+        let budgets = ParserDfaBudgets {
+            global: BudgetLimits {
+                max_states: Some(states),
+                ..BudgetLimits::default()
+            },
+        };
+        let (_, build) = build_source_with("Partial", source, AtnFallback::Forbidden, &budgets);
+        let groups: Vec<_> = build
+            .report
+            .decisions
+            .iter()
+            .filter_map(|decision| decision.result.static_only.as_ref())
+            .flat_map(|resolved| &resolved.tie_breaks)
+            .collect();
+        assert!(!groups.is_empty());
+        for group in groups {
+            let hazard = group.hazard.as_ref().expect("analyzed");
+            assert_ne!(
+                hazard.verdict,
+                super::HijackVerdict::Covered,
+                "{states}: {group:?}"
+            );
+        }
+    }
+}
+
+/// A chosen path that reads a token in an assumed caller does not cover a
+/// dropped path, and neither does a chosen path across a predicate.
+#[test]
+fn unsure_chosen_paths_do_not_cover() {
+    for (name, source) in [
+        (
+            "Boundary",
+            "grammar Boundary;
+s : r EOF ;
+r : A | (X r | A) B ;
+A : 'a' ; B : 'b' ; X : 'x' ;
+",
+        ),
+        (
+            "PredChosen",
+            "grammar PredChosen;
+s : r EOF ;
+r : A X {false}? B | A X B ;
+A : 'a' ; B : 'b' ; X : 'x' ;
+",
+        ),
+    ] {
+        let groups = hazards_of(name, source, "r", 1);
+        assert!(!groups.is_empty(), "{name}");
+        for (_, _, verdict) in groups {
+            assert!(!verdict.contains("Covered"), "{name}: {verdict}");
+        }
+    }
 }

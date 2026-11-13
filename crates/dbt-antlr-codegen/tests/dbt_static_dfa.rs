@@ -745,7 +745,7 @@ fn not_fully_static_decisions_emit_g4s190_warnings() {
     assert_eq!(
         warnings,
         [
-            "parser decision 0 of rule 'a' is not fully static: 1 of 5 states escape to adaptivePredict; witness: ATN EOF"
+            "parser decision 0 of rule 'a' is not fully static: 1 of 5 states escape to adaptivePredict; witness: ATN EOF; conflicting alternatives: alt 1 (repeat (ID | ATN), line 3), alt 2 (exit the loop)"
         ]
     );
 }
@@ -985,7 +985,9 @@ fn static_dfa_only_resolves_hybrid_tables_without_adaptive_predict() {
         warnings,
         [
             "parser decision 0 of rule 'a' resolves its escape states without adaptivePredict: \
-             1 conflict state predicts the minimum alternative (witness: ATN EOF)"
+             1 conflict state predicts the minimum alternative (witness: ATN EOF); tie-breaks: \
+             1 state chooses alt 1 (repeat (ID | ATN), line 3) over alt 2 (exit the loop) \
+             [greedy choice, not verified]"
         ]
     );
     assert!(
@@ -1001,6 +1003,7 @@ fn static_dfa_only_resolves_hybrid_tables_without_adaptive_predict() {
     assert!(manifest.contains("\"minAltStates\": 1"), "{manifest}");
     assert!(manifest.contains("\"minViableAltStates\": 0"), "{manifest}");
     assert!(manifest.contains("\"syntaxErrorStates\": 0"), "{manifest}");
+    assert!(manifest.contains("\"hijackHazards\": 0"), "{manifest}");
     assert!(manifest.contains("\"adaptiveDecisions\": 0"), "{manifest}");
     assert!(
         manifest.contains("\"staticDecisions\": 2"),
@@ -1031,8 +1034,12 @@ fn static_dfa_only_dumps_annotate_the_resolved_states() {
     assert!(
         dump.contains(
             "    s4: accept alt=1 (static-dfa-only: minimum conflicting alternative); \
-             error-recovery fallback alt=1"
+             error-recovery fallback alt=1; over alt 2"
         ),
+        "{dump}"
+    );
+    assert!(
+        dump.contains("alternatives: alt 1 (repeat (ID | ATN), line 3); alt 2 (exit the loop)"),
         "{dump}"
     );
 

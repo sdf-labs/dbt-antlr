@@ -26,27 +26,23 @@ use super::closure::{
 };
 use super::cost::{AttemptCost, AttemptKind, AttemptOutcome, CostLog, DecisionCost};
 use super::descent::{DescentAnalyzer, DescentPlan, DescentRules};
+use super::hazard::{self, StateHazard};
 use super::loop_block::{
     EXIT_ALT, EXIT_FOREIGN, ITERATE_ALT, ITERATE_REAL, LoopBlock, is_iterate_exit_pair,
 };
 use super::postfix::{GuardRegions, PostfixShape, epsilon_closure};
 use super::table::{StaticDfaEdge, StaticDfaState, StaticDfaTable};
-use super::{CONFLICT_ESCAPE, Category, ESCAPE, EscapeResolutions, GUARDED};
+use super::{CONFLICT_ESCAPE, Category, DecisionBudget, ESCAPE, EscapeResolutions, GUARDED};
 use crate::optimization::AtnFallback;
 
-/// The state budget of one decision table.
-pub(crate) const MAX_DFA_STATES: usize = 1000;
 /// Depth at which a hybrid table stops expanding and escapes.
 pub(crate) const HYBRID_DEPTH_CAP: usize = 4;
 /// State count at which a hybrid table stops expanding beyond depth 2.
 pub(crate) const HYBRID_STATE_CAP: usize = 64;
 /// [`HYBRID_DEPTH_CAP`] under `--static-dfa-only`. Without the adaptive
-/// fallback, a frontier state can only guess, so the table looks further.
+/// fallback, a frontier state can only guess, so the table looks further. Under
+/// `--static-dfa-only`, the hybrid state cap is the state cap of the decision.
 pub(crate) const STATIC_ONLY_HYBRID_DEPTH_CAP: usize = 16;
-/// [`HYBRID_STATE_CAP`] under `--static-dfa-only`. See
-/// [`DecisionBuild::at_hybrid_frontier`] for the room it keeps below
-/// [`MAX_DFA_STATES`].
-pub(crate) const STATIC_ONLY_HYBRID_STATE_CAP: usize = MAX_DFA_STATES;
 /// Below this share of useful start edges a hybrid table is not emitted,
 /// unless `--static-dfa-only` removes the adaptive fallback.
 pub(crate) const HYBRID_MIN_COVERAGE_PERCENT: u32 = 10;
@@ -69,6 +65,13 @@ pub(crate) const MAX_CONTINUATION_WORDS: usize = 64;
 /// grammars, 16 threads give most of the speedup at less than half the memory
 /// of 60 threads. The slowest decisions set the wall time.
 const MAX_CLASSIFY_THREADS: usize = 16;
+
+/// The escape states of one table that the prefix-hijack analysis analyzes
+/// at most, the shallowest first.
+const HAZARD_STATES: usize = 48;
+/// The escape states of one tie-break group that the prefix-hijack analysis
+/// analyzes at most. The analysis of a group stops at its first hijack.
+const HAZARD_STATES_PER_GROUP: usize = 4;
 
 /// Taint bits that invalidate a trusted verdict when a second path adds them
 /// to an already interned state. A decision state that gets one of them is
@@ -198,6 +201,8 @@ struct AttemptPolicy {
     /// State count at which a hybrid construction stops expanding beyond
     /// depth 2.
     hybrid_state_cap: usize,
+    /// The larger hybrid budget of `--static-dfa-only`.
+    static_only: bool,
     /// Stop at the first conflict the construction does not trust, keeping the
     /// work small for decisions that end up adaptive anyway.
     abort_on_untrusted_conflict: bool,
@@ -212,6 +217,7 @@ impl AttemptPolicy {
             hybrid: false,
             hybrid_depth_cap: HYBRID_DEPTH_CAP,
             hybrid_state_cap: HYBRID_STATE_CAP,
+            static_only: false,
             abort_on_untrusted_conflict: false,
             trust_exact_ambiguity: true,
         }
@@ -231,10 +237,39 @@ impl AttemptPolicy {
         }
     }
 
-    const fn static_only_hybrid() -> Self {
+    /// The hybrid policy with the depth cap of `budget`, when it sets one.
+    /// When a source set the state cap, the table expands up to that cap.
+    fn hybrid_within(budget: &DecisionBudget) -> Self {
         Self {
-            hybrid_depth_cap: STATIC_ONLY_HYBRID_DEPTH_CAP,
-            hybrid_state_cap: STATIC_ONLY_HYBRID_STATE_CAP,
+            hybrid_depth_cap: budget.max_k.unwrap_or(HYBRID_DEPTH_CAP),
+            hybrid_state_cap: if budget.explicit_max_states {
+                budget.max_states
+            } else {
+                HYBRID_STATE_CAP
+            },
+            ..Self::hybrid()
+        }
+    }
+
+    /// The small hybrid policy that `--static-dfa-only` tries when the
+    /// larger construction fails. A depth cap of `budget` below the default
+    /// applies here too.
+    fn fallback_hybrid(budget: &DecisionBudget) -> Self {
+        Self {
+            hybrid_depth_cap: budget
+                .max_k
+                .map_or(HYBRID_DEPTH_CAP, |max_k| max_k.min(HYBRID_DEPTH_CAP)),
+            ..Self::hybrid()
+        }
+    }
+
+    /// The larger hybrid policy of `--static-dfa-only`: the state cap is the
+    /// state cap of the decision.
+    fn static_only_hybrid(budget: &DecisionBudget) -> Self {
+        Self {
+            hybrid_depth_cap: budget.max_k.unwrap_or(STATIC_ONLY_HYBRID_DEPTH_CAP),
+            hybrid_state_cap: budget.max_states,
+            static_only: true,
             ..Self::hybrid()
         }
     }
@@ -243,7 +278,7 @@ impl AttemptPolicy {
         match self {
             Self {
                 hybrid: true,
-                hybrid_depth_cap: STATIC_ONLY_HYBRID_DEPTH_CAP,
+                static_only: true,
                 ..
             } => AttemptKind::StaticOnlyHybrid,
             Self { hybrid: true, .. } => AttemptKind::Hybrid,
@@ -283,6 +318,9 @@ struct Attempt {
     start_exhausted: bool,
     /// Set when the closures of the attempt spent the visit budget.
     exhausted: bool,
+    /// Set when a hybrid attempt spent the state cap or the visit budget and
+    /// escaped the states it cannot expand.
+    budget_cutoff: bool,
     /// Configs the closures of the attempt visited.
     visits: u64,
     /// The visited configs by rule index.
@@ -381,6 +419,11 @@ pub(crate) struct DecisionResult {
     pub(crate) static_only: Option<EscapeResolutions>,
     /// What the classification of the decision cost.
     pub(crate) cost: DecisionCost,
+    /// The analysis budget of the decision.
+    pub(crate) budget: DecisionBudget,
+    /// The table escapes the states that the state cap or the visit budget
+    /// did not let the construction expand.
+    pub(crate) budget_cutoff: bool,
 }
 
 impl DecisionResult {
@@ -416,6 +459,8 @@ impl DecisionResult {
             precedence: None,
             static_only: None,
             cost: DecisionCost::default(),
+            budget: DecisionBudget::default(),
+            budget_cutoff: false,
         }
     }
 
@@ -524,8 +569,10 @@ pub(crate) struct DecisionClassifier {
     /// The token counts from each alternative start state to the stop state
     /// of its rule, by ATN state number, computed on first use.
     completion_depths: Box<[OnceLock<BitSet>]>,
-    /// Configs one build attempt may visit before it is treated as overflow.
-    visit_budget: u64,
+    /// The budget of a decision without an entry in `budgets`.
+    default_budget: DecisionBudget,
+    /// The budget of each decision, by decision number.
+    budgets: Vec<DecisionBudget>,
     /// The operator-loop analysis of each precedence-loop decision, built at
     /// most once and shared by every class attempt.
     loop_blocks: Box<[OnceLock<LoopBlock>]>,
@@ -551,7 +598,8 @@ impl DecisionClassifier {
             atn,
             ll1_disjoint,
             completion_depths: once_locks(atn.states_count()),
-            visit_budget: super::closure::DEFAULT_VISIT_BUDGET,
+            default_budget: DecisionBudget::default(),
+            budgets: Vec::new(),
             loop_blocks: once_locks(atn.decision_to_state.len()),
             postfix_shapes: once_locks(atn.decision_to_state.len()),
             atn_fallback: AtnFallback::Allowed,
@@ -577,16 +625,27 @@ impl DecisionClassifier {
             .clone()
     }
 
-    /// Sets the per-attempt visit budget. The default is
+    /// Sets the per-attempt visit budget of the decisions without an entry
+    /// in [`Self::with_budgets`]. The default is
     /// [`DEFAULT_VISIT_BUDGET`](super::DEFAULT_VISIT_BUDGET).
+    #[cfg(test)]
     pub(crate) const fn with_visit_budget(mut self, budget: u64) -> Self {
-        self.visit_budget = budget;
+        self.default_budget.max_visits = budget;
         self
     }
 
-    /// The per-attempt visit budget.
-    pub(crate) const fn visit_budget(&self) -> u64 {
-        self.visit_budget
+    /// Sets the budget of each decision, by decision number.
+    pub(crate) fn with_budgets(mut self, budgets: Vec<DecisionBudget>) -> Self {
+        self.budgets = budgets;
+        self
+    }
+
+    /// The budget of decision `decision`.
+    pub(crate) fn budget(&self, decision: usize) -> DecisionBudget {
+        self.budgets
+            .get(decision)
+            .copied()
+            .unwrap_or(self.default_budget)
     }
 
     /// Enables shared-descent groups with the rule facts of the grammar.
@@ -678,6 +737,7 @@ impl DecisionClassifier {
         let mut log = CostLog::default();
         let mut result = self.classify_decision(decision, &mut log);
         result.cost = log.finish(started.map(|started| started.elapsed()));
+        result.budget = self.budget(decision);
         result
     }
 
@@ -730,7 +790,7 @@ impl DecisionClassifier {
         if !eligible {
             return run;
         }
-        for &policy in self.hybrid_policies() {
+        for policy in self.hybrid_policies(decision) {
             // The start closure does not depend on the hybrid bounds. A start
             // state that spent the visit budget once spends it again.
             if run.start_exhausted && policy.depth_bound == i32::MAX {
@@ -918,13 +978,14 @@ impl DecisionClassifier {
     /// Without the adaptive fallback, every frontier state of a hybrid table
     /// is a guess, so a larger budget comes first. The default budget stays as
     /// the second choice, for a decision whose larger construction overflows.
-    fn hybrid_policies(&self) -> &'static [AttemptPolicy] {
-        const ALLOWED: &[AttemptPolicy] = &[AttemptPolicy::hybrid()];
-        const FORBIDDEN: &[AttemptPolicy] =
-            &[AttemptPolicy::static_only_hybrid(), AttemptPolicy::hybrid()];
+    fn hybrid_policies(&self, decision: usize) -> Vec<AttemptPolicy> {
+        let budget = self.budget(decision);
         match self.atn_fallback {
-            AtnFallback::Allowed => ALLOWED,
-            AtnFallback::Forbidden => FORBIDDEN,
+            AtnFallback::Allowed => vec![AttemptPolicy::hybrid_within(&budget)],
+            AtnFallback::Forbidden => vec![
+                AttemptPolicy::static_only_hybrid(&budget),
+                AttemptPolicy::fallback_hybrid(&budget),
+            ],
         }
     }
 
@@ -1012,6 +1073,12 @@ impl DecisionClassifier {
             result.iterate_accepts += outcome.iterate_accepts;
             result.take_rule_fires += outcome.take_rule_fires;
             result.has_postfix_shape |= outcome.has_postfix_shape;
+            result.budget_cutoff |= outcome.table.is_some() && outcome.budget_cutoff;
+            for conflict in &outcome.conflicts {
+                if !result.conflicts.contains(conflict) {
+                    result.conflicts.push(conflict.clone());
+                }
+            }
             if result.conflict_witness.is_none() {
                 result.conflict_witness = outcome.conflict_witness.clone();
             }
@@ -1062,7 +1129,7 @@ impl DecisionClassifier {
             AttemptOutcome::VisitBudget
         } else if attempt.stopped {
             AttemptOutcome::Stopped
-        } else if attempt.overflow {
+        } else if attempt.overflow || attempt.budget_cutoff {
             AttemptOutcome::StateBudget
         } else {
             AttemptOutcome::Finished
@@ -1100,6 +1167,7 @@ impl DecisionClassifier {
         let loop_block = precedence.map(|_| self.loop_block(decision));
         let postfix = self.postfix_shape(decision);
         let has_postfix_shape = postfix.is_some();
+        let budget = self.budget(decision);
         // Shared-descent groups resolve escapes, so only hybrid attempts use
         // them; a precedence class table is selected by the precedence, which a
         // group arm cannot see.
@@ -1127,9 +1195,11 @@ impl DecisionClassifier {
                     precedence,
                     loop_block,
                     postfix.clone(),
-                    self.visit_budget,
+                    budget.max_visits,
                 ),
                 policy,
+                max_states: budget.max_states,
+                budget_spent: false,
                 allow_continuations: policy.hybrid && precedence.is_none(),
                 precedence_class: precedence.is_some(),
                 postfix,
@@ -1143,6 +1213,7 @@ impl DecisionClassifier {
                 decision,
                 info: HashMap::new(),
                 states: Vec::new(),
+                accept_sinks: HashMap::new(),
                 queue: VecDeque::new(),
                 completion_depths: &self.completion_depths,
                 attempt: Attempt {
@@ -1193,6 +1264,7 @@ fn apply_facts(result: &mut DecisionResult, attempt: &Attempt) {
     result.guarded_iterates += attempt.guarded_iterates;
     result.iterate_accepts += attempt.iterate_accepts;
     result.descent_group_states += attempt.descent_group_states;
+    result.budget_cutoff |= attempt.budget_cutoff && attempt.table.is_some();
     for conflict in &attempt.conflicts {
         if !result.conflicts.contains(conflict) {
             result.conflicts.push(conflict.clone());
@@ -1237,6 +1309,11 @@ struct DecisionBuild<'b, 'sim, 'a> {
     scratch: &'a Bump,
     closure: Closure<'static, 'a>,
     policy: AttemptPolicy,
+    /// The state cap of the table.
+    max_states: usize,
+    /// A hybrid attempt spent the state cap or the visit budget: every state
+    /// that is not expanded yet becomes a frontier escape.
+    budget_spent: bool,
     /// Whether frontier escape states may carry a continuation. Precedence
     /// classes never do: their tables are selected by the parser's precedence,
     /// which the resumed SLL simulation cannot reproduce from a config set.
@@ -1268,6 +1345,9 @@ struct DecisionBuild<'b, 'sim, 'a> {
     info: HashMap<i32, StateFacts>,
     /// DFA states in creation order; the index is the state number.
     states: Vec<&'sim DFAState<'sim, ATNConfigSet<'sim>>>,
+    /// For each alternative, the shared accept state of the config sets with
+    /// only that viable alternative.
+    accept_sinks: HashMap<i32, &'sim DFAState<'sim, ATNConfigSet<'sim>>>,
     queue: VecDeque<i32>,
     completion_depths: &'a [OnceLock<BitSet>],
     attempt: Attempt,
@@ -1303,25 +1383,15 @@ where
             // The hybrid frontier is a *creation* budget: a state that was
             // already expanded keeps its successors, even though re-expanding
             // it after a taint increase may now run past the cap.
-            if !facts.expanded && self.policy.hybrid && self.at_hybrid_frontier(facts.depth) {
-                // A budget frontier that sits on the iterate/exit pair of a
-                // precedence loop stays decidable by substitution. No conflict
-                // materialized before the cutoff. The attestations are still a
-                // lineage property, independent of any collision. So the
-                // argument below applies, and iterate is the answer the
-                // runtime would reach.
-                if self.accept_descent_group(number, &facts) {
-                    continue;
+            let frontier = !facts.expanded && self.policy.hybrid;
+            if frontier && (self.budget_spent || self.at_hybrid_frontier(facts.depth)) {
+                if facts.depth < self.policy.hybrid_depth_cap
+                    && self.states.len() >= self.max_states
+                {
+                    self.budget_spent = true;
+                    self.attempt.budget_cutoff = true;
                 }
-                if !(self.precedence_class && self.resolve_frontier_iterate(number, &facts)) {
-                    self.set_escape(number, ESCAPE);
-                    if self.postfix.is_some() && self.state_has_take_skip_pair(number) {
-                        // A budget escape of a take/skip state: the guarded
-                        // take can still resolve it (eligibility is evaluated
-                        // once the construction is complete).
-                        self.guard_candidates.insert(number, None);
-                    }
-                }
+                self.escape_frontier(number, &facts);
                 continue;
             }
             if let Some(facts) = self.info.get_mut(&number) {
@@ -1335,15 +1405,41 @@ where
                 roots: facts.roots.clone(),
             };
             let successors = self.closure.successors(&closed);
+            // Past the start state, a hybrid table escapes the states that it
+            // has no budget to expand instead of failing. The check before the
+            // interning assumes that every successor is new, so no state is
+            // interned without an edge to it.
+            let cut_off = frontier
+                && facts.depth > 0
+                && (self.closure.exhausted
+                    || self.states.len() + successors.len() > self.max_states);
+            if cut_off {
+                self.attempt.exhausted |= self.closure.exhausted;
+                self.closure.exhausted = false;
+                self.budget_spent = true;
+                self.attempt.budget_cutoff = true;
+                if let Some(facts) = self.info.get_mut(&number) {
+                    facts.expanded = false;
+                }
+                self.escape_frontier(number, &facts);
+                continue;
+            }
             if self.closure.exhausted {
                 self.attempt.overflow = true;
                 break;
             }
+            let mut targets = Vec::with_capacity(successors.len());
             for (label, successor) in successors {
                 let Some(target) = self.intern(successor, facts.depth + 1) else {
                     self.attempt.overflow = true;
                     break;
                 };
+                targets.push((label, target));
+            }
+            if self.attempt.overflow {
+                break;
+            }
+            for (label, target) in targets {
                 for interval in label.as_interval_set().as_slice() {
                     for token in interval.a..=interval.b {
                         if token < EOF || token > self.atn.max_token_type {
@@ -1353,33 +1449,62 @@ where
                     }
                 }
             }
-            if self.attempt.overflow {
-                break;
-            }
         }
 
         if !self.attempt.overflow {
             self.finalize_guards();
             self.attach_continuations();
-            self.attempt.table = Some(self.snapshot());
+            // `finalize` drops a table with a taint conflict or an escaping
+            // start state, so its hazards are not needed.
+            let start_decides = self
+                .info
+                .get(&0)
+                .is_some_and(|facts| !matches!(facts.verdict, Verdict::Escape(_)));
+            let hazards = if self.static_only && !self.attempt.taint_conflict && start_decides {
+                self.state_hazards()
+            } else {
+                HashMap::new()
+            };
+            self.attempt.table = Some(self.snapshot(&hazards));
         }
         self.take_attempt()
     }
 
+    /// Ends the expansion at a state that the hybrid construction does not
+    /// expand: a shared-descent group or the iterate of a precedence loop
+    /// resolves it, or else it escapes.
+    fn escape_frontier(&mut self, number: i32, facts: &StateFacts) {
+        if self.accept_descent_group(number, facts) {
+            return;
+        }
+        // A budget frontier that sits on the iterate/exit pair of a
+        // precedence loop stays decidable by substitution. No conflict
+        // materialized before the cutoff. The attestations are still a
+        // lineage property, independent of any collision. So the argument
+        // below applies, and iterate is the answer the runtime would reach.
+        // Before depth 2, a multi-token operator of another precedence class
+        // can still separate the alternatives, so the substitution does not
+        // apply there.
+        if self.precedence_class && facts.depth >= 2 && self.resolve_frontier_iterate(number, facts)
+        {
+            return;
+        }
+        self.set_escape(number, ESCAPE);
+        if self.postfix.is_some() && self.state_has_take_skip_pair(number) {
+            // A budget escape of a take/skip state: the guarded take can
+            // still resolve it (eligibility is evaluated once the
+            // construction is complete).
+            self.guard_candidates.insert(number, None);
+        }
+    }
+
     /// Whether a hybrid construction stops expanding a state at `depth`.
     ///
-    /// A state cap above [`HYBRID_STATE_CAP`] leaves room for one more
-    /// expansion, which adds at most one state per token type and EOF. The
-    /// cap applies from depth 2, so the expansions at depth 0 and 1 can still
-    /// overflow [`MAX_DFA_STATES`], as can the closure visit budget. In these
-    /// cases, the classifier retries with the default budget.
+    /// The state cap applies from depth 2. When an expansion exceeds the
+    /// state cap of the table or spends the visit budget, its state escapes
+    /// (see [`Self::run`]).
     fn at_hybrid_frontier(&self, depth: usize) -> bool {
-        let alphabet = usize::try_from(self.atn.max_token_type).unwrap_or(0) + 2;
-        let headroom = MAX_DFA_STATES.saturating_sub(alphabet);
-        let state_cap = self
-            .policy
-            .hybrid_state_cap
-            .min(headroom.max(HYBRID_STATE_CAP));
+        let state_cap = self.policy.hybrid_state_cap.min(self.max_states);
         depth >= self.policy.hybrid_depth_cap || (self.states.len() >= state_cap && depth >= 2)
     }
 
@@ -1388,7 +1513,7 @@ where
         self.attempt.decision = self.decision;
         self.attempt.state_count = self.states.len();
         self.attempt.facts = std::mem::take(&mut self.closure.facts);
-        self.attempt.exhausted = self.closure.exhausted;
+        self.attempt.exhausted |= self.closure.exhausted;
         self.attempt.visits = self.closure.visits();
         self.attempt.rule_visits = self.closure.take_rule_visits();
         if self.attempt.descent_group_states > 0 {
@@ -1659,6 +1784,11 @@ where
                 // Without a guard, only a real iterate resolves the conflict.
                 continue;
             }
+            if danger.is_empty() && conflicting.is_none() && self.static_only {
+                // A frontier state without a guard stays an escape, so that
+                // the `--static-dfa-only` report counts its guess.
+                continue;
+            }
             if let Some(conflicting) = conflicting {
                 self.attempt
                     .approximations
@@ -1730,6 +1860,17 @@ where
     ) -> Option<&'sim DFAState<'sim, ATNConfigSet<'sim>>> {
         let closed = self.closure.canonical_set(closed);
         let (facts, effects) = self.classify(&closed, depth);
+        // An accept state with one viable alternative has no edges, and the
+        // runtime reads only its alternative. All such accept states of one
+        // alternative share one state, so they use one state of the state cap.
+        if let Verdict::Accept(alt) = facts.verdict
+            && alt > 0
+            && depth > 0
+            && !facts.resolved_conflict
+            && !facts.predicated
+        {
+            return self.accept_sink(alt, facts, effects);
+        }
         let interned = self.closure.merged_config_set(&closed);
         let mut proposed = ProposedDFAState::new(interned);
         proposed.is_accept_state = matches!(facts.verdict, Verdict::Accept(_));
@@ -1783,8 +1924,7 @@ where
             }
             return Some(state);
         }
-        if number as usize >= MAX_DFA_STATES {
-            self.attempt.overflow = true;
+        if number as usize >= self.max_states {
             return None;
         }
         if effects.conflict.is_some() {
@@ -1796,6 +1936,57 @@ where
         if decide && !self.attempt.overflow {
             self.queue.push_back(number);
         }
+        Some(state)
+    }
+
+    /// The shared accept state of alternative `alt`, interned on first use.
+    ///
+    /// The shared state has its own config set: one config at the decision
+    /// state. No closure output contains the decision state, because it has
+    /// only epsilon transitions. So no other config set of the build becomes
+    /// this state, and the state keeps no fallback, taint, or roots of one
+    /// path.
+    fn accept_sink(
+        &mut self,
+        alt: i32,
+        facts: StateFacts,
+        effects: ClassifyEffects,
+    ) -> Option<&'sim DFAState<'sim, ATNConfigSet<'sim>>> {
+        if let Some(state) = self.accept_sinks.get(&alt) {
+            return Some(*state);
+        }
+        let config = dbt_antlr_runtime::analysis::ATNConfig::new(
+            self.decision_state,
+            alt,
+            Some(PredictionContextRef::new_empty()),
+        );
+        let sink = ClosedSet {
+            configs: vec![config],
+            taint: Taint::default(),
+            roots: GuardRoots::default(),
+        };
+        let mut proposed = ProposedDFAState::new(self.closure.merged_config_set(&sink));
+        proposed.is_accept_state = true;
+        proposed.prediction = alt;
+        let state = self.dfa.add_state(proposed, self.simulator);
+        let number = state.state_number();
+        if number as usize >= self.states.len() {
+            self.states.push(state);
+        }
+        if number as usize >= self.max_states {
+            return None;
+        }
+        self.commit(number, effects);
+        self.accept_sinks.insert(alt, state);
+        self.info.insert(
+            number,
+            StateFacts {
+                fallback: 0,
+                taint: Taint::default(),
+                roots: GuardRoots::default(),
+                ..facts
+            },
+        );
         Some(state)
     }
 
@@ -1886,8 +2077,16 @@ where
         if !block.guards_are_simple() {
             return false;
         }
+        // Under `--static-dfa-only`, an escape of the iterate/exit pair
+        // predicts the iterate on every stack, so a guard is never worse than
+        // the escape. The state stays an escape when no guard applies, so
+        // that the report counts it.
+        let covered = block.iterate_covers_exit(&configs, &facts.taint);
+        if !covered && !self.static_only {
+            return false;
+        }
         let attestation = block.iterate_exit_attestation(&configs, &facts.taint);
-        if attestation == ITERATE_REAL && self.keeps_caller_frames() {
+        if covered && attestation == ITERATE_REAL && self.keeps_caller_frames() {
             if let Some(facts) = self.info.get_mut(&number) {
                 facts.verdict = Verdict::Accept(ITERATE_ALT);
                 facts.resolved_conflict = true;
@@ -2252,7 +2451,94 @@ where
         }
     }
 
-    fn snapshot(&self) -> StaticDfaTable {
+    /// The prefix-hijack hazards of the escape states that
+    /// `--static-dfa-only` resolves to an alternative, for at most
+    /// [`HAZARD_STATES`] of the shallowest of them.
+    fn state_hazards(&mut self) -> HashMap<i32, StateHazard> {
+        let mut candidates: Vec<(usize, i32)> = self
+            .info
+            .iter()
+            .filter(|(_, facts)| {
+                matches!(facts.verdict, Verdict::Escape(ESCAPE | CONFLICT_ESCAPE))
+                    && !facts.predicated
+            })
+            .map(|(number, facts)| (facts.depth, *number))
+            .collect();
+        candidates.sort_unstable();
+        let mut hazards = HashMap::new();
+        // The analyzed states of each tie-break group, and whether one of
+        // them is a hijack.
+        let mut groups: HashMap<(i32, Vec<i32>), (usize, bool)> = HashMap::new();
+        let mut analyzed = 0;
+        for (_, number) in candidates {
+            if analyzed == HAZARD_STATES {
+                break;
+            }
+            let Some(facts) = self.info.get(&number).cloned() else {
+                continue;
+            };
+            let configs: Vec<_> = self.states[number as usize]
+                .configs()
+                .get_items()
+                .cloned()
+                .collect();
+            let alts: BTreeSet<i32> = configs
+                .iter()
+                .map(|config| config.get_alt())
+                .filter(|alt| *alt > 0)
+                .collect();
+            let conflicts: BTreeSet<i32> = facts
+                .conflicts
+                .iter()
+                .copied()
+                .filter(|alt| *alt > 0)
+                .collect();
+            // The same choice as `StaticDfaTable::resolve_escapes`.
+            let candidates = if conflicts.is_empty() {
+                &alts
+            } else {
+                &conflicts
+            };
+            let Some(&chosen) = candidates.first() else {
+                continue;
+            };
+            let dropped: Vec<i32> = candidates.iter().copied().skip(1).collect();
+            if dropped.is_empty() {
+                continue;
+            }
+            let group = groups.entry((chosen, dropped.clone())).or_default();
+            if group.1 || group.0 == HAZARD_STATES_PER_GROUP {
+                continue;
+            }
+            group.0 += 1;
+            analyzed += 1;
+            let verdict =
+                hazard::analyze(&mut self.closure, &configs, &facts.taint, chosen, &dropped);
+            group.1 = matches!(verdict, hazard::HijackVerdict::Hijack { .. });
+            let greedy = self.is_greedy_choice(&dropped);
+            hazards.insert(number, StateHazard { verdict, greedy });
+        }
+        hazards
+    }
+
+    /// Whether a guess that drops `dropped` is the greedy choice of the
+    /// decision: it drops the exit of a loop, or the skip of an optional block
+    /// or element.
+    fn is_greedy_choice(&self, dropped: &[i32]) -> bool {
+        let transitions = self.decision_state.get_transitions();
+        match self.decision_state.state_type() {
+            ATNStateType::StarLoopEntry | ATNStateType::PlusLoopBack => dropped == [2],
+            _ => {
+                let last = transitions.len();
+                dropped == [last as i32]
+                    && transitions.last().is_some_and(|transition| {
+                        transition.get_target().state_type() == ATNStateType::BlockEnd
+                    })
+            }
+        }
+    }
+
+    fn snapshot(&self, hazards: &HashMap<i32, StateHazard>) -> StaticDfaTable {
         let mut states: Vec<StaticDfaState> = self
             .states
             .iter()
@@ -2286,6 +2572,7 @@ where
                     viable_alts,
                     predicated: facts.is_some_and(|facts| facts.predicated),
                     resolution: None,
+                    hazard: hazards.get(&number).cloned(),
                     edges: Vec::new(),
                 }
             })
