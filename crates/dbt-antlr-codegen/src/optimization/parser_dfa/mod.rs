@@ -6,7 +6,8 @@
 //! compiled parser unit: can an SLL DFA be built for it statically, and what
 //! does that DFA cost? The answer drives `--static-parser-dfa`,
 //! `--report-decisions`, `--dump-dfas`, `--profile-decisions`, and the
-//! `G4S190` and `G4S193` diagnostics.
+//! `G4S190` and `G4S193` diagnostics. The budget of each decision (see
+//! [`DecisionBudget`]) limits the analysis.
 //!
 //! # Where the machinery lives
 //!
@@ -46,6 +47,7 @@
 #[cfg(test)]
 mod tests;
 
+mod budget;
 mod category;
 mod classifier;
 mod closure;
@@ -57,9 +59,14 @@ mod static_only;
 mod table;
 mod tables;
 
+#[cfg(test)]
+pub(crate) use budget::DEFAULT_VISIT_BUDGET;
+pub(crate) use budget::{
+    BUDGET_OPTIONS, BudgetLimits, BudgetRule, DecisionBudget, MAX_K_OPTION, MAX_STATES_OPTION,
+    MAX_VISITS_OPTION, ParserDfaBudgets, budget_option_problem, has_non_budget_option,
+};
 pub(crate) use category::Category;
-pub(crate) use classifier::{DecisionClassifier, DecisionResult, MAX_DFA_STATES};
-pub(crate) use closure::DEFAULT_VISIT_BUDGET;
+pub(crate) use classifier::{DecisionClassifier, DecisionResult};
 pub(crate) use cost::AttemptOutcome;
 pub(crate) use descent::{DescentGroup, DescentPlan, DescentRules, TailArm};
 pub(crate) use static_only::{EscapeResolution, EscapeResolutions};

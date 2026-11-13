@@ -24,7 +24,7 @@ use crate::optimization::AtnFallback;
 use super::cost::{AttemptKind, AttemptOutcome};
 use super::loop_block::LoopBlock;
 use super::table::{StaticDfaState, StaticDfaTable};
-use super::{Category, DecisionClassifier, DecisionResult};
+use super::{BudgetLimits, Category, DecisionClassifier, DecisionResult, ParserDfaBudgets};
 
 fn grammars_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -505,6 +505,7 @@ fn build_tables(path: &Path) -> (Vec<DecisionResult>, super::super::StaticParser
             .expect("parser artifact"),
         AtnFallback::Allowed,
         false,
+        &ParserDfaBudgets::default(),
     );
     let results = classify(path);
     (results, build.tables)
@@ -623,8 +624,12 @@ fn emitted_tables_validate_against_the_packed_atn() {
         let parser = compilation
             .parser(compilation.roots[0].parser.expect("parser root"))
             .expect("parser artifact");
-        let build =
-            crate::optimization::StaticParserDfa::build(parser, AtnFallback::Allowed, false);
+        let build = crate::optimization::StaticParserDfa::build(
+            parser,
+            AtnFallback::Allowed,
+            false,
+            &ParserDfaBudgets::default(),
+        );
         let packed = crate::grammar::atn::encode_packed_atn(parser.atn);
         let atn = PackedATNDeserializer::new()
             .deserialize(&packed)
@@ -756,9 +761,10 @@ fn simple_guarded_alternatives_need_no_escape() {
 }
 
 /// A follow that starts a new invocation of the loop's rule (`expr+`), or that
-/// consumes an operator outside the loop (`'set' expr '||' INT EOF`), puts all
-/// 39 iterate/exit states (20 conflict states and 19 budget-frontier states)
-/// under a stack guard.
+/// consumes an operator outside the loop (`'set' expr '||' INT EOF`), puts the
+/// 20 iterate/exit conflict states under a stack guard. The 19 budget-frontier
+/// states escape: their exit configs are widened, so their guard roots can be
+/// in a frame that the widening removed.
 #[test]
 fn foreign_consumption_guards_the_iterate_reading() {
     let results = classify(&grammars_dir().join("parser").join("LoopFrontier.g4"));
@@ -768,11 +774,8 @@ fn foreign_consumption_guards_the_iterate_reading() {
         .expect("the arithmetic loop decision");
     assert_eq!(result.k, 4);
     assert_eq!(result.num_dfa_states, 228);
-    assert_eq!(
-        result.escapes, 0,
-        "both conflict and frontier states are guarded, not escaped"
-    );
-    assert_eq!(result.guarded_iterates, 39);
+    assert_eq!(result.escapes, 19, "the frontier states escape");
+    assert_eq!(result.guarded_iterates, 20);
     assert_eq!(result.iterate_accepts, 0);
     assert!(!result.is_fully_static(), "a guard may defer");
     let classes = result.precedence.as_ref().expect("precedence tables");
@@ -794,7 +797,7 @@ fn foreign_consumption_guards_the_iterate_reading() {
         .copied()
         .filter(|state| state.is_guarded())
         .collect();
-    assert_eq!(guarded.len(), 39);
+    assert_eq!(guarded.len(), 20);
     let conflict_guards = guarded
         .iter()
         .filter(|state| state.conflicts == [1, 2])
@@ -803,7 +806,7 @@ fn foreign_consumption_guards_the_iterate_reading() {
         .iter()
         .filter(|state| state.conflicts.is_empty())
         .count();
-    assert_eq!((conflict_guards, frontier_guards), (20, 19));
+    assert_eq!((conflict_guards, frontier_guards), (20, 0));
     for state in guarded {
         assert_eq!(state.guarded_alt, 1, "a guarded iterate takes alt 1");
     }
@@ -1779,49 +1782,42 @@ fn exhausted_start_state_skips_the_hybrid_attempts() {
     );
 }
 
-/// The witness pass does not repeat an unbounded attempt that overflowed
-/// without a stop: only the widened attempt stopped, so only the widened
-/// attempt runs again.
+/// A hybrid attempt that spends the visit budget after the start state keeps
+/// a table: the states that it cannot expand escape. Only a start state that
+/// spends the budget leaves the decision without a table.
 #[test]
-fn witness_pass_skips_the_unstopped_unbounded_attempt() {
+fn hybrid_attempts_escape_where_the_visit_budget_runs_out() {
     let path =
         fixture("testcompositegrammars-testimportlargegrammar-110006096d").join("NewJava.g4");
     let results = classify_with_budget(&path, 2_000);
-    assert_eq!(results[7].category, Category::OVERFLOW);
+    assert_eq!(results[7].category, Category::HYBRID);
+    assert!(results[7].budget_cutoff);
+    assert!(results[7].escapes > 0);
     assert_eq!(
         attempts_of(&results, 7),
         [
             AttemptKind::Unbounded { abort: true },
             AttemptKind::Widened { abort: true },
             AttemptKind::Hybrid,
-            AttemptKind::Widened { abort: false },
         ]
     );
+
+    let results = classify_with_budget(&path, 100);
+    assert_eq!(results[7].category, Category::OVERFLOW);
+    assert!(results[7].table.is_none());
 }
 
-/// Each precedence class gets its own witness pass: a class with a table keeps
-/// it, and only the classes without a table run again.
+/// Each precedence class keeps a hybrid table when its construction spends
+/// the visit budget after the start state.
 #[test]
-fn precedence_classes_with_tables_need_no_witness_pass() {
+fn precedence_classes_keep_tables_where_the_visit_budget_runs_out() {
     let path = grammars_dir().join("parser").join("LoopFrontier.g4");
     let results = classify_with_budget(&path, 2_000);
     let precedence = results[4].precedence.as_ref().expect("precedence tables");
-    let adaptive = [
-        AttemptKind::Unbounded { abort: true },
-        AttemptKind::Hybrid,
-        AttemptKind::Unbounded { abort: false },
-        AttemptKind::Widened { abort: false },
-    ];
-    let mut expected = Vec::new();
-    for table in &precedence.tables {
-        match table {
-            Some(_) => expected.push(AttemptKind::Unbounded { abort: true }),
-            None => expected.extend(adaptive),
-        }
-    }
-    assert_eq!(precedence.adaptive_classes, 3);
+    assert_eq!(precedence.adaptive_classes, 0);
     assert_eq!(precedence.tables.len(), 5);
-    assert_eq!(attempts_of(&results, 4), expected);
+    assert!(precedence.tables.iter().all(Option::is_some));
+    assert!(results[4].budget_cutoff);
 }
 
 /// An unbounded attempt that stops at an untrusted conflict does not fall
@@ -1883,6 +1879,17 @@ fn parallel_classification_matches_serial_classification() {
     assert!(decisions > 800, "decisions classified: {decisions}");
 }
 
+/// Budget settings with the global visit budget `budget`.
+fn visit_budget(budget: u64) -> ParserDfaBudgets {
+    ParserDfaBudgets {
+        global: BudgetLimits {
+            max_visits: Some(budget),
+            ..BudgetLimits::default()
+        },
+        rules: Vec::new(),
+    }
+}
+
 /// Builds the pass artifact of the first root parser of one grammar under a
 /// visit budget.
 fn build_with_budget(
@@ -1897,11 +1904,11 @@ fn build_with_budget(
     let parser = compilation
         .parser(compilation.roots[0].parser.expect("parser root"))
         .expect("parser artifact");
-    crate::optimization::StaticParserDfa::build_with_budget(
+    crate::optimization::StaticParserDfa::build(
         parser,
         AtnFallback::Allowed,
         false,
-        budget,
+        &visit_budget(budget),
     )
 }
 
@@ -1922,11 +1929,11 @@ fn spent_visit_budgets_emit_g4s193_warnings() {
     assert_eq!(
         warnings,
         [
-            "the analysis of parser decision 0 of rule 'stat' is slow: 3 of 4 build attempts \
-             spent the visit budget (100 configs); 316 configs visited, 12 DFA states built; \
-             most visited rules: expr 94%, stat 5%",
-            "the analysis of parser decision 3 of rule 'expr' is slow: 9 of 13 build attempts \
-             spent the visit budget (100 configs); 1148 configs visited, 77 DFA states built; \
+            "the analysis of parser decision 0 of rule 'stat' is slow: 2 of 3 build attempts \
+             spent the visit budget (100 configs); 216 configs visited, 11 DFA states built; \
+             most visited rules: expr 95%, stat 4%",
+            "the analysis of parser decision 3 of rule 'expr' is slow: 6 of 10 build attempts \
+             spent the visit budget (100 configs); 848 configs visited, 60 DFA states built; \
              most visited rules: expr 89%, stat 10%",
         ]
     );
@@ -1979,7 +1986,7 @@ fn attempt_codes_follow_the_classes_and_the_fallback_policy() {
     );
     assert_eq!(
         results[4].cost.attempts_text(),
-        "c0: U! H$ u$ w$; c1: U! H$ u$ w$; c2: U! H$ u$ w$; c3: U; c4: U"
+        "c0: U! H$; c1: U! H$; c2: U! H$; c3: U; c4: U"
     );
 
     let path = grammars_dir().join("ReferenceToATN.g4");
@@ -2014,11 +2021,11 @@ fn profiled_builds_time_every_decision_and_list_the_slowest() {
     let parser = compilation
         .parser(compilation.roots[0].parser.expect("parser root"))
         .expect("parser artifact");
-    let build = crate::optimization::StaticParserDfa::build_with_budget(
+    let build = crate::optimization::StaticParserDfa::build(
         parser,
         AtnFallback::Allowed,
         true,
-        super::DEFAULT_VISIT_BUDGET,
+        &ParserDfaBudgets::default(),
     );
 
     assert_eq!(build.report.decisions.len(), 25);
@@ -2238,4 +2245,410 @@ fn unfolded_token_branches_emit_g4s194_warnings() {
         causes("Recursive", &recursive, "", 20),
         ["2:7 1 alternative is not a single token. 21 call sites enter the rule"]
     );
+}
+
+/// The compiler diagnostics and the pass artifact of a grammar written to a
+/// scratch directory, under `budgets`.
+fn build_source_with(
+    name: &str,
+    source: &str,
+    atn_fallback: AtnFallback,
+    budgets: &ParserDfaBudgets,
+) -> (
+    Vec<crate::grammar::diagnostic::Diagnostic>,
+    crate::optimization::static_parser_dfa::StaticParserDfaArtifact,
+) {
+    static SCRATCH: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let scratch = SCRATCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let directory = std::env::temp_dir().join(format!(
+        "dbt-antlr-budget-{}-{scratch}-{name}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("scratch directory");
+    let path = directory.join(format!("{name}.g4"));
+    std::fs::write(&path, source).expect("scratch grammar");
+    let compilation = compile(LoadOptions {
+        roots: vec![path],
+        library_directories: Vec::new(),
+    })
+    .expect("grammar compiles");
+    let _ = std::fs::remove_dir_all(&directory);
+    let parser = compilation
+        .parser(compilation.roots[0].parser.expect("parser root"))
+        .expect("parser artifact");
+    let build = crate::optimization::StaticParserDfa::build(parser, atn_fallback, false, budgets);
+    (compilation.diagnostics.clone(), build)
+}
+
+/// The budgets of the decisions of rule `rule`, in decision order.
+fn rule_budgets(
+    build: &crate::optimization::static_parser_dfa::StaticParserDfaArtifact,
+    rule: &str,
+) -> Vec<super::DecisionBudget> {
+    build
+        .report
+        .decisions
+        .iter()
+        .filter(|decision| decision.rule == rule)
+        .map(|decision| decision.result.budget)
+        .collect()
+}
+
+const BUDGET_GRAMMAR: &str = "grammar Budgets;
+options { max_dfa_states = 7; }
+s : a b EOF ;
+a options { max_k = 3; } : A B | A C ;
+b : ( options { max_dfa_visits = 5000; } : X Y | X Z ) | W ;
+A : 'a' ; B : 'b' ; C : 'c' ; X : 'x' ; Y : 'y' ; Z : 'z' ; W : 'w' ;
+";
+
+/// The grammar, rule, and block options set the budgets of the decisions, a
+/// block budget wins over a rule budget, which wins over a grammar budget, and
+/// each limit resolves on its own.
+#[test]
+fn budget_options_set_the_budgets_of_their_decisions() {
+    let (diagnostics, build) = build_source_with(
+        "Budgets",
+        BUDGET_GRAMMAR,
+        AtnFallback::Allowed,
+        &ParserDfaBudgets::default(),
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| !matches!(diagnostic.code, "G4S014" | "G4S015")),
+        "{diagnostics:?}"
+    );
+    let budget = |max_states, max_k, max_visits| super::DecisionBudget {
+        max_states,
+        max_k,
+        max_visits,
+        explicit_max_states: true,
+    };
+    assert_eq!(rule_budgets(&build, "a"), [budget(7, Some(3), 2_000_000)]);
+    assert_eq!(
+        rule_budgets(&build, "b"),
+        [budget(7, None, 5_000), budget(7, None, 2_000_000)]
+    );
+    assert_eq!(build.report.budget, budget(7, None, 2_000_000));
+}
+
+/// A `--dfa-budget` setting wins over the options of the grammar, and the
+/// global limits apply only where no option sets a limit.
+#[test]
+fn budget_selectors_win_over_the_budget_options() {
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits {
+            max_states: Some(50),
+            max_k: Some(2),
+            max_visits: Some(9_000),
+        },
+        rules: vec![super::BudgetRule::parse("b:states=9").expect("valid")],
+    };
+    let (_, build) = build_source_with("Budgets", BUDGET_GRAMMAR, AtnFallback::Allowed, &budgets);
+    let budget = |max_states, max_k, max_visits| super::DecisionBudget {
+        max_states,
+        max_k,
+        max_visits,
+        explicit_max_states: true,
+    };
+    assert_eq!(rule_budgets(&build, "a"), [budget(7, Some(3), 9_000)]);
+    assert_eq!(
+        rule_budgets(&build, "b"),
+        [budget(9, Some(2), 5_000), budget(9, Some(2), 9_000)]
+    );
+}
+
+/// A `--dfa-budget` selector that matches no decision gets a `G4S195`
+/// warning.
+#[test]
+fn unmatched_budget_selectors_emit_g4s195_warnings() {
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits::default(),
+        rules: vec![
+            super::BudgetRule::parse("missing:k=2").expect("valid"),
+            super::BudgetRule::parse("a:99:k=2").expect("valid"),
+            super::BudgetRule::parse("a:k=2").expect("valid"),
+        ],
+    };
+    let (_, build) = build_source_with("Budgets", BUDGET_GRAMMAR, AtnFallback::Allowed, &budgets);
+    let matched = crate::optimization::matched_budget_selectors(&build.report, &budgets);
+    assert_eq!(matched, [false, false, true]);
+    let diagnostics = crate::optimization::budget_selector_diagnostics(
+        &budgets,
+        &matched,
+        &build.report.source_span,
+    );
+    let warnings: Vec<_> = diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.code, diagnostic.message.as_str()))
+        .collect();
+    assert_eq!(
+        warnings,
+        [
+            (
+                "G4S195",
+                "--dfa-budget: no parser decision matches 'missing'"
+            ),
+            ("G4S195", "--dfa-budget: no parser decision matches 'a:99'"),
+        ]
+    );
+}
+
+/// A budget option with a value that is not a positive integer gets a
+/// `G4S015` warning, and the pass ignores it.
+#[test]
+fn incorrect_budget_option_values_emit_g4s015_warnings() {
+    let source = "grammar Wrong;
+options { max_dfa_states = 0; }
+s options { max_k = many; } : A B | A C ;
+A : 'a' ; B : 'b' ; C : 'c' ;
+";
+    let (diagnostics, build) = build_source_with(
+        "Wrong",
+        source,
+        AtnFallback::Allowed,
+        &ParserDfaBudgets::default(),
+    );
+    let warnings: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "G4S015")
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert_eq!(
+        warnings,
+        [
+            "unsupported option value max_dfa_states=0: the value must be at least 1",
+            "unsupported option value max_k=many: 'many' is not a positive integer",
+        ]
+    );
+    assert_eq!(
+        rule_budgets(&build, "s"),
+        [super::DecisionBudget::default()]
+    );
+}
+
+const FANOUT_GRAMMAR: &str = "grammar Fanout;
+s : a EOF ;
+a : A B X | A C X | A D X | A B Y | E ;
+A : 'a' ; B : 'b' ; C : 'c' ; D : 'd' ; E : 'e' ; X : 'x' ; Y : 'y' ;
+";
+
+/// A hybrid table escapes the state whose expansion would run past the state
+/// cap, also below depth 2, instead of losing the whole table. Under
+/// `--static-dfa-only`, the escape is a guess and not an error.
+#[test]
+fn state_caps_cut_hybrid_tables_instead_of_failing_them() {
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits {
+            max_states: Some(4),
+            ..BudgetLimits::default()
+        },
+        rules: Vec::new(),
+    };
+    let (_, build) = build_source_with("Fanout", FANOUT_GRAMMAR, AtnFallback::Allowed, &budgets);
+    let decision = &build.report.decisions[0];
+    assert_eq!(decision.rule, "a");
+    assert_eq!(decision.result.category, Category::HYBRID);
+    assert!(decision.result.budget_cutoff);
+    assert_eq!(decision.result.num_dfa_states, 3);
+
+    let (_, build) = build_source_with("Fanout", FANOUT_GRAMMAR, AtnFallback::Forbidden, &budgets);
+    let messages: Vec<_> = build
+        .diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.code, diagnostic.message.as_str()))
+        .collect();
+    assert_eq!(
+        messages,
+        [(
+            "G4S192",
+            "parser decision 0 of rule 'a' resolves its escape states without adaptivePredict: \
+             1 undecided state predicts the minimum viable alternative (witness: 'a'); the \
+             analysis budget (4 states or 2000000 visited configs) stopped the lookahead; raise \
+             it with --max-dfa-states and --max-dfa-visits, a --dfa-budget setting, or the \
+             max_dfa_states and max_dfa_visits options"
+        )]
+    );
+
+    let (_, build) = build_source_with(
+        "Fanout",
+        FANOUT_GRAMMAR,
+        AtnFallback::Forbidden,
+        &ParserDfaBudgets::default(),
+    );
+    assert!(build.diagnostics.is_empty(), "{:?}", build.diagnostics);
+}
+
+const SPLIT_OPERATOR_GRAMMAR: &str = "grammar Split;
+s : e EOF ;
+e : e '+' 'q' 'a' | e '*' e | e '+' 'q' 'b' | 'x' ;
+";
+
+/// The accept of the state that `tokens` reach from the start of `table`.
+fn accept_after(table: &StaticDfaTable, tokens: &[i32]) -> Option<i32> {
+    let mut state = 0;
+    for token in tokens {
+        state = table.states[state]
+            .edges
+            .iter()
+            .find(|edge| edge.lo <= *token && *token <= edge.hi)?
+            .target;
+    }
+    Some(table.states[state].accept)
+}
+
+/// A frontier state where a multi-token operator has not yet separated the
+/// alternatives does not resolve to iterate. In the class of the right operand
+/// of `*`, only the first `+` operator iterates, and the exit lineage enters
+/// the second `+` operator again: after `+ q`, the input can still be `b`.
+#[test]
+fn frontier_iterates_need_every_exit_position_in_the_iterate_lineage() {
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits {
+            max_states: Some(5),
+            ..BudgetLimits::default()
+        },
+        rules: Vec::new(),
+    };
+    let (_, build) = build_source_with(
+        "Split",
+        SPLIT_OPERATOR_GRAMMAR,
+        AtnFallback::Allowed,
+        &budgets,
+    );
+    let token = |name: &str| {
+        build
+            .report
+            .vocabulary
+            .iter()
+            .position(|display| display == name)
+            .map(|index| index as i32 + 1)
+            .expect("token in vocabulary")
+    };
+    let path = [token("'+'"), token("'q'")];
+    let decision = build
+        .report
+        .decisions
+        .iter()
+        .find(|decision| decision.result.category == Category::LR_PRECEDENCE)
+        .expect("a precedence loop decision");
+    let precedence = decision.result.precedence.as_ref().expect("classes");
+    let accepts: Vec<_> = precedence
+        .tables
+        .iter()
+        .map(|table| table.as_ref().and_then(|table| accept_after(table, &path)))
+        .collect();
+    assert_eq!(precedence.cutoffs, [2, 3, 4]);
+    // The class `p=4` escapes after `+ q` instead of predicting the iterate.
+    assert_eq!(accepts[2], Some(super::ESCAPE), "{accepts:?}");
+}
+
+/// Split-operator accepts in the class `p=4` after `+ q`, for a grammar
+/// built with the state cap `max_states`.
+fn split_operator_accepts(name: &str, source: &str, max_states: usize) -> Vec<Option<i32>> {
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits {
+            max_states: Some(max_states),
+            ..BudgetLimits::default()
+        },
+        rules: Vec::new(),
+    };
+    let (_, build) = build_source_with(name, source, AtnFallback::Allowed, &budgets);
+    let token = |name: &str| {
+        build
+            .report
+            .vocabulary
+            .iter()
+            .position(|display| display == name)
+            .map(|index| index as i32 + 1)
+            .expect("token in vocabulary")
+    };
+    let path = [token("'+'"), token("'q'")];
+    let decision = build
+        .report
+        .decisions
+        .iter()
+        .find(|decision| decision.result.category == Category::LR_PRECEDENCE)
+        .expect("a precedence loop decision");
+    let precedence = decision.result.precedence.as_ref().expect("classes");
+    precedence
+        .tables
+        .iter()
+        .map(|table| table.as_ref().and_then(|table| accept_after(table, &path)))
+        .collect()
+}
+
+/// A foreign exit config does not make the frontier state a guard candidate
+/// when another exit config of the state is not in the iterate lineage. The
+/// stack guard only sees the roots of the foreign lineage, so it would predict
+/// the iterate on `x * x + q b`.
+#[test]
+fn frontier_iterate_guards_need_every_loop_exit_in_the_iterate_lineage() {
+    let source = "grammar SplitGuard;
+s : e EOF | 'between' e '+' 'q' 'z' ;
+e : e '+' 'q' 'a' | e '*' e | e '+' 'q' 'b' | 'x' ;
+";
+    let accepts = split_operator_accepts("SplitGuard", source, 5);
+    assert_eq!(accepts[2], Some(super::ESCAPE), "{accepts:?}");
+}
+
+/// The decisions inside a block get the budget options of the blocks around
+/// them, and an inner block wins over an outer block. Only the budget option
+/// names set a budget: `k` is not one of them.
+#[test]
+fn nested_blocks_inherit_the_budget_options_of_outer_blocks() {
+    let source = "grammar Nested;
+options { k = 2; }
+s : ( options { max_k = 5; max_dfa_visits = 7000; } :
+      ( options { max_k = 6; } : A B | A C ) D
+    | E
+    ) EOF ;
+A : 'a' ; B : 'b' ; C : 'c' ; D : 'd' ; E : 'e' ;
+";
+    let (diagnostics, build) = build_source_with(
+        "Nested",
+        source,
+        AtnFallback::Allowed,
+        &ParserDfaBudgets::default(),
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "G4S014"
+                && diagnostic.message == "unsupported option k"),
+        "{diagnostics:?}"
+    );
+    let limits: Vec<_> = rule_budgets(&build, "s")
+        .iter()
+        .map(|budget| (budget.max_k, budget.max_visits))
+        .collect();
+    assert_eq!(limits, [(Some(6), 7_000), (Some(5), 7_000)]);
+}
+
+/// A lexer grammar or a lexer rule has no parser decisions, so the budget
+/// options are not supported there.
+#[test]
+fn lexer_grammars_do_not_support_budget_options() {
+    let directory =
+        std::env::temp_dir().join(format!("dbt-antlr-budget-lexer-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("scratch directory");
+    let path = directory.join("Words.g4");
+    std::fs::write(
+        &path,
+        "lexer grammar Words;\noptions { max_k = 2; }\nA options { max_k = 3; } : 'a' | 'b' ;\n",
+    )
+    .expect("scratch grammar");
+    let compilation = compile(LoadOptions {
+        roots: vec![path],
+        library_directories: Vec::new(),
+    })
+    .expect("grammar compiles");
+    let _ = std::fs::remove_dir_all(&directory);
+    let unsupported = compilation
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.message == "unsupported option max_k")
+        .count();
+    assert_eq!(unsupported, 2, "{:?}", compilation.diagnostics);
 }

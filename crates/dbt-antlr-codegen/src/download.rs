@@ -293,6 +293,19 @@ pub(crate) fn generate_with_pinned_binary(
     if optimization.static_dfa_only_enabled() {
         command.arg("--static-dfa-only");
     }
+    let budget = optimization.dfa_budget_limits();
+    if let Some(states) = budget.max_states {
+        command.arg(format!("--max-dfa-states={states}"));
+    }
+    if let Some(depth) = budget.max_k {
+        command.arg(format!("--max-dfa-depth={depth}"));
+    }
+    if let Some(visits) = budget.max_visits {
+        command.arg(format!("--max-dfa-visits={visits}"));
+    }
+    for spec in optimization.dfa_budget_specs() {
+        command.arg(format!("--dfa-budget={spec}"));
+    }
     if optimization.is_report_only() {
         command.arg("--report-only");
     }

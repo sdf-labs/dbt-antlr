@@ -2,6 +2,18 @@
 // Copyright (c) 2026 Konstantin Vyatkin
 use std::collections::BTreeSet;
 
+/// The analysis budget limits that one source sets. A limit that is `None`
+/// comes from a source with a lower priority.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct BudgetLimits {
+    /// The state cap of a decision table.
+    pub(crate) max_states: Option<usize>,
+    /// The depth at which a hybrid table stops.
+    pub(crate) max_k: Option<usize>,
+    /// The configs that one build attempt can visit.
+    pub(crate) max_visits: Option<u64>,
+}
+
 /// Optimization selection for one generation run.
 ///
 /// Grammar transforms rewrite the grammar model before ATN construction.
@@ -38,6 +50,8 @@ pub struct OptimizationOptions {
     pub(crate) dump_dfas: Option<String>,
     pub(crate) profile_decisions: bool,
     pub(crate) report_only: bool,
+    pub(crate) dfa_budget: BudgetLimits,
+    pub(crate) dfa_budget_specs: Vec<String>,
 }
 
 impl OptimizationOptions {
@@ -134,6 +148,52 @@ impl OptimizationOptions {
         self
     }
 
+    /// Sets the state cap of each static parser DFA table
+    /// (`--max-dfa-states`). Default: 1000.
+    ///
+    /// The cap must be at most 32767. When a table row has many token columns,
+    /// the generator clamps the cap to the size that the table image can hold.
+    /// The `max_dfa_states` option of a grammar, a rule, or a block, and
+    /// [`Self::dfa_budget`], change the cap for some decisions.
+    pub const fn max_dfa_states(&mut self, states: usize) -> &mut Self {
+        self.dfa_budget.max_states = Some(states);
+        self
+    }
+
+    /// Sets the depth at which a hybrid static parser DFA table stops
+    /// (`--max-dfa-depth`). Default: 16 with
+    /// [`Self::static_dfa_only`], otherwise 4.
+    ///
+    /// The `max_k` option of a grammar, a rule, or a block, and
+    /// [`Self::dfa_budget`], change the depth for some decisions.
+    pub const fn max_dfa_depth(&mut self, depth: usize) -> &mut Self {
+        self.dfa_budget.max_k = Some(depth);
+        self
+    }
+
+    /// Sets the configs that one static parser DFA build attempt can visit
+    /// (`--max-dfa-visits`). Default: 2000 for each state of the state cap,
+    /// and at least 2,000,000.
+    ///
+    /// The `max_dfa_visits` option of a grammar, a rule, or a block, and
+    /// [`Self::dfa_budget`], change the budget for some decisions.
+    pub const fn max_dfa_visits(&mut self, visits: u64) -> &mut Self {
+        self.dfa_budget.max_visits = Some(visits);
+        self
+    }
+
+    /// Sets the analysis budget of some parser decisions
+    /// (`--dfa-budget <SPEC>`). Repeatable. A later setting wins over an
+    /// earlier one.
+    ///
+    /// `spec` is `SELECTOR:SETTING[,SETTING...]`. The selector is a decision
+    /// number, a rule name, or `rule:decision`. A setting is `states=N`,
+    /// `k=N`, or `visits=N`. For example, `selectStmt:states=4000,k=6`.
+    pub fn dfa_budget(&mut self, spec: impl Into<String>) -> &mut Self {
+        self.dfa_budget_specs.push(spec.into());
+        self
+    }
+
     /// Compiles, analyzes, and optimizes the input grammars without writing
     /// output files (`--report-only`, `--dry-run`, `-n`). Default: `false`.
     pub const fn report_only(&mut self, enabled: bool) -> &mut Self {
@@ -181,6 +241,16 @@ impl OptimizationOptions {
     #[cfg(feature = "download")]
     pub(crate) const fn static_dfa_only_enabled(&self) -> bool {
         self.static_dfa_only
+    }
+
+    #[cfg(feature = "download")]
+    pub(crate) const fn dfa_budget_limits(&self) -> BudgetLimits {
+        self.dfa_budget
+    }
+
+    #[cfg(feature = "download")]
+    pub(crate) fn dfa_budget_specs(&self) -> impl Iterator<Item = &str> {
+        self.dfa_budget_specs.iter().map(String::as_str)
     }
 
     /// Whether the selection prints parser reports, which only the in-process

@@ -115,6 +115,10 @@ fn help_text_lists_the_static_lexer_dfa_flag() {
         "--report-decisions",
         "--dump-dfas",
         "--profile-decisions",
+        "--max-dfa-states",
+        "--max-dfa-depth",
+        "--max-dfa-visits",
+        "--dfa-budget",
     ] {
         assert!(
             error.to_string().contains(flag),

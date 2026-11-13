@@ -16,6 +16,7 @@ use super::provenance::{MandatoryTransform, Origin, ProvenanceIndex, Tombstone};
 use super::syntax::parse_grammar_unit;
 use super::transform::TransformGrammar;
 use super::validation::validate_model;
+use crate::optimization::parser_dfa::has_non_budget_option;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct RootOutputs {
@@ -682,7 +683,9 @@ fn block_set_members(
     block: &Block,
     lexer: bool,
 ) -> Option<(Vec<SetElement>, Vec<ModelNodeId>, Vec<LexerCommand>)> {
-    if !block.options.is_empty() || block.alternatives.len() < 2 {
+    // A budget option changes only the analysis of the decision, which the
+    // set removes.
+    if has_non_budget_option(&block.options) || block.alternatives.len() < 2 {
         return None;
     }
     let commands = block.alternatives.first()?.commands.clone();

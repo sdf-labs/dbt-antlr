@@ -20,6 +20,13 @@
 //!                                 (implies report-only)
 //!   --profile-decisions           print the time and work of each parser decision
 //!                                 analysis (implies report-only)
+//!   --max-dfa-states <N>          state cap of each static parser DFA table (default 1000)
+//!   --max-dfa-depth <K>           depth at which a hybrid parser DFA table stops
+//!                                 (default 16 with --static-dfa-only, otherwise 4)
+//!   --max-dfa-visits <N>          configs one parser DFA build attempt can visit
+//!                                 (default 2000 per state of the cap, at least 2000000)
+//!   --dfa-budget <SPEC>           budget of some decisions (repeatable), for example
+//!                                 selectStmt:states=4000,k=6
 //!   --entry-rule <NAME>           mark NAME as a parser entry rule (repeatable)
 //!   --prune-unreachable-rules     delete parser rules unreachable from the entry rules
 //!   --inline-trivial-rules        inline trivial pure parser rules into their callers
@@ -48,6 +55,13 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
                                 (implies report-only)
   --profile-decisions           print the time and work of each parser decision
                                 analysis (implies report-only)
+  --max-dfa-states <N>          state cap of each static parser DFA table (default 1000)
+  --max-dfa-depth <K>           depth at which a hybrid parser DFA table stops
+                                (default 16 with --static-dfa-only, otherwise 4)
+  --max-dfa-visits <N>          configs one parser DFA build attempt can visit
+                                (default 2000 per state of the cap, at least 2000000)
+  --dfa-budget <SPEC>           budget of some decisions (repeatable), for example
+                                selectStmt:states=4000,k=6
   --entry-rule <NAME>           mark NAME as a parser entry rule (repeatable)
   --prune-unreachable-rules     delete parser rules unreachable from the entry rules
   --inline-trivial-rules        inline trivial pure parser rules into their callers
@@ -68,6 +82,10 @@ struct CliArgs {
     report_decisions: bool,
     dump_dfas: Option<String>,
     profile_decisions: bool,
+    max_dfa_states: Option<usize>,
+    max_dfa_depth: Option<usize>,
+    max_dfa_visits: Option<u64>,
+    dfa_budgets: Vec<String>,
     entry_rules: Vec<String>,
     prune_unreachable: bool,
     inline_trivial: bool,
@@ -87,6 +105,10 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let mut report_decisions = false;
     let mut dump_dfas = None;
     let mut profile_decisions = false;
+    let mut max_dfa_states = None;
+    let mut max_dfa_depth = None;
+    let mut max_dfa_visits = None;
+    let mut dfa_budgets = Vec::new();
     let mut entry_rules = Vec::new();
     let mut prune_unreachable = false;
     let mut inline_trivial = false;
@@ -124,6 +146,18 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
                 }
                 dump_dfas = Some(spec.to_owned());
             }
+            _ if is_option(arg, "--max-dfa-states") => {
+                max_dfa_states = Some(positive(arg, &option_value(arg, args, &mut index)?)?);
+            }
+            _ if is_option(arg, "--max-dfa-depth") => {
+                max_dfa_depth = Some(positive(arg, &option_value(arg, args, &mut index)?)?);
+            }
+            _ if is_option(arg, "--max-dfa-visits") => {
+                max_dfa_visits = Some(positive(arg, &option_value(arg, args, &mut index)?)?);
+            }
+            _ if is_option(arg, "--dfa-budget") => {
+                dfa_budgets.push(option_value(arg, args, &mut index)?);
+            }
             "--entry-rule" => {
                 entry_rules.push(value_after(arg, args, &mut index)?);
             }
@@ -160,12 +194,45 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         report_decisions,
         dump_dfas,
         profile_decisions,
+        max_dfa_states,
+        max_dfa_depth,
+        max_dfa_visits,
+        dfa_budgets,
         entry_rules,
         prune_unreachable,
         inline_trivial,
         optimize_ladders,
         report_only,
     })
+}
+
+/// Whether `arg` is the option `name`, as `name` or as `name=VALUE`.
+fn is_option(arg: &str, name: &str) -> bool {
+    arg.strip_prefix(name)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('='))
+}
+
+/// The value of the option `arg`: the text after `=`, or the next argument.
+fn option_value(arg: &str, args: &[String], index: &mut usize) -> miette::Result<String> {
+    match arg.split_once('=') {
+        Some((name, "")) => Err(miette::miette!("option {name} expects a value\n{USAGE}")),
+        Some((_, value)) => Ok(value.to_owned()),
+        None => value_after(arg, args, index),
+    }
+}
+
+/// The value of the option `arg` as a positive integer.
+fn positive<T: std::str::FromStr + Default + PartialEq>(
+    arg: &str,
+    value: &str,
+) -> miette::Result<T> {
+    let name = arg.split_once('=').map_or(arg, |(name, _)| name);
+    match value.parse::<T>() {
+        Ok(parsed) if parsed != T::default() => Ok(parsed),
+        _ => Err(miette::miette!(
+            "option {name} expects a positive integer, not '{value}'\n{USAGE}"
+        )),
+    }
 }
 
 fn value_after(option: &str, args: &[String], index: &mut usize) -> miette::Result<String> {
@@ -233,6 +300,18 @@ pub fn run(
         .report_only(cli.report_only);
     if let Some(spec) = &cli.dump_dfas {
         config.dump_dfas(spec);
+    }
+    if let Some(states) = cli.max_dfa_states {
+        config.max_dfa_states(states);
+    }
+    if let Some(depth) = cli.max_dfa_depth {
+        config.max_dfa_depth(depth);
+    }
+    if let Some(visits) = cli.max_dfa_visits {
+        config.max_dfa_visits(visits);
+    }
+    for spec in &cli.dfa_budgets {
+        config.dfa_budget(spec);
     }
     for dir in &cli.lib_dirs {
         config.lib_dir(dir);
@@ -330,6 +409,38 @@ mod tests {
         assert!(cli.static_dfa_only);
         let cli = parse(&["T.g4"]).expect("minimal command line parses");
         assert!(!cli.static_dfa_only);
+    }
+
+    #[test]
+    fn dfa_budget_flags_parse() {
+        let cli = parse(&["T.g4"]).expect("minimal command line parses");
+        assert_eq!(
+            (cli.max_dfa_states, cli.max_dfa_depth, cli.max_dfa_visits),
+            (None, None, None)
+        );
+        assert!(cli.dfa_budgets.is_empty());
+
+        let cli = parse(&[
+            "--max-dfa-states",
+            "4000",
+            "--max-dfa-depth=6",
+            "--max-dfa-visits=9000000",
+            "--dfa-budget",
+            "selectStmt:states=8000",
+            "--dfa-budget=expr:3:k=8",
+            "T.g4",
+        ])
+        .expect("budget flags parse");
+        assert_eq!(cli.max_dfa_states, Some(4000));
+        assert_eq!(cli.max_dfa_depth, Some(6));
+        assert_eq!(cli.max_dfa_visits, Some(9_000_000));
+        assert_eq!(cli.dfa_budgets, ["selectStmt:states=8000", "expr:3:k=8"]);
+
+        assert!(parse(&["--max-dfa-states=0", "T.g4"]).is_err());
+        assert!(parse(&["--max-dfa-depth=deep", "T.g4"]).is_err());
+        assert!(parse(&["--max-dfa-visits=", "T.g4"]).is_err());
+        assert!(parse(&["T.g4", "--dfa-budget"]).is_err());
+        assert!(parse(&["--max-dfa-statesx=3", "T.g4"]).is_err());
     }
 
     #[test]
