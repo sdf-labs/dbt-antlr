@@ -28,9 +28,10 @@
 //! resolved escape states gets a warning (`G4S192`). The warning names the
 //! alternatives that each guess chooses and drops, and ranks the guesses by
 //! their prefix-hijack hazard (see `parser_dfa::hazard`). For guarded states,
-//! the warning also names the rules and lines of the calls where the stack
-//! guard defers. `--dump-dfas` shows this caller for each invoking state of a
-//! danger set, for example `danger=[47 (query:25)]`.
+//! the warning also names the calls where the stack guard defers: the rule,
+//! the label of the alternative, and the line. `--dump-dfas` shows this caller
+//! for each invoking state of a danger set, for example
+//! `danger=[47 (query:25), 56 (expr#cast:30)]`.
 //!
 //! Each decision has an analysis budget (see `parser_dfa::budget`). The
 //! budget options of the grammar, its rules, and its blocks set it.
@@ -400,26 +401,31 @@ pub(crate) struct StaticParserDfaReport {
     pub(crate) profile: Option<ClassificationProfile>,
 }
 
-/// The rule that an invoking state calls from, and the source line of the
-/// call.
+/// The rule that an invoking state calls from, the label of the alternative
+/// that holds the call, and the source line of the call.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct InvokingState {
     pub(crate) rule: String,
+    pub(crate) label: Option<String>,
     pub(crate) line: Option<usize>,
 }
 
 impl fmt::Display for InvokingState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.line {
-            Some(line) => write!(f, "{}:{line}", self.rule),
-            None => f.write_str(&self.rule),
+        f.write_str(&self.rule)?;
+        if let Some(label) = &self.label {
+            write!(f, "#{label}")?;
         }
+        if let Some(line) = self.line {
+            write!(f, ":{line}")?;
+        }
+        Ok(())
     }
 }
 
 impl StaticParserDfaReport {
     /// A danger set with the caller of each invoking state, for example
-    /// `[47 (expr:30), 56 (query:24)]`.
+    /// `[47 (query:25), 56 (expr#cast:30)]`.
     fn danger_text(&self, danger: &[i32]) -> String {
         let states: Vec<String> = danger
             .iter()
@@ -2161,7 +2167,7 @@ fn resolution_text(
 }
 
 /// The distinct callers of the invoking states of a danger set, for a
-/// `G4S192` warning, for example `danger callers: expr:30, query:24`. The
+/// `G4S192` warning, for example `danger callers: query:25, expr#cast:30`. The
 /// caller of the lowest invoking state comes first.
 fn danger_callers_text(report: &StaticParserDfaReport, danger: &[i32]) -> Option<String> {
     let mut callers: Vec<String> = Vec::new();
@@ -2226,31 +2232,57 @@ fn danger_invoking_states(
     states
 }
 
-/// The rule of ATN state `state` and the source line of the rule call that
-/// leaves the state.
+/// The rule of ATN state `state`, the label of the alternative of the rule
+/// call that leaves the state, and the source line of the call.
 fn invoking_state(compiled: &CompiledParser, sources: &SourceSet, state: i32) -> InvokingState {
     let graph_state = usize::try_from(state)
         .ok()
         .and_then(|state| compiled.graph.states.get(state));
-    let rule = graph_state
-        .and_then(|state| state.rule_index)
+    let rule_index = graph_state.and_then(|state| state.rule_index);
+    let rule = rule_index
         .and_then(|rule| compiled.semantic.recognizer.rule_names.get(rule))
         .cloned()
         .unwrap_or_else(|| "?".to_owned());
-    let line = graph_state
-        .and_then(|state| {
-            let call_origins = state
-                .transitions
-                .iter()
-                .flat_map(|transition| compiled.provenance.transition_origins(*transition));
-            let state_origins = compiled.provenance.state_origins(state.original);
-            call_origins
-                .chain(state_origins)
-                .find_map(|origin| origin_span(compiled, origin))
-        })
+    let span = graph_state.and_then(|state| {
+        let call_origins = state
+            .transitions
+            .iter()
+            .flat_map(|transition| compiled.provenance.transition_origins(*transition));
+        let state_origins = compiled.provenance.state_origins(state.original);
+        call_origins
+            .chain(state_origins)
+            .find_map(|origin| origin_span(compiled, origin))
+    });
+    let label = span.as_ref().and_then(|span| {
+        let rule = compiled.semantic.unit.rules.get(rule_index?)?;
+        labeled_alternative(&rule.block, span)
+    });
+    let line = span
         .and_then(|span| sources.line_column(span.source, span.bytes.start))
         .map(|(line, _)| line);
-    InvokingState { rule, line }
+    InvokingState { rule, label, line }
+}
+
+/// The label of the alternative of `block` or of a nested block that holds
+/// `span`. Only the outer alternatives of a rule have labels, but the
+/// left-recursion rewrite can move them into nested blocks.
+fn labeled_alternative(block: &Block, span: &SourceSpan) -> Option<String> {
+    block.alternatives.iter().find_map(|alternative| {
+        if let Some(label) = &alternative.label
+            && alternative.span.source == span.source
+            && alternative.span.bytes.start <= span.bytes.start
+            && span.bytes.end <= alternative.span.bytes.end
+        {
+            return Some(label.value.clone());
+        }
+        alternative
+            .elements
+            .iter()
+            .find_map(|element| match &element.kind {
+                ElementKind::Block(inner) => labeled_alternative(inner, span),
+                _ => None,
+            })
+    })
 }
 
 /// The authored span of one origin, or the span of the model node that a

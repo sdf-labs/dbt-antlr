@@ -1158,7 +1158,7 @@ fn static_dfa_only_keeps_the_stack_guards() {
         .unwrap_or_else(|| panic!("no guard clause: {warning}"));
     assert!(guarded > 0);
     assert!(
-        warning.contains("; danger callers: query:25, expr:30)"),
+        warning.contains("; danger callers: query:25, expr#cast:30)"),
         "the warning names the callers of the danger set: {warning}"
     );
     let manifest = output.optimization_manifest.expect("manifest written");
@@ -1187,7 +1187,7 @@ fn static_dfa_only_keeps_the_stack_guards() {
         "{dump}"
     );
     assert!(
-        dump.contains("    group 0: danger=[47 (query:25), 56 (expr:30)]\n"),
+        dump.contains("    group 0: danger=[47 (query:25), 56 (expr#cast:30)]\n"),
         "the dump names the caller of each invoking state: {dump}"
     );
 }
