@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-codegen-v0.8.1...dbt-antlr-codegen-v0.9.0) - 2026-11-13
+
+### Added
+
+- *(codegen)* name the callers of guard danger sets in --dump-dfas and G4S192 ([#101](https://github.com/sdf-labs/dbt-antlr/pull/101))
+- *(codegen)* -q/--quiet, Config::quiet, and a CLI diagnostics summary line ([#100](https://github.com/sdf-labs/dbt-antlr/pull/100))
+- *(codegen)* surface implicit parser token definitions and reject them with --strict ([#95](https://github.com/sdf-labs/dbt-antlr/pull/95))
+- *(codegen)* per-grammar optimization manifests with a decision inventory ([#96](https://github.com/sdf-labs/dbt-antlr/pull/96))
+- *(codegen)* --explain differential fault localizer for static parser DFAs ([#97](https://github.com/sdf-labs/dbt-antlr/pull/97))
+- *(codegen)* rank --static-dfa-only guesses by prefix-hijack hazard ([#94](https://github.com/sdf-labs/dbt-antlr/pull/94))
+- *(codegen)* name the competing alternatives in static DFA diagnostics ([#93](https://github.com/sdf-labs/dbt-antlr/pull/93))
+- *(codegen)* share accept states and minimize static parser tables ([#89](https://github.com/sdf-labs/dbt-antlr/pull/89))
+- *(codegen)* configurable static parser DFA budgets ([#88](https://github.com/sdf-labs/dbt-antlr/pull/88))
+- *(codegen,runtime)* keep stack guards under --static-dfa-only ([#79](https://github.com/sdf-labs/dbt-antlr/pull/79))
+- *(codegen)* warn on unfolded single-token blocks in hot rules (G4S194) ([#78](https://github.com/sdf-labs/dbt-antlr/pull/78))
+- *(codegen)* report the cost of parser DFA decisions (G4S193, --profile-decisions) ([#75](https://github.com/sdf-labs/dbt-antlr/pull/75))
+
+### Fixed
+
+- *(codegen)* do not trust widened contexts in static parser tables ([#90](https://github.com/sdf-labs/dbt-antlr/pull/90))
+- *(tests)* resolve harness artifacts under cargo 1.100's target layout ([#80](https://github.com/sdf-labs/dbt-antlr/pull/80))
+
+### Other
+
+- Fix Cargo 1.100 warnings ([#99](https://github.com/sdf-labs/dbt-antlr/pull/99))
+- *(codegen)* share one closure between token classes that start from the same steps ([#77](https://github.com/sdf-labs/dbt-antlr/pull/77))
+- *(codegen,runtime)* make the LL(1) lookahead linear in the call depth ([#76](https://github.com/sdf-labs/dbt-antlr/pull/76))
+- *(codegen)* classify parser DFA decisions in parallel ([#74](https://github.com/sdf-labs/dbt-antlr/pull/74))
+- *(codegen)* prune redundant parser DFA classification attempts ([#73](https://github.com/sdf-labs/dbt-antlr/pull/73))
+- *(runtime,codegen)* flat packed static parser table image, embedded zero-copy ([#72](https://github.com/sdf-labs/dbt-antlr/pull/72))
+- *(runtime,codegen)* flat packed static lexer DFA image, embedded zero-copy ([#67](https://github.com/sdf-labs/dbt-antlr/pull/67))
+
+### Tests
+
+- stage scratch crates in the target dir, not /tmp/pi ([#86](https://github.com/sdf-labs/dbt-antlr/pull/86))
+
 ## [0.8.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-codegen-v0.7.0...dbt-antlr-codegen-v0.8.0) - 2026-11-10
 
 ### Other

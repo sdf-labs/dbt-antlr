@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-g4-parser-v0.8.1...dbt-antlr-g4-parser-v0.9.0) - 2026-11-13
+
+### Added
+
+- *(codegen)* per-grammar optimization manifests with a decision inventory ([#96](https://github.com/sdf-labs/dbt-antlr/pull/96))
+- *(codegen)* share accept states and minimize static parser tables ([#89](https://github.com/sdf-labs/dbt-antlr/pull/89))
+- *(codegen,runtime)* keep stack guards under --static-dfa-only ([#79](https://github.com/sdf-labs/dbt-antlr/pull/79))
+
+### Other
+
+- Fix Cargo 1.100 warnings ([#99](https://github.com/sdf-labs/dbt-antlr/pull/99))
+- *(runtime,codegen)* flat packed static parser table image, embedded zero-copy ([#72](https://github.com/sdf-labs/dbt-antlr/pull/72))
+- *(runtime,codegen)* flat packed static lexer DFA image, embedded zero-copy ([#67](https://github.com/sdf-labs/dbt-antlr/pull/67))
+
 ## [0.7.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-g4-parser-v0.6.2...dbt-antlr-g4-parser-v0.7.0) - 2026-11-03
 
 ### Added
