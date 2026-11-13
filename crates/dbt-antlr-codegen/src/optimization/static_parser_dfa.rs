@@ -27,12 +27,16 @@
 //! still needs `adaptivePredict` is an error (`G4S190`), and a decision with
 //! resolved escape states gets a warning (`G4S192`). The warning names the
 //! alternatives that each guess chooses and drops, and ranks the guesses by
-//! their prefix-hijack hazard (see `parser_dfa::hazard`).
+//! their prefix-hijack hazard (see `parser_dfa::hazard`). For guarded states,
+//! the warning also names the rules and lines of the calls where the stack
+//! guard defers. `--dump-dfas` shows this caller for each invoking state of a
+//! danger set, for example `danger=[47 (query:25)]`.
 //!
 //! Each decision has an analysis budget (see `parser_dfa::budget`). The
 //! budget options of the grammar, its rules, and its blocks set it.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::time::{Duration, Instant};
 
 use minijinja::Value;
@@ -77,6 +81,8 @@ const VISIT_BUDGET_SPENT: &str = "G4S193";
 const TOKEN_BRANCHES: &str = "G4S194";
 /// The tie-break groups that a `G4S192` warning names at most.
 const TIE_BREAK_GROUPS: usize = 3;
+/// The danger callers that a `G4S192` warning names at most.
+const DANGER_CALLERS: usize = 3;
 
 /// The minimum number of call sites that enter a rule, for a `G4S194`
 /// warning.
@@ -240,6 +246,7 @@ impl StaticParserDfa {
             source_span: compiled.semantic.unit.span.clone(),
             vocabulary,
             rule_names: recognizer.rule_names.clone(),
+            invoking_states: danger_invoking_states(compiled, sources, &results),
             decisions,
             atn_fallback,
             budget,
@@ -380,6 +387,9 @@ pub(crate) struct StaticParserDfaReport {
     pub(crate) vocabulary: Vec<String>,
     /// Rule names, indexed by rule index.
     pub(crate) rule_names: Vec<String>,
+    /// The caller of each invoking state in a guard danger set, by ATN state
+    /// number.
+    pub(crate) invoking_states: BTreeMap<i32, InvokingState>,
     pub(crate) decisions: Vec<StaticParserDecisionReport>,
     /// Whether the generated parser can defer to the adaptive simulation.
     pub(crate) atn_fallback: AtnFallback,
@@ -390,7 +400,37 @@ pub(crate) struct StaticParserDfaReport {
     pub(crate) profile: Option<ClassificationProfile>,
 }
 
+/// The rule that an invoking state calls from, and the source line of the
+/// call.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct InvokingState {
+    pub(crate) rule: String,
+    pub(crate) line: Option<usize>,
+}
+
+impl fmt::Display for InvokingState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.line {
+            Some(line) => write!(f, "{}:{line}", self.rule),
+            None => f.write_str(&self.rule),
+        }
+    }
+}
+
 impl StaticParserDfaReport {
+    /// A danger set with the caller of each invoking state, for example
+    /// `[47 (expr:30), 56 (query:24)]`.
+    fn danger_text(&self, danger: &[i32]) -> String {
+        let states: Vec<String> = danger
+            .iter()
+            .map(|state| match self.invoking_states.get(state) {
+                Some(caller) => format!("{state} ({caller})"),
+                None => state.to_string(),
+            })
+            .collect();
+        format!("[{}]", states.join(", "))
+    }
+
     /// The number of decisions whose tables never escape to the adaptive
     /// simulation (see [`DecisionResult::is_fully_static`]).
     fn static_decisions(&self) -> usize {
@@ -1150,7 +1190,10 @@ fn table_dump_lines(
             table.guard_pass.len()
         ));
         for (group, danger) in table.guard_groups.iter().enumerate() {
-            lines.push(format!("    group {group}: danger={danger:?}"));
+            lines.push(format!(
+                "    group {group}: danger={}",
+                report.danger_text(danger)
+            ));
         }
     }
     for (index, state) in table.states.iter().enumerate() {
@@ -1191,13 +1234,15 @@ fn table_dump_lines(
                 "adaptivePredict".to_owned()
             };
             line.push_str(&format!(
-                "GUARDED alt={}, or {deferred} when the parse stack reaches a guard root of group {} (danger={:?})",
+                "GUARDED alt={}, or {deferred} when the parse stack reaches a guard root of group {} (danger={})",
                 state.guarded_alt,
                 state.guard_group,
-                table
-                    .guard_groups
-                    .get(state.guard_group as usize)
-                    .map_or(&[][..], Vec::as_slice)
+                report.danger_text(
+                    table
+                        .guard_groups
+                        .get(state.guard_group as usize)
+                        .map_or(&[][..], Vec::as_slice)
+                )
             ));
         } else if state.is_escape() {
             line.push_str("ESCAPE");
@@ -1599,6 +1644,7 @@ fn static_only_diagnostics(report: &StaticParserDfaReport) -> Vec<Diagnostic> {
                     ("guarded state returns", "guarded states return"),
                     "the skip or the exit where the stack guard defers",
                     resolved.guarded_witness.as_deref(),
+                    danger_callers_text(report, &resolved.guarded_danger),
                 ));
             }
             if resolved.min_alt > 0 {
@@ -1608,6 +1654,7 @@ fn static_only_diagnostics(report: &StaticParserDfaReport) -> Vec<Diagnostic> {
                     ("conflict state predicts", "conflict states predict"),
                     "the minimum alternative",
                     resolved.min_alt_witness.as_deref(),
+                    None,
                 ));
             }
             if resolved.min_viable_alt > 0 {
@@ -1617,6 +1664,7 @@ fn static_only_diagnostics(report: &StaticParserDfaReport) -> Vec<Diagnostic> {
                     ("undecided state predicts", "undecided states predict"),
                     "the minimum viable alternative",
                     resolved.min_viable_alt_witness.as_deref(),
+                    None,
                 ));
             }
             if resolved.syntax_error > 0 {
@@ -1626,6 +1674,7 @@ fn static_only_diagnostics(report: &StaticParserDfaReport) -> Vec<Diagnostic> {
                     ("predicated state reports", "predicated states report"),
                     "a syntax error",
                     resolved.syntax_error_witness.as_deref(),
+                    None,
                 ));
             }
             (!parts.is_empty()).then(|| {
@@ -2088,20 +2137,56 @@ fn hazard_text(
 }
 
 /// One clause of a `G4S192` warning, for example `2 predicated states report a
-/// syntax error (witness: ID EOF)`.
+/// syntax error (witness: ID EOF)`. The `note` follows the witness in the
+/// parentheses.
 fn resolution_text(
     vocabulary: &[String],
     count: usize,
     (singular, plural): (&str, &str),
     verdict: &str,
     witness: Option<&[i32]>,
+    note: Option<String>,
 ) -> String {
     let subject = if count == 1 { singular } else { plural };
     let mut text = format!("{count} {subject} {verdict}");
-    if let Some(witness) = witness_text(vocabulary, witness) {
-        text.push_str(&format!(" (witness: {witness})"));
+    let details: Vec<String> = witness_text(vocabulary, witness)
+        .map(|witness| format!("witness: {witness}"))
+        .into_iter()
+        .chain(note)
+        .collect();
+    if !details.is_empty() {
+        text.push_str(&format!(" ({})", details.join("; ")));
     }
     text
+}
+
+/// The distinct callers of the invoking states of a danger set, for a
+/// `G4S192` warning, for example `danger callers: expr:30, query:24`. The
+/// caller of the lowest invoking state comes first.
+fn danger_callers_text(report: &StaticParserDfaReport, danger: &[i32]) -> Option<String> {
+    let mut callers: Vec<String> = Vec::new();
+    for caller in danger
+        .iter()
+        .filter_map(|state| report.invoking_states.get(state))
+    {
+        let caller = caller.to_string();
+        if !callers.contains(&caller) {
+            callers.push(caller);
+        }
+    }
+    let shown = callers.len().min(DANGER_CALLERS);
+    let mut text = match callers.len() {
+        0 => return None,
+        1 => "danger caller: ".to_owned(),
+        _ => "danger callers: ".to_owned(),
+    };
+    text.push_str(&callers[..shown].join(", "));
+    match callers.len() - shown {
+        0 => {}
+        1 => text.push_str(" and 1 more danger caller"),
+        more => text.push_str(&format!(" and {more} more danger callers")),
+    }
+    Some(text)
 }
 
 /// Why `--static-dfa-only` cannot give the decision a static prediction.
@@ -2114,6 +2199,67 @@ fn static_only_failure_reason(result: &DecisionResult) -> String {
             "the precedence loop has no precedence predicates to build class tables from".to_owned()
         }
         _ => adaptive_reason(result),
+    }
+}
+
+/// The caller of every invoking state in a guard danger set of a table of
+/// `results`, by ATN state number.
+fn danger_invoking_states(
+    compiled: &CompiledParser,
+    sources: &SourceSet,
+    results: &[DecisionResult],
+) -> BTreeMap<i32, InvokingState> {
+    let mut states = BTreeMap::new();
+    for result in results {
+        let precedence_tables = result
+            .precedence
+            .iter()
+            .flat_map(|precedence| precedence.tables.iter().flatten());
+        for table in result.table.iter().chain(precedence_tables) {
+            for state in table.guard_groups.iter().flatten() {
+                states
+                    .entry(*state)
+                    .or_insert_with(|| invoking_state(compiled, sources, *state));
+            }
+        }
+    }
+    states
+}
+
+/// The rule of ATN state `state` and the source line of the rule call that
+/// leaves the state.
+fn invoking_state(compiled: &CompiledParser, sources: &SourceSet, state: i32) -> InvokingState {
+    let graph_state = usize::try_from(state)
+        .ok()
+        .and_then(|state| compiled.graph.states.get(state));
+    let rule = graph_state
+        .and_then(|state| state.rule_index)
+        .and_then(|rule| compiled.semantic.recognizer.rule_names.get(rule))
+        .cloned()
+        .unwrap_or_else(|| "?".to_owned());
+    let line = graph_state
+        .and_then(|state| {
+            let call_origins = state
+                .transitions
+                .iter()
+                .flat_map(|transition| compiled.provenance.transition_origins(*transition));
+            let state_origins = compiled.provenance.state_origins(state.original);
+            call_origins
+                .chain(state_origins)
+                .find_map(|origin| origin_span(compiled, origin))
+        })
+        .and_then(|span| sources.line_column(span.source, span.bytes.start))
+        .map(|(line, _)| line);
+    InvokingState { rule, line }
+}
+
+/// The authored span of one origin, or the span of the model node that a
+/// synthetic origin belongs to.
+fn origin_span(compiled: &CompiledParser, origin: &Origin) -> Option<SourceSpan> {
+    match origin {
+        Origin::Authored { span, .. } => Some(span.clone()),
+        Origin::Synthetic { owner, .. } => model_node_span(compiled, *owner),
+        _ => None,
     }
 }
 

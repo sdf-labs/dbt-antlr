@@ -56,6 +56,10 @@ pub(crate) struct EscapeResolutions {
     pub(crate) syntax_error: usize,
     /// A shortest lookahead path to a [`EscapeResolution::Guarded`] state.
     pub(crate) guarded_witness: Option<Vec<i32>>,
+    /// The danger set of the guard group of the state at the end of
+    /// [`Self::guarded_witness`]: the sorted invoking states where its guard
+    /// defers.
+    pub(crate) guarded_danger: Vec<i32>,
     /// A shortest lookahead path to a [`EscapeResolution::MinAlt`] state.
     pub(crate) min_alt_witness: Option<Vec<i32>>,
     /// A shortest lookahead path to a [`EscapeResolution::MinViableAlt`]
@@ -221,6 +225,7 @@ impl EscapeResolutions {
         self.syntax_error += other.syntax_error;
         if self.guarded_witness.is_none() {
             self.guarded_witness = other.guarded_witness;
+            self.guarded_danger = other.guarded_danger;
         }
         if self.min_alt_witness.is_none() {
             self.min_alt_witness = other.min_alt_witness;
@@ -336,6 +341,15 @@ impl StaticDfaTable {
             self.guard_pass.clear();
         }
         resolutions.guarded_witness = first_guarded.and_then(|state| self.witness(state));
+        if resolutions.guarded_witness.is_some() {
+            resolutions.guarded_danger = first_guarded
+                .and_then(|state| {
+                    self.guard_groups
+                        .get(self.states[state].guard_group as usize)
+                })
+                .cloned()
+                .unwrap_or_default();
+        }
         resolutions.min_alt_witness = first_min_alt.and_then(|state| self.witness(state));
         resolutions.min_viable_alt_witness =
             first_min_viable_alt.and_then(|state| self.witness(state));

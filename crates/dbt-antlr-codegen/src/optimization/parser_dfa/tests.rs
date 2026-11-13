@@ -3274,6 +3274,61 @@ fn static_only_warnings_show_the_hijack_hazards() {
     );
 }
 
+const CALLERS_GRAMMAR: &str = "grammar Callers;
+prog : stmt+ EOF ;
+stmt : 'set' expr '=' expr ';'
+     | 'let' expr '=' expr ';'
+     | assign
+     | update
+     | expr ';'
+     ;
+assign : 'var' expr '=' expr ';' ;
+update : 'put' expr '=' expr ';' ;
+expr : value pred? ;
+pred : '=' value ;
+value : ID | '(' expr ')' ;
+ID : [a-z]+ ;
+WS : [ \\t\\n]+ -> skip ;
+";
+
+/// A `G4S192` warning names the callers of the invoking states where the
+/// stack guard defers, and `--dump-dfas` shows the caller of each invoking
+/// state of a danger set.
+#[test]
+fn guard_danger_sets_name_their_callers() {
+    let (_, build) = build_source_with(
+        "Callers",
+        CALLERS_GRAMMAR,
+        AtnFallback::Forbidden,
+        &ParserDfaBudgets::default(),
+    );
+    let message = &build
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "G4S192")
+        .expect("a G4S192 warning")
+        .message;
+    assert!(
+        message.contains(
+            "the stack guard defers (witness: '=' ID ';'; danger callers: stmt:3, stmt:4, \
+             assign:9 and 1 more danger caller)"
+        ),
+        "{message}"
+    );
+
+    let (dump, diagnostics) = crate::optimization::StaticParserDfa::render_dfa_dump(
+        std::slice::from_ref(&build.report),
+        "expr",
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let danger = "danger=[22 (stmt:3), 28 (stmt:4), 41 (assign:9), 47 (update:10)]";
+    assert!(dump.contains(&format!("group 0: {danger}\n")), "{dump}");
+    assert!(
+        dump.contains(&format!("guard root of group 0 ({danger})")),
+        "{dump}"
+    );
+}
+
 /// The most harmful tie-break group comes first, before a group with a lower
 /// alternative.
 #[test]
