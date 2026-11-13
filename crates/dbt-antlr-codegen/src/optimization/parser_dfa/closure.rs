@@ -1063,6 +1063,10 @@ impl<'atn, 'a> Closure<'atn, 'a> {
     /// The precedence filter of a precedence-loop start state: an alternative
     /// that would consume the loop while a higher-precedence alternative
     /// already reached the same state with the same context is dropped.
+    ///
+    /// The filter keeps a config when one of the two configs has a widened
+    /// context. Equal widened contexts can stand for different real stacks,
+    /// so the dropped config can be the only viable one.
     fn apply_precedence_filter(&mut self, closed: ClosedSet<'a>) -> ClosedSet<'a> {
         // Merge the contexts first (as the reference classifier does): the
         // filter compares alternative 1's context against every other
@@ -1081,10 +1085,15 @@ impl<'atn, 'a> Closure<'atn, 'a> {
 
         let mut out = SetBuilder::new();
         for config in closed.configs {
+            let state_number = config.get_state().get_state_number();
+            let widened = (taint_of(&closed.taint, &config)
+                | closed.taint.get(&(state_number, 1)).copied().unwrap_or(0))
+                & WIDENED_TAINT
+                != 0;
             if config.get_alt() != 1
                 && !config.is_precedence_filter_suppressed()
-                && states_from_alt1.get(&config.get_state().get_state_number())
-                    == config.get_context().as_ref()
+                && !widened
+                && states_from_alt1.get(&state_number) == config.get_context().as_ref()
             {
                 continue;
             }

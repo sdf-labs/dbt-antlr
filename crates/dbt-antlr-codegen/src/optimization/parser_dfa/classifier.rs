@@ -1887,7 +1887,7 @@ where
             return false;
         }
         let attestation = block.iterate_exit_attestation(&configs, &facts.taint);
-        if attestation == ITERATE_REAL {
+        if attestation == ITERATE_REAL && self.keeps_caller_frames() {
             if let Some(facts) = self.info.get_mut(&number) {
                 facts.verdict = Verdict::Accept(ITERATE_ALT);
                 facts.resolved_conflict = true;
@@ -2113,12 +2113,15 @@ where
         // block, pending token obligations the iterate reading does not owe,
         // and a missing iterate attestation. A compound guarded alternative
         // breaks the mapping altogether (see `LoopBlock`).
+        //
+        // The vetoes read the frames of the contexts. The widened attempt
+        // drops every caller frame, so it does not resolve the conflict.
         if let Some(block) = self.closure.loop_block()
             && block.guards_are_simple()
             && is_iterate_exit_pair(&conflicting)
         {
             let attestation = block.iterate_exit_attestation(&closed.configs, &closed.taint);
-            if attestation == ITERATE_REAL {
+            if attestation == ITERATE_REAL && self.keeps_caller_frames() {
                 facts.resolved_conflict = true;
                 effects.exact_ambiguity = Some(conflicting.clone());
                 facts.verdict = Verdict::Accept(ITERATE_ALT);
@@ -2137,7 +2140,9 @@ where
 
         // Optional-postfix take rule: resolve a take/skip conflict to take when
         // every skip configuration mirrors the take reading and a non-widened
-        // take configuration attests take viability.
+        // take configuration attests take viability. Like the iterate/exit
+        // vetoes, the mirror check reads the frames of the contexts, so the
+        // widened attempt does not apply the rule.
         if let Some(postfix) = self.postfix.clone()
             && is_take_skip_pair(&conflicting)
         {
@@ -2154,7 +2159,7 @@ where
                     real_take = true;
                 }
             }
-            if mirror_ok && real_take {
+            if mirror_ok && real_take && self.keeps_caller_frames() {
                 self.attempt.take_rule_fires += 1;
                 facts.resolved_conflict = true;
                 effects.exact_ambiguity = Some(conflicting.clone());
@@ -2230,6 +2235,12 @@ where
             effects.abort = true;
         }
         (facts, effects)
+    }
+
+    /// Whether a rule call keeps the frame of its caller, at least up to the
+    /// widening bound. The widened attempt gives every call an empty context.
+    const fn keeps_caller_frames(&self) -> bool {
+        self.policy.depth_bound > 0
     }
 
     fn set_escape(&mut self, number: i32, marker: i32) {
@@ -2404,6 +2415,14 @@ where
 
         let mut by_state_contexts: HashMap<i32, Vec<PredictionContextRef<'a>>> = HashMap::new();
         for config in &closed.configs {
+            // Widening removes frames from the context of a competing config,
+            // so its context does not show the continuation of its real
+            // stacks. No attestation can match such a context, and equal
+            // contexts after widening can make a conflict that the runtime
+            // never sees.
+            if config.get_alt() != min_alt && closed.taint_of(config) & WIDENED_TAINT != 0 {
+                return 0;
+            }
             let state_number = config.get_state().get_state_number();
             let context = config.get_context().expect("config has a context");
             let entries = by_state_contexts.entry(state_number).or_default();
