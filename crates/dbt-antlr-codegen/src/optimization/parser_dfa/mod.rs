@@ -70,8 +70,8 @@ pub(crate) use category::Category;
 pub(crate) use classifier::{DecisionClassifier, DecisionResult};
 pub(crate) use cost::AttemptOutcome;
 pub(crate) use descent::{DescentGroup, DescentPlan, DescentRules, TailArm};
-pub(crate) use hazard::{HazardLevel, HijackVerdict};
-pub(crate) use static_only::{EscapeResolution, EscapeResolutions, TieBreak};
+pub(crate) use hazard::{HazardLevel, HijackVerdict, StackHijackVerdict};
+pub(crate) use static_only::{EscapeResolution, EscapeResolutions, GuardGroup, TieBreak};
 pub(crate) use table::StaticDfaTable;
 pub(crate) use tables::{build_tables, minimized_states};
 
