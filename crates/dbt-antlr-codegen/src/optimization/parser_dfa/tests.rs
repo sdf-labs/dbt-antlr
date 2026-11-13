@@ -2844,8 +2844,10 @@ OVER : 'over' ; DOT : '.' ;
                         .first()
                         .is_some_and(|name| name.starts_with(first))
             })
-            .map(|(_, alternatives)| alternatives.clone())
-            .unwrap_or_else(|| panic!("no decision of {rule} starts with {first}: {names:?}"))
+            .map_or_else(
+                || panic!("no decision of {rule} starts with {first}: {names:?}"),
+                |(_, alternatives)| alternatives.clone(),
+            )
     };
     assert_eq!(
         find("s", "alt 1 (repeat"),
