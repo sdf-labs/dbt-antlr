@@ -154,7 +154,7 @@ fn quiet_keeps_the_report_and_drops_the_warnings() {
     );
     assert_eq!(
         String::from_utf8_lossy(&quiet.stderr),
-        "summary: Budget.g4: 0 errors, 1 warning (1 G4S192); --quiet hid the warnings\n"
+        "summary: Budget.g4: 0 errors, 1 warning (1 G4S192); --quiet hid the warning\n"
     );
     assert_eq!(quiet.stdout, loud.stdout);
 }
@@ -183,7 +183,7 @@ fn quiet_keeps_the_errors() {
     assert!(
         stderr.contains(
             "summary: Predicated.g4: 1 error (1 G4S190), 1 warning (1 G4S192); \
-             --quiet hid the warnings\n"
+             --quiet hid the warning\n"
         ),
         "{stderr}"
     );

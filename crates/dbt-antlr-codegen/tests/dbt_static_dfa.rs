@@ -108,35 +108,57 @@ fn quiet_prints_only_the_errors() {
         .join("tests/fixtures/explain/Predicated.g4")
         .to_string_lossy()
         .into_owned();
-    let stderr_of = |quiet: &[&str]| {
-        let args = [quiet, &["--static-dfa-only", "--report-only", &grammar]]
+    let out_dir = std::env::temp_dir().join(format!("dbt-quiet-{}", std::process::id()));
+    let out = out_dir.to_string_lossy().into_owned();
+    let stderr_of = |flags: &[&str]| {
+        let args = [flags, &["--static-dfa-only", "-o", &out, &grammar]]
             .concat()
             .into_iter()
             .map(str::to_owned)
             .collect::<Vec<_>>();
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
-        cli::run(&args, &mut stdout, &mut stderr)
+        let error = cli::run(&args, &mut stdout, &mut stderr)
             .expect_err("--static-dfa-only rejects the predicated decision");
+        assert!(
+            format!("{error:?}").contains("failed with 1 error(s)"),
+            "{error:?}"
+        );
         String::from_utf8(stderr).expect("stderr is utf-8")
     };
 
-    let loud = stderr_of(&[]);
-    assert!(loud.contains("error[G4S190]"), "{loud}");
-    assert!(loud.contains("warning[G4S192]"), "{loud}");
-    assert!(
-        loud.contains("summary: Predicated.g4: 1 error (1 G4S190), 1 warning (1 G4S192)\n"),
-        "{loud}"
-    );
-    for flag in ["-q", "--quiet"] {
-        let quiet = stderr_of(&[flag]);
-        assert!(quiet.contains("error[G4S190]"), "{flag}: {quiet}");
-        assert!(!quiet.contains("warning["), "{flag}: {quiet}");
-        assert!(
-            quiet.contains("summary: Predicated.g4: 1 error (1 G4S190), 1 warning (1 G4S192); --quiet hid the warnings"),
-            "{flag}: {quiet}"
+    // Without --report-only, the error stops the compilation; with it, the
+    // run completes and reports the error.
+    for mode in [None, Some("--report-only")] {
+        let loud = stderr_of(&mode.into_iter().collect::<Vec<_>>());
+        assert_eq!(loud.matches("error[G4S190]").count(), 1, "{mode:?}: {loud}");
+        assert_eq!(
+            loud.matches("warning[G4S192]").count(),
+            1,
+            "{mode:?}: {loud}"
         );
+        assert!(
+            loud.ends_with("summary: Predicated.g4: 1 error (1 G4S190), 1 warning (1 G4S192)\n"),
+            "{mode:?}: {loud}"
+        );
+        for flag in ["-q", "--quiet"] {
+            let quiet = stderr_of(&[Some(flag), mode].into_iter().flatten().collect::<Vec<_>>());
+            assert_eq!(
+                quiet.matches("error[G4S190]").count(),
+                1,
+                "{mode:?} {flag}: {quiet}"
+            );
+            assert!(!quiet.contains("warning["), "{mode:?} {flag}: {quiet}");
+            assert!(
+                quiet.ends_with(
+                    "summary: Predicated.g4: 1 error (1 G4S190), 1 warning (1 G4S192); \
+                     --quiet hid the warning\n"
+                ),
+                "{mode:?} {flag}: {quiet}"
+            );
+        }
     }
+    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -1306,9 +1328,10 @@ fn cli_static_dfa_only_reports_and_fails() {
     let error = cli::run(&args, &mut stdout, &mut stderr)
         .expect_err("a lexer that needs the ATN fails the run");
     assert!(error.to_string().contains("cannot emit"), "{error}");
+    let errors = String::from_utf8(stderr).expect("stderr is utf-8");
     assert!(
-        format!("{error:?}").contains("error[G4S188]"),
-        "the error names the escaped edge: {error:?}"
+        errors.contains("error[G4S188]"),
+        "the error names the escaped edge: {errors}"
     );
     assert!(
         !out_dir.join("spike.rs").exists(),

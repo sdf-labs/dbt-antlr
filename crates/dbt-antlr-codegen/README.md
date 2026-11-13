@@ -28,10 +28,12 @@ search directories. `Config::generate` also prints each grammar warning as a
 example, a parser grammar that refers to a token that its `tokenVocab` lexer
 does not define gets a `G4S030` warning. Call `.strict(true)` (`--strict` on
 the command line) to make this warning an error, or `.quiet(true)` (`-q` or
-`--quiet` on the command line) to print only the errors. The command line
-ends its diagnostics with a summary line, also with `--quiet`, for example
-`summary: Trino.g4: 0 errors, 3 warnings (2 G4S192, 1 G4S193)`. Wrap the
-generated files with `include!` inside a module carrying
+`--quiet` on the command line) to print only the errors. When a run has
+diagnostics, the command line ends them with a summary line that counts them
+by code, for example
+`summary: Trino.g4: 0 errors, 3 warnings (2 G4S192, 1 G4S193)`. With
+`--quiet`, the summary line stays and tells that it hid the warnings. Wrap
+the generated files with `include!` inside a module carrying
 `#![allow(clippy::all, warnings)]`.
 `default-features = false` skips the `fancy` diagnostics rendering used by
 the command-line tool and noticeably shrinks the build-dependency tree.

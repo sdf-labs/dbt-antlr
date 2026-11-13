@@ -303,10 +303,10 @@ pub fn run(
     for entry in &cli.entry_rules {
         config.entry_rule(entry);
     }
-    let generation = config
-        .generate_detailed()
-        .into_diagnostic()
-        .wrap_err_with(|| format!("cannot emit {}", cli.grammar.display()))?;
+    let generation = match config.generate_detailed() {
+        Ok(generation) => generation,
+        Err(error) => return Err(failure(stderr, &cli, error, "emit")),
+    };
     write_diagnostics(
         stderr,
         generation.diagnostics(),
@@ -347,6 +347,34 @@ fn write_diagnostics(
     Ok(())
 }
 
+/// The report of a run that `error` stopped. When the grammar failed to
+/// compile, the diagnostics go to `stderr` like the diagnostics of a
+/// completed run, so that `--quiet` and the summary line apply to them too.
+fn failure(
+    stderr: &mut impl Write,
+    cli: &CliArgs,
+    error: crate::EmitError,
+    action: &str,
+) -> miette::Report {
+    let context = format!("cannot {action} {}", cli.grammar.display());
+    let diagnostics = match &error {
+        crate::EmitError::Compile(compile) => compile.diagnostics(),
+        _ => &[],
+    };
+    if diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity() == crate::Severity::Error)
+    {
+        let finished = write_diagnostics(stderr, diagnostics, &[], cli.quiet)
+            .and_then(|()| finish(stderr, cli, diagnostics));
+        return match finished {
+            Err(report) => report.wrap_err(context),
+            Ok(()) => miette::miette!("{context}"),
+        };
+    }
+    miette::Report::from_err(error).wrap_err(context)
+}
+
 /// Writes the summary line of the diagnostics to `stderr`, also with
 /// `--quiet`, and fails when a diagnostic is an error. A run without
 /// diagnostics writes no summary.
@@ -378,10 +406,11 @@ fn summary(grammar: &std::path::Path, diagnostics: &[crate::Diagnostic], quiet: 
     );
     let (_, errors) = tally(diagnostics, crate::Severity::Error, "error");
     let (warning_count, warnings) = tally(diagnostics, crate::Severity::Warning, "warning");
-    let hidden = if quiet && warning_count > 0 {
-        "; --quiet hid the warnings"
-    } else {
-        ""
+    let hidden = match warning_count {
+        0 => "",
+        _ if !quiet => "",
+        1 => "; --quiet hid the warning",
+        _ => "; --quiet hid the warnings",
     };
     format!("summary: {name}: {errors}, {warnings}{hidden}")
 }
@@ -458,9 +487,10 @@ fn run_explain(
         start_rule: cli.start_rule.clone(),
         lexer: cli.lexer.clone(),
     };
-    let output = crate::explain::explain(&cli.grammar, &cli.lib_dirs, &options, &request)
-        .into_diagnostic()
-        .wrap_err_with(|| format!("cannot explain {}", cli.grammar.display()))?;
+    let output = match crate::explain::explain(&cli.grammar, &cli.lib_dirs, &options, &request) {
+        Ok(output) => output,
+        Err(error) => return Err(failure(stderr, cli, error, "explain")),
+    };
     write_diagnostics(
         stderr,
         &output.diagnostics,
