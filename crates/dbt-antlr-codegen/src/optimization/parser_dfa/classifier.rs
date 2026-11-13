@@ -26,7 +26,7 @@ use super::closure::{
 };
 use super::cost::{AttemptCost, AttemptKind, AttemptOutcome, CostLog, DecisionCost};
 use super::descent::{DescentAnalyzer, DescentPlan, DescentRules};
-use super::hazard::{self, StateHazard};
+use super::hazard::{self, StackHijackVerdict, StateHazard};
 use super::loop_block::{
     EXIT_ALT, EXIT_FOREIGN, ITERATE_ALT, ITERATE_REAL, LoopBlock, is_iterate_exit_pair,
 };
@@ -72,6 +72,11 @@ const HAZARD_STATES: usize = 48;
 /// The escape states of one tie-break group that the prefix-hijack analysis
 /// analyzes at most. The analysis of a group stops at its first hijack.
 const HAZARD_STATES_PER_GROUP: usize = 4;
+/// The guarded states of one table whose stack-hijack hazard the classifier
+/// analyzes at most.
+const GUARD_HAZARD_STATES: usize = 48;
+/// The analyzed guarded states of one guard group at most.
+const GUARD_HAZARD_STATES_PER_GROUP: usize = 8;
 
 /// Taint bits that invalidate a trusted verdict when a second path adds them
 /// to an already interned state. A decision state that gets one of them is
@@ -1465,7 +1470,11 @@ where
             } else {
                 HashMap::new()
             };
-            self.attempt.table = Some(self.snapshot(&hazards));
+            let mut table = self.snapshot(&hazards);
+            if self.static_only && !self.attempt.taint_conflict && start_decides {
+                self.guard_hazards(&mut table);
+            }
+            self.attempt.table = Some(table);
         }
         self.take_attempt()
     }
@@ -2521,6 +2530,72 @@ where
         hazards
     }
 
+    /// The stack-hijack hazards of the guarded states of `table`, for at most
+    /// [`GUARD_HAZARD_STATES`] of them and [`GUARD_HAZARD_STATES_PER_GROUP`]
+    /// of each guard group. The frontier states come first, then the
+    /// shallowest states: a frontier state stops where the lookahead budget
+    /// cut the guarded alternative off, and so can hide a hijack that a
+    /// conflict state shows the end of.
+    fn guard_hazards(&mut self, table: &mut StaticDfaTable) {
+        let mut candidates: Vec<(bool, usize, usize)> = table
+            .states
+            .iter()
+            .enumerate()
+            .filter(|(_, state)| {
+                state.is_guarded()
+                    && state.guarded_alt > 0
+                    && state.guard_defer_alt > 0
+                    && !state.predicated
+            })
+            .map(|(index, state)| (!state.conflicts.is_empty(), state.depth, index))
+            .collect();
+        candidates.sort_unstable();
+        let decision_rule = self.decision_state.get_rule_index();
+        // The stacks of each guard group, the analyzed states of the group,
+        // and whether one of them is a hijack.
+        let mut groups: HashMap<u32, (hazard::GuardChains, usize, bool)> = HashMap::new();
+        let mut analyzed = 0;
+        for (_, _, index) in candidates {
+            if analyzed == GUARD_HAZARD_STATES {
+                break;
+            }
+            let state = &table.states[index];
+            let (group_index, guarded_alt, defer_alt) =
+                (state.guard_group, state.guarded_alt, state.guard_defer_alt);
+            let Some(witness) = table.witness(index) else {
+                continue;
+            };
+            let group = groups.entry(group_index).or_insert_with(|| {
+                let danger = table
+                    .guard_groups
+                    .get(group_index as usize)
+                    .map_or(&[][..], Vec::as_slice);
+                let chains = hazard::guard_chains(
+                    self.closure.call_sites(),
+                    decision_rule,
+                    self.closure.precedence(),
+                    danger,
+                    &table.guard_pass,
+                );
+                (chains, 0, false)
+            });
+            if group.2 || group.1 == GUARD_HAZARD_STATES_PER_GROUP {
+                continue;
+            }
+            group.1 += 1;
+            analyzed += 1;
+            let verdict = hazard::analyze_guard(
+                &mut self.closure,
+                self.decision_state,
+                &group.0,
+                &witness,
+                (guarded_alt, defer_alt),
+            );
+            group.2 = matches!(verdict, StackHijackVerdict::Hijack { .. });
+            table.states[index].stack_hazard = Some(verdict);
+        }
+    }
+
     /// Whether a guess that drops `dropped` is the greedy choice of the
     /// decision: it drops the exit of a loop, or the skip of an optional block
     /// or element.
@@ -2573,6 +2648,7 @@ where
                     predicated: facts.is_some_and(|facts| facts.predicated),
                     resolution: None,
                     hazard: hazards.get(&number).cloned(),
+                    stack_hazard: None,
                     edges: Vec::new(),
                 }
             })

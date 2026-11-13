@@ -40,7 +40,8 @@ use dbt_antlr_runtime::analysis::{
     FOREIGN_CONSUME_TAINT, FOREIGN_LINEAGE_TAINT, INTERIOR_TAINT, IntervalSetBuf, MIDWAY_TAINT,
     MergeCache, MutableATNConfigSet, NotSetTransition, PRECPRED_TAINT, PRED_TAINT,
     PrecedencePredicateTransition, PredicateTransition, PredictionContext, PredictionContextRef,
-    ROOTED_TAINT, RuleTransition, TOKEN_MIN_USER_TOKEN_TYPE, TransitionType, WIDENED_TAINT,
+    ROOTED_TAINT, RuleTransition, TOKEN_MIN_USER_TOKEN_TYPE, Transition, TransitionType,
+    WIDENED_TAINT,
 };
 
 use super::loop_block::LoopBlock;
@@ -187,6 +188,19 @@ struct CallInfo {
     precedence: i32,
 }
 
+/// One rule invocation of the ATN, seen from the rule that it calls.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct RuleCall {
+    /// The invoking state.
+    pub(super) site: i32,
+    /// The rule of the invoking state.
+    pub(super) caller_rule: i32,
+    /// The follow state: the return state that the call pushes.
+    pub(super) follow: i32,
+    /// The precedence argument of the call.
+    pub(super) precedence: i32,
+}
+
 /// The rule invocations of one ATN, keyed by their follow states. All build
 /// attempts over the ATN share one copy.
 #[derive(Debug, Default)]
@@ -196,29 +210,55 @@ pub(super) struct CallSites {
     site_by_follow_state: HashMap<i32, i32>,
     /// The rule and the precedence of each invocation.
     call_by_follow_state: HashMap<i32, CallInfo>,
+    /// The invocations of each rule, by the rule index of the called rule, in
+    /// ATN state order.
+    calls_to_rule: Vec<Vec<RuleCall>>,
 }
 
 impl CallSites {
     pub(super) fn of(atn: &ATN) -> Self {
-        let mut sites = Self::default();
+        let mut sites = Self {
+            calls_to_rule: vec![Vec::new(); atn.rule_to_start_state.len()],
+            ..Self::default()
+        };
         for state in atn.iter_states() {
             for transition in state.get_transitions() {
                 if let Some(rule_transition) = transition.try_as::<RuleTransition>() {
                     let follow_state = rule_transition.follow_state.get_state_number();
+                    let target_rule_index = rule_transition.get_target().get_rule_index();
                     sites
                         .site_by_follow_state
                         .insert(follow_state, state.get_state_number());
                     sites.call_by_follow_state.insert(
                         follow_state,
                         CallInfo {
-                            target_rule_index: rule_transition.get_target().get_rule_index(),
+                            target_rule_index,
                             precedence: rule_transition.precedence(),
                         },
                     );
+                    if let Some(calls) = usize::try_from(target_rule_index)
+                        .ok()
+                        .and_then(|rule| sites.calls_to_rule.get_mut(rule))
+                    {
+                        calls.push(RuleCall {
+                            site: state.get_state_number(),
+                            caller_rule: state.get_rule_index(),
+                            follow: follow_state,
+                            precedence: rule_transition.precedence(),
+                        });
+                    }
                 }
             }
         }
         sites
+    }
+
+    /// The invocations of the rule `rule`.
+    pub(super) fn calls_to(&self, rule: i32) -> &[RuleCall] {
+        usize::try_from(rule)
+            .ok()
+            .and_then(|rule| self.calls_to_rule.get(rule))
+            .map_or(&[], Vec::as_slice)
     }
 }
 
@@ -444,15 +484,21 @@ impl<'atn, 'a> Closure<'atn, 'a> {
     /// Closes the start configurations of `decision_state`: one config per
     /// alternative, each starting from the empty prediction context.
     pub(super) fn start(&mut self, decision_state: ATNStateRef) -> ClosedSet<'a> {
+        self.start_in(decision_state, PredictionContextRef::new_empty())
+    }
+
+    /// Closes the start configurations of `decision_state` on the parse stack
+    /// `context`: one config per alternative.
+    pub(super) fn start_in(
+        &mut self,
+        decision_state: ATNStateRef,
+        context: PredictionContextRef<'a>,
+    ) -> ClosedSet<'a> {
         let mut out = SetBuilder::new();
         self.decision_state = decision_state;
         self.precedence_start = self.precedence.is_some();
         for (index, transition) in decision_state.get_transitions().iter().enumerate() {
-            let config = ATNConfig::new(
-                transition.get_target(),
-                (index + 1) as i32,
-                Some(PredictionContextRef::new_empty()),
-            );
+            let config = ATNConfig::new(transition.get_target(), (index + 1) as i32, Some(context));
             self.current_roots = 0;
             self.closure(config, 0, 0, &mut out);
         }
@@ -462,6 +508,77 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             Some(_) => self.apply_precedence_filter(closed),
             None => closed,
         }
+    }
+
+    /// The configs of `closed` after they read `token`, closed.
+    pub(super) fn step(&mut self, closed: &ClosedSet<'a>, token: i32) -> ClosedSet<'a> {
+        let all_tokens = self.all_tokens();
+        let mut out = SetBuilder::new();
+        for config in &closed.configs {
+            let mut taint = closed.taint_of(config);
+            if taint & BOUNDARY_TAINT != 0 {
+                taint &= !INTERIOR_TAINT;
+            }
+            let state = config.get_state();
+            if state.state_type() == ATNStateType::RuleStop {
+                if token == EOF {
+                    out.insert(config.clone(), taint, &BTreeSet::new());
+                }
+                continue;
+            }
+            for transition in state.get_transitions() {
+                let reads = self
+                    .transition_label(transition, &all_tokens)
+                    .is_some_and(|label| label.as_interval_set().contains(token));
+                if !reads {
+                    continue;
+                }
+                let step = self.consume(config, transition.get_target(), taint, 0);
+                self.current_roots = 0;
+                self.closure(step.config, step.taint, 0, &mut out);
+                if self.exhausted {
+                    return out.into_closed_set();
+                }
+            }
+        }
+        self.current_roots = 0;
+        out.into_closed_set()
+    }
+
+    /// The call sites of the ATN.
+    pub(super) fn call_sites(&self) -> &'a CallSites {
+        self.call_sites
+    }
+
+    /// The precedence class of the build, when it builds one.
+    pub(super) fn precedence(&self) -> Option<PrecedenceClass> {
+        self.precedence
+    }
+
+    /// Runs `analysis` with the widening bound `depth_bound`, and then
+    /// restores the bound of the attempt.
+    pub(super) fn with_depth_bound<R>(
+        &mut self,
+        depth_bound: i32,
+        analysis: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let saved = std::mem::replace(&mut self.depth_bound, depth_bound);
+        let result = analysis(self);
+        self.depth_bound = saved;
+        result
+    }
+
+    /// The parse stack that the follow states `follows` push, the innermost
+    /// frame first, on an empty stack.
+    pub(super) fn call_stack(&mut self, follows: &[i32]) -> PredictionContextRef<'a> {
+        let mut context = PredictionContextRef::new_empty();
+        for &follow in follows.iter().rev() {
+            let follow_state = self.atn.make_state_ref(follow);
+            context = PredictionContextRef::from(self.scratch.alloc(
+                PredictionContext::new_singleton(Some(context), follow_state),
+            ));
+        }
+        context
     }
 
     /// The labeled successors of one closed set: the token intervals that can
@@ -525,26 +642,9 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                 continue;
             }
             for transition in state.get_transitions() {
-                if transition.is_epsilon() {
+                let Some(label) = self.transition_label(transition, &all_tokens) else {
                     continue;
-                }
-                let label = match transition.transition_type() {
-                    TransitionType::NotSet => {
-                        let not_set = transition.try_as::<NotSetTransition>().unwrap();
-                        not_set
-                            .get_label()
-                            .unwrap()
-                            .complement(TOKEN_MIN_USER_TOKEN_TYPE, self.atn.max_token_type)
-                    }
-                    TransitionType::Wildcard => all_tokens.clone(),
-                    _ => match transition.get_label() {
-                        Some(set) => set.to_interval_set_buf(),
-                        None => continue,
-                    },
                 };
-                if label.as_interval_set().as_slice().is_empty() {
-                    continue;
-                }
                 add_step(
                     label,
                     self.consume(config, transition.get_target(), taint, roots),
@@ -706,6 +806,30 @@ impl<'atn, 'a> Closure<'atn, 'a> {
     /// predicates and for interning.
     pub(super) fn merged_config_set(&mut self, closed: &ClosedSet<'a>) -> MutableATNConfigSet<'a> {
         self.config_set(&closed.configs)
+    }
+
+    /// The tokens that a transition reads, `None` for an epsilon transition
+    /// and for an empty label.
+    fn transition_label(
+        &self,
+        transition: &Transition,
+        all_tokens: &IntervalSetBuf,
+    ) -> Option<IntervalSetBuf> {
+        if transition.is_epsilon() {
+            return None;
+        }
+        let label = match transition.transition_type() {
+            TransitionType::NotSet => {
+                let not_set = transition.try_as::<NotSetTransition>().unwrap();
+                not_set
+                    .get_label()
+                    .unwrap()
+                    .complement(TOKEN_MIN_USER_TOKEN_TYPE, self.atn.max_token_type)
+            }
+            TransitionType::Wildcard => all_tokens.clone(),
+            _ => transition.get_label()?.to_interval_set_buf(),
+        };
+        (!label.as_interval_set().as_slice().is_empty()).then_some(label)
     }
 
     fn all_tokens(&self) -> IntervalSetBuf {
