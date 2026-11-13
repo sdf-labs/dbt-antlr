@@ -743,6 +743,36 @@ fn prune_unreachable_is_transitive_loud_and_preserves_explicit_entries() {
 }
 
 #[test]
+fn quiet_hides_warnings_and_transform_notes_but_not_the_written_files() {
+    let temp = temporary_directory("unreachable-rules-quiet");
+    let grammar = fixture("unreachable-rules/Reachability.g4");
+    let out = temp.path().join("generated");
+
+    let output = run_dbt_antlr(&[
+        grammar.as_os_str(),
+        OsStr::new("--entry-rule"),
+        OsStr::new("manual"),
+        OsStr::new("--prune-unreachable-rules"),
+        OsStr::new("--quiet"),
+        OsStr::new("-o"),
+        out.as_os_str(),
+    ]);
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        utf8(&output.stdout),
+        utf8(&output.stderr)
+    );
+    assert_eq!(
+        utf8(&output.stderr),
+        "summary: Reachability.g4: 0 errors, 2 warnings (2 G4S078); --quiet hid the warnings\n"
+    );
+    let written = utf8(&output.stdout).lines().collect::<Vec<_>>();
+    assert!(written.contains(&"reachabilityparser.rs"), "{written:?}");
+    assert!(written.contains(&"reachabilitylexer.rs"), "{written:?}");
+}
+
+#[test]
 fn independent_top_level_rules_without_eof_are_inferred() {
     let temp = temporary_directory("no-eof-entry-rules");
     let grammar = temp.path().join("NoEof.g4");

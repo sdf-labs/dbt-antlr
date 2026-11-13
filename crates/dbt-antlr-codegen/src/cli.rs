@@ -33,6 +33,8 @@
 //!   --lexer <Lexer.g4>            the lexer grammar that tokenizes the --explain input
 //!   --strict                      report implicit token definitions in parser grammars
 //!                                 (G4S030) as errors
+//!   -q, --quiet                   print only error diagnostics on stderr: no warnings
+//!                                 and no transform notes (the summary line stays)
 //! ```
 
 use std::io::Write;
@@ -70,6 +72,8 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   --lexer <Lexer.g4>            the lexer grammar that tokenizes the --explain input
   --strict                      report implicit token definitions in parser grammars
                                 (G4S030) as errors
+  -q, --quiet                   print only error diagnostics on stderr: no warnings
+                                and no transform notes (the summary line stays)
 ";
 
 /// Parsed command line.
@@ -95,6 +99,7 @@ struct CliArgs {
     start_rule: Option<String>,
     lexer: Option<PathBuf>,
     strict: bool,
+    quiet: bool,
 }
 
 /// Where the `--explain` input comes from.
@@ -125,6 +130,8 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let mut start_rule = None;
     let mut lexer = None;
     let mut strict = false;
+    let mut quiet = false;
+    let mut ignored = Vec::new();
 
     let mut index = 0;
     while index < args.len() {
@@ -189,10 +196,9 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
                 }
             }
             "--strict" => strict = true,
+            "-q" | "--quiet" => quiet = true,
             "-h" | "-help" | "--help" => return Err(miette::miette!("{USAGE}")),
-            _ if arg.starts_with("-D") => {
-                writeln!(stderr, "warning: ignoring option {arg}").into_diagnostic()?;
-            }
+            _ if arg.starts_with("-D") => ignored.push(arg),
             _ if arg.starts_with('-') && arg.len() > 1 => {
                 miette::bail!("unknown option {arg}\n{USAGE}");
             }
@@ -204,6 +210,11 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         }
     }
 
+    if !quiet {
+        for arg in ignored {
+            writeln!(stderr, "warning: ignoring option {arg}").into_diagnostic()?;
+        }
+    }
     let Some(grammar) = grammar else {
         miette::bail!("missing grammar file\n{USAGE}");
     };
@@ -231,6 +242,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         start_rule,
         lexer,
         strict,
+        quiet,
     })
 }
 
@@ -291,20 +303,16 @@ pub fn run(
     for entry in &cli.entry_rules {
         config.entry_rule(entry);
     }
-    let generation = config
-        .generate_detailed()
-        .into_diagnostic()
-        .wrap_err_with(|| format!("cannot emit {}", cli.grammar.display()))?;
-    let mut errors = 0;
-    for diagnostic in generation.diagnostics() {
-        if diagnostic.severity() == crate::Severity::Error {
-            errors += 1;
-        }
-        writeln!(stderr, "{diagnostic}").into_diagnostic()?;
-    }
-    for message in generation.optimization_messages() {
-        writeln!(stderr, "{message}").into_diagnostic()?;
-    }
+    let generation = match config.generate_detailed() {
+        Ok(generation) => generation,
+        Err(error) => return Err(failure(stderr, &cli, error, "emit")),
+    };
+    write_diagnostics(
+        stderr,
+        generation.diagnostics(),
+        generation.optimization_messages(),
+        cli.quiet,
+    )?;
     for report in generation.reports() {
         write!(stdout, "{report}").into_diagnostic()?;
     }
@@ -315,11 +323,124 @@ pub fn run(
         );
         writeln!(stdout, "{name}").into_diagnostic()?;
     }
+    finish(stderr, &cli, generation.diagnostics())
+}
+
+/// Writes the diagnostics and the transform notes of a run to `stderr`.
+/// When `quiet` is set, only the errors are written.
+fn write_diagnostics(
+    stderr: &mut impl Write,
+    diagnostics: &[crate::Diagnostic],
+    optimization_messages: &[String],
+    quiet: bool,
+) -> miette::Result<()> {
+    for diagnostic in diagnostics {
+        if !quiet || diagnostic.severity() == crate::Severity::Error {
+            writeln!(stderr, "{diagnostic}").into_diagnostic()?;
+        }
+    }
+    if !quiet {
+        for message in optimization_messages {
+            writeln!(stderr, "{message}").into_diagnostic()?;
+        }
+    }
+    Ok(())
+}
+
+/// The report of a run that `error` stopped. When the grammar failed to
+/// compile, the diagnostics go to `stderr` like the diagnostics of a
+/// completed run, so that `--quiet` and the summary line apply to them too.
+fn failure(
+    stderr: &mut impl Write,
+    cli: &CliArgs,
+    error: crate::EmitError,
+    action: &str,
+) -> miette::Report {
+    let context = format!("cannot {action} {}", cli.grammar.display());
+    let diagnostics = match &error {
+        crate::EmitError::Compile(compile) => compile.diagnostics(),
+        _ => &[],
+    };
+    if diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity() == crate::Severity::Error)
+    {
+        let finished = write_diagnostics(stderr, diagnostics, &[], cli.quiet)
+            .and_then(|()| finish(stderr, cli, diagnostics));
+        return match finished {
+            Err(report) => report.wrap_err(context),
+            Ok(()) => miette::miette!("{context}"),
+        };
+    }
+    miette::Report::from_err(error).wrap_err(context)
+}
+
+/// Writes the summary line of the diagnostics to `stderr`, also with
+/// `--quiet`, and fails when a diagnostic is an error. A run without
+/// diagnostics writes no summary.
+fn finish(
+    stderr: &mut impl Write,
+    cli: &CliArgs,
+    diagnostics: &[crate::Diagnostic],
+) -> miette::Result<()> {
+    if diagnostics.is_empty() {
+        return Ok(());
+    }
+    writeln!(stderr, "{}", summary(&cli.grammar, diagnostics, cli.quiet)).into_diagnostic()?;
+    let errors = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.severity() == crate::Severity::Error)
+        .count();
     if errors > 0 {
         miette::bail!("failed with {errors} error(s)");
     }
     Ok(())
 }
+
+/// The summary line of `diagnostics`, for example
+/// `summary: T.g4: 0 errors, 3 warnings (2 G4S192, 1 G4S193)`.
+fn summary(grammar: &std::path::Path, diagnostics: &[crate::Diagnostic], quiet: bool) -> String {
+    let name = grammar.file_name().map_or_else(
+        || grammar.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let (_, errors) = tally(diagnostics, crate::Severity::Error, "error");
+    let (warning_count, warnings) = tally(diagnostics, crate::Severity::Warning, "warning");
+    let hidden = match warning_count {
+        0 => "",
+        _ if !quiet => "",
+        1 => "; --quiet hid the warning",
+        _ => "; --quiet hid the warnings",
+    };
+    format!("summary: {name}: {errors}, {warnings}{hidden}")
+}
+
+/// The number of `severity` diagnostics and its text with the count of each
+/// code: `2 warnings (1 G4S192, 1 G4S193)`.
+fn tally(
+    diagnostics: &[crate::Diagnostic],
+    severity: crate::Severity,
+    noun: &str,
+) -> (usize, String) {
+    let mut codes = std::collections::BTreeMap::<&str, usize>::new();
+    for diagnostic in diagnostics {
+        if diagnostic.severity() == severity {
+            *codes.entry(diagnostic.code()).or_default() += 1;
+        }
+    }
+    let total = codes.values().sum::<usize>();
+    if codes.is_empty() {
+        return (0, format!("0 {noun}s"));
+    }
+    let plural = if total == 1 { "" } else { "s" };
+    let codes = codes
+        .iter()
+        .map(|(code, count)| format!("{count} {code}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    (total, format!("{total} {noun}{plural} ({codes})"))
+}
+
 /// Runs `--explain` / `--explain-file`.
 fn run_explain(
     cli: &CliArgs,
@@ -366,26 +487,20 @@ fn run_explain(
         start_rule: cli.start_rule.clone(),
         lexer: cli.lexer.clone(),
     };
-    let output = crate::explain::explain(&cli.grammar, &cli.lib_dirs, &options, &request)
-        .into_diagnostic()
-        .wrap_err_with(|| format!("cannot explain {}", cli.grammar.display()))?;
-    let mut errors = 0;
-    for diagnostic in &output.diagnostics {
-        if diagnostic.severity() == crate::Severity::Error {
-            errors += 1;
-        }
-        writeln!(stderr, "{diagnostic}").into_diagnostic()?;
-    }
-    for message in &output.optimization_messages {
-        writeln!(stderr, "{message}").into_diagnostic()?;
-    }
+    let output = match crate::explain::explain(&cli.grammar, &cli.lib_dirs, &options, &request) {
+        Ok(output) => output,
+        Err(error) => return Err(failure(stderr, cli, error, "explain")),
+    };
+    write_diagnostics(
+        stderr,
+        &output.diagnostics,
+        &output.optimization_messages,
+        cli.quiet,
+    )?;
     for report in &output.reports {
         write!(stdout, "{report}").into_diagnostic()?;
     }
-    if errors > 0 {
-        miette::bail!("failed with {errors} error(s)");
-    }
-    Ok(())
+    finish(stderr, cli, &output.diagnostics)
 }
 
 #[cfg(test)]
@@ -457,6 +572,57 @@ mod tests {
         assert!(cli.strict);
         let cli = parse(&["T.g4"]).expect("minimal command line parses");
         assert!(!cli.strict);
+    }
+
+    #[test]
+    fn quiet_flag_and_alias_parse() {
+        for flag in ["-q", "--quiet"] {
+            let cli = parse(&[flag, "T.g4"]).expect("flag parses");
+            assert!(cli.quiet, "{flag} sets quiet");
+        }
+        let cli = parse(&["T.g4"]).expect("minimal command line parses");
+        assert!(!cli.quiet);
+    }
+
+    #[test]
+    fn quiet_hides_the_ignored_option_warning() {
+        let mut stderr = Vec::new();
+        let args = ["-Dlanguage=Rust", "T.g4", "-q"].map(str::to_owned);
+        parse_args(&args, &mut stderr).expect("-D option parses");
+        assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
+    }
+
+    #[test]
+    fn the_summary_counts_each_code() {
+        let diagnostic = |code, severity| {
+            crate::Diagnostic::new(
+                code,
+                severity,
+                String::new(),
+                std::path::PathBuf::from("dir/T.g4"),
+                None,
+                None,
+            )
+        };
+        let grammar = std::path::Path::new("dir/T.g4");
+        let diagnostics = [
+            diagnostic("G4S193", crate::Severity::Warning),
+            diagnostic("G4S192", crate::Severity::Warning),
+            diagnostic("G4S192", crate::Severity::Warning),
+        ];
+        assert_eq!(
+            super::summary(grammar, &diagnostics, false),
+            "summary: T.g4: 0 errors, 3 warnings (2 G4S192, 1 G4S193)"
+        );
+        assert_eq!(
+            super::summary(grammar, &diagnostics, true),
+            "summary: T.g4: 0 errors, 3 warnings (2 G4S192, 1 G4S193); --quiet hid the warnings"
+        );
+        let diagnostics = [diagnostic("G4S190", crate::Severity::Error)];
+        assert_eq!(
+            super::summary(grammar, &diagnostics, true),
+            "summary: T.g4: 1 error (1 G4S190), 0 warnings"
+        );
     }
 
     #[test]

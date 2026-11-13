@@ -138,6 +138,58 @@ fn the_lexer_option_names_the_lexer_grammar() {
 }
 
 #[test]
+fn quiet_keeps_the_report_and_drops_the_warnings() {
+    let args = ["--static-dfa-only", "--explain", "a b = c ;", "Budget.g4"];
+    let loud = run(&args);
+    let quiet = run(&[&["--quiet"], &args[..]].concat());
+    assert!(loud.status.success() && quiet.status.success());
+    assert!(
+        String::from_utf8_lossy(&loud.stderr).contains("warning[G4S192]"),
+        "the budget cutoff is a warning without --quiet"
+    );
+    assert!(
+        String::from_utf8_lossy(&loud.stderr)
+            .ends_with("summary: Budget.g4: 0 errors, 1 warning (1 G4S192)\n"),
+        "the summary line ends stderr"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&quiet.stderr),
+        "summary: Budget.g4: 0 errors, 1 warning (1 G4S192); --quiet hid the warning\n"
+    );
+    assert_eq!(quiet.stdout, loud.stdout);
+}
+
+#[test]
+fn quiet_keeps_the_errors() {
+    let output = run(&[
+        "-q",
+        "--static-dfa-only",
+        "--explain",
+        "a ; x y z ;",
+        "Predicated.g4",
+    ]);
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("[VERDICT: STATIC-DFA SYNTAX ERROR]"),
+        "{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("error[G4S190]: Predicated.g4:3:4:"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("warning["), "{stderr}");
+    assert!(
+        stderr.contains(
+            "summary: Predicated.g4: 1 error (1 G4S190), 1 warning (1 G4S192); \
+             --quiet hid the warning\n"
+        ),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn explain_needs_a_static_parser_mode() {
     let stderr = fail(&["--explain", "a b c ;", "Budget.g4"]);
     assert!(
