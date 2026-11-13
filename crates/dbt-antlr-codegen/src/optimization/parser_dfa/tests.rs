@@ -3459,3 +3459,186 @@ A : 'a' ; B : 'b' ; X : 'x' ;
         }
     }
 }
+
+/// The danger set and the stack-hijack verdict of each guard group of the
+/// decisions of `rule`, under `--static-dfa-only` with the lookahead budget
+/// `max_k`, and the build.
+fn guard_hazards_of(
+    name: &str,
+    source: &str,
+    rule: &str,
+    max_k: Option<usize>,
+) -> (
+    Vec<(Vec<i32>, String)>,
+    crate::optimization::static_parser_dfa::StaticParserDfaArtifact,
+) {
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits {
+            max_k,
+            ..BudgetLimits::default()
+        },
+    };
+    let (_, build) = build_source_with(name, source, AtnFallback::Forbidden, &budgets);
+    let groups = build
+        .report
+        .decisions
+        .iter()
+        .filter(|decision| decision.rule == rule)
+        .filter_map(|decision| decision.result.static_only.as_ref())
+        .flat_map(|resolved| resolved.guard_groups.iter())
+        .map(|group| (group.danger.clone(), format!("{:?}", group.hazard)))
+        .collect();
+    (groups, build)
+}
+
+/// The `G4S192` warning of the decisions of `rule`.
+fn static_only_warning(
+    build: &crate::optimization::static_parser_dfa::StaticParserDfaArtifact,
+    rule: &str,
+) -> String {
+    build
+        .diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code == "G4S192" && diagnostic.message.contains(&format!("of rule '{rule}'"))
+        })
+        .map_or_else(
+            || panic!("a G4S192 warning for '{rule}': {:?}", build.diagnostics),
+            |diagnostic| diagnostic.message.clone(),
+        )
+}
+
+const SETTINGS_GRAMMAR: &str = "grammar Settings;
+command : query settings? ';' ;
+query : select ('UNION' 'ALL' select)* ;
+select : 'SELECT' expr settings? ;
+settings : 'SETTINGS' ID '=' INT (',' ID '=' INT)* ;
+expr : ID | INT ;
+ID : [a-z]+ ; INT : [0-9]+ ; WS : [ ]+ -> skip ;
+";
+
+/// `command` reads `SETTINGS` after its query too, so the guard of the
+/// `settings?` of `select` defers when `command` is on the parse stack. The
+/// call of `query` from `command` is an outer wrapper of `select`: inside
+/// it, the take of `SETTINGS a = 1` reads `UNION` next, and the skip cannot.
+/// A lookahead budget that reaches the `;` of the statement shows that the
+/// guard only defers on input where the skip is right.
+#[test]
+fn outer_wrapper_guards_are_stack_hijacks() {
+    let (groups, build) = guard_hazards_of("Settings", SETTINGS_GRAMMAR, "select", Some(4));
+    let [(danger, verdict)] = groups.as_slice() else {
+        panic!("one guard group: {groups:?}");
+    };
+    assert_eq!(danger.len(), 1, "{groups:?}");
+    let caller = danger[0];
+    assert_eq!(
+        *verdict,
+        format!("Some(Hijack {{ caller: {caller}, extension: [5, 8, 6, 9, 2] }})")
+    );
+    let warning = static_only_warning(&build, "select");
+    assert!(
+        warning.ends_with(
+            "(witness: 'SETTINGS' ID '=' INT; danger caller: command:2) [stack-hijack hazard: \
+             when called from 'command' (line 2), defers 'SETTINGS' ID '=' INT even when \
+             followed by 'UNION']"
+        ),
+        "{warning}"
+    );
+    let (dump, diagnostics) = crate::optimization::StaticParserDfa::render_dfa_dump(
+        std::slice::from_ref(&build.report),
+        "select",
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert!(
+        dump.contains(&format!(
+            "group 0: danger=[{caller} (command:2)] [stack-hijack hazard: when called from \
+             'command' (line 2), defers 'SETTINGS' ID '=' INT even when followed by 'UNION']\n"
+        )),
+        "{dump}"
+    );
+
+    let (groups, build) = guard_hazards_of("Settings", SETTINGS_GRAMMAR, "select", Some(8));
+    assert_eq!(groups, [(danger.clone(), "Some(Covered)".to_owned())]);
+    let warning = static_only_warning(&build, "select");
+    assert!(warning.ends_with(" [benign stack guard]"), "{warning}");
+    let (dump, _) = crate::optimization::StaticParserDfa::render_dfa_dump(
+        std::slice::from_ref(&build.report),
+        "select",
+    );
+    assert!(
+        dump.contains(&format!("group 0: danger=[{caller} (command:2)]\n")),
+        "a benign group has no note: {dump}"
+    );
+}
+
+/// The shapes of `CAST(INTERVAL '1' DAY + 1 AS String)`: `DAY` is a unit of
+/// the interval and an alias of the column. In `add`, the guard of `unit?`
+/// defers when `column` is on the stack. The take reads `+` after
+/// `DAY + 1` inside the call of `column`, and the skip cannot. A left
+/// recursive `expr` without the pass frame of `add` has the same hazard.
+#[test]
+fn interval_units_are_stack_hijacks() {
+    let rules = [
+        (
+            "unary",
+            "column : add alias? ;
+add : unary ('+' unary)* ;
+unary : 'INTERVAL' STR unit? | 'CAST' '(' column 'AS' ID ')' | ID | INT ;",
+        ),
+        (
+            "expr",
+            "column : expr alias? ;
+expr : expr '+' expr | 'INTERVAL' STR unit? | 'CAST' '(' column 'AS' ID ')' | ID | INT ;",
+        ),
+    ];
+    for (rule, rules) in rules {
+        let source = format!(
+            "grammar Interval;
+stmt : 'SELECT' column ('+' INT)? EOF ;
+{rules}
+unit : 'DAY' | 'HOUR' ;
+alias : ID | 'DAY' ;
+ID : [a-z]+ ; INT : [0-9]+ ; STR : '\\'' [0-9]+ '\\'' ; WS : [ ]+ -> skip ;
+"
+        );
+        let (groups, build) = guard_hazards_of("Interval", &source, rule, Some(3));
+        assert!(
+            groups
+                .iter()
+                .any(|(_, verdict)| verdict.contains("extension: [8, 2, 11, 2]")),
+            "{rule}: {groups:?}"
+        );
+        let warning = static_only_warning(&build, rule);
+        assert!(
+            warning.contains(
+                "[stack-hijack hazard: when called from 'column' (line 3), defers 'DAY' '+' INT \
+                 even when followed by '+']"
+            ),
+            "{rule}: {warning}"
+        );
+        if rule == "expr" {
+            // The iterate of `expr '+' expr` has a guard too: `stmt` reads
+            // `+ INT` after the column. The call of `column` from `stmt` is
+            // the danger caller, and the iterate pops it after one operand.
+            assert!(
+                groups.iter().any(|(_, verdict)| verdict == "Some(Covered)"),
+                "{groups:?}"
+            );
+        }
+    }
+}
+
+/// When the danger caller calls the decision rule directly, as in
+/// `CALLERS_GRAMMAR`, the guarded alternative pops the call of the caller
+/// right after the optional clause. The skip reads the same continuations
+/// there, so the guard is benign.
+#[test]
+fn direct_danger_callers_are_benign_guards() {
+    let (groups, build) = guard_hazards_of("Callers", CALLERS_GRAMMAR, "expr", None);
+    assert!(!groups.is_empty());
+    for (danger, verdict) in &groups {
+        assert_eq!(verdict, "Some(Covered)", "{danger:?}");
+    }
+    let warning = static_only_warning(&build, "expr");
+    assert!(warning.ends_with(" [benign stack guard]"), "{warning}");
+}

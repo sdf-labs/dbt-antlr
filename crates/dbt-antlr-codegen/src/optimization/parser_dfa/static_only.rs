@@ -11,7 +11,8 @@
 //!   precedence loop instead of the adaptive simulation. The guard walks only
 //!   the parse stack, so this needs no ATN simulation. This is also a guess:
 //!   the guard sees the guard roots on the stack, but not the input after the
-//!   lookahead of the table.
+//!   lookahead of the table. The guard groups rank by their stack-hijack
+//!   hazard (see `hazard`).
 //! - A state with an SLL conflict (a conflict escape) accepts its minimum
 //!   conflicting alternative. This is the choice of the SLL prediction mode.
 //! - A state where the lookahead budget stopped the construction accepts its
@@ -22,7 +23,7 @@
 //! - A predicated state becomes a dead end without edges or fallback, so the
 //!   walk reports a syntax error. The table cannot evaluate the predicate.
 
-use super::hazard::{HazardLevel, HijackVerdict, StateHazard};
+use super::hazard::{HazardLevel, HijackVerdict, StackHijackVerdict, StateHazard};
 use super::{CONFLICT_ESCAPE, Category, DecisionResult, ESCAPE, GUARDED, StaticDfaTable};
 
 /// How `--static-dfa-only` replaced one escape state.
@@ -71,6 +72,108 @@ pub(crate) struct EscapeResolutions {
     /// the chosen alternative and the dropped alternatives. The most harmful
     /// groups come first, then the groups with the most states.
     pub(crate) tie_breaks: Vec<TieBreak>,
+    /// The guarded states, grouped by the danger set of their guard. The
+    /// most harmful groups come first, then the groups with the most states.
+    pub(crate) guard_groups: Vec<GuardGroup>,
+}
+
+/// The guarded states of one decision whose guards have one danger set.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct GuardGroup {
+    /// The sorted invoking states where the guards defer.
+    pub(crate) danger: Vec<i32>,
+    /// The number of states.
+    pub(crate) states: usize,
+    /// A shortest lookahead path to one of the states.
+    pub(crate) witness: Option<Vec<i32>>,
+    /// The most harmful stack-hijack hazard of the states of the group, when
+    /// the analysis ran for one of them.
+    pub(crate) hazard: Option<StackHijackVerdict>,
+}
+
+impl GuardGroup {
+    /// The level that orders the groups: a group without an analysis counts
+    /// as [`HazardLevel::Medium`].
+    pub(crate) fn level(&self) -> HazardLevel {
+        self.hazard
+            .as_ref()
+            .map_or(HazardLevel::Medium, StackHijackVerdict::level)
+    }
+
+    /// Adds `other` to the group: the states, the shorter witness, and the
+    /// worse hazard.
+    fn absorb(&mut self, other: Self) {
+        self.states += other.states;
+        self.hazard = worse_stack(self.hazard.take(), other.hazard);
+        let shorter = match (&self.witness, &other.witness) {
+            (None, Some(_)) => true,
+            (Some(known), Some(new)) => new.len() < known.len(),
+            _ => false,
+        };
+        if shorter {
+            self.witness = other.witness;
+        }
+    }
+}
+
+/// Whether the stack-hijack verdict `left` is more harmful than `right`: a
+/// higher level, then a shorter hijack path, then a lower danger caller.
+fn stack_outranks(left: &StackHijackVerdict, right: &StackHijackVerdict) -> bool {
+    let rank = |verdict: &StackHijackVerdict| match verdict {
+        StackHijackVerdict::Hijack { caller, extension } => (
+            verdict.level(),
+            std::cmp::Reverse(extension.len()),
+            std::cmp::Reverse(*caller),
+        ),
+        _ => (verdict.level(), std::cmp::Reverse(0), std::cmp::Reverse(0)),
+    };
+    rank(left) > rank(right)
+}
+
+/// The same verdict, unknown instead of covered: a state of the group was
+/// not analyzed.
+fn partial_stack(verdict: StackHijackVerdict) -> StackHijackVerdict {
+    match verdict {
+        StackHijackVerdict::Covered => StackHijackVerdict::Unknown,
+        verdict => verdict,
+    }
+}
+
+/// The more harmful of two stack-hijack verdicts. A side without an analysis
+/// makes a covered verdict unknown.
+fn worse_stack(
+    left: Option<StackHijackVerdict>,
+    right: Option<StackHijackVerdict>,
+) -> Option<StackHijackVerdict> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(if stack_outranks(&right, &left) {
+            right
+        } else {
+            left
+        }),
+        (Some(known), None) | (None, Some(known)) => Some(partial_stack(known)),
+        (None, None) => None,
+    }
+}
+
+/// Adds `group` to `groups`, merged into the group with the same danger set.
+fn add_guard_group(groups: &mut Vec<GuardGroup>, group: GuardGroup) {
+    match groups.iter_mut().find(|known| known.danger == group.danger) {
+        Some(known) => known.absorb(group),
+        None => groups.push(group),
+    }
+}
+
+/// Orders guard groups: the most harmful first, then the most states, then
+/// by danger set.
+fn sort_guard_groups(groups: &mut [GuardGroup]) {
+    groups.sort_by(|left, right| {
+        right
+            .level()
+            .cmp(&left.level())
+            .then_with(|| right.states.cmp(&left.states))
+            .then_with(|| left.danger.cmp(&right.danger))
+    });
 }
 
 /// The states of one decision where `--static-dfa-only` chose one
@@ -240,6 +343,30 @@ impl EscapeResolutions {
             add_tie_break(&mut self.tie_breaks, group);
         }
         sort_tie_breaks(&mut self.tie_breaks);
+        for group in other.guard_groups {
+            add_guard_group(&mut self.guard_groups, group);
+        }
+        sort_guard_groups(&mut self.guard_groups);
+        self.show_stack_hijack();
+    }
+
+    /// Shows the guard group of a stack hijack in the guarded witness and
+    /// danger set, when the most harmful guard group is a hijack.
+    fn show_stack_hijack(&mut self) {
+        if let Some(group) = self.guard_groups.first()
+            && matches!(group.hazard, Some(StackHijackVerdict::Hijack { .. }))
+            && group.witness.is_some()
+        {
+            self.guarded_witness.clone_from(&group.witness);
+            self.guarded_danger.clone_from(&group.danger);
+        }
+    }
+
+    /// The guard groups with a high stack-hijack hazard.
+    pub(crate) fn stack_hijacks(&self) -> impl Iterator<Item = &GuardGroup> {
+        self.guard_groups
+            .iter()
+            .filter(|group| group.level() == HazardLevel::High)
     }
 }
 
@@ -257,6 +384,9 @@ impl StaticDfaTable {
         // The tie-break groups, each with the shallowest state that is in it
         // and the hazards of its analyzed states.
         let mut groups: Vec<GroupBuild> = Vec::new();
+        // The guard groups by group index, each with its shallowest state, the
+        // number of its states, and the verdicts of its analyzed states.
+        let mut guards: Vec<(u32, usize, usize, Vec<StackHijackVerdict>)> = Vec::new();
         for (index, state) in self.states.iter_mut().enumerate() {
             if !matches!(state.accept, ESCAPE | CONFLICT_ESCAPE | GUARDED) {
                 continue;
@@ -265,6 +395,22 @@ impl StaticDfaTable {
                 state.resolution = Some(EscapeResolution::Guarded);
                 resolutions.guarded += 1;
                 first_guarded.get_or_insert(index);
+                let verdict = state.stack_hazard.take();
+                match guards
+                    .iter_mut()
+                    .find(|(group, ..)| *group == state.guard_group)
+                {
+                    Some((_, shallowest, states, verdicts)) => {
+                        *states += 1;
+                        if depths[index] < depths[*shallowest] {
+                            *shallowest = index;
+                        }
+                        verdicts.extend(verdict);
+                    }
+                    None => {
+                        guards.push((state.guard_group, index, 1, verdict.into_iter().collect()))
+                    }
+                }
                 continue;
             }
             let conflict_alt = if state.accept == GUARDED && state.guarded_alt > 0 {
@@ -335,6 +481,7 @@ impl StaticDfaTable {
             state.guard_group = 0;
             state.continuation = None;
             state.hazard = None;
+            state.stack_hazard = None;
         }
         if resolutions.guarded == 0 {
             self.guard_groups.clear();
@@ -380,6 +527,40 @@ impl StaticDfaTable {
             })
             .collect();
         sort_tie_breaks(&mut resolutions.tie_breaks);
+        for (group, shallowest, states, verdicts) in guards {
+            let analyzed = verdicts.len();
+            let hazard = verdicts
+                .into_iter()
+                .reduce(|known, verdict| {
+                    if stack_outranks(&verdict, &known) {
+                        verdict
+                    } else {
+                        known
+                    }
+                })
+                .map(|verdict| {
+                    if analyzed < states {
+                        partial_stack(verdict)
+                    } else {
+                        verdict
+                    }
+                });
+            add_guard_group(
+                &mut resolutions.guard_groups,
+                GuardGroup {
+                    danger: self
+                        .guard_groups
+                        .get(group as usize)
+                        .cloned()
+                        .unwrap_or_default(),
+                    states,
+                    witness: self.witness(shallowest),
+                    hazard,
+                },
+            );
+        }
+        sort_guard_groups(&mut resolutions.guard_groups);
+        resolutions.show_stack_hijack();
         resolutions
     }
 }
@@ -422,7 +603,7 @@ impl DecisionResult {
 
 #[cfg(test)]
 mod tests {
-    use super::{EscapeResolutions, TieBreak};
+    use super::{EscapeResolutions, GuardGroup, StackHijackVerdict, TieBreak};
 
     fn group(chosen: i32, dropped: &[i32], states: usize, witness: &[i32]) -> TieBreak {
         TieBreak {
@@ -455,5 +636,57 @@ mod tests {
                 group(3, &[4], 1, &[8]),
             ]
         );
+    }
+
+    fn guard(
+        danger: &[i32],
+        states: usize,
+        witness: &[i32],
+        hazard: Option<StackHijackVerdict>,
+    ) -> GuardGroup {
+        GuardGroup {
+            danger: danger.to_vec(),
+            states,
+            witness: Some(witness.to_vec()),
+            hazard,
+        }
+    }
+
+    /// The guard groups of several tables merge by danger set. A merged group
+    /// keeps its worst verdict, and a covered group with an unanalyzed side
+    /// is unknown. A stack hijack comes first, and the guarded witness and
+    /// danger set show it.
+    #[test]
+    fn guard_groups_merge_over_tables() {
+        let hijack = StackHijackVerdict::Hijack {
+            caller: 9,
+            extension: vec![5, 2],
+        };
+        let mut resolutions = EscapeResolutions {
+            guarded_witness: Some(vec![3]),
+            guarded_danger: vec![4],
+            guard_groups: vec![
+                guard(&[4], 3, &[3], Some(StackHijackVerdict::Covered)),
+                guard(&[9], 1, &[5, 6], Some(StackHijackVerdict::Covered)),
+            ],
+            ..EscapeResolutions::default()
+        };
+        resolutions.merge(EscapeResolutions {
+            guard_groups: vec![
+                guard(&[4], 2, &[7], None),
+                guard(&[9], 1, &[5], Some(hijack.clone())),
+            ],
+            ..EscapeResolutions::default()
+        });
+        assert_eq!(
+            resolutions.guard_groups,
+            [
+                guard(&[9], 2, &[5], Some(hijack)),
+                guard(&[4], 5, &[3], Some(StackHijackVerdict::Unknown)),
+            ]
+        );
+        assert_eq!(resolutions.guarded_witness, Some(vec![5]));
+        assert_eq!(resolutions.guarded_danger, [9]);
+        assert_eq!(resolutions.stack_hijacks().count(), 1);
     }
 }
