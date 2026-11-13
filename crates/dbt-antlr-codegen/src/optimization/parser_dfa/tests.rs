@@ -1886,7 +1886,6 @@ fn visit_budget(budget: u64) -> ParserDfaBudgets {
             max_visits: Some(budget),
             ..BudgetLimits::default()
         },
-        rules: Vec::new(),
     }
 }
 
@@ -2333,17 +2332,15 @@ fn budget_options_set_the_budgets_of_their_decisions() {
     assert_eq!(build.report.budget, budget(7, None, 2_000_000));
 }
 
-/// A `--dfa-budget` setting wins over the options of the grammar, and the
-/// global limits apply only where no option sets a limit.
+/// The base limits apply only where no option sets a limit.
 #[test]
-fn budget_selectors_win_over_the_budget_options() {
+fn budget_options_win_over_the_base_limits() {
     let budgets = ParserDfaBudgets {
         global: BudgetLimits {
             max_states: Some(50),
             max_k: Some(2),
             max_visits: Some(9_000),
         },
-        rules: vec![super::BudgetRule::parse("b:states=9").expect("valid")],
     };
     let (_, build) = build_source_with("Budgets", BUDGET_GRAMMAR, AtnFallback::Allowed, &budgets);
     let budget = |max_states, max_k, max_visits| super::DecisionBudget {
@@ -2355,43 +2352,7 @@ fn budget_selectors_win_over_the_budget_options() {
     assert_eq!(rule_budgets(&build, "a"), [budget(7, Some(3), 9_000)]);
     assert_eq!(
         rule_budgets(&build, "b"),
-        [budget(9, Some(2), 5_000), budget(9, Some(2), 9_000)]
-    );
-}
-
-/// A `--dfa-budget` selector that matches no decision gets a `G4S195`
-/// warning.
-#[test]
-fn unmatched_budget_selectors_emit_g4s195_warnings() {
-    let budgets = ParserDfaBudgets {
-        global: BudgetLimits::default(),
-        rules: vec![
-            super::BudgetRule::parse("missing:k=2").expect("valid"),
-            super::BudgetRule::parse("a:99:k=2").expect("valid"),
-            super::BudgetRule::parse("a:k=2").expect("valid"),
-        ],
-    };
-    let (_, build) = build_source_with("Budgets", BUDGET_GRAMMAR, AtnFallback::Allowed, &budgets);
-    let matched = crate::optimization::matched_budget_selectors(&build.report, &budgets);
-    assert_eq!(matched, [false, false, true]);
-    let diagnostics = crate::optimization::budget_selector_diagnostics(
-        &budgets,
-        &matched,
-        &build.report.source_span,
-    );
-    let warnings: Vec<_> = diagnostics
-        .iter()
-        .map(|diagnostic| (diagnostic.code, diagnostic.message.as_str()))
-        .collect();
-    assert_eq!(
-        warnings,
-        [
-            (
-                "G4S195",
-                "--dfa-budget: no parser decision matches 'missing'"
-            ),
-            ("G4S195", "--dfa-budget: no parser decision matches 'a:99'"),
-        ]
+        [budget(7, Some(2), 5_000), budget(7, Some(2), 9_000)]
     );
 }
 
@@ -2444,7 +2405,6 @@ fn state_caps_cut_hybrid_tables_instead_of_failing_them() {
             max_states: Some(4),
             ..BudgetLimits::default()
         },
-        rules: Vec::new(),
     };
     let (_, build) = build_source_with("Fanout", FANOUT_GRAMMAR, AtnFallback::Allowed, &budgets);
     let decision = &build.report.decisions[0];
@@ -2466,8 +2426,8 @@ fn state_caps_cut_hybrid_tables_instead_of_failing_them() {
             "parser decision 0 of rule 'a' resolves its escape states without adaptivePredict: \
              1 undecided state predicts the minimum viable alternative (witness: 'a'); the \
              analysis budget (4 states or 2000000 visited configs) stopped the lookahead; raise \
-             it with --max-dfa-states and --max-dfa-visits, a --dfa-budget setting, or the \
-             max_dfa_states and max_dfa_visits options"
+             it with the max_dfa_states and max_dfa_visits options of the grammar, the rule, or \
+             the block"
         )]
     );
 
@@ -2509,7 +2469,6 @@ fn frontier_iterates_need_every_exit_position_in_the_iterate_lineage() {
             max_states: Some(5),
             ..BudgetLimits::default()
         },
-        rules: Vec::new(),
     };
     let (_, build) = build_source_with(
         "Split",
@@ -2552,7 +2511,6 @@ fn split_operator_accepts(name: &str, source: &str, max_states: usize) -> Vec<Op
             max_states: Some(max_states),
             ..BudgetLimits::default()
         },
-        rules: Vec::new(),
     };
     let (_, build) = build_source_with(name, source, AtnFallback::Allowed, &budgets);
     let token = |name: &str| {

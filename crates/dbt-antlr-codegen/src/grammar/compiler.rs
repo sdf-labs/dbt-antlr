@@ -2,10 +2,10 @@
 // Copyright (c) 2026 Konstantin Vyatkin
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::optimization::parser_dfa::ParserDfaBudgets;
 use crate::optimization::{
     AtnFallback, OptimizationPlan, OptimizationReport, StaticDfaPass, StaticLexerDfa,
-    StaticLexerTables, StaticParserDfa, StaticParserTables, budget_selector_diagnostics,
-    matched_budget_selectors,
+    StaticLexerTables, StaticParserDfa, StaticParserTables,
 };
 
 use super::action::{ActionReferenceParser, action_references};
@@ -337,7 +337,7 @@ fn build_static_dfas(
         match pass {
             StaticDfaPass::StaticLexerDfa => build_static_lexer_dfas(&mut compilation, fallback),
             StaticDfaPass::StaticParserDfa => {
-                build_static_parser_dfas(&mut compilation, plan);
+                build_static_parser_dfas(&mut compilation, fallback, plan.profile_decisions());
             }
         }
     }
@@ -374,12 +374,8 @@ fn build_static_lexer_dfas(compilation: &mut Compilation, fallback: AtnFallback)
     }
 }
 
-fn build_static_parser_dfas(compilation: &mut Compilation, plan: &OptimizationPlan) {
-    let fallback = plan.atn_fallback();
-    let profile = plan.profile_decisions();
-    let budgets = plan.parser_dfa_budgets();
-    let mut matched = vec![false; budgets.rules.len()];
-    let mut span = None;
+fn build_static_parser_dfas(compilation: &mut Compilation, fallback: AtnFallback, profile: bool) {
+    let budgets = ParserDfaBudgets::default();
     let parser_ids = compilation
         .roots
         .iter()
@@ -389,14 +385,7 @@ fn build_static_parser_dfas(compilation: &mut Compilation, plan: &OptimizationPl
         let Some(compiled) = compilation.parsers.get(&parser_id) else {
             continue;
         };
-        let build = StaticParserDfa::build(compiled, fallback, profile, budgets);
-        for (matched, now) in matched
-            .iter_mut()
-            .zip(matched_budget_selectors(&build.report, budgets))
-        {
-            *matched |= now;
-        }
-        span.get_or_insert_with(|| build.report.source_span.clone());
+        let build = StaticParserDfa::build(compiled, fallback, profile, &budgets);
         compilation.diagnostics.extend(build.diagnostics);
         compilation
             .optimization_report
@@ -404,11 +393,6 @@ fn build_static_parser_dfas(compilation: &mut Compilation, plan: &OptimizationPl
         compilation
             .static_parser_tables
             .insert(parser_id, build.tables);
-    }
-    if let Some(span) = span {
-        compilation
-            .diagnostics
-            .extend(budget_selector_diagnostics(budgets, &matched, &span));
     }
 }
 
@@ -515,40 +499,6 @@ mod tests {
                 compilation.diagnostics
             );
         }
-    }
-
-    /// A `--dfa-budget` selector gets a `G4S195` warning only when it matches
-    /// no decision of any root parser.
-    #[test]
-    fn budget_selectors_match_across_root_parsers() {
-        let mut options = OptimizationOptions::new();
-        options
-            .static_parser_dfa(true)
-            .dfa_budget("stat:states=2000")
-            .dfa_budget("missing:k=2");
-        let plan = OptimizationPlan::from_options(&options).expect("plan should be valid");
-        let grammars = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("crate directory")
-            .join("dbt-antlr-runtime/grammars/parser");
-        let compilation = compile_with_plan(
-            LoadOptions {
-                roots: vec![grammars.join("LrDfa.g4"), grammars.join("StaticDFA.g4")],
-                library_directories: Vec::new(),
-            },
-            &plan,
-        )
-        .expect("the grammars compile");
-        let warnings: Vec<_> = compilation
-            .diagnostics
-            .iter()
-            .filter(|diagnostic| diagnostic.code == "G4S195")
-            .map(|diagnostic| diagnostic.message.as_str())
-            .collect();
-        assert_eq!(
-            warnings,
-            ["--dfa-budget: no parser decision matches 'missing'"]
-        );
     }
 
     #[test]

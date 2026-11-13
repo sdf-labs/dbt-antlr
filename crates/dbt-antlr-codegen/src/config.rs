@@ -168,35 +168,6 @@ impl Config {
         self
     }
 
-    /// Sets the state cap of each static parser DFA table
-    /// (`--max-dfa-states`). See [`OptimizationOptions::max_dfa_states`].
-    pub const fn max_dfa_states(&mut self, states: usize) -> &mut Self {
-        self.optimization.max_dfa_states(states);
-        self
-    }
-
-    /// Sets the depth at which a hybrid static parser DFA table stops
-    /// (`--max-dfa-depth`). See [`OptimizationOptions::max_dfa_depth`].
-    pub const fn max_dfa_depth(&mut self, depth: usize) -> &mut Self {
-        self.optimization.max_dfa_depth(depth);
-        self
-    }
-
-    /// Sets the configs that one static parser DFA build attempt can visit
-    /// (`--max-dfa-visits`). See [`OptimizationOptions::max_dfa_visits`].
-    pub const fn max_dfa_visits(&mut self, visits: u64) -> &mut Self {
-        self.optimization.max_dfa_visits(visits);
-        self
-    }
-
-    /// Sets the analysis budget of some parser decisions
-    /// (`--dfa-budget <SPEC>`). Repeatable. See
-    /// [`OptimizationOptions::dfa_budget`].
-    pub fn dfa_budget(&mut self, spec: impl Into<String>) -> &mut Self {
-        self.optimization.dfa_budget(spec);
-        self
-    }
-
     /// Returns the optimization selection for in-place configuration.
     /// See [`OptimizationOptions`] for the available options. The
     /// convenience setters on [`Config`] delegate to it.

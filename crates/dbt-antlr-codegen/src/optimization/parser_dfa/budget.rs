@@ -7,21 +7,21 @@
 //! can visit. The limits come from these sources, from the highest priority
 //! to the lowest:
 //!
-//! 1. A `--dfa-budget` selector that matches the decision.
-//! 2. The options of the block that owns the decision.
-//! 3. The options of the rule of the decision.
-//! 4. The options of the grammar.
-//! 5. The global settings (`--max-dfa-states`, `--max-dfa-depth`,
-//!    `--max-dfa-visits`).
-//! 6. The defaults.
+//! 1. The options of the block that owns the decision.
+//! 2. The options of the rule of the decision.
+//! 3. The options of the grammar.
+//! 4. The defaults.
 //!
 //! Each limit resolves on its own, so a rule can set `max_k` and keep the
 //! state cap of the grammar.
+//!
+//! The budget can change the language of a `--static-dfa-only` parser,
+//! because a smaller budget makes more guesses. Thus only the grammar sets
+//! the budget, and the generator has no command-line setting for it.
 
 use dbt_antlr_runtime::dfa::static_parser_dfa::{MAX_TABLE_CELLS, MAX_TABLE_STATES};
 
 use crate::grammar::model::OptionDecl;
-pub(crate) use crate::optimization::options::BudgetLimits;
 
 /// The default state cap of one decision table.
 pub(crate) const DEFAULT_MAX_STATES: usize = 1000;
@@ -94,6 +94,18 @@ fn parse_limit(value: &str, max: u64) -> Result<u64, String> {
         return Err(format!("the value must be at most {max}"));
     }
     Ok(parsed)
+}
+
+/// The analysis budget limits that one source sets. A limit that is `None`
+/// comes from a source with a lower priority.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct BudgetLimits {
+    /// The state cap of a decision table.
+    pub(crate) max_states: Option<usize>,
+    /// The depth at which a hybrid table stops.
+    pub(crate) max_k: Option<usize>,
+    /// The configs that one build attempt can visit.
+    pub(crate) max_visits: Option<u64>,
 }
 
 impl BudgetLimits {
@@ -196,206 +208,17 @@ impl DecisionBudget {
     }
 }
 
-/// The decisions that one `--dfa-budget` setting applies to.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum BudgetSelector {
-    Decision(usize),
-    Rule(String),
-    RuleDecision { rule: String, decision: usize },
-}
-
-impl BudgetSelector {
-    fn parse(parts: &[&str]) -> Option<Self> {
-        match parts {
-            [item] => Some(match decision_number(item) {
-                Some(decision) => Self::Decision(decision),
-                None if is_rule_name(item) => Self::Rule((*item).to_owned()),
-                None => return None,
-            }),
-            [rule, decision] if is_rule_name(rule) => Some(Self::RuleDecision {
-                rule: (*rule).to_owned(),
-                decision: decision_number(decision)?,
-            }),
-            _ => None,
-        }
-    }
-
-    /// Whether the selector matches decision `decision` of rule `rule`.
-    pub(crate) fn matches(&self, rule: &str, decision: usize) -> bool {
-        match self {
-            Self::Decision(wanted) => *wanted == decision,
-            Self::Rule(wanted) => wanted == rule,
-            Self::RuleDecision {
-                rule: wanted_rule,
-                decision: wanted,
-            } => wanted_rule == rule && *wanted == decision,
-        }
-    }
-}
-
-fn decision_number(text: &str) -> Option<usize> {
-    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    text.parse().ok()
-}
-
-fn is_rule_name(text: &str) -> bool {
-    !text.is_empty()
-        && text
-            .chars()
-            .all(|character| character.is_alphanumeric() || character == '_')
-}
-
-/// One `--dfa-budget` setting: `SELECTOR:SETTING[,SETTING...]`, where the
-/// selector is a decision number, a rule name, or `rule:decision`, and each
-/// setting is `states=N`, `k=N`, or `visits=N`.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct BudgetRule {
-    pub(crate) selector: BudgetSelector,
-    pub(crate) limits: BudgetLimits,
-    /// The selector as the user wrote it, for diagnostics.
-    pub(crate) text: String,
-}
-
-impl BudgetRule {
-    pub(crate) fn parse(spec: &str) -> Result<Self, String> {
-        let malformed = |reason: &str| {
-            format!(
-                "invalid --dfa-budget '{spec}': {reason}; expected \
-                 SELECTOR:SETTING[,SETTING...] with a decision number, a rule name, or \
-                 rule:decision as the selector, and states=N, k=N, or visits=N as settings"
-            )
-        };
-        let parts = spec.split(':').map(str::trim).collect::<Vec<_>>();
-        let Some((settings, selector)) = parts.split_last() else {
-            return Err(malformed("the setting is missing"));
-        };
-        let selector = BudgetSelector::parse(selector)
-            .ok_or_else(|| malformed("the selector is not valid"))?;
-        let mut limits = BudgetLimits::default();
-        for setting in settings.split(',').map(str::trim) {
-            let Some((name, value)) = setting.split_once('=') else {
-                return Err(malformed(&format!("'{setting}' is not NAME=VALUE")));
-            };
-            let (name, value) = (name.trim(), value.trim());
-            if !matches!(name, "states" | "k" | "visits") {
-                return Err(malformed(&format!("'{name}' is not a known setting")));
-            }
-            let option = match name {
-                "states" => MAX_STATES_OPTION,
-                "k" => MAX_K_OPTION,
-                _ => MAX_VISITS_OPTION,
-            };
-            if let Some(problem) = budget_option_problem(option, value) {
-                return Err(malformed(&format!("{name}: {problem}")));
-            }
-            limits.set(option, value);
-        }
-        let text = parts[..parts.len() - 1].join(":");
-        Ok(Self {
-            selector,
-            limits,
-            text,
-        })
-    }
-}
-
-/// The budget settings of one generation run: the global limits and the
-/// `--dfa-budget` settings, in command-line order.
+/// The base limits of the static parser DFA pass, under the options of the
+/// grammar. Code generation always uses the defaults. Tests lower the limits
+/// to examine the behavior at the edge of a budget.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ParserDfaBudgets {
     pub(crate) global: BudgetLimits,
-    pub(crate) rules: Vec<BudgetRule>,
-}
-
-impl ParserDfaBudgets {
-    /// The limits of the `--dfa-budget` settings that match decision
-    /// `decision` of rule `rule`. A later setting wins over an earlier one.
-    pub(crate) fn selected_limits(&self, rule: &str, decision: usize) -> BudgetLimits {
-        self.rules
-            .iter()
-            .rev()
-            .filter(|budget| budget.selector.matches(rule, decision))
-            .fold(BudgetLimits::default(), |limits, budget| {
-                limits.or(budget.limits)
-            })
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn budget_rules_parse_each_selector_form() {
-        let rule = BudgetRule::parse("selectStmt:states=4000,k=6").expect("valid");
-        assert_eq!(rule.selector, BudgetSelector::Rule("selectStmt".to_owned()));
-        assert_eq!(rule.text, "selectStmt");
-        assert_eq!(
-            rule.limits,
-            BudgetLimits {
-                max_states: Some(4000),
-                max_k: Some(6),
-                max_visits: None,
-            }
-        );
-
-        let rule = BudgetRule::parse("12:visits=5000000").expect("valid");
-        assert_eq!(rule.selector, BudgetSelector::Decision(12));
-        assert_eq!(rule.limits.max_visits, Some(5_000_000));
-
-        let rule = BudgetRule::parse("expr:251:states=3000").expect("valid");
-        assert_eq!(
-            rule.selector,
-            BudgetSelector::RuleDecision {
-                rule: "expr".to_owned(),
-                decision: 251,
-            }
-        );
-        assert_eq!(rule.text, "expr:251");
-    }
-
-    #[test]
-    fn budget_rules_reject_malformed_specs() {
-        for spec in [
-            "states=4000",
-            "expr:",
-            "expr:depth=4",
-            "expr:states=0",
-            "expr:states=40000",
-            "expr:k=x",
-            "a:b:c:k=2",
-            "-:k=2",
-        ] {
-            assert!(
-                BudgetRule::parse(spec).is_err(),
-                "{spec} should be rejected"
-            );
-        }
-    }
-
-    #[test]
-    fn later_budget_rules_win_per_limit() {
-        let budgets = ParserDfaBudgets {
-            global: BudgetLimits::default(),
-            rules: vec![
-                BudgetRule::parse("expr:states=2000,k=5").expect("valid"),
-                BudgetRule::parse("expr:3:k=7").expect("valid"),
-                BudgetRule::parse("other:states=9").expect("valid"),
-            ],
-        };
-        assert_eq!(
-            budgets.selected_limits("expr", 3),
-            BudgetLimits {
-                max_states: Some(2000),
-                max_k: Some(7),
-                max_visits: None,
-            }
-        );
-        assert_eq!(budgets.selected_limits("expr", 4).max_k, Some(5));
-        assert_eq!(budgets.selected_limits("stmt", 3), BudgetLimits::default());
-    }
 
     #[test]
     fn resolved_budgets_clamp_to_the_table_image() {

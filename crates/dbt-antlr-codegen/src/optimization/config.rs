@@ -3,10 +3,6 @@
 use std::collections::BTreeSet;
 
 use super::options::OptimizationOptions;
-use super::parser_dfa::{
-    BudgetLimits, BudgetRule, MAX_K_OPTION, MAX_STATES_OPTION, MAX_VISITS_OPTION, ParserDfaBudgets,
-    budget_option_problem,
-};
 use crate::error::EmitError;
 use crate::grammar::rule_reachability::EntryRuleConfig;
 use crate::grammar::source::SourceSet;
@@ -102,8 +98,6 @@ struct SelectionSettings {
     dump_dfas: Option<String>,
     profile_decisions: bool,
     report_only: bool,
-    dfa_budget: BudgetLimits,
-    dfa_budget_specs: Vec<String>,
 }
 
 impl SelectionSettings {
@@ -120,8 +114,6 @@ impl SelectionSettings {
             dump_dfas: options.dump_dfas.clone(),
             profile_decisions: options.profile_decisions,
             report_only: options.is_report_only(),
-            dfa_budget: options.dfa_budget,
-            dfa_budget_specs: options.dfa_budget_specs.clone(),
         }
     }
 }
@@ -141,7 +133,6 @@ pub(crate) struct OptimizationPlan {
     pub(super) static_parser_reports: StaticParserDfaSelection,
     pub(super) report_only: bool,
     pub(super) static_dfa_only: bool,
-    pub(super) parser_dfa_budgets: ParserDfaBudgets,
 }
 
 const PASS_REGISTRY: &[PassRegistration] = &[
@@ -196,7 +187,6 @@ impl OptimizationPlan {
             });
         }
         validate_selection(&selected)?;
-        let parser_dfa_budgets = parser_dfa_budgets(&settings)?;
         let static_parser_reports = StaticParserDfaSelection {
             report_decisions: settings.report_decisions,
             dump_dfas: settings.dump_dfas,
@@ -211,7 +201,6 @@ impl OptimizationPlan {
             static_parser_reports,
             report_only,
             static_dfa_only,
-            parser_dfa_budgets,
         })
     }
 
@@ -239,10 +228,6 @@ impl OptimizationPlan {
         self.static_parser_reports.profile_decisions
     }
 
-    pub(crate) const fn parser_dfa_budgets(&self) -> &ParserDfaBudgets {
-        &self.parser_dfa_budgets
-    }
-
     pub(crate) const fn atn_fallback(&self) -> AtnFallback {
         if self.static_dfa_only {
             AtnFallback::Forbidden
@@ -250,40 +235,6 @@ impl OptimizationPlan {
             AtnFallback::Allowed
         }
     }
-}
-
-/// The analysis budgets of the static parser DFA pass.
-fn parser_dfa_budgets(settings: &SelectionSettings) -> Result<ParserDfaBudgets, EmitError> {
-    let limits = settings.dfa_budget;
-    let checks = [
-        (
-            "--max-dfa-states",
-            MAX_STATES_OPTION,
-            limits.max_states.map(|value| value as u64),
-        ),
-        (
-            "--max-dfa-depth",
-            MAX_K_OPTION,
-            limits.max_k.map(|value| value as u64),
-        ),
-        ("--max-dfa-visits", MAX_VISITS_OPTION, limits.max_visits),
-    ];
-    for (flag, option, value) in checks {
-        if let Some(problem) =
-            value.and_then(|value| budget_option_problem(option, &value.to_string()))
-        {
-            return Err(EmitError::Config(format!("invalid {flag}: {problem}")));
-        }
-    }
-    let rules = settings
-        .dfa_budget_specs
-        .iter()
-        .map(|spec| BudgetRule::parse(spec).map_err(EmitError::Config))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(ParserDfaBudgets {
-        global: limits,
-        rules,
-    })
 }
 
 fn configure_prune_unreachable(settings: &SelectionSettings) -> Option<ConfiguredPass> {
@@ -466,8 +417,6 @@ mod tests {
             dump_dfas: None,
             profile_decisions: false,
             report_only: false,
-            dfa_budget: BudgetLimits::default(),
-            dfa_budget_specs: Vec::new(),
         }
     }
 
@@ -556,42 +505,6 @@ mod tests {
             );
             assert_eq!(plan.static_parser_reports, selection);
         }
-    }
-
-    #[test]
-    fn dfa_budgets_reach_the_plan_and_malformed_settings_fail() {
-        let mut options = OptimizationOptions::new();
-        options
-            .static_dfa_only(true)
-            .max_dfa_states(4000)
-            .max_dfa_depth(6)
-            .dfa_budget("selectStmt:states=8000");
-        let plan = OptimizationPlan::from_options(&options).expect("plan should be valid");
-        let budgets = plan.parser_dfa_budgets();
-        assert_eq!(
-            budgets.global,
-            BudgetLimits {
-                max_states: Some(4000),
-                max_k: Some(6),
-                max_visits: None,
-            }
-        );
-        assert_eq!(budgets.rules.len(), 1);
-        assert_eq!(budgets.rules[0].limits.max_states, Some(8000));
-
-        let mut options = OptimizationOptions::new();
-        options.dfa_budget("selectStmt:depth=4");
-        let Err(EmitError::Config(message)) = OptimizationPlan::from_options(&options) else {
-            panic!("a malformed --dfa-budget fails the plan");
-        };
-        assert!(
-            message.starts_with("invalid --dfa-budget 'selectStmt:depth=4'"),
-            "{message}"
-        );
-
-        let mut options = OptimizationOptions::new();
-        options.max_dfa_states(0);
-        assert!(OptimizationPlan::from_options(&options).is_err());
     }
 
     #[test]

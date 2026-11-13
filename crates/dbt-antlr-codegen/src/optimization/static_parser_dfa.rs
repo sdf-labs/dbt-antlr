@@ -26,12 +26,9 @@
 //! resolved escape states gets a warning (`G4S192`).
 //!
 //! Each decision has an analysis budget (see `parser_dfa::budget`). The
-//! `--max-dfa-states`, `--max-dfa-depth`, `--max-dfa-visits`, and
-//! `--dfa-budget` flags and the budget options of the grammar set it. A
-//! `--dfa-budget` selector that matches no decision gets a warning
-//! (`G4S195`).
+//! budget options of the grammar, its rules, and its blocks set it.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use minijinja::Value;
@@ -72,8 +69,6 @@ const VISIT_BUDGET_SPENT: &str = "G4S193";
 /// The diagnostic code of a block of single-token alternatives that do not
 /// fold into one token set, in a rule with many call sites.
 const TOKEN_BRANCHES: &str = "G4S194";
-/// The diagnostic code of an unmatched `--dfa-budget` selector.
-const BUDGET_SELECTOR_NO_MATCH: &str = "G4S195";
 
 /// The minimum number of call sites that enter a rule, for a `G4S194`
 /// warning.
@@ -183,9 +178,8 @@ impl StaticParserDfa {
     /// With `profile`, the report also records the wall-clock times of the
     /// classification (`--profile-decisions`).
     ///
-    /// `budgets` holds the analysis budgets of the command line. The options
-    /// of the grammar, its rules, and its blocks set budgets too (see
-    /// [`ParserDfaBudgets`]).
+    /// `budgets` holds the base analysis budgets, which the options of the
+    /// grammar, its rules, and its blocks change (see [`ParserDfaBudgets`]).
     pub(crate) fn build(
         compiled: &CompiledParser,
         atn_fallback: AtnFallback,
@@ -1267,8 +1261,8 @@ fn category_reason(result: &DecisionResult) -> String {
 fn budget_cutoff_text(result: &DecisionResult) -> String {
     format!(
         "the analysis budget ({} states or {} visited configs) stopped the lookahead; \
-         raise it with --max-dfa-states and --max-dfa-visits, a --dfa-budget setting, or \
-         the max_dfa_states and max_dfa_visits options",
+         raise it with the max_dfa_states and max_dfa_visits options of the grammar, \
+         the rule, or the block",
         result.budget.max_states, result.budget.max_visits
     )
 }
@@ -1899,7 +1893,7 @@ fn decision_span(compiled: &CompiledParser, result: &DecisionResult) -> Option<S
     Some(rule.span.clone())
 }
 
-/// The budget of a decision that no rule, block, or selector budget changes,
+/// The budget of a decision that no rule or block budget changes,
 /// and the budget of each decision, by decision number.
 fn decision_budgets(
     compiled: &CompiledParser,
@@ -1911,16 +1905,9 @@ fn decision_budgets(
     let decisions = atn
         .decision_to_state
         .iter()
-        .enumerate()
-        .map(|(decision, state)| {
+        .map(|state| {
             let rule_index = usize::try_from(state.get_rule_index()).unwrap_or(usize::MAX);
             let rule = unit.rules.get(rule_index);
-            let rule_name = compiled
-                .semantic
-                .recognizer
-                .rule_names
-                .get(rule_index)
-                .map_or("", String::as_str);
             let block = rule
                 .zip(usize::try_from(state.get_state_number()).ok())
                 .map(|(rule, state)| block_limits(compiled, state, rule))
@@ -1928,11 +1915,7 @@ fn decision_budgets(
             let rule = rule
                 .map(|rule| BudgetLimits::from_options(&rule.options))
                 .unwrap_or_default();
-            let limits = budgets
-                .selected_limits(rule_name, decision)
-                .or(block)
-                .or(rule)
-                .or(grammar);
+            let limits = block.or(rule).or(grammar);
             DecisionBudget::resolve(limits, atn.max_token_type)
         })
         .collect();
@@ -1999,48 +1982,6 @@ fn enclosing_blocks<'a>(
         path.pop();
     }
     false
-}
-
-/// Which `--dfa-budget` settings of `budgets` match a decision of the parser
-/// of `report`, in setting order.
-pub(crate) fn matched_budget_selectors(
-    report: &StaticParserDfaReport,
-    budgets: &ParserDfaBudgets,
-) -> Vec<bool> {
-    budgets
-        .rules
-        .iter()
-        .map(|budget| {
-            report
-                .decisions
-                .iter()
-                .any(|decision| budget.selector.matches(&decision.rule, decision.decision))
-        })
-        .collect()
-}
-
-/// The `G4S195` warnings: one per `--dfa-budget` selector that matches no
-/// decision of any root parser. `matched` comes from
-/// [`matched_budget_selectors`], merged over the root parsers.
-pub(crate) fn budget_selector_diagnostics(
-    budgets: &ParserDfaBudgets,
-    matched: &[bool],
-    span: &SourceSpan,
-) -> Vec<Diagnostic> {
-    let mut reported = BTreeSet::new();
-    budgets
-        .rules
-        .iter()
-        .zip(matched)
-        .filter(|(budget, matched)| !**matched && reported.insert(budget.text.clone()))
-        .map(|(budget, _)| {
-            Diagnostic::warning(
-                BUDGET_SELECTOR_NO_MATCH,
-                span.clone(),
-                format!("--dfa-budget: no parser decision matches '{}'", budget.text),
-            )
-        })
-        .collect()
 }
 
 /// The span of a model node that has grammar syntax behind it.

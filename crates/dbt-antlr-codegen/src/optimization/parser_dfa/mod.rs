@@ -62,8 +62,8 @@ mod tables;
 #[cfg(test)]
 pub(crate) use budget::DEFAULT_VISIT_BUDGET;
 pub(crate) use budget::{
-    BUDGET_OPTIONS, BudgetLimits, BudgetRule, DecisionBudget, MAX_K_OPTION, MAX_STATES_OPTION,
-    MAX_VISITS_OPTION, ParserDfaBudgets, budget_option_problem, has_non_budget_option,
+    BUDGET_OPTIONS, BudgetLimits, DecisionBudget, ParserDfaBudgets, budget_option_problem,
+    has_non_budget_option,
 };
 pub(crate) use category::Category;
 pub(crate) use classifier::{DecisionClassifier, DecisionResult};
