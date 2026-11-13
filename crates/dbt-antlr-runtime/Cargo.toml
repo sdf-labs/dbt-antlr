@@ -6,7 +6,6 @@ authors = [
   "Alex Snaps <alex@wcgw.dev>",
   "Bo Lin <bo@dreamsphere.org>",
 ]
-homepage = { workspace = true }
 repository = { workspace = true }
 documentation = "https://docs.rs/dbt-antlr-runtime"
 description = "Dbt fork of ANTLR4 runtime for Rust"

@@ -5,7 +5,6 @@ edition = { workspace = true }
 rust-version = { workspace = true }
 description = "Integration-test harness for the ANTLR upstream runtime conformance suite"
 repository = { workspace = true }
-homepage = { workspace = true }
 license = { workspace = true }
 publish = false
 
