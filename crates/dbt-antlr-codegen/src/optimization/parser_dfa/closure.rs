@@ -412,6 +412,30 @@ impl<'atn, 'a> Closure<'atn, 'a> {
         self.visits.min(self.visit_budget)
     }
 
+    /// Runs `analysis` with `visits` more configs to visit, and then restores
+    /// the facts, the visit counts, and the budget state of the closure. An
+    /// analysis after the construction thus does not change what the attempt
+    /// reports. Returns `None` when the analysis spends its visits.
+    pub(super) fn sandbox<R>(
+        &mut self,
+        visits: u64,
+        analysis: impl FnOnce(&mut Self) -> Option<R>,
+    ) -> Option<R> {
+        let facts = std::mem::take(&mut self.facts);
+        let rule_visits = self.rule_visits.clone();
+        let (saved_visits, budget, exhausted) = (self.visits, self.visit_budget, self.exhausted);
+        self.visit_budget = saved_visits.saturating_add(visits);
+        self.exhausted = false;
+        let result = analysis(self);
+        let spent = self.exhausted;
+        self.facts = facts;
+        self.rule_visits = rule_visits;
+        self.visits = saved_visits;
+        self.visit_budget = budget;
+        self.exhausted = exhausted;
+        if spent { None } else { result }
+    }
+
     /// Moves out the visited configs by the rule index of their ATN state.
     pub(super) fn take_rule_visits(&mut self) -> Vec<u64> {
         std::mem::take(&mut self.rule_visits)

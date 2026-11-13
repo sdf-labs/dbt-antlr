@@ -22,6 +22,7 @@
 //! - A predicated state becomes a dead end without edges or fallback, so the
 //!   walk reports a syntax error. The table cannot evaluate the predicate.
 
+use super::hazard::{HazardLevel, HijackVerdict, StateHazard};
 use super::{CONFLICT_ESCAPE, Category, DecisionResult, ESCAPE, GUARDED, StaticDfaTable};
 
 /// How `--static-dfa-only` replaced one escape state.
@@ -63,8 +64,8 @@ pub(crate) struct EscapeResolutions {
     /// A shortest lookahead path to a [`EscapeResolution::SyntaxError`] state.
     pub(crate) syntax_error_witness: Option<Vec<i32>>,
     /// The states that resolved to one alternative over others, grouped by
-    /// the chosen alternative and the dropped alternatives. The groups with
-    /// the most states come first.
+    /// the chosen alternative and the dropped alternatives. The most harmful
+    /// groups come first, then the groups with the most states.
     pub(crate) tie_breaks: Vec<TieBreak>,
 }
 
@@ -80,6 +81,82 @@ pub(crate) struct TieBreak {
     pub(crate) states: usize,
     /// A shortest lookahead path to one of the states.
     pub(crate) witness: Option<Vec<i32>>,
+    /// The most harmful prefix-hijack hazard of the states of the group, when
+    /// the analysis ran for one of them.
+    pub(crate) hazard: Option<GroupHazard>,
+}
+
+/// The prefix-hijack hazard of a tie-break group.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct GroupHazard {
+    pub(crate) level: HazardLevel,
+    /// For a hijack, the extension is the whole lookahead path from the start
+    /// of the decision.
+    pub(crate) verdict: HijackVerdict,
+    pub(crate) greedy: bool,
+}
+
+impl GroupHazard {
+    /// The hazard of `state`, with the hijack path from the start state of
+    /// `table`. A hijack at a state that the start state does not reach has
+    /// no path, so it counts as unknown.
+    fn of(table: &StaticDfaTable, state: usize, hazard: &StateHazard) -> Self {
+        let unknown = StateHazard {
+            verdict: HijackVerdict::Unknown,
+            greedy: hazard.greedy,
+        };
+        let (verdict, hazard) = match (&hazard.verdict, table.witness(state)) {
+            (HijackVerdict::Hijack { alt, extension }, Some(path)) => (
+                HijackVerdict::Hijack {
+                    alt: *alt,
+                    extension: path.into_iter().chain(extension.iter().copied()).collect(),
+                },
+                hazard,
+            ),
+            (HijackVerdict::Hijack { .. }, None) => (HijackVerdict::Unknown, &unknown),
+            (verdict, _) => (verdict.clone(), hazard),
+        };
+        Self {
+            level: hazard.level(),
+            verdict,
+            greedy: hazard.greedy,
+        }
+    }
+
+    /// The same hazard, unknown instead of covered: a state of the group was
+    /// not analyzed.
+    fn partial(mut self) -> Self {
+        if self.verdict == HijackVerdict::Covered {
+            self.verdict = HijackVerdict::Unknown;
+            self.level = StateHazard {
+                verdict: HijackVerdict::Unknown,
+                greedy: self.greedy,
+            }
+            .level();
+        }
+        self
+    }
+
+    /// Whether `self` is more harmful than `other`: a higher level, then a
+    /// worse verdict, then a shorter hijack path.
+    fn outranks(&self, other: &Self) -> bool {
+        let rank = |hazard: &Self| match &hazard.verdict {
+            HijackVerdict::Hijack { extension, .. } => (2, std::cmp::Reverse(extension.len())),
+            HijackVerdict::Unknown => (1, std::cmp::Reverse(0)),
+            HijackVerdict::Covered => (0, std::cmp::Reverse(0)),
+        };
+        (self.level, rank(self)) > (other.level, rank(other))
+    }
+}
+
+/// The more harmful of two group hazards. A side without an analysis makes a
+/// covered verdict unknown.
+fn worse(left: Option<GroupHazard>, right: Option<GroupHazard>) -> Option<GroupHazard> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(if right.outranks(&left) { right } else { left }),
+        (Some(known), None) | (None, Some(known)) => Some(known.partial()),
+        (None, None) => None,
+    }
 }
 
 impl TieBreak {
@@ -87,9 +164,19 @@ impl TieBreak {
         (self.chosen, &self.dropped)
     }
 
-    /// Adds `other` to the group: the states, and the shorter witness.
+    /// The level that orders the groups: a group without an analysis counts
+    /// as [`HazardLevel::Medium`].
+    pub(crate) fn level(&self) -> HazardLevel {
+        self.hazard
+            .as_ref()
+            .map_or(HazardLevel::Medium, |hazard| hazard.level)
+    }
+
+    /// Adds `other` to the group: the states, the shorter witness, and the
+    /// worse hazard.
     fn absorb(&mut self, other: Self) {
         self.states += other.states;
+        self.hazard = worse(self.hazard.take(), other.hazard.clone());
         let shorter = match (&self.witness, &other.witness) {
             (None, Some(_)) => true,
             (Some(known), Some(new)) => new.len() < known.len(),
@@ -101,6 +188,10 @@ impl TieBreak {
     }
 }
 
+/// A tie-break group while `resolve_escapes` builds it: the group, its
+/// shallowest state, and the hazards of its analyzed states.
+type GroupBuild = (TieBreak, usize, Vec<(usize, StateHazard)>);
+
 /// Adds `group` to `groups`, merged into the group with the same key.
 fn add_tie_break(groups: &mut Vec<TieBreak>, group: TieBreak) {
     match groups.iter_mut().find(|known| known.key() == group.key()) {
@@ -109,12 +200,14 @@ fn add_tie_break(groups: &mut Vec<TieBreak>, group: TieBreak) {
     }
 }
 
-/// Orders tie-break groups: the most states first, then by alternatives.
+/// Orders tie-break groups: the most harmful first, then the most states,
+/// then by alternatives.
 fn sort_tie_breaks(groups: &mut [TieBreak]) {
     groups.sort_by(|left, right| {
         right
-            .states
-            .cmp(&left.states)
+            .level()
+            .cmp(&left.level())
+            .then_with(|| right.states.cmp(&left.states))
             .then_with(|| left.chosen.cmp(&right.chosen))
             .then_with(|| left.dropped.cmp(&right.dropped))
     });
@@ -156,8 +249,9 @@ impl StaticDfaTable {
         let mut first_min_viable_alt = None;
         let mut first_syntax_error = None;
         let depths = self.depths();
-        // The tie-break groups, each with the shallowest state that is in it.
-        let mut groups: Vec<(TieBreak, usize)> = Vec::new();
+        // The tie-break groups, each with the shallowest state that is in it
+        // and the hazards of its analyzed states.
+        let mut groups: Vec<GroupBuild> = Vec::new();
         for (index, state) in self.states.iter_mut().enumerate() {
             if !matches!(state.accept, ESCAPE | CONFLICT_ESCAPE | GUARDED) {
                 continue;
@@ -208,23 +302,26 @@ impl StaticDfaTable {
             dropped.sort_unstable();
             dropped.dedup();
             if resolution != EscapeResolution::SyntaxError && !dropped.is_empty() {
+                let hazard = state.hazard.as_ref().map(|hazard| (index, hazard.clone()));
                 let group = TieBreak {
                     chosen: state.accept,
                     dropped,
                     states: 1,
                     witness: None,
+                    hazard: None,
                 };
                 match groups
                     .iter_mut()
-                    .find(|(known, _)| known.key() == group.key())
+                    .find(|(known, ..)| known.key() == group.key())
                 {
-                    Some((known, shallowest)) => {
+                    Some((known, shallowest, hazards)) => {
                         known.states += 1;
                         if depths[index] < depths[*shallowest] {
                             *shallowest = index;
                         }
+                        hazards.extend(hazard);
                     }
-                    None => groups.push((group, index)),
+                    None => groups.push((group, index, hazard.into_iter().collect())),
                 }
             }
             state.conflict_min_alt = 0;
@@ -232,6 +329,7 @@ impl StaticDfaTable {
             state.guard_defer_alt = 0;
             state.guard_group = 0;
             state.continuation = None;
+            state.hazard = None;
         }
         if resolutions.guarded == 0 {
             self.guard_groups.clear();
@@ -244,8 +342,26 @@ impl StaticDfaTable {
         resolutions.syntax_error_witness = first_syntax_error.and_then(|state| self.witness(state));
         resolutions.tie_breaks = groups
             .into_iter()
-            .map(|(mut group, shallowest)| {
+            .map(|(mut group, shallowest, hazards)| {
                 group.witness = self.witness(shallowest);
+                let analyzed = hazards.len();
+                group.hazard = hazards
+                    .iter()
+                    .map(|(state, hazard)| GroupHazard::of(self, *state, hazard))
+                    .reduce(|known, hazard| {
+                        if hazard.outranks(&known) {
+                            hazard
+                        } else {
+                            known
+                        }
+                    })
+                    .map(|hazard| {
+                        if analyzed < group.states {
+                            hazard.partial()
+                        } else {
+                            hazard
+                        }
+                    });
                 group
             })
             .collect();
@@ -300,6 +416,7 @@ mod tests {
             dropped: dropped.to_vec(),
             states,
             witness: Some(witness.to_vec()),
+            hazard: None,
         }
     }
 

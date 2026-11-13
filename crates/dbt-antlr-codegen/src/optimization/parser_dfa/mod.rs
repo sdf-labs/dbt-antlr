@@ -53,6 +53,7 @@ mod classifier;
 mod closure;
 mod cost;
 mod descent;
+mod hazard;
 mod loop_block;
 mod postfix;
 mod static_only;
@@ -69,7 +70,8 @@ pub(crate) use category::Category;
 pub(crate) use classifier::{DecisionClassifier, DecisionResult};
 pub(crate) use cost::AttemptOutcome;
 pub(crate) use descent::{DescentGroup, DescentPlan, DescentRules, TailArm};
-pub(crate) use static_only::{EscapeResolution, EscapeResolutions};
+pub(crate) use hazard::{HazardLevel, HijackVerdict};
+pub(crate) use static_only::{EscapeResolution, EscapeResolutions, TieBreak};
 pub(crate) use table::StaticDfaTable;
 pub(crate) use tables::{build_tables, minimized_states};
 

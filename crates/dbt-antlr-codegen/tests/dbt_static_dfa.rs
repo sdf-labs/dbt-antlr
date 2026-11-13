@@ -986,7 +986,8 @@ fn static_dfa_only_resolves_hybrid_tables_without_adaptive_predict() {
         [
             "parser decision 0 of rule 'a' resolves its escape states without adaptivePredict: \
              1 conflict state predicts the minimum alternative (witness: ATN EOF); tie-breaks: \
-             1 state chooses alt 1 (repeat (ID | ATN), line 3) over alt 2 (exit the loop)"
+             1 state chooses alt 1 (repeat (ID | ATN), line 3) over alt 2 (exit the loop) \
+             [greedy choice, not verified]"
         ]
     );
     assert!(
@@ -1002,6 +1003,7 @@ fn static_dfa_only_resolves_hybrid_tables_without_adaptive_predict() {
     assert!(manifest.contains("\"minAltStates\": 1"), "{manifest}");
     assert!(manifest.contains("\"minViableAltStates\": 0"), "{manifest}");
     assert!(manifest.contains("\"syntaxErrorStates\": 0"), "{manifest}");
+    assert!(manifest.contains("\"hijackHazards\": 0"), "{manifest}");
     assert!(manifest.contains("\"adaptiveDecisions\": 0"), "{manifest}");
     assert!(
         manifest.contains("\"staticDecisions\": 2"),
