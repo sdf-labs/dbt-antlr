@@ -1,7 +1,7 @@
 // Generated from ParenExpr.g4 by ANTLR 4.13.2
 use dbt_antlr_runtime::prelude::*;
 use dbt_antlr_runtime::atn_simulator::ParserATNSimulatorManager as ATNSimulatorManager;
-dbt_antlr_runtime::check_version!("0","8");
+dbt_antlr_runtime::check_version!("0","9");
 pub const ParenExpr_T__0:i32=1; 
 pub const ParenExpr_T__1:i32=2; 
 pub const ParenExpr_T__2:i32=3; 
