@@ -47,7 +47,10 @@ use crate::error::{Diagnostic, EmitError};
 /// [`generate`](Config::generate) prints `cargo:rerun-if-changed` directives
 /// for the configured grammars and library directories (including each root
 /// grammar's own directory, which the loader searches for imported grammars),
-/// so the build script reruns exactly when grammar inputs change.
+/// so the build script reruns exactly when grammar inputs change. It also
+/// prints each compiler diagnostic as a `cargo:warning` directive, so that
+/// cargo shows the warnings of the grammar (for example `G4S030` for a token
+/// that the lexer never emits) in the build output.
 #[derive(Clone, Debug)]
 pub struct Config {
     grammars: Vec<PathBuf>,
@@ -211,6 +214,14 @@ impl Config {
         self
     }
 
+    /// Reports an implicit token definition in a parser grammar (`G4S030`)
+    /// as an error instead of a warning (`--strict`). Default: `false`.
+    /// See [`OptimizationOptions::strict`].
+    pub const fn strict(&mut self, enabled: bool) -> &mut Self {
+        self.optimization.strict(enabled);
+        self
+    }
+
     /// Switches generation to a pinned prebuilt `dbt-antlr-codegen` release
     /// binary (requires the `download` feature).
     ///
@@ -256,6 +267,11 @@ impl Config {
     /// Generates all configured grammars into the output directory, creating
     /// it when needed, and returns the paths written.
     ///
+    /// When [`cargo_directives`](Config::cargo_directives) is on, each
+    /// diagnostic of the run is also printed as a `cargo:warning` directive.
+    /// Use [`generate_detailed`](Config::generate_detailed) to get the
+    /// diagnostics instead.
+    ///
     /// # Errors
     ///
     /// Returns [`EmitError::Config`] when no grammars are configured or no
@@ -265,7 +281,13 @@ impl Config {
     // Cargo's build-script protocol reads directives from stdout.
     #[allow(clippy::print_stdout)]
     pub fn generate(&self) -> Result<Vec<PathBuf>, EmitError> {
-        Ok(self.generate_detailed()?.into_written_files())
+        let generation = self.generate_detailed()?;
+        if self.cargo_directives {
+            for directive in cargo_warnings(generation.diagnostics()) {
+                println!("{directive}");
+            }
+        }
+        Ok(generation.into_written_files())
     }
 
     /// [`generate`](Config::generate) with the rest of the run output:
@@ -434,6 +456,22 @@ impl Config {
     }
 }
 
+/// The `cargo:warning` directives that show `diagnostics` in the cargo build
+/// output. A directive holds one line, so each line of a diagnostic gets its
+/// own directive.
+fn cargo_warnings(diagnostics: &[Diagnostic]) -> Vec<String> {
+    diagnostics
+        .iter()
+        .flat_map(|diagnostic| {
+            diagnostic
+                .to_string()
+                .lines()
+                .map(|line| format!("cargo:warning={line}"))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 fn create_out_dir(out_dir: &std::path::Path) -> Result<(), EmitError> {
     std::fs::create_dir_all(out_dir).map_err(|source| EmitError::Write {
         path: out_dir.to_path_buf(),
@@ -534,5 +572,43 @@ impl Generation {
     /// Consumes the generation and returns the written files.
     pub fn into_written_files(self) -> Vec<PathBuf> {
         self.written
+    }
+}
+
+#[cfg(all(test, feature = "generator"))]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::cargo_warnings;
+    use crate::error::{Diagnostic, Severity};
+
+    #[test]
+    fn cargo_warnings_give_each_diagnostic_line_a_directive() {
+        let diagnostics = [
+            Diagnostic::new(
+                "G4S030",
+                Severity::Warning,
+                "implicit definition of token CACHE in parser".to_owned(),
+                PathBuf::from("P.g4"),
+                Some((3, 24)),
+                None,
+            ),
+            Diagnostic::new(
+                "G4S192",
+                Severity::Warning,
+                "first line\nsecond line".to_owned(),
+                PathBuf::from("P.g4"),
+                None,
+                None,
+            ),
+        ];
+        assert_eq!(
+            cargo_warnings(&diagnostics),
+            [
+                "cargo:warning=warning[G4S030]: P.g4:3:24: implicit definition of token CACHE in parser",
+                "cargo:warning=warning[G4S192]: P.g4: first line",
+                "cargo:warning=second line",
+            ]
+        );
     }
 }

@@ -16,7 +16,7 @@ use super::integration::{
 };
 use super::loader::{LoadOptions, LoadedSources, load_recovering};
 use super::model::{GrammarId, GrammarKind};
-use super::semantics::SemanticGrammarSet;
+use super::semantics::{IMPLICIT_TOKEN_DEFINITION, SemanticGrammarSet};
 use super::source::SourceSet;
 use super::transform::TransformReport;
 
@@ -245,6 +245,21 @@ fn merge_diagnostics(
     authored
 }
 
+/// Makes each implicit token definition warning an error (`--strict`).
+/// Returns whether there was such a warning. As with the `--static-dfa-only`
+/// errors, a report-only run keeps these errors as diagnostics.
+fn reject_implicit_tokens(diagnostics: &mut [Diagnostic]) -> bool {
+    let mut rejected = false;
+    for diagnostic in diagnostics
+        .iter_mut()
+        .filter(|diagnostic| diagnostic.code == IMPLICIT_TOKEN_DEFINITION)
+    {
+        diagnostic.severity = Severity::Error;
+        rejected = true;
+    }
+    rejected
+}
+
 fn compile_semantics(
     transformed: TransformedGrammar,
     plan: &OptimizationPlan,
@@ -272,6 +287,12 @@ fn compile_semantics(
         semantics.diagnostics = merge_diagnostics(
             authored_diagnostics,
             std::mem::take(&mut semantics.diagnostics),
+        );
+    }
+    if plan.strict() && reject_implicit_tokens(&mut semantics.diagnostics) && !plan.report_only() {
+        return Err(
+            CompilationError::new(std::mem::take(&mut semantics.diagnostics))
+                .with_sources(&sources),
         );
     }
     let SemanticGrammarSet {
@@ -591,6 +612,49 @@ mod tests {
     }
 
     #[test]
+    fn strict_makes_implicit_parser_tokens_errors_unless_report_only() {
+        let load = || LoadOptions {
+            roots: vec![
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/grammar-semantics/implicit-parser-tokens/SplitParser.g4"),
+            ],
+            library_directories: Vec::new(),
+        };
+        let implicit_tokens = |diagnostics: &[Diagnostic]| {
+            diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == IMPLICIT_TOKEN_DEFINITION)
+                .map(|diagnostic| diagnostic.severity)
+                .collect::<Vec<_>>()
+        };
+
+        let compilation = compile(load()).expect("implicit tokens are warnings by default");
+        assert_eq!(
+            implicit_tokens(&compilation.diagnostics),
+            [Severity::Warning, Severity::Warning]
+        );
+
+        let mut options = OptimizationOptions::new();
+        options.strict(true);
+        let plan = OptimizationPlan::from_options(&options).expect("plan should be valid");
+        let error =
+            compile_with_plan(load(), &plan).expect_err("--strict rejects ENABLE and CACHE");
+        assert_eq!(
+            implicit_tokens(error.diagnostics()),
+            [Severity::Error, Severity::Error]
+        );
+
+        options.report_only(true);
+        let plan = OptimizationPlan::from_options(&options).expect("plan should be valid");
+        let compilation =
+            compile_with_plan(load(), &plan).expect("report-only keeps the errors as diagnostics");
+        assert_eq!(
+            implicit_tokens(&compilation.diagnostics),
+            [Severity::Error, Severity::Error]
+        );
+    }
+
+    #[test]
     fn implicit_token_warning_precedes_unknown_channel_error() {
         let error = compile_fixture("vscode-diagnostics", &["t.g4"])
             .expect_err("unknown channel must be fatal");
@@ -600,7 +664,8 @@ mod tests {
             Severity::Warning,
             "t.g4",
             Some((3, 3)),
-            "implicit definition of token ZZ in parser",
+            "implicit definition of token ZZ in parser: no lexer rule defines ZZ, so the lexer \
+             never emits it",
         );
         assert_diagnostic(
             &error,

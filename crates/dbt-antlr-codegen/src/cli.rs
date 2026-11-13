@@ -31,6 +31,8 @@
 //!   --start-rule <NAME>           the parser rule that --explain starts from
 //!                                 (default: the first rule)
 //!   --lexer <Lexer.g4>            the lexer grammar that tokenizes the --explain input
+//!   --strict                      report implicit token definitions in parser grammars
+//!                                 (G4S030) as errors
 //! ```
 
 use std::io::Write;
@@ -66,6 +68,8 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   --start-rule <NAME>           the parser rule that --explain starts from
                                 (default: the first rule)
   --lexer <Lexer.g4>            the lexer grammar that tokenizes the --explain input
+  --strict                      report implicit token definitions in parser grammars
+                                (G4S030) as errors
 ";
 
 /// Parsed command line.
@@ -90,6 +94,7 @@ struct CliArgs {
     explain: Option<ExplainInput>,
     start_rule: Option<String>,
     lexer: Option<PathBuf>,
+    strict: bool,
 }
 
 /// Where the `--explain` input comes from.
@@ -119,6 +124,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let mut explain = None;
     let mut start_rule = None;
     let mut lexer = None;
+    let mut strict = false;
 
     let mut index = 0;
     while index < args.len() {
@@ -182,6 +188,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
                     miette::bail!("expected at most one --lexer\n{USAGE}");
                 }
             }
+            "--strict" => strict = true,
             "-h" | "-help" | "--help" => return Err(miette::miette!("{USAGE}")),
             _ if arg.starts_with("-D") => {
                 writeln!(stderr, "warning: ignoring option {arg}").into_diagnostic()?;
@@ -223,6 +230,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         explain,
         start_rule,
         lexer,
+        strict,
     })
 }
 
@@ -233,25 +241,6 @@ fn value_after(option: &str, args: &[String], index: &mut usize) -> miette::Resu
             *index += 1;
             Ok(value.clone())
         },
-    )
-}
-
-/// Renders one non-fatal diagnostic in the `warning[G4S078]: path:line:
-/// column: message` format the Java tool's Rust target diagnostics use.
-fn render_diagnostic(diagnostic: &crate::Diagnostic) -> String {
-    let severity = match diagnostic.severity() {
-        crate::Severity::Warning => "warning",
-        crate::Severity::Error => "error",
-    };
-    let position = match (diagnostic.line(), diagnostic.column()) {
-        (Some(line), Some(column)) => format!(":{line}:{column}"),
-        _ => String::new(),
-    };
-    format!(
-        "{severity}[{}]: {}{position}: {}",
-        diagnostic.code(),
-        diagnostic.path().display(),
-        diagnostic.message()
     )
 }
 
@@ -291,7 +280,8 @@ pub fn run(
         .prune_unreachable_rules(cli.prune_unreachable)
         .inline_trivial_rules(cli.inline_trivial)
         .optimize_precedence_ladders(cli.optimize_ladders)
-        .report_only(cli.report_only);
+        .report_only(cli.report_only)
+        .strict(cli.strict);
     if let Some(spec) = &cli.dump_dfas {
         config.dump_dfas(spec);
     }
@@ -310,7 +300,7 @@ pub fn run(
         if diagnostic.severity() == crate::Severity::Error {
             errors += 1;
         }
-        writeln!(stderr, "{}", render_diagnostic(diagnostic)).into_diagnostic()?;
+        writeln!(stderr, "{diagnostic}").into_diagnostic()?;
     }
     for message in generation.optimization_messages() {
         writeln!(stderr, "{message}").into_diagnostic()?;
@@ -362,7 +352,8 @@ fn run_explain(
         .profile_decisions(cli.profile_decisions)
         .prune_unreachable_rules(cli.prune_unreachable)
         .inline_trivial_rules(cli.inline_trivial)
-        .optimize_precedence_ladders(cli.optimize_ladders);
+        .optimize_precedence_ladders(cli.optimize_ladders)
+        .strict(cli.strict);
     if let Some(spec) = &cli.dump_dfas {
         options.dump_dfas(spec);
     }
@@ -383,7 +374,7 @@ fn run_explain(
         if diagnostic.severity() == crate::Severity::Error {
             errors += 1;
         }
-        writeln!(stderr, "{}", render_diagnostic(diagnostic)).into_diagnostic()?;
+        writeln!(stderr, "{diagnostic}").into_diagnostic()?;
     }
     for message in &output.optimization_messages {
         writeln!(stderr, "{message}").into_diagnostic()?;
@@ -458,6 +449,14 @@ mod tests {
         assert!(cli.static_dfa_only);
         let cli = parse(&["T.g4"]).expect("minimal command line parses");
         assert!(!cli.static_dfa_only);
+    }
+
+    #[test]
+    fn strict_flag_parses() {
+        let cli = parse(&["--strict", "T.g4"]).expect("flag parses");
+        assert!(cli.strict);
+        let cli = parse(&["T.g4"]).expect("minimal command line parses");
+        assert!(!cli.strict);
     }
 
     #[test]

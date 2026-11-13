@@ -41,6 +41,7 @@ pub struct OptimizationOptions {
     pub(crate) dump_dfas: Option<String>,
     pub(crate) profile_decisions: bool,
     pub(crate) report_only: bool,
+    pub(crate) strict: bool,
 }
 
 impl OptimizationOptions {
@@ -144,6 +145,22 @@ impl OptimizationOptions {
         self
     }
 
+    /// Reports an implicit token definition in a parser grammar (`G4S030`)
+    /// as an error instead of a warning (`--strict`). Default: `false`.
+    ///
+    /// A parser grammar defines a token implicitly when it refers to a token
+    /// that its token vocabulary (`tokenVocab`) or the lexer rules of its
+    /// combined grammar do not define. The parser gets a token type for this
+    /// token, but the lexer never emits it. Usually, the reference is a
+    /// spelling error or a lexer rule that is missing.
+    ///
+    /// The errors stop the generation. In report-only mode, the errors are
+    /// diagnostics and the reports are still rendered.
+    pub const fn strict(&mut self, enabled: bool) -> &mut Self {
+        self.strict = enabled;
+        self
+    }
+
     /// Whether the selection prints instead of writing files: `--report-only`
     /// or a report mode that implies it (`--report-decisions`,
     /// `--dump-dfas`, `--profile-decisions`).
@@ -184,6 +201,11 @@ impl OptimizationOptions {
     #[cfg(feature = "download")]
     pub(crate) const fn static_dfa_only_enabled(&self) -> bool {
         self.static_dfa_only
+    }
+
+    #[cfg(feature = "download")]
+    pub(crate) const fn strict_enabled(&self) -> bool {
+        self.strict
     }
 
     /// Whether the selection prints parser reports, which only the in-process

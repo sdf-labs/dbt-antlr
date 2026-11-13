@@ -53,6 +53,9 @@ const GRAMMAR_OPTIONS: &[&str] = &[
     "exportMacro",
     "caseInsensitive",
 ];
+/// The code of the implicit token definition warning, which `--strict` makes
+/// an error.
+pub(crate) const IMPLICIT_TOKEN_DEFINITION: &str = "G4S030";
 const RULE_REF_OPTIONS: &[&str] = &["p", "tokenIndex"];
 const TOKEN_OPTIONS: &[&str] = &["assoc", "tokenIndex"];
 const TOKEN_ATTRIBUTES: &[&str] = &["text", "type", "line", "index", "pos", "channel", "int"];
@@ -158,6 +161,11 @@ pub(crate) fn analyze_with_action_reference_parser(
         let shares_tokens_with_implicit_lexer = dependencies
             .iter()
             .any(|dependency| dependency.declaration.is_none());
+        let token_source = dependencies
+            .iter()
+            .find_map(|dependency| dependency.declaration.as_ref())
+            .map(|declaration| TokenSource::Vocabulary(declaration.value.as_str()))
+            .or_else(|| shares_tokens_with_implicit_lexer.then_some(TokenSource::CombinedLexer));
         let mut imported = VocabularyBuilder::new();
         for dependency in dependencies {
             import_dependency(
@@ -174,6 +182,7 @@ pub(crate) fn analyze_with_action_reference_parser(
                 sources,
                 symbol_unit: &symbol_units[&unit_id],
                 shares_tokens_with_implicit_lexer,
+                token_source,
                 entry_rules,
                 action_reference_parser,
             },
@@ -973,11 +982,21 @@ fn import_dependency(
     }
 }
 
+/// Where the tokens of a parser unit come from, for the implicit token warning.
+#[derive(Clone, Copy)]
+enum TokenSource<'a> {
+    /// The `tokenVocab` option names this vocabulary.
+    Vocabulary(&'a str),
+    /// The lexer rules of the same combined grammar define the tokens.
+    CombinedLexer,
+}
+
 #[derive(Clone, Copy)]
 struct UnitAnalysisContext<'a> {
     sources: &'a SourceSet,
     symbol_unit: &'a GrammarUnit,
     shares_tokens_with_implicit_lexer: bool,
+    token_source: Option<TokenSource<'a>>,
     entry_rules: &'a EntryRuleConfig,
     action_reference_parser: ActionReferenceParser,
 }
@@ -993,6 +1012,7 @@ fn analyze_unit(
         sources,
         symbol_unit,
         shares_tokens_with_implicit_lexer,
+        token_source,
         entry_rules,
         action_reference_parser,
     } = context;
@@ -1015,7 +1035,14 @@ fn analyze_unit(
     match unit.kind {
         GrammarKind::Lexer => assign_lexer_tokens(&unit, &mut vocabulary, ids),
         GrammarKind::Parser => {
-            assign_parser_tokens(sources, &unit, &mut vocabulary, ids, &mut token_diagnostics);
+            assign_parser_tokens(
+                sources,
+                &unit,
+                token_source,
+                &mut vocabulary,
+                ids,
+                &mut token_diagnostics,
+            );
         }
         GrammarKind::Combined => unreachable!("combined grammar is split before semantics"),
     }
@@ -1173,6 +1200,7 @@ fn assign_lexer_tokens(
 fn assign_parser_tokens(
     sources: &SourceSet,
     unit: &GrammarUnit,
+    token_source: Option<TokenSource<'_>>,
     vocabulary: &mut VocabularyBuilder,
     ids: &mut ModelIdAllocator,
     diagnostics: &mut Vec<Diagnostic>,
@@ -1182,9 +1210,9 @@ fn assign_parser_tokens(
             ElementKind::Terminal(Terminal::Token(name)) => {
                 if name != "EOF" && !vocabulary.by_name.contains_key(name) {
                     diagnostics.push(Diagnostic::warning(
-                        "G4S030",
+                        IMPLICIT_TOKEN_DEFINITION,
                         diagnostic_span_in_root(sources, unit.source, &element.span),
-                        format!("implicit definition of token {name} in parser"),
+                        implicit_token_message(name, token_source),
                     ));
                     vocabulary.define_name(name, None, None, ids);
                 }
@@ -1208,9 +1236,9 @@ fn assign_parser_tokens(
                             ..
                         } if name != "EOF" && !vocabulary.by_name.contains_key(name) => {
                             diagnostics.push(Diagnostic::warning(
-                                "G4S030",
+                                IMPLICIT_TOKEN_DEFINITION,
                                 diagnostic_span_in_root(sources, unit.source, &element.span),
-                                format!("implicit definition of token {name} in parser"),
+                                implicit_token_message(name, token_source),
                             ));
                             vocabulary.define_name(name, None, None, ids);
                         }
@@ -1232,6 +1260,21 @@ fn assign_parser_tokens(
             }
             _ => {}
         });
+    }
+}
+
+/// The `G4S030` message. The lexer cannot emit an implicit token. Thus the
+/// message names the vocabulary that does not define the token.
+fn implicit_token_message(name: &str, token_source: Option<TokenSource<'_>>) -> String {
+    let problem = format!("implicit definition of token {name} in parser");
+    match token_source {
+        Some(TokenSource::Vocabulary(vocabulary)) => format!(
+            "{problem}: the token vocabulary {vocabulary} does not define {name}, so its lexer never emits it"
+        ),
+        Some(TokenSource::CombinedLexer) => {
+            format!("{problem}: no lexer rule defines {name}, so the lexer never emits it")
+        }
+        None => problem,
     }
 }
 
@@ -2042,6 +2085,44 @@ F : 'f' -> skip, Channel(COMMENTS);
             })
             .collect::<Vec<_>>();
         insta::assert_debug_snapshot!("capitalized_lexer_command_diagnostics", diagnostics);
+    }
+
+    #[test]
+    fn implicit_parser_tokens_name_the_vocabulary_that_misses_them() {
+        let fixture = Fixture::new("implicit-parser-tokens");
+        fixture.write(
+            "Split.g4",
+            "parser grammar Split; options { tokenVocab=SplitLexer; } root : ID (CACHE | ID) ;",
+        );
+        fixture.write("SplitLexer.g4", "lexer grammar SplitLexer; ID : [a-z]+ ;");
+        fixture.write(
+            "Combined.g4",
+            "grammar Combined; root : ID CACHE ; ID : [a-z]+ ;",
+        );
+        fixture.write("Bare.g4", "parser grammar Bare; root : CACHE ;");
+
+        for (root, message) in [
+            (
+                "Split.g4",
+                "implicit definition of token CACHE in parser: the token vocabulary SplitLexer \
+                 does not define CACHE, so its lexer never emits it",
+            ),
+            (
+                "Combined.g4",
+                "implicit definition of token CACHE in parser: no lexer rule defines CACHE, so \
+                 the lexer never emits it",
+            ),
+            ("Bare.g4", "implicit definition of token CACHE in parser"),
+        ] {
+            let semantic = compile(&fixture, root).expect("implicit tokens are warnings");
+            let warnings = semantic
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == IMPLICIT_TOKEN_DEFINITION)
+                .map(|diagnostic| (diagnostic.severity, diagnostic.message.as_str()))
+                .collect::<Vec<_>>();
+            assert_eq!(warnings, [(Severity::Warning, message)], "{root}");
+        }
     }
 
     #[test]

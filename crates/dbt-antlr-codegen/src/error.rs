@@ -87,6 +87,27 @@ impl Diagnostic {
     }
 }
 
+/// Shows the diagnostic as `warning[G4S078]: path:line:column: message`, the
+/// format that the command line writes to stderr.
+impl fmt::Display for Diagnostic {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let severity = match self.severity {
+            Severity::Warning => "warning",
+            Severity::Error => "error",
+        };
+        write!(
+            formatter,
+            "{severity}[{}]: {}",
+            self.code,
+            self.path.display()
+        )?;
+        if let (Some(line), Some(column)) = (self.line, self.column) {
+            write!(formatter, ":{line}:{column}")?;
+        }
+        write!(formatter, ": {}", self.message)
+    }
+}
+
 /// Structured error returned by the emission entry points.
 #[derive(Debug)]
 pub struct Error {

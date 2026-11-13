@@ -98,6 +98,7 @@ struct SelectionSettings {
     dump_dfas: Option<String>,
     profile_decisions: bool,
     report_only: bool,
+    strict: bool,
 }
 
 impl SelectionSettings {
@@ -114,6 +115,7 @@ impl SelectionSettings {
             dump_dfas: options.dump_dfas.clone(),
             profile_decisions: options.profile_decisions,
             report_only: options.is_report_only(),
+            strict: options.strict,
         }
     }
 }
@@ -133,6 +135,7 @@ pub(crate) struct OptimizationPlan {
     pub(super) static_parser_reports: StaticParserDfaSelection,
     pub(super) report_only: bool,
     pub(super) static_dfa_only: bool,
+    pub(super) strict: bool,
 }
 
 const PASS_REGISTRY: &[PassRegistration] = &[
@@ -194,6 +197,7 @@ impl OptimizationPlan {
         };
         let report_only = settings.report_only;
         let static_dfa_only = settings.static_dfa_only;
+        let strict = settings.strict;
         Ok(Self {
             entry_rules: settings.entry_rules,
             transforms,
@@ -201,6 +205,7 @@ impl OptimizationPlan {
             static_parser_reports,
             report_only,
             static_dfa_only,
+            strict,
         })
     }
 
@@ -222,6 +227,12 @@ impl OptimizationPlan {
 
     pub(crate) const fn report_only(&self) -> bool {
         self.report_only
+    }
+
+    /// Whether `--strict` reports implicit parser token definitions as
+    /// errors.
+    pub(crate) const fn strict(&self) -> bool {
+        self.strict
     }
 
     pub(crate) const fn profile_decisions(&self) -> bool {
@@ -417,6 +428,7 @@ mod tests {
             dump_dfas: None,
             profile_decisions: false,
             report_only: false,
+            strict: false,
         }
     }
 
