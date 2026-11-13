@@ -124,10 +124,18 @@ fn quiet_prints_only_the_errors() {
     let loud = stderr_of(&[]);
     assert!(loud.contains("error[G4S190]"), "{loud}");
     assert!(loud.contains("warning[G4S192]"), "{loud}");
+    assert!(
+        loud.contains("summary: Predicated.g4: 1 error (1 G4S190), 1 warning (1 G4S192)\n"),
+        "{loud}"
+    );
     for flag in ["-q", "--quiet"] {
         let quiet = stderr_of(&[flag]);
         assert!(quiet.contains("error[G4S190]"), "{flag}: {quiet}");
         assert!(!quiet.contains("warning["), "{flag}: {quiet}");
+        assert!(
+            quiet.contains("summary: Predicated.g4: 1 error (1 G4S190), 1 warning (1 G4S192); --quiet hid the warnings"),
+            "{flag}: {quiet}"
+        );
     }
 }
 

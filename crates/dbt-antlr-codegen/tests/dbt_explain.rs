@@ -148,9 +148,13 @@ fn quiet_keeps_the_report_and_drops_the_warnings() {
         "the budget cutoff is a warning without --quiet"
     );
     assert!(
-        quiet.stderr.is_empty(),
-        "{}",
-        String::from_utf8_lossy(&quiet.stderr)
+        String::from_utf8_lossy(&loud.stderr)
+            .ends_with("summary: Budget.g4: 0 errors, 1 warning (1 G4S192)\n"),
+        "the summary line ends stderr"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&quiet.stderr),
+        "summary: Budget.g4: 0 errors, 1 warning (1 G4S192); --quiet hid the warnings\n"
     );
     assert_eq!(quiet.stdout, loud.stdout);
 }
@@ -176,6 +180,13 @@ fn quiet_keeps_the_errors() {
         "{stderr}"
     );
     assert!(!stderr.contains("warning["), "{stderr}");
+    assert!(
+        stderr.contains(
+            "summary: Predicated.g4: 1 error (1 G4S190), 1 warning (1 G4S192); \
+             --quiet hid the warnings\n"
+        ),
+        "{stderr}"
+    );
 }
 
 #[test]

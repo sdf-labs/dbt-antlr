@@ -6,3 +6,4 @@ warning[G4S078]: <grammar>:28:0: parser rule deadRoot is unreachable from entry 
 warning[G4S078]: <grammar>:32:0: parser rule deadHelper is unreachable from entry rules start, script, alternate, manual
 pruned: <grammar>:28:0: unreachable parser rule ReachabilityParser.deadRoot
 pruned: <grammar>:32:0: unreachable parser rule ReachabilityParser.deadHelper
+summary: Reachability.g4: 0 errors, 2 warnings (2 G4S078)
