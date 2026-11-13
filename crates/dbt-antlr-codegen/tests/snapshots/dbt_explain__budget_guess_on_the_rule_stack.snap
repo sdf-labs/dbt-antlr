@@ -1,0 +1,33 @@
+---
+source: crates/dbt-antlr-codegen/tests/dbt_explain.rs
+expression: report
+---
+=== explain: BudgetParser (start rule: prog, mode: --static-dfa-only) ===
+input: <inline> (5 tokens)
+
+[VERDICT: STATIC-DFA DIVERGENCE]
+  Full LL(*) accepts this input. The syntax error is a --static-dfa-only artifact: an earlier static choice went wrong.
+  --static-dfa-only: syntax error at token 2 '=' (line 1:5)
+  full LL(*):        accepted (2 decisions)
+
+[FIRST DIVERGENCE @ step 0, token 0 'a' (line 1:1)]
+  rule 'stat', decision 1 (HYBRID):
+    --static-dfa-only chose alt 1 (ID ID ID ..., line 6)
+      via MinViableAlt (lookahead budget cutoff) at s2, lookahead 'a' 'b'
+      dropped: alt 2 (ID ID '=' ..., line 7)
+    full LL(*) chose alt 2 (ID ID '=' ..., line 7)
+  root cause: lookahead budget. Unbounded SLL(*) also chooses alt 2, so a longer static lookahead decides this input. Left-factor the alternatives, or raise the max_dfa_states, max_dfa_visits, or max_k option of rule 'stat' or of its block.
+  hint: inspect the table with `--dump-dfas 1`
+  impact: causes the syntax error 2 tokens later, at token 2 '=' (line 1:5)
+
+[SYNTAX ERROR (--static-dfa-only) @ token 2 '=' (line 1:5)]
+  mismatched input
+  1 | a b = c ;
+    |     ^
+  expected: ID
+  rule stack:
+    prog (from token 0 'a' (line 1:1))
+    stat (from token 0 'a' (line 1:1))
+
+[STATIC GUESSES BEFORE THE ERROR: 1 (1 on the rule stack, 0 in completed subtrees)]
+  step 0, token 0 'a' (line 1:1): decision 1 in rule 'stat' s2 -> alt 1 via MinViableAlt [rule stack] [DIVERGENCE]

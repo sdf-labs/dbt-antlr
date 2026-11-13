@@ -38,7 +38,8 @@ pub struct InterpreterRuleContextExt {
 }
 
 impl InterpreterRuleContextExt {
-    pub(crate) fn new(rule_index: usize) -> Self {
+    /// Creates the extension data of a context of rule `rule_index`.
+    pub fn new(rule_index: usize) -> Self {
         Self {
             rule_index,
             alt_number: INVALID_ALT,

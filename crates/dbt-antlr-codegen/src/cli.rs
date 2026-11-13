@@ -24,6 +24,13 @@
 //!   --prune-unreachable-rules     delete parser rules unreachable from the entry rules
 //!   --inline-trivial-rules        inline trivial pure parser rules into their callers
 //!   --optimize-precedence-ladders collapse precedence ladders into left-recursive rules
+//!   --explain <INPUT>             explain how the static DFA parser parses INPUT, compared
+//!                                 with full LL (needs --static-dfa-only or
+//!                                 --static-parser-dfa; implies report-only)
+//!   --explain-file <PATH>         like --explain, with the input in PATH (- reads stdin)
+//!   --start-rule <NAME>           the parser rule that --explain starts from
+//!                                 (default: the first rule)
+//!   --lexer <Lexer.g4>            the lexer grammar that tokenizes the --explain input
 //! ```
 
 use std::io::Write;
@@ -52,6 +59,13 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   --prune-unreachable-rules     delete parser rules unreachable from the entry rules
   --inline-trivial-rules        inline trivial pure parser rules into their callers
   --optimize-precedence-ladders collapse precedence ladders into left-recursive rules
+  --explain <INPUT>             explain how the static DFA parser parses INPUT, compared
+                                with full LL (needs --static-dfa-only or
+                                --static-parser-dfa; implies report-only)
+  --explain-file <PATH>         like --explain, with the input in PATH (- reads stdin)
+  --start-rule <NAME>           the parser rule that --explain starts from
+                                (default: the first rule)
+  --lexer <Lexer.g4>            the lexer grammar that tokenizes the --explain input
 ";
 
 /// Parsed command line.
@@ -73,6 +87,16 @@ struct CliArgs {
     inline_trivial: bool,
     optimize_ladders: bool,
     report_only: bool,
+    explain: Option<ExplainInput>,
+    start_rule: Option<String>,
+    lexer: Option<PathBuf>,
+}
+
+/// Where the `--explain` input comes from.
+#[derive(Debug, Eq, PartialEq)]
+enum ExplainInput {
+    Text(String),
+    File(PathBuf),
 }
 
 fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArgs> {
@@ -92,6 +116,9 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let mut inline_trivial = false;
     let mut optimize_ladders = false;
     let mut report_only = false;
+    let mut explain = None;
+    let mut start_rule = None;
+    let mut lexer = None;
 
     let mut index = 0;
     while index < args.len() {
@@ -130,6 +157,31 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
             "--prune-unreachable-rules" => prune_unreachable = true,
             "--inline-trivial-rules" => inline_trivial = true,
             "--optimize-precedence-ladders" => optimize_ladders = true,
+            "--explain" | "--explain-file" => {
+                let value = value_after(arg, args, &mut index)?;
+                let input = if arg == "--explain" {
+                    ExplainInput::Text(value)
+                } else {
+                    ExplainInput::File(PathBuf::from(value))
+                };
+                if explain.replace(input).is_some() {
+                    miette::bail!("expected at most one --explain or --explain-file\n{USAGE}");
+                }
+            }
+            "--start-rule" => {
+                if start_rule
+                    .replace(value_after(arg, args, &mut index)?)
+                    .is_some()
+                {
+                    miette::bail!("expected at most one --start-rule\n{USAGE}");
+                }
+            }
+            "--lexer" => {
+                let path = PathBuf::from(value_after(arg, args, &mut index)?);
+                if lexer.replace(path).is_some() {
+                    miette::bail!("expected at most one --lexer\n{USAGE}");
+                }
+            }
             "-h" | "-help" | "--help" => return Err(miette::miette!("{USAGE}")),
             _ if arg.starts_with("-D") => {
                 writeln!(stderr, "warning: ignoring option {arg}").into_diagnostic()?;
@@ -148,6 +200,9 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let Some(grammar) = grammar else {
         miette::bail!("missing grammar file\n{USAGE}");
     };
+    if explain.is_none() && (start_rule.is_some() || lexer.is_some()) {
+        miette::bail!("--start-rule and --lexer need --explain or --explain-file\n{USAGE}");
+    }
     Ok(CliArgs {
         grammar,
         out_dir,
@@ -165,6 +220,9 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         inline_trivial,
         optimize_ladders,
         report_only,
+        explain,
+        start_rule,
+        lexer,
     })
 }
 
@@ -216,6 +274,9 @@ pub fn run(
     stderr: &mut impl Write,
 ) -> miette::Result<()> {
     let cli = parse_args(args, stderr)?;
+    if cli.explain.is_some() {
+        return run_explain(&cli, stdout, stderr);
+    }
     let mut config = crate::Config::new(&cli.grammar);
     config
         .out_dir(&cli.out_dir)
@@ -269,6 +330,73 @@ pub fn run(
     }
     Ok(())
 }
+/// Runs `--explain` / `--explain-file`.
+fn run_explain(
+    cli: &CliArgs,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> miette::Result<()> {
+    let (input, input_name) = match &cli.explain {
+        Some(ExplainInput::Text(text)) => (text.clone(), "<inline>".to_owned()),
+        Some(ExplainInput::File(path)) if path.as_os_str() == "-" => {
+            let mut text = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)
+                .into_diagnostic()
+                .wrap_err("cannot read the --explain-file input from stdin")?;
+            (text, "<stdin>".to_owned())
+        }
+        Some(ExplainInput::File(path)) => (
+            std::fs::read_to_string(path)
+                .into_diagnostic()
+                .wrap_err_with(|| format!("cannot read --explain-file {}", path.display()))?,
+            path.display().to_string(),
+        ),
+        None => unreachable!("run_explain runs only with an --explain input"),
+    };
+    let mut options = crate::OptimizationOptions::new();
+    options
+        .static_lexer_dfa(cli.static_lexer_dfa)
+        .static_parser_dfa(cli.static_parser_dfa)
+        .static_dfa_only(cli.static_dfa_only)
+        .report_decisions(cli.report_decisions)
+        .profile_decisions(cli.profile_decisions)
+        .prune_unreachable_rules(cli.prune_unreachable)
+        .inline_trivial_rules(cli.inline_trivial)
+        .optimize_precedence_ladders(cli.optimize_ladders);
+    if let Some(spec) = &cli.dump_dfas {
+        options.dump_dfas(spec);
+    }
+    for entry in &cli.entry_rules {
+        options.entry_rule(entry);
+    }
+    let request = crate::explain::ExplainRequest {
+        input,
+        input_name,
+        start_rule: cli.start_rule.clone(),
+        lexer: cli.lexer.clone(),
+    };
+    let output = crate::explain::explain(&cli.grammar, &cli.lib_dirs, &options, &request)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("cannot explain {}", cli.grammar.display()))?;
+    let mut errors = 0;
+    for diagnostic in &output.diagnostics {
+        if diagnostic.severity() == crate::Severity::Error {
+            errors += 1;
+        }
+        writeln!(stderr, "{}", render_diagnostic(diagnostic)).into_diagnostic()?;
+    }
+    for message in &output.optimization_messages {
+        writeln!(stderr, "{message}").into_diagnostic()?;
+    }
+    for report in &output.reports {
+        write!(stdout, "{report}").into_diagnostic()?;
+    }
+    if errors > 0 {
+        miette::bail!("failed with {errors} error(s)");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::parse_args;
@@ -360,6 +488,65 @@ mod tests {
         assert_eq!(cli.grammar, std::path::PathBuf::from("T.g4"));
         let warning = String::from_utf8(stderr).expect("warning is utf-8");
         assert!(warning.contains("ignoring option -Dlanguage=Rust"));
+    }
+
+    #[test]
+    fn explain_flags_parse() {
+        let cli = parse(&[
+            "--static-dfa-only",
+            "--explain",
+            "a b",
+            "--start-rule",
+            "prog",
+            "--lexer",
+            "L.g4",
+            "T.g4",
+        ])
+        .expect("explain flags parse");
+        assert_eq!(
+            cli.explain,
+            Some(super::ExplainInput::Text("a b".to_owned()))
+        );
+        assert_eq!(cli.start_rule.as_deref(), Some("prog"));
+        assert_eq!(cli.lexer, Some(std::path::PathBuf::from("L.g4")));
+
+        let cli = parse(&["--explain-file", "-", "T.g4"]).expect("explain file parses");
+        assert_eq!(
+            cli.explain,
+            Some(super::ExplainInput::File(std::path::PathBuf::from("-")))
+        );
+    }
+
+    #[test]
+    fn explain_flags_are_checked() {
+        assert!(parse(&["--explain", "a", "--explain-file", "f", "T.g4"]).is_err());
+        assert!(
+            parse(&[
+                "--explain",
+                "a",
+                "--start-rule",
+                "x",
+                "--start-rule",
+                "y",
+                "T.g4"
+            ])
+            .is_err()
+        );
+        assert!(
+            parse(&[
+                "--explain",
+                "a",
+                "--lexer",
+                "A.g4",
+                "--lexer",
+                "B.g4",
+                "T.g4"
+            ])
+            .is_err()
+        );
+        assert!(parse(&["--start-rule", "x", "T.g4"]).is_err());
+        assert!(parse(&["--lexer", "L.g4", "T.g4"]).is_err());
+        assert!(parse(&["T.g4", "--explain"]).is_err());
     }
 
     #[test]

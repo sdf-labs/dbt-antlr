@@ -1,0 +1,32 @@
+---
+source: crates/dbt-antlr-codegen/tests/dbt_explain.rs
+expression: report
+---
+=== explain: ContextParser (start rule: s, mode: --static-dfa-only) ===
+input: <inline> (3 tokens)
+
+[VERDICT: STATIC-DFA DIVERGENCE]
+  Full LL(*) accepts this input. The syntax error is a --static-dfa-only artifact: an earlier static choice went wrong.
+  --static-dfa-only: syntax error at token 3 <EOF> (line 1:6)
+  full LL(*):        accepted (2 decisions)
+
+[FIRST DIVERGENCE @ step 1, token 1 'a' (line 1:3)]
+  rule 'e', decision 1 (HYBRID):
+    --static-dfa-only chose alt 1 ('a' 'y', line 5)
+      via MinAlt (minimum conflicting alternative) at s4, lookahead 'a' 'y' <EOF>
+      dropped: alt 2 ('a', line 5)
+    full LL(*) chose alt 2 ('a', line 5)
+  root cause: context sensitivity. SLL(*) also chooses alt 1: only full-context LL(*) sees that the tokens after rule 'e' select alt 2. A larger lookahead budget does not help. Change the grammar so that the caller decides, for example inline the rule at this call site.
+  hint: inspect the table with `--dump-dfas 1`
+  impact: causes the syntax error 2 tokens later, at token 3 <EOF> (line 1:6)
+
+[SYNTAX ERROR (--static-dfa-only) @ token 3 <EOF> (line 1:6)]
+  mismatched input
+  1 | x a y
+    |      ^
+  expected: 'y'
+  rule stack:
+    s (from token 0 'x' (line 1:1))
+
+[STATIC GUESSES BEFORE THE ERROR: 1 (0 on the rule stack, 1 in completed subtrees)]
+  step 1, token 1 'a' (line 1:3): decision 1 in rule 'e' s4 -> alt 1 via MinAlt [completed subtree] [DIVERGENCE]

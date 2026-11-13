@@ -1,0 +1,13 @@
+---
+source: crates/dbt-antlr-codegen/tests/dbt_explain.rs
+expression: report
+---
+=== explain: BudgetParser ===
+input: <inline>
+
+[VERDICT: LEXER ERROR]
+  The lexer rejects the input, so no parser decision ran. Fix the input or the lexer grammar first.
+
+[LEXER ERROR @ line 1:3] token recognition error at: '#'
+  1 | a # b ;
+    |   ^

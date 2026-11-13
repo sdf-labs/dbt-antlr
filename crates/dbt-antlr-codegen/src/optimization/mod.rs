@@ -37,4 +37,4 @@ pub(crate) use report::OptimizationReport;
 #[cfg(feature = "generator")]
 pub(crate) use static_lexer_dfa::{StaticLexerDfa, StaticLexerTables};
 #[cfg(feature = "generator")]
-pub(crate) use static_parser_dfa::{StaticParserDfa, StaticParserTables};
+pub(crate) use static_parser_dfa::{StaticParserDfa, StaticParserDfaReport, StaticParserTables};
