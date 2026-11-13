@@ -274,6 +274,8 @@ fn scratch_crate(name: &str, target: &Path) -> PathBuf {
              version = \"0.0.0\"\n\
              edition = \"2021\"\n\
              \n\
+             [workspace]\n\
+             \n\
              [dependencies]\n\
              dbt-antlr-runtime = {{ path = {:?} }}\n",
             runtime_crate_root(),

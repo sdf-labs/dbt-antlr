@@ -151,12 +151,12 @@ fn xml_lexer_matches_golden() {
 }
 
 /// Compile check: the emitted files must compile against the `dbt-antlr-runtime`
-/// runtime, like the goldens do. Writes a scratch crate under
-/// `/tmp/pi/dbt-emit-check/` and runs `cargo check` on it.
+/// runtime, like the goldens do. Writes a scratch crate inside cargo's
+/// target-dir scratch space and runs `cargo check` on it.
 #[test]
 #[ignore = "slow: builds dbt-antlr-runtime in a scratch crate; run with --ignored"]
 fn emitted_lexers_compile_against_dbt_antlr_runtime() {
-    let scratch = Path::new("/tmp/pi/dbt-emit-check");
+    let scratch = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dbt-emit-check");
     let src = scratch.join("src");
     std::fs::create_dir_all(&src).expect("create scratch crate");
 
@@ -168,6 +168,7 @@ fn emitted_lexers_compile_against_dbt_antlr_runtime() {
         scratch.join("Cargo.toml"),
         format!(
             "[package]\nname = \"dbt-emit-check\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n\
+             [workspace]\n\n\
              [dependencies]\ndbt-antlr-runtime = {{ path = {:?} }}\n",
             runtime_path.display().to_string()
         ),
@@ -185,7 +186,7 @@ fn emitted_lexers_compile_against_dbt_antlr_runtime() {
 
     let output = std::process::Command::new("cargo")
         .args(["check", "--offline"])
-        .current_dir(scratch)
+        .current_dir(&scratch)
         .env("CARGO_TARGET_DIR", scratch.join("target"))
         .output()
         .expect("run cargo check");

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Bo Lin
 //! Dev-loop driver for the dbt emission layer: emits the lexer and parser
-//! sources for a `.g4` grammar into `/tmp/pi/` for diffing against the
-//! goldens in `dbt-antlr-runtime/tests/gen/`.
+//! sources for a `.g4` grammar into `dbt-antlr-dump-emit/` under the system
+//! temp dir for diffing against the goldens in `dbt-antlr-runtime/tests/gen/`.
 //!
 //! ```sh
-//! cargo run -p dbt-antlr --example dump_emit -- ../dbt-antlr-runtime/grammars/SimpleLR.g4
-//! cargo run -p dbt-antlr --example dump_emit -- ../dbt-antlr-runtime/grammars/SimpleLR.g4 --no-visitor
+//! cargo run -p dbt-antlr-codegen --example dump_emit -- ../dbt-antlr-runtime/grammars/SimpleLR.g4
+//! cargo run -p dbt-antlr-codegen --example dump_emit -- ../dbt-antlr-runtime/grammars/SimpleLR.g4 --no-visitor
 //! ```
 
 #![allow(clippy::print_stdout)]
@@ -32,9 +32,11 @@ fn main() {
         )
     };
     let files = emit.unwrap();
+    let out_dir = std::env::temp_dir().join("dbt-antlr-dump-emit");
+    std::fs::create_dir_all(&out_dir).unwrap();
     for f in files {
-        let out = format!("/tmp/pi/{}", f.name);
+        let out = out_dir.join(&f.name);
         std::fs::write(&out, &f.content).unwrap();
-        println!("wrote {out}");
+        println!("wrote {}", out.display());
     }
 }

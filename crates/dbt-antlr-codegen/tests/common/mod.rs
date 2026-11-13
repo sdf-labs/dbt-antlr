@@ -93,10 +93,12 @@ fn mask_deserializer_import(content: &str) -> String {
 }
 
 /// Compile check: writes `files` plus a `lib.rs` declaring `modules` into a
-/// scratch crate under `/tmp/pi/` and runs `cargo check` against the
-/// `dbt-antlr-runtime` runtime.
+/// scratch crate inside cargo's target-dir scratch space, and runs
+/// `cargo check` against the `dbt-antlr-runtime` runtime.
 pub(crate) fn compile_check(crate_name: &str, files: &[(String, String)], modules: &[&str]) {
-    let scratch = Path::new("/tmp/pi").join(crate_name);
+    let scratch = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("scratch-crates")
+        .join(crate_name);
     let src = scratch.join("src");
     std::fs::create_dir_all(&src).expect("create scratch crate");
 
@@ -108,6 +110,7 @@ pub(crate) fn compile_check(crate_name: &str, files: &[(String, String)], module
         scratch.join("Cargo.toml"),
         format!(
             "[package]\nname = \"{crate_name}\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n\
+             [workspace]\n\n\
              [dependencies]\ndbt-antlr-runtime = {{ path = {:?} }}\n",
             runtime_path.display().to_string()
         ),
