@@ -385,7 +385,8 @@ fn build_static_parser_dfas(compilation: &mut Compilation, fallback: AtnFallback
         let Some(compiled) = compilation.parsers.get(&parser_id) else {
             continue;
         };
-        let build = StaticParserDfa::build(compiled, fallback, profile, &budgets);
+        let build =
+            StaticParserDfa::build(compiled, &compilation.sources, fallback, profile, &budgets);
         compilation.diagnostics.extend(build.diagnostics);
         compilation
             .optimization_report

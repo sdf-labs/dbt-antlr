@@ -6,6 +6,8 @@
 #[cfg(feature = "generator")]
 mod config;
 #[cfg(feature = "generator")]
+mod decision_alternatives;
+#[cfg(feature = "generator")]
 mod descriptor;
 #[cfg(feature = "generator")]
 mod manifest;
@@ -23,6 +25,8 @@ mod static_parser_dfa;
 
 #[cfg(feature = "generator")]
 pub(crate) use config::{AtnFallback, OptimizationPlan, StaticDfaPass};
+#[cfg(feature = "generator")]
+pub(crate) use decision_alternatives::{AlternativeNames, alternative_names};
 #[cfg(feature = "generator")]
 pub(crate) use metrics::{StructuralMetrics, integrated_grammar_metrics};
 pub use options::OptimizationOptions;

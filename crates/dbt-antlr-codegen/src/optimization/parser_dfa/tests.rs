@@ -503,6 +503,7 @@ fn build_tables(path: &Path) -> (Vec<DecisionResult>, super::super::StaticParser
         compilation
             .parser(compilation.roots[0].parser.expect("parser root"))
             .expect("parser artifact"),
+        &compilation.sources,
         AtnFallback::Allowed,
         false,
         &ParserDfaBudgets::default(),
@@ -626,6 +627,7 @@ fn emitted_tables_validate_against_the_packed_atn() {
             .expect("parser artifact");
         let build = crate::optimization::StaticParserDfa::build(
             parser,
+            &compilation.sources,
             AtnFallback::Allowed,
             false,
             &ParserDfaBudgets::default(),
@@ -1905,6 +1907,7 @@ fn build_with_budget(
         .expect("parser artifact");
     crate::optimization::StaticParserDfa::build(
         parser,
+        &compilation.sources,
         AtnFallback::Allowed,
         false,
         &visit_budget(budget),
@@ -2022,6 +2025,7 @@ fn profiled_builds_time_every_decision_and_list_the_slowest() {
         .expect("parser artifact");
     let build = crate::optimization::StaticParserDfa::build(
         parser,
+        &compilation.sources,
         AtnFallback::Allowed,
         true,
         &ParserDfaBudgets::default(),
@@ -2275,7 +2279,13 @@ fn build_source_with(
     let parser = compilation
         .parser(compilation.roots[0].parser.expect("parser root"))
         .expect("parser artifact");
-    let build = crate::optimization::StaticParserDfa::build(parser, atn_fallback, false, budgets);
+    let build = crate::optimization::StaticParserDfa::build(
+        parser,
+        &compilation.sources,
+        atn_fallback,
+        false,
+        budgets,
+    );
     (compilation.diagnostics.clone(), build)
 }
 
@@ -2424,10 +2434,11 @@ fn state_caps_cut_hybrid_tables_instead_of_failing_them() {
         [(
             "G4S192",
             "parser decision 0 of rule 'a' resolves its escape states without adaptivePredict: \
-             1 undecided state predicts the minimum viable alternative (witness: 'a'); the \
-             analysis budget (4 states or 2000000 visited configs) stopped the lookahead; raise \
-             it with the max_dfa_states and max_dfa_visits options of the grammar, the rule, or \
-             the block"
+             1 undecided state predicts the minimum viable alternative (witness: 'a'); \
+             tie-breaks: 1 state chooses alt 1 (A B X, line 3) over alt 2 (A C X, line 3), \
+             alt 3 (A D X, line 3), alt 4 (A B Y, line 3); the analysis budget (4 states or \
+             2000000 visited configs) stopped the lookahead; raise it with the max_dfa_states \
+             and max_dfa_visits options of the grammar, the rule, or the block"
         )]
     );
 
@@ -2786,4 +2797,273 @@ fn runtime_tables_are_minimized_and_equivalent() {
         decoded_tables(&results);
     }
     assert!(merged > 0, "some states merge");
+}
+
+/// The alternative names of each decision of a grammar written to a scratch
+/// directory, by rule, in decision order.
+fn names_of(name: &str, source: &str) -> Vec<(String, Vec<String>)> {
+    let (_, build) = build_source_with(
+        name,
+        source,
+        AtnFallback::Allowed,
+        &ParserDfaBudgets::default(),
+    );
+    build
+        .report
+        .decisions
+        .iter()
+        .map(|decision| (decision.rule.clone(), decision.alternatives.all().to_vec()))
+        .collect()
+}
+
+/// Each decision names its alternatives by label, or by their first elements,
+/// with the line where they start. Loops, optional elements, and optional
+/// blocks name their implicit alternatives.
+#[test]
+fn decisions_name_their_alternatives() {
+    let source = "grammar Names;
+s : e (COMMA e)* COMMA? EOF ;
+e : e STAR e     #mul
+  | e PLUS e     #add
+  | p            #prim
+  ;
+p : ID LP e RP OVER LP RP
+  | ID LP e RP
+  | ( ID | INT ) ( DOT ID )?
+  ;
+COMMA : ',' ; STAR : '*' ; PLUS : '+' ; ID : [a-z]+ ; INT : [0-9]+ ; LP : '(' ; RP : ')' ;
+OVER : 'over' ; DOT : '.' ;
+";
+    let names = names_of("Names", source);
+    let find = |rule: &str, first: &str| {
+        names
+            .iter()
+            .find(|(owner, alternatives)| {
+                owner == rule
+                    && alternatives
+                        .first()
+                        .is_some_and(|name| name.starts_with(first))
+            })
+            .map_or_else(
+                || panic!("no decision of {rule} starts with {first}: {names:?}"),
+                |(_, alternatives)| alternatives.clone(),
+            )
+    };
+    assert_eq!(
+        find("s", "alt 1 (repeat"),
+        ["alt 1 (repeat COMMA e, line 2)", "alt 2 (exit the loop)"]
+    );
+    assert_eq!(
+        find("s", "alt 1 (COMMA,"),
+        ["alt 1 (COMMA, line 2)", "alt 2 (skip)"]
+    );
+    assert_eq!(
+        find("e", "alt 1 (#mul"),
+        ["alt 1 (#mul, line 3)", "alt 2 (#add, line 4)"]
+    );
+    assert_eq!(
+        find("p", "alt 1 (ID LP e ..."),
+        [
+            "alt 1 (ID LP e ..., line 7)",
+            "alt 2 (ID LP e ..., line 8)",
+            "alt 3 ((ID | INT) ( ... )?, line 9)",
+        ]
+    );
+    assert_eq!(
+        find("p", "alt 1 (DOT ID"),
+        ["alt 1 (DOT ID, line 9)", "alt 2 (skip the block)"]
+    );
+    assert_eq!(
+        find("e", "alt 1 (repeat ( #mul"),
+        [
+            "alt 1 (repeat ( #mul | #add ), line 3)",
+            "alt 2 (exit the loop)"
+        ]
+    );
+}
+
+/// `--static-dfa-only` groups the resolved states of a decision by the chosen
+/// and the dropped alternatives, over all precedence classes, with the most
+/// states first.
+#[test]
+fn static_only_groups_its_tie_breaks() {
+    let mut results = resolve_static_only(&grammars_dir().join("parser").join("GuardExpr.g4"));
+    results.extend(resolve_static_only(
+        &grammars_dir().join("ReferenceToATN.g4"),
+    ));
+    results.extend(resolve_static_only(
+        &grammars_dir().join("parser").join("LoopFrontier.g4"),
+    ));
+    for result in &results {
+        let Some(resolved) = &result.static_only else {
+            continue;
+        };
+        let grouped: usize = resolved.tie_breaks.iter().map(|group| group.states).sum();
+        assert_eq!(grouped, resolved.min_alt + resolved.min_viable_alt);
+        for pair in resolved.tie_breaks.windows(2) {
+            assert!(
+                pair[0].states >= pair[1].states,
+                "{:?}",
+                resolved.tie_breaks
+            );
+            assert_ne!(
+                (pair[0].chosen, &pair[0].dropped),
+                (pair[1].chosen, &pair[1].dropped)
+            );
+        }
+        for group in &resolved.tie_breaks {
+            assert!(!group.dropped.is_empty());
+            assert!(!group.dropped.contains(&group.chosen));
+            assert!(group.dropped.iter().all(|alt| *alt > 0));
+            assert!(group.witness.is_some());
+        }
+    }
+    assert!(
+        results.iter().any(|result| result
+            .static_only
+            .as_ref()
+            .is_some_and(|resolved| !resolved.tie_breaks.is_empty())),
+        "the grammars have tie-breaks"
+    );
+}
+
+/// A non-greedy decision puts its exit or skip first, and its names follow.
+#[test]
+fn non_greedy_decisions_name_the_exit_first() {
+    let source = "grammar Lazy;
+s : ID*? INT ( ID ID | INT INT )?? EOF ;
+ID : [a-z]+ ; INT : [0-9]+ ;
+";
+    let names = names_of("Lazy", source);
+    let alternatives: Vec<_> = names.iter().map(|(_, names)| names.clone()).collect();
+    assert!(
+        alternatives.contains(&vec![
+            "alt 1 (exit the loop)".to_owned(),
+            "alt 2 (repeat ID, line 2)".to_owned(),
+        ]),
+        "{alternatives:?}"
+    );
+    assert!(
+        alternatives.contains(&vec![
+            "alt 1 (skip the block)".to_owned(),
+            "alt 2 (ID ID, line 2)".to_owned(),
+            "alt 3 (INT INT, line 2)".to_owned(),
+        ]),
+        "{alternatives:?}"
+    );
+}
+
+const TIE_GRAMMAR: &str = "grammar Ties;
+s : a EOF ;
+a : X Y P | X Y Q | X Z P | X Z Q | W Y P | W Y Q | W Z P | W Z Q ;
+X : 'x' ; Y : 'y' ; Z : 'z' ; W : 'w' ; P : 'p' ; Q : 'q' ;
+";
+
+/// A decision with more tie-break groups than a `G4S192` warning shows
+/// orders them and counts the others.
+#[test]
+fn static_only_warnings_show_the_largest_tie_break_groups() {
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits {
+            max_states: Some(8),
+            max_k: Some(2),
+            ..BudgetLimits::default()
+        },
+    };
+    let (_, build) = build_source_with("Ties", TIE_GRAMMAR, AtnFallback::Forbidden, &budgets);
+    let decision = &build.report.decisions[0];
+    let resolved = decision.result.static_only.as_ref().expect("resolved");
+    let groups: Vec<_> = resolved
+        .tie_breaks
+        .iter()
+        .map(|group| (group.chosen, group.dropped.clone(), group.states))
+        .collect();
+    assert_eq!(
+        groups,
+        [
+            (1, vec![2], 1),
+            (3, vec![4], 1),
+            (5, vec![6], 1),
+            (7, vec![8], 1)
+        ]
+    );
+    let message = &build
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "G4S192")
+        .expect("a G4S192 warning")
+        .message;
+    assert!(
+        message.contains(
+            "tie-breaks: 1 state chooses alt 1 (X Y P, line 3) over alt 2 (X Y Q, line 3); \
+             1 state chooses alt 3 (X Z P, line 3) over alt 4 (X Z Q, line 3) (witness: 'x' 'z'); \
+             1 state chooses alt 5 (W Y P, line 3) over alt 6 (W Y Q, line 3) (witness: 'w' 'y'); \
+             and 1 more tie-break group"
+        ),
+        "{message}"
+    );
+}
+
+/// A `G4S190` warning for a frontier escape names the viable alternatives of
+/// the escape state when the decision has no conflict.
+#[test]
+fn not_fully_static_warnings_name_the_viable_alternatives() {
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits {
+            max_states: Some(12),
+            max_k: Some(2),
+            ..BudgetLimits::default()
+        },
+    };
+    // The direct accept of `e` gives the hybrid table enough coverage.
+    let source = TIE_GRAMMAR
+        .replace("W Z Q ;", "W Z Q | E ;")
+        .replace("Q : 'q' ;", "Q : 'q' ; E : 'e' ;");
+    let (_, build) = build_source_with("Ties", &source, AtnFallback::Allowed, &budgets);
+    let message = &build
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "G4S190")
+        .expect("a G4S190 warning")
+        .message;
+    assert!(
+        message.ends_with("; viable alternatives: alt 1 (X Y P, line 3), alt 2 (X Y Q, line 3)"),
+        "{message}"
+    );
+}
+
+/// A non-greedy optional element names its skip first, and a list of names
+/// in a diagnostic stops after four names.
+#[test]
+fn optional_elements_and_long_lists_have_short_names() {
+    let source = "grammar Short;
+s : A?? (B | C | D | E | F | G) EOF ;
+A : 'a' ; B : 'b' ; C : 'c' ; D : 'd' ; E : 'e' ; F : 'f' ; G : 'g' ;
+";
+    let (_, build) = build_source_with(
+        "Short",
+        source,
+        AtnFallback::Allowed,
+        &ParserDfaBudgets::default(),
+    );
+    let lazy = build
+        .report
+        .decisions
+        .iter()
+        .find(|decision| decision.alternatives.all().len() == 2)
+        .expect("the decision of `A??`");
+    assert_eq!(
+        lazy.alternatives.all(),
+        ["alt 1 (skip)", "alt 2 (A, line 2)"]
+    );
+    assert_eq!(
+        lazy.alternatives.list(&[1, 2, 1, 2, 1, 2]),
+        "alt 1 (skip), alt 2 (A, line 2), alt 1 (skip), alt 2 (A, line 2), \
+         and 2 more alternatives"
+    );
+    assert_eq!(
+        lazy.alternatives.list(&[1, 2, 1, 2, 1]),
+        "alt 1 (skip), alt 2 (A, line 2), alt 1 (skip), alt 2 (A, line 2), \
+         and 1 more alternative"
+    );
 }
