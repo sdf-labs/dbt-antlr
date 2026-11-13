@@ -43,7 +43,7 @@ use dbt_antlr_runtime::dfa::static_parser_dfa::{
 use super::parser_dfa::{
     AttemptOutcome, BudgetLimits, Category, DecisionBudget, DecisionClassifier, DecisionResult,
     DescentPlan, DescentRules, EscapeResolution, EscapeResolutions, ParserDfaBudgets,
-    StaticDfaTable, has_non_budget_option,
+    StaticDfaTable, has_non_budget_option, minimized_states,
 };
 use crate::grammar::atn::{CompiledParser, FinalizedTransitionKind, left_corner_rules};
 use crate::grammar::diagnostic::Diagnostic;
@@ -1028,9 +1028,15 @@ fn table_dump_lines(
     table: &StaticDfaTable,
     with_paths: bool,
 ) -> Vec<String> {
+    let runtime_states = minimized_states(table);
     let mut lines = vec![format!(
-        "  table: states={} cyclic={}{}",
+        "  table: states={}{} cyclic={}{}",
         table.states.len(),
+        if runtime_states < table.states.len() {
+            format!(" (runtime {runtime_states})")
+        } else {
+            String::new()
+        },
         table.cyclic,
         if table.cyclic {
             String::new()

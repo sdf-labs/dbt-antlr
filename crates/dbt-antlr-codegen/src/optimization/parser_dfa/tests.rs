@@ -762,7 +762,7 @@ fn simple_guarded_alternatives_need_no_escape() {
 
 /// A follow that starts a new invocation of the loop's rule (`expr+`), or that
 /// consumes an operator outside the loop (`'set' expr '||' INT EOF`), puts the
-/// 20 iterate/exit conflict states under a stack guard. The 19 budget-frontier
+/// 32 iterate/exit conflict states under a stack guard. The 3 budget-frontier
 /// states escape: their exit configs are widened, so their guard roots can be
 /// in a frame that the widening removed.
 #[test]
@@ -773,9 +773,9 @@ fn foreign_consumption_guards_the_iterate_reading() {
         .find(|result| result.category == Category::LR_PRECEDENCE)
         .expect("the arithmetic loop decision");
     assert_eq!(result.k, 4);
-    assert_eq!(result.num_dfa_states, 228);
-    assert_eq!(result.escapes, 19, "the frontier states escape");
-    assert_eq!(result.guarded_iterates, 20);
+    assert_eq!(result.num_dfa_states, 88);
+    assert_eq!(result.escapes, 3, "the frontier states escape");
+    assert_eq!(result.guarded_iterates, 32);
     assert_eq!(result.iterate_accepts, 0);
     assert!(!result.is_fully_static(), "a guard may defer");
     let classes = result.precedence.as_ref().expect("precedence tables");
@@ -797,7 +797,7 @@ fn foreign_consumption_guards_the_iterate_reading() {
         .copied()
         .filter(|state| state.is_guarded())
         .collect();
-    assert_eq!(guarded.len(), 20);
+    assert_eq!(guarded.len(), 32);
     let conflict_guards = guarded
         .iter()
         .filter(|state| state.conflicts == [1, 2])
@@ -806,7 +806,7 @@ fn foreign_consumption_guards_the_iterate_reading() {
         .iter()
         .filter(|state| state.conflicts.is_empty())
         .count();
-    assert_eq!((conflict_guards, frontier_guards), (20, 0));
+    assert_eq!((conflict_guards, frontier_guards), (32, 0));
     for state in guarded {
         assert_eq!(state.guarded_alt, 1, "a guarded iterate takes alt 1");
     }
@@ -922,7 +922,7 @@ fn foreign_rooted_obligations_guard_the_iterate_reading() {
         .find(|result| result.category == Category::LR_PRECEDENCE)
         .expect("the loop decision of `p`");
     assert_eq!(result.k, 4);
-    assert_eq!(result.num_dfa_states, 36);
+    assert_eq!(result.num_dfa_states, 27);
     assert_eq!(result.escapes, 0);
     assert_eq!(result.guarded_iterates, 10);
     assert_eq!(result.iterate_accepts, 0);
@@ -1237,7 +1237,7 @@ fn static_only_turns_predicated_states_into_syntax_errors() {
 
     let decoded = decoded_tables(&results);
     let runtime = decoded.table(1, 0).expect("decision 1 has a table");
-    let dead_end = table
+    let dead_end = super::tables::minimized(table)
         .states
         .iter()
         .position(|state| state.resolution.is_some())
@@ -1932,7 +1932,7 @@ fn spent_visit_budgets_emit_g4s193_warnings() {
              spent the visit budget (100 configs); 216 configs visited, 11 DFA states built; \
              most visited rules: expr 95%, stat 4%",
             "the analysis of parser decision 3 of rule 'expr' is slow: 6 of 10 build attempts \
-             spent the visit budget (100 configs); 848 configs visited, 60 DFA states built; \
+             spent the visit budget (100 configs); 848 configs visited, 34 DFA states built; \
              most visited rules: expr 89%, stat 10%",
         ]
     );
@@ -2464,47 +2464,14 @@ fn accept_after(table: &StaticDfaTable, tokens: &[i32]) -> Option<i32> {
 /// the second `+` operator again: after `+ q`, the input can still be `b`.
 #[test]
 fn frontier_iterates_need_every_exit_position_in_the_iterate_lineage() {
-    let budgets = ParserDfaBudgets {
-        global: BudgetLimits {
-            max_states: Some(5),
-            ..BudgetLimits::default()
-        },
-    };
-    let (_, build) = build_source_with(
-        "Split",
-        SPLIT_OPERATOR_GRAMMAR,
-        AtnFallback::Allowed,
-        &budgets,
-    );
-    let token = |name: &str| {
-        build
-            .report
-            .vocabulary
-            .iter()
-            .position(|display| display == name)
-            .map(|index| index as i32 + 1)
-            .expect("token in vocabulary")
-    };
-    let path = [token("'+'"), token("'q'")];
-    let decision = build
-        .report
-        .decisions
-        .iter()
-        .find(|decision| decision.result.category == Category::LR_PRECEDENCE)
-        .expect("a precedence loop decision");
-    let precedence = decision.result.precedence.as_ref().expect("classes");
-    let accepts: Vec<_> = precedence
-        .tables
-        .iter()
-        .map(|table| table.as_ref().and_then(|table| accept_after(table, &path)))
-        .collect();
-    assert_eq!(precedence.cutoffs, [2, 3, 4]);
+    let accepts = split_operator_accepts("Split", SPLIT_OPERATOR_GRAMMAR, 4);
+    assert_eq!(accepts.len(), 4, "the cutoffs are 2, 3, and 4");
     // The class `p=4` escapes after `+ q` instead of predicting the iterate.
     assert_eq!(accepts[2], Some(super::ESCAPE), "{accepts:?}");
 }
 
-/// Split-operator accepts in the class `p=4` after `+ q`, for a grammar
-/// built with the state cap `max_states`.
+/// The accepts after `+ q` in each precedence class, for a grammar built with
+/// the state cap `max_states`.
 fn split_operator_accepts(name: &str, source: &str, max_states: usize) -> Vec<Option<i32>> {
     let budgets = ParserDfaBudgets {
         global: BudgetLimits {
@@ -2547,7 +2514,7 @@ fn frontier_iterate_guards_need_every_loop_exit_in_the_iterate_lineage() {
 s : e EOF | 'between' e '+' 'q' 'z' ;
 e : e '+' 'q' 'a' | e '*' e | e '+' 'q' 'b' | 'x' ;
 ";
-    let accepts = split_operator_accepts("SplitGuard", source, 5);
+    let accepts = split_operator_accepts("SplitGuard", source, 4);
     assert_eq!(accepts[2], Some(super::ESCAPE), "{accepts:?}");
 }
 
@@ -2609,4 +2576,214 @@ fn lexer_grammars_do_not_support_budget_options() {
         .filter(|diagnostic| diagnostic.message == "unsupported option max_k")
         .count();
     assert_eq!(unsupported, 2, "{:?}", compilation.diagnostics);
+}
+
+/// The accepts of one alternative that have a single viable alternative share
+/// one state, so they use one state of the state cap.
+#[test]
+fn single_alternative_accepts_share_one_state() {
+    let source = "grammar Sinks;
+s : a EOF ;
+a : ( A B | C D | E F ) X | A G Y ;
+A : 'a' ; B : 'b' ; C : 'c' ; D : 'd' ; E : 'e' ; F : 'f' ; G : 'g' ; X : 'x' ; Y : 'y' ;
+";
+    let results = classify_source("Sinks", source);
+    let decision = results
+        .iter()
+        .find(|result| result.table.is_some() && result.k == 2)
+        .expect("the LL(2) decision of `a`");
+    let table = decision.table.as_ref().expect("table");
+    let accepts: Vec<_> = table
+        .states
+        .iter()
+        .filter(|state| state.is_accept())
+        .map(|state| state.accept)
+        .collect();
+    assert_eq!(accepts, [1, 2], "{table:?}");
+    let first_alt = table
+        .states
+        .iter()
+        .position(|state| state.accept == 1)
+        .expect("an accept of alternative 1");
+    let into_first_alt = table
+        .states
+        .iter()
+        .flat_map(|state| &state.edges)
+        .filter(|edge| edge.target == first_alt)
+        .count();
+    assert_eq!(into_first_alt, 3, "`a b`, `c`, and `e` lead to one state");
+}
+
+/// A predicated path and a path without a predicate can reach the same config
+/// set. The shared accept state has its own config set, so neither path takes
+/// the verdict of the other, in each order of the token types.
+#[test]
+fn shared_accept_states_do_not_absorb_predicated_paths() {
+    for order in ["Y W X", "X Y W", "X W Y", "W Y X"] {
+        let mut source = String::from(
+            "grammar Order;\ns : a EOF ;\na : P ( Y | W Q | X {false}? ) B | P Z ;\nP : 'p' ;\n",
+        );
+        for token in order.split(' ') {
+            source.push_str(&format!("{token} : '{}' ;\n", token.to_lowercase()));
+        }
+        source.push_str("Q : 'q' ; B : 'b' ; Z : 'z' ;\n");
+        let results = resolve_static_only_source("Order", &source);
+        let decision = results
+            .iter()
+            .find(|result| result.table.is_some() && result.k >= 2)
+            .unwrap_or_else(|| panic!("{order}: the decision of `a`"));
+        let table = decision.table.as_ref().expect("table");
+        let token = |name: char| {
+            2 + order
+                .split(' ')
+                .position(|token| token.starts_with(name))
+                .expect("token") as i32
+        };
+        let after = |second: i32| accept_after(table, &[1, second]);
+        assert_eq!(after(token('Y')), Some(1), "{order}: `p y` predicts 1");
+        assert_eq!(after(token('W')), Some(1), "{order}: `p w` predicts 1");
+        let x = table.states[0]
+            .edges
+            .iter()
+            .find(|edge| edge.lo <= 1 && 1 <= edge.hi)
+            .map(|edge| &table.states[edge.target])
+            .and_then(|state| {
+                state
+                    .edges
+                    .iter()
+                    .find(|edge| edge.lo <= token('X') && token('X') <= edge.hi)
+            })
+            .map(|edge| &table.states[edge.target])
+            .expect("an edge for `p x`");
+        assert_eq!(
+            x.resolution,
+            Some(super::EscapeResolution::SyntaxError),
+            "{order}: `p x` stops at the predicate"
+        );
+    }
+}
+
+/// Classifies and resolves for `--static-dfa-only` a grammar written to a
+/// scratch directory.
+fn resolve_static_only_source(name: &str, source: &str) -> Vec<DecisionResult> {
+    static SCRATCH: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let scratch = SCRATCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let directory = std::env::temp_dir().join(format!(
+        "dbt-antlr-static-only-{}-{scratch}-{name}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("scratch directory");
+    let path = directory.join(format!("{name}.g4"));
+    std::fs::write(&path, source).expect("scratch grammar");
+    let results = resolve_static_only(&path);
+    let _ = std::fs::remove_dir_all(&directory);
+    results
+}
+
+/// Walks a table and its runtime minimization in lockstep from their start
+/// states, and checks that the runtime cannot distinguish them.
+fn assert_runtime_equivalent(table: &StaticDfaTable, minimized: &StaticDfaTable) {
+    let outcome = |state: &StaticDfaState| {
+        let accept = if state.accept == super::CONFLICT_ESCAPE && state.conflict_min_alt <= 0 {
+            super::ESCAPE
+        } else {
+            state.accept
+        };
+        (
+            accept,
+            if accept == 0 { state.fallback } else { 0 },
+            if accept == super::CONFLICT_ESCAPE {
+                state.conflict_min_alt
+            } else {
+                0
+            },
+            state.guarded_alt,
+            if state.resolution == Some(super::EscapeResolution::Guarded) {
+                state.guard_defer_alt
+            } else {
+                0
+            },
+            state.guard_group,
+            state
+                .continuation
+                .as_ref()
+                .filter(|_| accept == super::ESCAPE)
+                .map(|continuation| (continuation.contexts.clone(), continuation.configs.clone())),
+        )
+    };
+    let target = |state: &StaticDfaState, token: i32| {
+        state
+            .edges
+            .iter()
+            .find(|edge| edge.lo <= token && token <= edge.hi)
+            .map(|edge| edge.target)
+    };
+    let mut tokens: Vec<i32> = table
+        .states
+        .iter()
+        .chain(&minimized.states)
+        .flat_map(|state| &state.edges)
+        .flat_map(|edge| [edge.lo - 1, edge.lo, edge.hi, edge.hi + 1])
+        .collect();
+    tokens.sort_unstable();
+    tokens.dedup();
+    let mut seen = std::collections::HashSet::new();
+    let mut queue = std::collections::VecDeque::from([(0_usize, 0_usize)]);
+    while let Some((left, right)) = queue.pop_front() {
+        if !seen.insert((left, right)) {
+            continue;
+        }
+        let (left_state, right_state) = (&table.states[left], &minimized.states[right]);
+        assert_eq!(
+            outcome(left_state),
+            outcome(right_state),
+            "states {left} and {right}"
+        );
+        if left_state.accept != 0 {
+            continue;
+        }
+        for &token in &tokens {
+            match (target(left_state, token), target(right_state, token)) {
+                (Some(left), Some(right)) => queue.push_back((left, right)),
+                (None, None) => {}
+                pair => panic!("token {token} from {left}/{right}: {pair:?}"),
+            }
+        }
+    }
+}
+
+/// The runtime table of a decision is its minimization, which the runtime
+/// cannot distinguish from the built table. The image of the minimized tables
+/// loads and validates.
+#[test]
+fn runtime_tables_are_minimized_and_equivalent() {
+    let mut merged = 0;
+    for (grammar, fallback) in [
+        ("parser/FuzzExpr.g4", AtnFallback::Allowed),
+        ("parser/LoopFrontier.g4", AtnFallback::Allowed),
+        ("parser/GuardExpr.g4", AtnFallback::Forbidden),
+        ("parser/InlineAlias.g4", AtnFallback::Forbidden),
+    ] {
+        let path = grammars_dir().join(grammar);
+        let results = match fallback {
+            AtnFallback::Allowed => classify(&path),
+            AtnFallback::Forbidden => resolve_static_only(&path),
+        };
+        for result in &results {
+            let tables = result.table.iter().chain(
+                result
+                    .precedence
+                    .iter()
+                    .flat_map(|precedence| precedence.tables.iter().flatten()),
+            );
+            for table in tables {
+                let minimized = super::tables::minimized(table);
+                assert!(minimized.states.len() <= table.states.len());
+                merged += table.states.len() - minimized.states.len();
+                assert_runtime_equivalent(table, &minimized);
+            }
+        }
+        decoded_tables(&results);
+    }
+    assert!(merged > 0, "some states merge");
 }

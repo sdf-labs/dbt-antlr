@@ -1200,6 +1200,7 @@ impl DecisionClassifier {
                 decision,
                 info: HashMap::new(),
                 states: Vec::new(),
+                accept_sinks: HashMap::new(),
                 queue: VecDeque::new(),
                 completion_depths: &self.completion_depths,
                 attempt: Attempt {
@@ -1331,6 +1332,9 @@ struct DecisionBuild<'b, 'sim, 'a> {
     info: HashMap<i32, StateFacts>,
     /// DFA states in creation order; the index is the state number.
     states: Vec<&'sim DFAState<'sim, ATNConfigSet<'sim>>>,
+    /// For each alternative, the shared accept state of the config sets with
+    /// only that viable alternative.
+    accept_sinks: HashMap<i32, &'sim DFAState<'sim, ATNConfigSet<'sim>>>,
     queue: VecDeque<i32>,
     completion_depths: &'a [OnceLock<BitSet>],
     attempt: Attempt,
@@ -1832,6 +1836,17 @@ where
     ) -> Option<&'sim DFAState<'sim, ATNConfigSet<'sim>>> {
         let closed = self.closure.canonical_set(closed);
         let (facts, effects) = self.classify(&closed, depth);
+        // An accept state with one viable alternative has no edges, and the
+        // runtime reads only its alternative. All such accept states of one
+        // alternative share one state, so they use one state of the state cap.
+        if let Verdict::Accept(alt) = facts.verdict
+            && alt > 0
+            && depth > 0
+            && !facts.resolved_conflict
+            && !facts.predicated
+        {
+            return self.accept_sink(alt, facts, effects);
+        }
         let interned = self.closure.merged_config_set(&closed);
         let mut proposed = ProposedDFAState::new(interned);
         proposed.is_accept_state = matches!(facts.verdict, Verdict::Accept(_));
@@ -1897,6 +1912,57 @@ where
         if decide && !self.attempt.overflow {
             self.queue.push_back(number);
         }
+        Some(state)
+    }
+
+    /// The shared accept state of alternative `alt`, interned on first use.
+    ///
+    /// The shared state has its own config set: one config at the decision
+    /// state. No closure output contains the decision state, because it has
+    /// only epsilon transitions. So no other config set of the build becomes
+    /// this state, and the state keeps no fallback, taint, or roots of one
+    /// path.
+    fn accept_sink(
+        &mut self,
+        alt: i32,
+        facts: StateFacts,
+        effects: ClassifyEffects,
+    ) -> Option<&'sim DFAState<'sim, ATNConfigSet<'sim>>> {
+        if let Some(state) = self.accept_sinks.get(&alt) {
+            return Some(*state);
+        }
+        let config = dbt_antlr_runtime::analysis::ATNConfig::new(
+            self.decision_state,
+            alt,
+            Some(PredictionContextRef::new_empty()),
+        );
+        let sink = ClosedSet {
+            configs: vec![config],
+            taint: Taint::default(),
+            roots: GuardRoots::default(),
+        };
+        let mut proposed = ProposedDFAState::new(self.closure.merged_config_set(&sink));
+        proposed.is_accept_state = true;
+        proposed.prediction = alt;
+        let state = self.dfa.add_state(proposed, self.simulator);
+        let number = state.state_number();
+        if number as usize >= self.states.len() {
+            self.states.push(state);
+        }
+        if number as usize >= self.max_states {
+            return None;
+        }
+        self.commit(number, effects);
+        self.accept_sinks.insert(alt, state);
+        self.info.insert(
+            number,
+            StateFacts {
+                fallback: 0,
+                taint: Taint::default(),
+                roots: GuardRoots::default(),
+                ..facts
+            },
+        );
         Some(state)
     }
 
