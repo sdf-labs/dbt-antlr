@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-runtime-v0.8.1...dbt-antlr-runtime-v0.9.0) - 2026-11-13
+
+### Added
+
+- *(codegen)* --explain differential fault localizer for static parser DFAs ([#97](https://github.com/sdf-labs/dbt-antlr/pull/97))
+- *(codegen)* share accept states and minimize static parser tables ([#89](https://github.com/sdf-labs/dbt-antlr/pull/89))
+- *(codegen)* configurable static parser DFA budgets ([#88](https://github.com/sdf-labs/dbt-antlr/pull/88))
+- *(codegen,runtime)* keep stack guards under --static-dfa-only ([#79](https://github.com/sdf-labs/dbt-antlr/pull/79))
+
+### Fixed
+
+- *(codegen)* do not trust widened contexts in static parser tables ([#90](https://github.com/sdf-labs/dbt-antlr/pull/90))
+
+### Other
+
+- Fix Cargo 1.100 warnings ([#99](https://github.com/sdf-labs/dbt-antlr/pull/99))
+- *(codegen,runtime)* make the LL(1) lookahead linear in the call depth ([#76](https://github.com/sdf-labs/dbt-antlr/pull/76))
+- *(runtime,codegen)* flat packed static parser table image, embedded zero-copy ([#72](https://github.com/sdf-labs/dbt-antlr/pull/72))
+- *(runtime,codegen)* flat packed static lexer DFA image, embedded zero-copy ([#67](https://github.com/sdf-labs/dbt-antlr/pull/67))
+
 ## [0.8.1](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-runtime-v0.8.0...dbt-antlr-runtime-v0.8.1) - 2026-11-11
 
 ### Fixed
