@@ -309,9 +309,11 @@ impl Explanation<'_> {
 
     /// Points to the `--dump-dfas` dump of a decision that has a static table.
     fn dump_hint(&self, out: &mut String, decision: usize) {
-        let has_table = self.report.decisions.get(decision).is_some_and(|decision| {
-            decision.result.table.is_some() || decision.result.precedence.is_some()
-        });
+        let has_table = self
+            .report
+            .decisions
+            .get(decision)
+            .is_some_and(|decision| decision.result.has_table());
         if has_table {
             let _ = writeln!(
                 out,
@@ -321,16 +323,16 @@ impl Explanation<'_> {
     }
 
     fn decision_headline(&self, out: &mut String, event: &DecisionEvent) {
-        let category = self
+        let kind = self
             .report
             .decisions
             .get(event.decision)
             .map_or_else(String::new, |decision| {
-                format!(" ({})", decision.result.category)
+                format!(" ({})", decision.result.kind)
             });
         let _ = writeln!(
             out,
-            "  rule '{}', decision {}{category}:",
+            "  rule '{}', decision {}{kind}:",
             self.rule_name(event.rule),
             event.decision
         );

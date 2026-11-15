@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Bo Lin
 //! `--static-dfa-only` resolution of the escape states of decision tables.
 //!
-//! A hybrid table escapes to the adaptive simulation where the static
+//! A partial table escapes to the adaptive simulation where the static
 //! construction stopped. Without that fallback, each escape state gets a
 //! static verdict:
 //!
@@ -24,7 +24,7 @@
 //!   walk reports a syntax error. The table cannot evaluate the predicate.
 
 use super::hazard::{HazardLevel, HijackVerdict, StackHijackVerdict, StateHazard};
-use super::{CONFLICT_ESCAPE, Category, DecisionResult, ESCAPE, GUARDED, StaticDfaTable};
+use super::{CONFLICT_ESCAPE, DecisionKind, DecisionOutcome, ESCAPE, GUARDED, StaticDfaTable};
 
 /// How `--static-dfa-only` replaced one escape state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -565,10 +565,10 @@ impl StaticDfaTable {
     }
 }
 
-impl DecisionResult {
+impl DecisionOutcome {
     /// Resolves the escape states of every table of the decision for
     /// `--static-dfa-only` and records the result in
-    /// [`DecisionResult::static_only`].
+    /// [`DecisionOutcome::static_only`].
     ///
     /// Returns `false` and changes nothing when the generated parser still
     /// needs `adaptivePredict` for the decision. This is the case when the
@@ -576,23 +576,26 @@ impl DecisionResult {
     /// non-greedy decision.
     pub(crate) fn resolve_static_only(&mut self) -> bool {
         let mut resolutions = EscapeResolutions::default();
-        match self.category {
-            Category::LL1 => {}
-            Category::NON_GREEDY => return false,
-            _ => {
-                if let Some(precedence) = &mut self.precedence {
-                    if precedence.tables.is_empty() || precedence.adaptive_classes > 0 {
-                        return false;
-                    }
-                    for table in precedence.tables.iter_mut().flatten() {
-                        resolutions.merge(table.resolve_escapes());
-                    }
-                    precedence.escapes = 0;
-                } else if let Some(table) = &mut self.table {
-                    resolutions.merge(table.resolve_escapes());
-                } else {
+        match self.kind {
+            DecisionKind::Ll1 => {}
+            DecisionKind::NonGreedy | DecisionKind::Adaptive => return false,
+            DecisionKind::Precedence => {
+                let Some(precedence) = &mut self.precedence else {
+                    return false;
+                };
+                if precedence.adaptive_classes > 0 {
                     return false;
                 }
+                for table in precedence.tables.iter_mut().flatten() {
+                    resolutions.merge(table.resolve_escapes());
+                }
+                precedence.escapes = 0;
+            }
+            DecisionKind::Static | DecisionKind::Hybrid => {
+                let Some(table) = &mut self.table else {
+                    return false;
+                };
+                resolutions.merge(table.resolve_escapes());
             }
         }
         self.escapes = 0;

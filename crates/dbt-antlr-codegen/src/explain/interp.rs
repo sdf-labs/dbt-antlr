@@ -42,7 +42,7 @@ use dbt_antlr_runtime::{Arena, PredictionMode};
 
 use super::lex::{ExplainLexer, LexerSpec};
 use crate::grammar::atn::DecisionLookahead;
-use crate::optimization::parser_dfa::{DecisionResult, EscapeResolution, StaticDfaTable};
+use crate::optimization::parser_dfa::{DecisionOutcome, EscapeResolution, StaticDfaTable};
 use crate::optimization::{DescentGroup, StaticParserTables};
 
 type ExplainTokens<'input, 'arena> = CommonTokenStream<
@@ -136,7 +136,7 @@ impl<'input, 'arena>
 
 /// The static prediction data of the parser under test.
 pub(super) struct StaticOracle<'r> {
-    pub(super) results: &'r [DecisionResult],
+    pub(super) results: &'r [DecisionOutcome],
     pub(super) tables: &'r StaticParserTables,
     pub(super) runtime: &'static RuntimeTables,
     /// The `LL(1)` lookahead of each disjoint decision, by decision number.
@@ -903,7 +903,7 @@ impl<'input, 'arena> Simulation<'input, 'arena, '_, '_> {
 
     /// Walks the generation-time table of a decision over the lookahead to
     /// find the state where the runtime walk stops.
-    fn walk_table(&mut self, result: &DecisionResult) -> Option<TableWalk> {
+    fn walk_table(&mut self, result: &DecisionOutcome) -> Option<TableWalk> {
         let precedence = self.base.get_precedence().max(0);
         let (table, class) = match (&result.table, &result.precedence) {
             (Some(table), _) => (table, None),

@@ -15,7 +15,6 @@
 //!   --static-parser-dfa           precompute static parser DFA tables (parser scope only)
 //!   --static-dfa-only             generate only fully static lexer and parser DFA tables
 //!                                 (implies --static-lexer-dfa and --static-parser-dfa)
-//!   --report-decisions            print the parser decision report (implies report-only)
 //!   --dump-dfas <SPEC>            print the static parser DFA tables matching SPEC
 //!                                 (implies report-only)
 //!   --profile-decisions           print the time and work of each parser decision
@@ -54,7 +53,6 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   --static-parser-dfa           precompute static parser DFA tables (parser scope only)
   --static-dfa-only             generate only fully static lexer and parser DFA tables
                                 (implies --static-lexer-dfa and --static-parser-dfa)
-  --report-decisions            print the parser decision report (implies report-only)
   --dump-dfas <SPEC>            print the static parser DFA tables matching SPEC
                                 (implies report-only)
   --profile-decisions           print the time and work of each parser decision
@@ -87,7 +85,6 @@ struct CliArgs {
     static_lexer_dfa: bool,
     static_parser_dfa: bool,
     static_dfa_only: bool,
-    report_decisions: bool,
     dump_dfas: Option<String>,
     profile_decisions: bool,
     entry_rules: Vec<String>,
@@ -118,7 +115,6 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let mut static_lexer_dfa = false;
     let mut static_parser_dfa = false;
     let mut static_dfa_only = false;
-    let mut report_decisions = false;
     let mut dump_dfas = None;
     let mut profile_decisions = false;
     let mut entry_rules = Vec::new();
@@ -152,7 +148,6 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
             "--static-lexer-dfa" => static_lexer_dfa = true,
             "--static-parser-dfa" => static_parser_dfa = true,
             "--static-dfa-only" => static_dfa_only = true,
-            "--report-decisions" => report_decisions = true,
             "--profile-decisions" => profile_decisions = true,
             "--dump-dfas" => {
                 dump_dfas = Some(value_after(arg, args, &mut index)?);
@@ -230,7 +225,6 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         static_lexer_dfa,
         static_parser_dfa,
         static_dfa_only,
-        report_decisions,
         dump_dfas,
         profile_decisions,
         entry_rules,
@@ -287,7 +281,6 @@ pub fn run(
         .static_lexer_dfa(cli.static_lexer_dfa)
         .static_parser_dfa(cli.static_parser_dfa)
         .static_dfa_only(cli.static_dfa_only)
-        .report_decisions(cli.report_decisions)
         .profile_decisions(cli.profile_decisions)
         .prune_unreachable_rules(cli.prune_unreachable)
         .inline_trivial_rules(cli.inline_trivial)
@@ -469,7 +462,6 @@ fn run_explain(
         .static_lexer_dfa(cli.static_lexer_dfa)
         .static_parser_dfa(cli.static_parser_dfa)
         .static_dfa_only(cli.static_dfa_only)
-        .report_decisions(cli.report_decisions)
         .profile_decisions(cli.profile_decisions)
         .prune_unreachable_rules(cli.prune_unreachable)
         .inline_trivial_rules(cli.inline_trivial)
@@ -536,18 +528,11 @@ mod tests {
     fn static_parser_dfa_and_report_flags_parse() {
         let cli = parse(&["--static-parser-dfa", "T.g4"]).expect("flag parses");
         assert!(cli.static_parser_dfa);
-        assert!(!cli.report_decisions);
         assert_eq!(cli.dump_dfas, None);
         assert!(!cli.profile_decisions);
 
-        let cli = parse(&[
-            "--report-decisions",
-            "--dump-dfas=all",
-            "--profile-decisions",
-            "T.g4",
-        ])
-        .expect("report flags parse");
-        assert!(cli.report_decisions);
+        let cli =
+            parse(&["--dump-dfas=all", "--profile-decisions", "T.g4"]).expect("report flags parse");
         assert!(cli.profile_decisions);
         assert_eq!(cli.dump_dfas.as_deref(), Some("all"));
 

@@ -68,7 +68,7 @@ pub(super) type GuardRoots = HashMap<(i32, i32), BTreeSet<i32>>;
 
 /// A closed config set with the taints of the paths that produced it.
 ///
-/// The configs are *not* merged here: like the reference classifier, the
+/// The configs are *not* merged here: like the reference Java tool, the
 /// closure keeps every distinct `(state, alt, context)` it produced, and the
 /// contexts are merged only once the set is finished (see
 /// [`Closure::config_set`]). Merging during the closure would feed
@@ -367,7 +367,7 @@ pub(super) struct Closure<'atn, 'a> {
     precedence: Option<PrecedenceClass>,
     depth_cache: HashMap<usize, i32>,
     call_sites: &'a CallSites,
-    /// Widening bound of the current attempt: `i32::MAX` for the unbounded
+    /// Widening bound of the current attempt: `i32::MAX` for the default
     /// attempt, `0` for the fully widened one.
     depth_bound: i32,
     /// `true` while the start closure of a precedence class runs: precedence
@@ -388,8 +388,8 @@ pub(super) struct Closure<'atn, 'a> {
     rule_visits: Vec<u64>,
     visit_budget: u64,
     /// Set when the visit budget ran out. The config sets that the closure
-    /// builds after this are not complete. A static attempt then fails, and a
-    /// hybrid attempt escapes the state that it expands (see
+    /// builds after this are not complete. The attempt then escapes the state
+    /// that it expands, or fails at the start state (see
     /// `DecisionBuild::run`).
     pub(super) exhausted: bool,
     /// The guard-root sets of the closure.
@@ -840,7 +840,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             // The analysis taint stays in the side map: writing it into the
             // config would make `ATNConfigSet::dips_into_outer_context` part of
             // the DFA state identity, so the same config set reached with
-            // different taint would intern as two states and the classifier
+            // different taint would intern as two states and the builder
             // would never see the second path.
             set.add_cached(config.clone(), &mut self.merge);
         }
@@ -1198,7 +1198,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
     /// context. Equal widened contexts can stand for different real stacks,
     /// so the dropped config can be the only viable one.
     fn apply_precedence_filter(&mut self, closed: ClosedSet<'a>) -> ClosedSet<'a> {
-        // Merge the contexts first (as the reference classifier does): the
+        // Merge the contexts first (as the reference Java tool does): the
         // filter compares alternative 1's context against every other
         // alternative's, so it has to see the same merged contexts the runtime
         // start state would hold.

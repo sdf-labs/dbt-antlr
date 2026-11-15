@@ -2,11 +2,11 @@
 // makes (issue #84).
 //
 // In decision 1 of `a`, the alternative `B B B B a E` calls `a` again. The
-// padding alternatives make the unbounded attempt spend its state budget, so
-// the classifier falls back to the widened attempt. That attempt gives the
-// inner `a` an empty context. After `'b' 'b' 'b' 'b' 'a'`, both alternatives
-// then meet at the same state with the same context. The real stacks are
-// different: only alternative 2 can read `c b b b b a d e d x`.
+// widened build, which runs after a start state that spent the visit budget,
+// gives the inner `a` an empty context. After `'b' 'b' 'b' 'b' 'a'`, both
+// alternatives then meet at the same state with the same context. The real
+// stacks are different: only alternative 2 can read `c b b b b a d e d x`.
+// The padding alternatives make the table large.
 grammar WidenedTrust;
 top : a X | a Y ;
 a   : ( A

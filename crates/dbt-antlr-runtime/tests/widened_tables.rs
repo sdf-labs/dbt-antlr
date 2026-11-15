@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Bo Lin
-//! Static parser tables against the adaptive parser where the classifier
-//! falls back to the widened attempt.
+//! Static parser tables against the adaptive parser on the witnesses of the
+//! widened build.
 //!
-//! The widened attempt gives every rule call an empty context. Two configs
-//! can then meet at the same state with the same context, but have different
-//! real stacks. `WidenedTrust.g4` is a conflict that only widening makes: the
-//! table must not resolve it to the lowest alternative. `WidenedPrecedence.g4`
-//! is a precedence-class start state: the precedence filter must not drop the
-//! exit config that widening made equal to an iterate config.
+//! The widened build gives every rule call an empty context. Two configs can
+//! then meet at the same state with the same context, but have different real
+//! stacks. `WidenedTrust.g4` is a conflict that only widening makes: the table
+//! must not resolve it to the lowest alternative. `WidenedPrecedence.g4` is a
+//! precedence-class start state: the precedence filter must not drop the exit
+//! config that widening made equal to an iterate config. The table builder
+//! widens only after a start state that spent the visit budget, so the unit
+//! tests of `dbt-antlr-codegen` force the widened build on these grammars. The
+//! generated tables here come from the default build, and must agree with the
+//! adaptive parser too.
 
 #[rustfmt::skip]
 mod gen {

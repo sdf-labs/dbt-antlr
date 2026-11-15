@@ -1,16 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Bo Lin
-//! Classifier tests over the golden grammar corpus.
+//! Table builder tests over the golden grammar corpus.
 //!
-//! The expected categories are the ones the reference `antlr4.base2` classifier
-//! reports for the same grammars (`-Xdecision-report`).
-//!
-//! Large grammars diverge in a conservative direction: the reference
-//! classifier resolves a conflict from the *first* path that reached a config
-//! set, while this classifier keeps the union of every path's taint
-//! (`INTERIOR_TAINT` marks the paths that never popped the decision boundary).
-//! Mixed usage is never trusted here; on `fixtures/vscode-cpp14/CPP14.g4` that
-//! costs six `EXACT_AMBIG` decisions, which land on hybrid tables instead.
+//! The builder resolves a conflict only when every path that reached a config
+//! set allows it: it keeps the union of every path's taint (`INTERIOR_TAINT`
+//! marks the paths that never popped the decision boundary). A state that
+//! mixed paths reach escapes.
 
 use std::path::{Path, PathBuf};
 
@@ -24,7 +19,10 @@ use crate::optimization::AtnFallback;
 use super::cost::{AttemptKind, AttemptOutcome};
 use super::loop_block::LoopBlock;
 use super::table::{StaticDfaState, StaticDfaTable};
-use super::{BudgetLimits, Category, DecisionClassifier, DecisionResult, ParserDfaBudgets};
+use super::{
+    BudgetLimits, CONFLICT_ESCAPE, DecisionKind, DecisionOutcome, DecisionTableBuilder,
+    NoTableReason, ParserDfaBudgets,
+};
 
 fn grammars_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -42,22 +40,44 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-/// The classifier of one compiled parser, set up as the static parser DFA
+/// The table builder of one compiled parser, set up as the static parser DFA
 /// pass sets it up.
-fn classifier(parser: &crate::grammar::atn::CompiledParser) -> DecisionClassifier {
+fn builder(parser: &crate::grammar::atn::CompiledParser) -> DecisionTableBuilder {
     let ll1 = crate::optimization::static_parser_dfa::ll1_disjointness(parser);
-    DecisionClassifier::new(parser.atn, ll1).with_descent_rules(
+    DecisionTableBuilder::new(parser.atn, ll1).with_descent_rules(
         crate::optimization::static_parser_dfa::descent_rules(parser),
     )
 }
 
-/// Classifies every decision of every root parser of one grammar file.
-fn classify(path: &Path) -> Vec<DecisionResult> {
-    classify_with(path, AtnFallback::Allowed)
+/// Builds the tables of every decision of every root parser of one grammar
+/// file.
+fn outcomes(path: &Path) -> Vec<DecisionOutcome> {
+    outcomes_with(path, AtnFallback::Allowed)
 }
 
-/// [`classify`] with an explicit adaptive fallback policy.
-fn classify_with(path: &Path, atn_fallback: AtnFallback) -> Vec<DecisionResult> {
+/// [`outcomes`] with an explicit adaptive fallback policy.
+fn outcomes_with(path: &Path, atn_fallback: AtnFallback) -> Vec<DecisionOutcome> {
+    outcomes_of(path, |builder| builder.with_atn_fallback(atn_fallback))
+}
+
+/// [`outcomes_with`] where every build runs with full widening, like the
+/// build after a start state that spent the visit budget. The lookahead depth
+/// of 64 lets the tables expand beyond the default frontier of a partial
+/// table.
+fn widened_outcomes_with(path: &Path, atn_fallback: AtnFallback) -> Vec<DecisionOutcome> {
+    outcomes_of(path, |builder| {
+        builder
+            .with_atn_fallback(atn_fallback)
+            .with_widening()
+            .with_max_k(64)
+    })
+}
+
+/// The outcomes of the builders that `setup` configures.
+fn outcomes_of(
+    path: &Path,
+    setup: impl Fn(DecisionTableBuilder) -> DecisionTableBuilder,
+) -> Vec<DecisionOutcome> {
     let compilation = compile(LoadOptions {
         roots: vec![path.to_path_buf()],
         library_directories: Vec::new(),
@@ -69,16 +89,12 @@ fn classify_with(path: &Path, atn_fallback: AtnFallback) -> Vec<DecisionResult> 
             continue;
         };
         let parser = compilation.parser(parser_id).expect("parser artifact");
-        results.extend(
-            classifier(parser)
-                .with_atn_fallback(atn_fallback)
-                .classify_all(),
-        );
+        results.extend(setup(builder(parser)).build_all());
     }
     results
 }
 
-fn rule_names(path: &Path, results: &[DecisionResult]) -> Vec<String> {
+fn rule_names(path: &Path, results: &[DecisionOutcome]) -> Vec<String> {
     let compilation = compile(LoadOptions {
         roots: vec![path.to_path_buf()],
         library_directories: Vec::new(),
@@ -96,67 +112,75 @@ fn rule_names(path: &Path, results: &[DecisionResult]) -> Vec<String> {
         .collect()
 }
 
-fn categories(path: &Path) -> Vec<Category> {
-    classify(path)
+fn kinds(path: &Path) -> Vec<DecisionKind> {
+    outcomes(path)
         .into_iter()
-        .map(|result| result.category)
+        .map(|result| result.kind)
         .collect()
 }
 
+/// The kinds of the decisions of the golden corpus: how the generated parser
+/// predicts each of them.
 #[test]
-fn golden_corpus_categories_match_the_reference_classifier() {
-    let cases: [(&str, &[Category]); 7] = [
-        ("CSV.g4", &[Category::LL1; 4]),
+fn golden_corpus_decisions_get_their_kinds() {
+    let cases: [(&str, &[DecisionKind]); 7] = [
+        ("CSV.g4", &[DecisionKind::Ll1; 4]),
         (
             "Labels.g4",
             &[
-                Category::LL1,
-                Category::LL1,
-                Category::LLK,
-                Category::LR_PRECEDENCE,
+                DecisionKind::Ll1,
+                DecisionKind::Ll1,
+                DecisionKind::Static,
+                DecisionKind::Precedence,
             ],
         ),
-        ("SimpleLR.g4", &[Category::LR_PRECEDENCE]),
+        ("SimpleLR.g4", &[DecisionKind::Precedence]),
         ("VisitorBasic.g4", &[]),
-        ("VisitorCalc.g4", &[Category::LLK, Category::LR_PRECEDENCE]),
-        ("ReferenceToATN.g4", &[Category::HYBRID, Category::LL1]),
+        (
+            "VisitorCalc.g4",
+            &[DecisionKind::Static, DecisionKind::Precedence],
+        ),
+        (
+            "ReferenceToATN.g4",
+            &[DecisionKind::Hybrid, DecisionKind::Ll1],
+        ),
         // The shared-descent group of `expr ';' | expr '.'` cures every
-        // conflict of the first decision, as upstream.
+        // conflict of the first decision.
         (
             "Perf.g4",
             &[
-                Category::EXACT_AMBIG,
-                Category::LL1,
-                Category::LLK,
-                Category::LR_PRECEDENCE,
+                DecisionKind::Static,
+                DecisionKind::Ll1,
+                DecisionKind::Static,
+                DecisionKind::Precedence,
             ],
         ),
     ];
     for (file, expected) in cases {
         let path = grammars_dir().join(file);
-        assert_eq!(categories(&path), expected, "{file}");
+        assert_eq!(kinds(&path), expected, "{file}");
     }
 
     let shapes = fixture("parser-shapes").join("ParserShapes.g4");
     assert_eq!(
-        categories(&shapes),
+        kinds(&shapes),
         [
-            Category::LL1,
-            Category::HYBRID,
-            Category::LL1,
-            Category::NON_GREEDY,
+            DecisionKind::Ll1,
+            DecisionKind::Hybrid,
+            DecisionKind::Ll1,
+            DecisionKind::NonGreedy,
         ]
     );
-    let results = classify(&shapes);
+    let results = outcomes(&shapes);
     let rules = rule_names(&shapes, &results);
     assert_eq!(rules, ["optional", "plus", "star", "nongreedy"]);
 }
 
 #[test]
 fn ll1_decisions_need_no_table() {
-    let results = classify(&grammars_dir().join("CSV.g4"));
+    let results = outcomes(&grammars_dir().join("CSV.g4"));
     for result in &results {
-        assert_eq!(result.category, Category::LL1);
+        assert_eq!(result.kind, DecisionKind::Ll1);
         assert_eq!(result.k, 1);
         assert!(result.table.is_none());
         assert!(result.is_fully_static());
@@ -166,9 +190,9 @@ fn ll1_decisions_need_no_table() {
 
 #[test]
 fn hybrid_tables_escape_at_the_conflict_state() {
-    let results = classify(&grammars_dir().join("ReferenceToATN.g4"));
+    let results = outcomes(&grammars_dir().join("ReferenceToATN.g4"));
     let decision = &results[0];
-    assert_eq!(decision.category, Category::HYBRID);
+    assert_eq!(decision.kind, DecisionKind::Hybrid);
     assert_eq!(decision.k, 2);
     assert_eq!(decision.escapes, 1);
     assert!(!decision.is_fully_static());
@@ -180,10 +204,10 @@ fn hybrid_tables_escape_at_the_conflict_state() {
 }
 
 #[test]
-fn precedence_decisions_are_classified_per_class() {
-    let results = classify(&grammars_dir().join("SimpleLR.g4"));
+fn precedence_decisions_get_one_table_per_class() {
+    let results = outcomes(&grammars_dir().join("SimpleLR.g4"));
     let decision = &results[0];
-    assert_eq!(decision.category, Category::LR_PRECEDENCE);
+    assert_eq!(decision.kind, DecisionKind::Precedence);
     let precedence = decision.precedence.as_ref().expect("precedence tables");
     assert_eq!(precedence.cutoffs, [2]);
     assert_eq!(precedence.tables.len(), 2);
@@ -196,12 +220,12 @@ fn precedence_decisions_are_classified_per_class() {
 #[test]
 fn predicated_branches_escape_while_the_loop_stays_static() {
     let shapes = fixture("parser-shapes").join("ParserShapes.g4");
-    let results = classify(&shapes);
+    let results = outcomes(&shapes);
     let plus = &results[1];
     // The `(B | C)+` loop decision itself is static; only the configs the
     // FOLLOW chase reached through `{ready()}?` depend on the parse state, so
     // they escape and the table stays (Tier 3, per-config predicate taint).
-    assert_eq!(plus.category, Category::HYBRID);
+    assert_eq!(plus.kind, DecisionKind::Hybrid);
     assert!(plus.saw_predicate || plus.first_predicate.is_some());
     let table = plus.table.as_ref().expect("the loop keeps a hybrid table");
     assert!(table.escapes() > 0, "the predicated branch escapes");
@@ -211,22 +235,25 @@ fn predicated_branches_escape_while_the_loop_stays_static() {
 #[test]
 fn non_greedy_decisions_are_flagged_without_a_table() {
     let shapes = fixture("parser-shapes").join("ParserShapes.g4");
-    let results = classify(&shapes);
+    let results = outcomes(&shapes);
     let nongreedy = &results[3];
-    assert_eq!(nongreedy.category, Category::NON_GREEDY);
+    assert_eq!(nongreedy.kind, DecisionKind::NonGreedy);
+    assert_eq!(nongreedy.no_table, Some(NoTableReason::NonGreedy));
     assert!(nongreedy.table.is_none());
-    assert!(nongreedy.is_fully_static());
+    // The generated parser predicts a non-greedy subrule with
+    // `adaptivePredict`.
+    assert!(!nongreedy.is_fully_static());
 }
 
 #[test]
-fn classification_is_deterministic() {
+fn table_builds_are_deterministic() {
     for file in ["Labels.g4", "Perf.g4", "ReferenceToATN.g4", "SimpleLR.g4"] {
         let path = grammars_dir().join(file);
-        let first = classify(&path);
-        let second = classify(&path);
+        let first = outcomes(&path);
+        let second = outcomes(&path);
         assert_eq!(first.len(), second.len(), "{file}");
         for (first, second) in first.iter().zip(&second) {
-            assert_eq!(first.category, second.category, "{file}");
+            assert_eq!(first.kind, second.kind, "{file}");
             assert_eq!(first.k, second.k, "{file}");
             assert_eq!(first.num_dfa_states, second.num_dfa_states, "{file}");
             assert_eq!(first.table, second.table, "{file}");
@@ -251,7 +278,7 @@ fn no_table_has_an_eof_self_loop() {
     ];
     let mut tables = Vec::new();
     for file in grammars {
-        for result in classify(&grammars_dir().join(file)) {
+        for result in outcomes(&grammars_dir().join(file)) {
             if let Some(table) = &result.table {
                 tables.push((file, result.decision, table.clone()));
             }
@@ -275,7 +302,7 @@ fn no_table_has_an_eof_self_loop() {
     }
 }
 
-/// Classification must survive a broad slice of the fixture corpus: no panic,
+/// The table builds must survive a broad slice of the fixture corpus: no panic,
 /// no hang, and every table well formed.
 ///
 /// The corpus is sampled (every fourth grammar) because compiling each grammar
@@ -284,7 +311,7 @@ fn no_table_has_an_eof_self_loop() {
 /// imported grammars. The visit budget is exercised by the largest grammars of
 /// the sample.
 #[test]
-fn fixture_corpus_classifies_without_panicking() {
+fn fixture_corpus_builds_without_panicking() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("codegen-direct")
@@ -300,7 +327,7 @@ fn fixture_corpus_classifies_without_panicking() {
         .map(|(_, path)| path)
         .collect::<Vec<_>>();
 
-    let mut classified = 0_usize;
+    let mut built = 0_usize;
     for path in grammars {
         let Ok(compilation) = compile(LoadOptions {
             roots: vec![path.clone()],
@@ -313,9 +340,9 @@ fn fixture_corpus_classifies_without_panicking() {
                 continue;
             };
             let parser = compilation.parser(parser_id).expect("parser artifact");
-            let results = classifier(parser).classify_all();
+            let results = builder(parser).build_all();
             for result in results {
-                classified += 1;
+                built += 1;
                 for table in result.table.iter().chain(
                     result
                         .precedence
@@ -347,7 +374,7 @@ fn fixture_corpus_classifies_without_panicking() {
             }
         }
     }
-    assert!(classified > 10, "classified {classified} decisions");
+    assert!(built > 10, "built {built} decisions");
 }
 
 fn collect_grammars(directory: &Path, out: &mut Vec<PathBuf>) {
@@ -364,11 +391,11 @@ fn collect_grammars(directory: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// The fixture sample, classified under a small visit budget: every attempt is
+/// The fixture sample, built under a small visit budget: every attempt is
 /// bounded, so this checks the budget path on grammars large enough to hit it
 /// without paying the production budget's time.
 #[test]
-fn whole_fixture_corpus_classifies_under_a_small_budget() {
+fn whole_fixture_corpus_builds_under_a_small_budget() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("codegen-direct")
@@ -395,7 +422,7 @@ fn whole_fixture_corpus_classifies_under_a_small_budget() {
                 continue;
             };
             let parser = compilation.parser(parser_id).expect("parser artifact");
-            let results = classifier(parser).with_visit_budget(20_000).classify_all();
+            let results = builder(parser).with_visit_budget(20_000).build_all();
             for result in results {
                 for table in result.table.iter().chain(
                     result
@@ -417,22 +444,30 @@ fn whole_fixture_corpus_classifies_under_a_small_budget() {
     assert!(tables > 0, "the corpus produces tables");
 }
 
-/// An exhausted visit budget is reported as an overflow, never as a table: the
-/// config sets built after the budget ran out are incomplete.
+/// A start state that spends the visit budget leaves the decision without a
+/// table: the config sets built after the budget ran out are incomplete.
 #[test]
-fn exhausted_visit_budget_yields_overflow_without_a_table() {
-    let reference = classify_with_budget(&grammars_dir().join("ReferenceToATN.g4"), 1);
+fn exhausted_start_state_yields_no_table() {
+    let reference = outcomes_with_budget(&grammars_dir().join("ReferenceToATN.g4"), 1);
     let decision = &reference[0];
-    assert_eq!(decision.category, Category::OVERFLOW);
+    assert_eq!(decision.kind, DecisionKind::Adaptive);
+    assert_eq!(decision.no_table, Some(NoTableReason::StartBudget));
     assert!(decision.table.is_none());
     assert!(!decision.is_fully_static());
 
-    // A precedence decision keeps its category - the classes are what degrade.
-    let precedence = classify_with_budget(&grammars_dir().join("SimpleLR.g4"), 1);
+    // Every precedence class of the decision has no table.
+    let precedence = outcomes_with_budget(&grammars_dir().join("SimpleLR.g4"), 1);
     let decision = &precedence[0];
-    assert_eq!(decision.category, Category::LR_PRECEDENCE);
+    assert_eq!(decision.kind, DecisionKind::Adaptive);
     let classes = decision.precedence.as_ref().expect("precedence classes");
-    assert!(classes.adaptive_classes > 0);
+    assert_eq!(
+        decision.no_table,
+        Some(NoTableReason::PrecedenceClasses {
+            failed: classes.tables.len(),
+            total: classes.tables.len(),
+            first: Box::new(NoTableReason::StartBudget),
+        })
+    );
     assert!(classes.tables.iter().all(Option::is_none));
     assert!(!decision.is_fully_static());
 }
@@ -478,7 +513,7 @@ fn precedence_decision(
         .expect("a left-recursive rule has a precedence loop")
 }
 
-fn classify_with_budget(path: &Path, budget: u64) -> Vec<DecisionResult> {
+fn outcomes_with_budget(path: &Path, budget: u64) -> Vec<DecisionOutcome> {
     let compilation = compile(LoadOptions {
         roots: vec![path.to_path_buf()],
         library_directories: Vec::new(),
@@ -488,12 +523,12 @@ fn classify_with_budget(path: &Path, budget: u64) -> Vec<DecisionResult> {
     let parser = compilation
         .parser(root.parser.expect("parser root"))
         .expect("parser artifact");
-    classifier(parser).with_visit_budget(budget).classify_all()
+    builder(parser).with_visit_budget(budget).build_all()
 }
 
 /// Builds the runtime tables of one grammar through the pass, exactly as the
 /// compiler stage does.
-fn build_tables(path: &Path) -> (Vec<DecisionResult>, super::super::StaticParserTables) {
+fn build_tables(path: &Path) -> (Vec<DecisionOutcome>, super::super::StaticParserTables) {
     let compilation = compile(LoadOptions {
         roots: vec![path.to_path_buf()],
         library_directories: Vec::new(),
@@ -508,7 +543,7 @@ fn build_tables(path: &Path) -> (Vec<DecisionResult>, super::super::StaticParser
         false,
         &ParserDfaBudgets::default(),
     );
-    let results = classify(path);
+    let results = outcomes(path);
     (results, build.tables)
 }
 
@@ -537,10 +572,10 @@ fn fully_static_decisions_never_defer() {
             "decision {} of rule index {} should be fully static, got {:?}",
             result.decision,
             result.rule_index,
-            result.category
+            result.kind
         );
-        if matches!(result.category, Category::LL1 | Category::NON_GREEDY) {
-            // These categories need no table at all.
+        if matches!(result.kind, DecisionKind::Ll1 | DecisionKind::NonGreedy) {
+            // These kinds have no table.
             continue;
         }
         assert!(tables.has_table(result.decision));
@@ -554,7 +589,7 @@ fn hybrid_frontier_escapes_carry_continuations() {
     // `binding`, the decision with the most frontier escapes.
     let hybrid = results
         .iter()
-        .filter(|result| result.category == Category::HYBRID)
+        .filter(|result| result.kind == DecisionKind::Hybrid)
         .max_by_key(|result| result.escapes)
         .expect("FuzzExpr has a hybrid decision");
     let words = tables.words();
@@ -704,10 +739,10 @@ fn compound_guarded_alternatives_are_not_substitutable() {
         "`(',' send)* '>>' send` is not a simple guarded alternative"
     );
 
-    let results = classify(&grammars_dir().join("parser").join("LoopVeto.g4"));
+    let results = outcomes(&grammars_dir().join("parser").join("LoopVeto.g4"));
     let result = results
         .iter()
-        .find(|result| result.category == Category::LR_PRECEDENCE)
+        .find(|result| result.kind == DecisionKind::Precedence)
         .expect("the loop decision");
     assert_eq!(result.escapes, 2, "the vetoed conflict escapes");
     assert!(!result.is_fully_static());
@@ -732,10 +767,10 @@ fn compound_guarded_alternatives_are_not_substitutable() {
 /// substitution. Without it this decision escapes 4 times.
 #[test]
 fn simple_guarded_alternatives_need_no_escape() {
-    let results = classify(&grammars_dir().join("parser").join("LoopSubst.g4"));
+    let results = outcomes(&grammars_dir().join("parser").join("LoopSubst.g4"));
     let result = results
         .iter()
-        .find(|result| result.category == Category::LR_PRECEDENCE)
+        .find(|result| result.kind == DecisionKind::Precedence)
         .expect("the arithmetic loop decision");
     assert_eq!(result.escapes, 0);
     assert!(result.is_fully_static());
@@ -769,10 +804,10 @@ fn simple_guarded_alternatives_need_no_escape() {
 /// in a frame that the widening removed.
 #[test]
 fn foreign_consumption_guards_the_iterate_reading() {
-    let results = classify(&grammars_dir().join("parser").join("LoopFrontier.g4"));
+    let results = outcomes(&grammars_dir().join("parser").join("LoopFrontier.g4"));
     let result = results
         .iter()
-        .find(|result| result.category == Category::LR_PRECEDENCE)
+        .find(|result| result.kind == DecisionKind::Precedence)
         .expect("the arithmetic loop decision");
     assert_eq!(result.k, 4);
     assert_eq!(result.num_dfa_states, 88);
@@ -815,9 +850,9 @@ fn foreign_consumption_guards_the_iterate_reading() {
     let table = classes.tables[0].as_ref().expect("class 0 table");
     assert!(!table.guard_danger().is_empty(), "the guard can trip");
 
-    let between = classify(&grammars_dir().join("parser").join("BetweenExpr.g4"));
+    let between = outcomes(&grammars_dir().join("parser").join("BetweenExpr.g4"));
     let boolean_loop = &between[3];
-    assert_eq!(boolean_loop.category, Category::LR_PRECEDENCE);
+    assert_eq!(boolean_loop.kind, DecisionKind::Precedence);
     assert_eq!(boolean_loop.escapes, 0);
     assert_eq!(boolean_loop.guarded_iterates, 2);
 }
@@ -873,7 +908,7 @@ fn walk<'t>(table: &'t StaticDfaTable, tokens: &[i32]) -> Option<&'t StaticDfaSt
 #[test]
 fn tokens_that_the_loop_does_not_own_veto_the_substitution() {
     let path = grammars_dir().join("parser").join("LoopSibling.g4");
-    let results = classify(&path);
+    let results = outcomes(&path);
     let names = rule_names(&path, &results);
     let types = token_types(&path, &["'-'", "'+'", "'pair'", "ID"]);
     let (minus, plus, pair, id) = (types[0], types[1], types[2], types[3]);
@@ -887,7 +922,7 @@ fn tokens_that_the_loop_does_not_own_veto_the_substitution() {
         let (result, _) = results
             .iter()
             .zip(&names)
-            .find(|(result, name)| result.category == Category::LR_PRECEDENCE && *name == rule)
+            .find(|(result, name)| result.kind == DecisionKind::Precedence && *name == rule)
             .unwrap_or_else(|| panic!("the loop decision of {rule}"));
         let ends: Vec<&StaticDfaState> = result
             .precedence
@@ -918,10 +953,10 @@ fn tokens_that_the_loop_does_not_own_veto_the_substitution() {
 #[test]
 fn foreign_rooted_obligations_guard_the_iterate_reading() {
     let path = grammars_dir().join("parser").join("LoopObligation.g4");
-    let results = classify(&path);
+    let results = outcomes(&path);
     let result = results
         .iter()
-        .find(|result| result.category == Category::LR_PRECEDENCE)
+        .find(|result| result.kind == DecisionKind::Precedence)
         .expect("the loop decision of `p`");
     assert_eq!(result.k, 4);
     assert_eq!(result.num_dfa_states, 27);
@@ -992,7 +1027,7 @@ fn first_of_two_calls(atn: &dbt_antlr_runtime::analysis::ATN, rule_index: usize)
 fn new_invocations_after_the_skip_are_out_of_discipline() {
     let path = grammars_dir().join("parser").join("PostfixSibling.g4");
     let atn = parser_atn(&path);
-    let results = classify(&path);
+    let results = outcomes(&path);
     let names = rule_names(&path, &results);
     let types = token_types(&path, &["'-'", "'B'", "';'", "']'", "'A'"]);
     let (minus, b, semi, close, a) = (types[0], types[1], types[2], types[3], types[4]);
@@ -1029,7 +1064,7 @@ fn new_invocations_after_the_skip_are_out_of_discipline() {
 #[test]
 fn optional_elements_after_the_postfix_starve_it() {
     let path = grammars_dir().join("parser").join("PostfixSibling.g4");
-    let results = classify(&path);
+    let results = outcomes(&path);
     let names = rule_names(&path, &results);
     let shaped: Vec<&str> = results
         .iter()
@@ -1083,20 +1118,20 @@ fn skip_mirrors_need_the_take_path_of_the_popped_frame() {
 /// the take reading: the dangling `else` still resolves to take.
 #[test]
 fn the_take_path_of_an_enclosing_invocation_mirrors_the_take() {
-    let results = classify(&grammars_dir().join("parser").join("DanglingElse.g4"));
+    let results = outcomes(&grammars_dir().join("parser").join("DanglingElse.g4"));
     let fires: usize = results.iter().map(|result| result.take_rule_fires).sum();
     assert_eq!(fires, 1);
-    assert!(results.iter().all(DecisionResult::is_fully_static));
+    assert!(results.iter().all(DecisionOutcome::is_fully_static));
 }
 
 /// `pred=predicate?` is the canonical optional-postfix shape, and the
-/// `set expr '=' expr` caller is where skip genuinely wins. The reference
-/// classifier reports one postfix decision for this grammar with no take-rule
-/// fire and 8 guarded takes; ours matches.
+/// `set expr '=' expr` caller is where skip genuinely wins. The grammar has
+/// one postfix decision, with no take-rule fire and 8 guarded takes, as the
+/// reference Java tool reports.
 #[test]
 fn optional_postfix_shapes_are_guarded() {
-    let results = classify(&grammars_dir().join("parser").join("GuardExpr.g4"));
-    let shaped: Vec<&DecisionResult> = results
+    let results = outcomes(&grammars_dir().join("parser").join("GuardExpr.g4"));
+    let shaped: Vec<&DecisionOutcome> = results
         .iter()
         .filter(|result| result.has_postfix_shape)
         .collect();
@@ -1105,7 +1140,7 @@ fn optional_postfix_shapes_are_guarded() {
     let fires: usize = results.iter().map(|result| result.take_rule_fires).sum();
     assert_eq!(fires, 0);
     let guarded: usize = results.iter().map(|result| result.guarded_takes).sum();
-    assert_eq!(guarded, 8, "matching the reference classifier");
+    assert_eq!(guarded, 8, "matching the reference Java tool");
     assert!(!shaped[0].is_fully_static(), "a guard may defer");
     let table = shaped[0].table.as_ref().expect("the hybrid table is kept");
     assert!(!table.guard_danger().is_empty(), "the guard can trip");
@@ -1117,14 +1152,14 @@ fn optional_postfix_shapes_are_guarded() {
 
     // No shape means no report line either: the grammar corpus that has no
     // `X Y?` block must stay silent.
-    let plain = classify(&grammars_dir().join("CSV.g4"));
+    let plain = outcomes(&grammars_dir().join("CSV.g4"));
     assert!(plain.iter().all(|result| !result.has_postfix_shape));
 }
 
-/// Classifies every decision of one grammar and resolves it for
+/// Builds the tables of every decision of one grammar and resolves them for
 /// `--static-dfa-only`.
-fn resolve_static_only(path: &Path) -> Vec<DecisionResult> {
-    let mut results = classify_with(path, AtnFallback::Forbidden);
+fn resolve_static_only(path: &Path) -> Vec<DecisionOutcome> {
+    let mut results = outcomes_with(path, AtnFallback::Forbidden);
     for result in &mut results {
         result.resolve_static_only();
     }
@@ -1133,7 +1168,7 @@ fn resolve_static_only(path: &Path) -> Vec<DecisionResult> {
 
 /// The runtime decoding of the tables of `results`.
 fn decoded_tables(
-    results: &[DecisionResult],
+    results: &[DecisionOutcome],
 ) -> dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables {
     load_image(super::build_tables(results).words())
 }
@@ -1150,7 +1185,7 @@ fn load_image(words: &[u32]) -> dbt_antlr_runtime::dfa::static_parser_dfa::Stati
 /// Every state of every runtime table accepts an alternative, continues the
 /// walk, or is guarded with a defer alternative: no state defers to the
 /// adaptive simulation.
-fn assert_no_runtime_escapes(results: &[DecisionResult]) {
+fn assert_no_runtime_escapes(results: &[DecisionOutcome]) {
     use dbt_antlr_runtime::dfa::static_parser_dfa::{CONFLICT_ESCAPE, ESCAPE};
 
     let decoded = decoded_tables(results);
@@ -1190,7 +1225,7 @@ fn assert_no_runtime_escapes(results: &[DecisionResult]) {
 fn static_only_resolves_conflict_escapes_to_the_minimum_alternative() {
     let results = resolve_static_only(&grammars_dir().join("ReferenceToATN.g4"));
     let decision = &results[0];
-    assert_eq!(decision.category, Category::HYBRID);
+    assert_eq!(decision.kind, DecisionKind::Hybrid);
     assert_eq!(decision.escapes, 0);
     assert!(decision.is_fully_static());
     assert_eq!(decision.fallback_text(), "1m");
@@ -1304,17 +1339,17 @@ fn static_only_keeps_the_guard_of_guarded_takes() {
 #[test]
 fn static_only_guards_iterates_that_consume_foreign_tokens() {
     let path = grammars_dir().join("parser").join("InlineAlias.g4");
-    let hybrid = classify(&path);
+    let hybrid = outcomes(&path);
     let hybrid_loop = hybrid
         .iter()
-        .find(|result| result.category == Category::LR_PRECEDENCE)
+        .find(|result| result.kind == DecisionKind::Precedence)
         .expect("the operator loop");
     assert!(hybrid_loop.escapes > 0, "the cast state escapes");
 
     let results = resolve_static_only(&path);
     let alias_loop = results
         .iter()
-        .find(|result| result.category == Category::LR_PRECEDENCE)
+        .find(|result| result.kind == DecisionKind::Precedence)
         .expect("the operator loop");
     let resolved = alias_loop.static_only.as_ref().expect("resolved");
     assert!(resolved.guarded > 0);
@@ -1357,10 +1392,10 @@ fn static_only_guards_iterates_that_consume_foreign_tokens() {
 /// guard different invoking states, so they are in different guard groups.
 #[test]
 fn guarded_states_have_their_own_guard_groups() {
-    let results = classify(&grammars_dir().join("parser").join("LoopObligation.g4"));
+    let results = outcomes(&grammars_dir().join("parser").join("LoopObligation.g4"));
     let p = results
         .iter()
-        .find(|result| result.category == Category::LR_PRECEDENCE)
+        .find(|result| result.kind == DecisionKind::Precedence)
         .expect("the `p` loop");
     let precedence = p.precedence.as_ref().expect("precedence tables");
     for table in precedence.tables.iter().flatten() {
@@ -1386,8 +1421,8 @@ fn guarded_states_have_their_own_guard_groups() {
 #[test]
 fn static_only_looks_further_and_guesses_the_minimum_viable_alternative() {
     let path = grammars_dir().join("parser").join("ParenExpr.g4");
-    let adaptive = &classify(&path)[1];
-    assert_eq!(adaptive.category, Category::HYBRID);
+    let adaptive = &outcomes(&path)[1];
+    assert_eq!(adaptive.kind, DecisionKind::Hybrid);
     let default_table = adaptive.table.as_ref().expect("the hybrid table");
     assert!(default_table.escapes() > 0);
 
@@ -1437,7 +1472,7 @@ fn static_only_keeps_precedence_classes_static() {
             result.static_only.is_some(),
             "decision {} ({}) resolves",
             result.decision,
-            result.category
+            result.kind
         );
         if let Some(precedence) = &result.precedence {
             assert_eq!(precedence.escapes, 0);
@@ -1455,36 +1490,36 @@ fn static_only_keeps_precedence_classes_static() {
 
 #[test]
 fn static_only_rejects_decisions_without_a_static_prediction() {
-    let mut results = classify_with(
+    let mut results = outcomes_with(
         &fixture("parser-shapes").join("ParserShapes.g4"),
         AtnFallback::Forbidden,
     );
     let nongreedy = &mut results[3];
-    assert_eq!(nongreedy.category, Category::NON_GREEDY);
+    assert_eq!(nongreedy.kind, DecisionKind::NonGreedy);
     assert!(!nongreedy.resolve_static_only());
     assert!(nongreedy.static_only.is_none());
 
     let optional = &mut results[0];
-    assert_eq!(optional.category, Category::LL1);
+    assert_eq!(optional.kind, DecisionKind::Ll1);
     assert!(optional.resolve_static_only(), "LL(1) needs no table");
     assert_eq!(optional.fallback_text(), "0");
 }
 
 /// Without the adaptive fallback, a partial table below the coverage threshold
-/// is still better than no table: the classifier keeps it, and the resolution
+/// is still better than no table: the builder keeps it, and the resolution
 /// turns its escapes into syntax errors.
 #[test]
 fn static_only_keeps_partial_tables_below_the_coverage_threshold() {
     let path = grammars_dir().join("parser").join("LowCoverage.g4");
-    let adaptive = &classify(&path)[0];
-    assert_eq!(adaptive.category, Category::PREDICATED);
+    let adaptive = &outcomes(&path)[0];
+    assert_eq!(adaptive.kind, DecisionKind::Adaptive);
     assert!(adaptive.table.is_none());
 
     let results = resolve_static_only(&path);
     let decision = &results[0];
-    assert_eq!(decision.category, Category::HYBRID);
+    assert_eq!(decision.kind, DecisionKind::Hybrid);
     assert!(
-        decision.coverage_percent < super::classifier::HYBRID_MIN_COVERAGE_PERCENT,
+        decision.coverage_percent < super::PARTIAL_MIN_COVERAGE_PERCENT,
         "coverage {}%",
         decision.coverage_percent
     );
@@ -1495,21 +1530,21 @@ fn static_only_keeps_partial_tables_below_the_coverage_threshold() {
     assert_no_runtime_escapes(&results);
 }
 
-/// Classifies a grammar written to a scratch directory.
-fn classify_source(name: &str, source: &str) -> Vec<DecisionResult> {
+/// Builds the tables of a grammar written to a scratch directory.
+fn outcomes_of_source(name: &str, source: &str) -> Vec<DecisionOutcome> {
     let directory =
         std::env::temp_dir().join(format!("dbt-antlr-descent-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("scratch directory");
     let path = directory.join(format!("{name}.g4"));
     std::fs::write(&path, source).expect("scratch grammar");
-    let results = classify(&path);
+    let results = outcomes(&path);
     let _ = std::fs::remove_dir_all(&directory);
     results
 }
 
 /// Whether any decision of rule `rule_index` accepts with a shared-descent
 /// group.
-fn rule_has_groups(results: &[DecisionResult], rule_index: usize) -> bool {
+fn rule_has_groups(results: &[DecisionOutcome], rule_index: usize) -> bool {
     results
         .iter()
         .filter(|result| result.rule_index == rule_index)
@@ -1518,7 +1553,7 @@ fn rule_has_groups(results: &[DecisionResult], rule_index: usize) -> bool {
 
 #[test]
 fn shared_descent_groups_cure_the_escapes_of_the_fuzz_items() {
-    let results = classify(&grammars_dir().join("parser/FuzzExpr.g4"));
+    let results = outcomes(&grammars_dir().join("parser/FuzzExpr.g4"));
     let path = grammars_dir().join("parser/FuzzExpr.g4");
     let rules = rule_names(&path, &results);
     let by_rule = |name: &str| {
@@ -1532,7 +1567,7 @@ fn shared_descent_groups_cure_the_escapes_of_the_fuzz_items() {
 
     // `item : e 'as' name | e`: one parse of `e`, then 'as' or anything else.
     let item = by_rule("item");
-    assert_eq!(item.category, Category::EXACT_AMBIG);
+    assert_eq!(item.kind, DecisionKind::Static);
     assert_eq!(item.escapes, 0);
     assert_eq!(item.descent_group_states, 15);
     let plan = item.descent.as_ref().expect("item accepts with a group");
@@ -1566,7 +1601,7 @@ fn shared_descent_groups_cure_the_escapes_of_the_fuzz_items() {
 
 #[test]
 fn shared_descent_groups_share_a_one_token_prefix() {
-    let results = classify(&grammars_dir().join("parser/ParenExpr.g4"));
+    let results = outcomes(&grammars_dir().join("parser/ParenExpr.g4"));
     let primary = results
         .iter()
         .find(|result| result.descent.is_some())
@@ -1595,7 +1630,7 @@ fn descent_witness(name: &str, x: &str, y: &str) -> String {
 
 #[test]
 fn shared_descent_accepts_a_plain_group() {
-    let results = classify_source(
+    let results = outcomes_of_source(
         "DescentPlain",
         &descent_witness("DescentPlain", "y '+' ID | y", "'(' y ')' | ID"),
     );
@@ -1605,7 +1640,7 @@ fn shared_descent_accepts_a_plain_group() {
 
 #[test]
 fn shared_descent_rejects_a_rule_with_arguments() {
-    let results = classify_source(
+    let results = outcomes_of_source(
         "DescentArgs",
         &descent_witness("DescentArgs", "y[1] '+' ID | y[1]", "'(' y[1] ')' | ID")
             .replace("y : ", "y[i32 depth] : "),
@@ -1615,7 +1650,7 @@ fn shared_descent_rejects_a_rule_with_arguments() {
 
 #[test]
 fn shared_descent_rejects_a_rule_that_runs_an_action() {
-    let results = classify_source(
+    let results = outcomes_of_source(
         "DescentAction",
         &descent_witness(
             "DescentAction",
@@ -1630,7 +1665,7 @@ fn shared_descent_rejects_a_rule_that_runs_an_action() {
 fn shared_descent_rejects_members_with_another_prefix_length() {
     // Alternative 1 reaches `y` after one or two tokens, so skipping one token
     // would not land on `y` for every input.
-    let results = classify_source(
+    let results = outcomes_of_source(
         "DescentPrefix",
         &descent_witness(
             "DescentPrefix",
@@ -1640,7 +1675,7 @@ fn shared_descent_rejects_members_with_another_prefix_length() {
     );
     assert!(!rule_has_groups(&results, 1));
     // A multi-token set transition before `y` is not a single-token prefix.
-    let results = classify_source(
+    let results = outcomes_of_source(
         "DescentSetPrefix",
         &descent_witness(
             "DescentSetPrefix",
@@ -1655,7 +1690,7 @@ fn shared_descent_rejects_members_with_another_prefix_length() {
 fn shared_descent_skips_optional_blocks() {
     // Both alternatives of the optional block start with `y`, but the block is
     // emitted as an optional block, which has no group arms.
-    let results = classify_source(
+    let results = outcomes_of_source(
         "DescentOptional",
         &descent_witness("DescentOptional", "(y '+' ID)? y", "'(' y ')' | ID"),
     );
@@ -1665,7 +1700,7 @@ fn shared_descent_skips_optional_blocks() {
 #[test]
 fn shared_descent_rejects_decisions_and_loops_before_the_shared_rule() {
     // A loop around `y` calls it again after its first call returned.
-    let results = classify_source(
+    let results = outcomes_of_source(
         "DescentLoop",
         &descent_witness(
             "DescentLoop",
@@ -1676,7 +1711,7 @@ fn shared_descent_rejects_decisions_and_loops_before_the_shared_rule() {
     assert!(!rule_has_groups(&results, 1));
     // The re-descent of alternative 1 would have to predict the optional block
     // before it reaches `y`.
-    let results = classify_source(
+    let results = outcomes_of_source(
         "DescentOptionalPrefix",
         &descent_witness(
             "DescentOptionalPrefix",
@@ -1693,7 +1728,7 @@ fn shared_descent_excludes_rules_whose_shared_rule_conflicts_with_member_tails()
     // `h`) that can both exit and continue on a token of the member tails
     // ('+' or 'as'), and `h`'s own members overlap on 'as' in FOLLOW(h).
     // Condition 2 excludes all of them at compile time.
-    let results = classify(&grammars_dir().join("parser/DescentContext.g4"));
+    let results = outcomes(&grammars_dir().join("parser/DescentContext.g4"));
     assert!(
         results
             .iter()
@@ -1702,7 +1737,7 @@ fn shared_descent_excludes_rules_whose_shared_rule_conflicts_with_member_tails()
     );
     // Distinct subrules `a` and `b` inside `r` that match the same input `ID`,
     // after which `a` exits `r` while `b` continues with `'+' ID`.
-    let results = classify_source(
+    let results = outcomes_of_source(
         "DescentDistinctSubrules",
         concat!(
             "grammar DescentDistinctSubrules;\n",
@@ -1725,7 +1760,7 @@ fn shared_descent_excludes_rules_whose_shared_rule_conflicts_with_member_tails()
 }
 
 /// The build attempts of one decision, in order.
-fn attempts_of(results: &[DecisionResult], decision: usize) -> Vec<AttemptKind> {
+fn attempts_of(results: &[DecisionOutcome], decision: usize) -> Vec<AttemptKind> {
     results[decision]
         .cost
         .attempts
@@ -1734,87 +1769,78 @@ fn attempts_of(results: &[DecisionResult], decision: usize) -> Vec<AttemptKind> 
         .collect()
 }
 
-/// A first pass that stops at an untrusted conflict does not try the widened
-/// construction. When the decision stays adaptive, the witness pass runs the
-/// unbounded construction again, but not the hybrid constructions, which do
-/// not depend on the stop.
+/// A decision gets one build, even when its table has conflict escapes or
+/// stays adaptive.
 #[test]
-fn witness_pass_repeats_only_the_stopped_attempt() {
+fn one_build_per_decision() {
     let path = fixture("vscode-split").join("TParser.g4");
-    let results = classify_with_budget(&path, super::DEFAULT_VISIT_BUDGET);
-    assert_eq!(results[5].category, Category::PREDICATED);
-    assert!(results[5].table.is_none());
-    assert_eq!(
-        attempts_of(&results, 5),
-        [
-            AttemptKind::Unbounded { abort: true },
-            AttemptKind::Hybrid,
-            AttemptKind::Unbounded { abort: false }
-        ]
-    );
-}
+    let results = outcomes_with_budget(&path, super::DEFAULT_VISIT_BUDGET);
+    for (decision, result) in results.iter().enumerate() {
+        if matches!(result.kind, DecisionKind::Ll1 | DecisionKind::NonGreedy) {
+            continue;
+        }
+        let builds = result
+            .precedence
+            .as_ref()
+            .map_or(1, |precedence| precedence.tables.len());
+        assert_eq!(
+            attempts_of(&results, decision).len(),
+            builds,
+            "decision {decision}: {result:?}"
+        );
+    }
 
-/// A decision whose first pass did not stop keeps its first-pass result, even
-/// without a table.
-#[test]
-fn unstopped_first_pass_needs_no_witness_pass() {
     let path = grammars_dir().join("parser").join("LowCoverage.g4");
-    let results = classify_with_budget(&path, super::DEFAULT_VISIT_BUDGET);
-    assert_eq!(results[0].category, Category::PREDICATED);
-    assert!(results[0].table.is_none());
-    assert_eq!(
-        attempts_of(&results, 0),
-        [AttemptKind::Unbounded { abort: true }, AttemptKind::Hybrid]
-    );
+    let results = outcomes_with_budget(&path, super::DEFAULT_VISIT_BUDGET);
+    assert_eq!(results[0].kind, DecisionKind::Adaptive);
+    assert!(matches!(
+        results[0].no_table,
+        Some(NoTableReason::LowCoverage { .. })
+    ));
+    assert_eq!(attempts_of(&results, 0), [AttemptKind::Default]);
 }
 
-/// A start state that spends the visit budget spends it in every unbounded
-/// construction, so no hybrid construction runs.
+/// A start state that spends the visit budget spends it in the default build,
+/// so the widened build runs.
 #[test]
-fn exhausted_start_state_skips_the_hybrid_attempts() {
+fn exhausted_start_state_falls_back_to_widening() {
     let path = grammars_dir().join("ReferenceToATN.g4");
-    let results = classify_with_budget(&path, 1);
-    assert_eq!(results[0].category, Category::OVERFLOW);
+    let results = outcomes_with_budget(&path, 1);
+    assert_eq!(results[0].kind, DecisionKind::Adaptive);
     assert_eq!(
         attempts_of(&results, 0),
-        [
-            AttemptKind::Unbounded { abort: true },
-            AttemptKind::Widened { abort: true }
-        ]
+        [AttemptKind::Default, AttemptKind::Widened]
     );
 }
 
-/// A hybrid attempt that spends the visit budget after the start state keeps
-/// a table: the states that it cannot expand escape. Only a start state that
-/// spends the budget leaves the decision without a table.
+/// A build that spends the visit budget after the start state keeps a table:
+/// the states that it cannot expand escape. Only a start state that spends
+/// the budget leaves the decision without a table.
 #[test]
-fn hybrid_attempts_escape_where_the_visit_budget_runs_out() {
+fn builds_escape_where_the_visit_budget_runs_out() {
     let path =
         fixture("testcompositegrammars-testimportlargegrammar-110006096d").join("NewJava.g4");
-    let results = classify_with_budget(&path, 2_000);
-    assert_eq!(results[7].category, Category::HYBRID);
+    let results = outcomes_with_budget(&path, 2_000);
+    assert_eq!(results[7].kind, DecisionKind::Hybrid);
     assert!(results[7].budget_cutoff);
     assert!(results[7].escapes > 0);
+    assert_eq!(attempts_of(&results, 7), [AttemptKind::Default]);
     assert_eq!(
-        attempts_of(&results, 7),
-        [
-            AttemptKind::Unbounded { abort: true },
-            AttemptKind::Widened { abort: true },
-            AttemptKind::Hybrid,
-        ]
+        results[7].cost.attempts[0].outcome,
+        AttemptOutcome::VisitBudget
     );
 
-    let results = classify_with_budget(&path, 100);
-    assert_eq!(results[7].category, Category::OVERFLOW);
+    let results = outcomes_with_budget(&path, 100);
+    assert_eq!(results[7].kind, DecisionKind::Adaptive);
     assert!(results[7].table.is_none());
 }
 
-/// Each precedence class keeps a hybrid table when its construction spends
+/// Each precedence class keeps a partial table when its construction spends
 /// the visit budget after the start state.
 #[test]
 fn precedence_classes_keep_tables_where_the_visit_budget_runs_out() {
     let path = grammars_dir().join("parser").join("LoopFrontier.g4");
-    let results = classify_with_budget(&path, 2_000);
+    let results = outcomes_with_budget(&path, 2_000);
     let precedence = results[4].precedence.as_ref().expect("precedence tables");
     assert_eq!(precedence.adaptive_classes, 0);
     assert_eq!(precedence.tables.len(), 5);
@@ -1822,13 +1848,13 @@ fn precedence_classes_keep_tables_where_the_visit_budget_runs_out() {
     assert!(results[4].budget_cutoff);
 }
 
-/// An unbounded attempt that stops at an untrusted conflict does not fall
-/// back to full widening. Here the widened construction predicts the first
-/// alternative after `'b' 'a'`, but when `a` is not nested, only the second
-/// alternative can read `'b' 'a' 'd' 'e'`.
+/// A table with a conflict escape does not fall back to full widening. Here
+/// the widened construction predicts the first alternative after `'b' 'a'`,
+/// but when `a` is not nested, only the second alternative can read
+/// `'b' 'a' 'd' 'e'`.
 #[test]
-fn stopped_unbounded_attempt_does_not_fall_back_to_widening() {
-    let results = classify_source(
+fn conflict_escapes_do_not_fall_back_to_widening() {
+    let results = outcomes_of_source(
         "WidenedAfterStop",
         "grammar WidenedAfterStop;\n\
          top : a X | a Y ;\n\
@@ -1836,98 +1862,93 @@ fn stopped_unbounded_attempt_does_not_fall_back_to_widening() {
          A : 'a' ; B : 'b' ; C : 'c' ; D : 'd' ; E : 'e' ; X : 'x' ; Y : 'y' ;\n",
     );
     let decision = &results[1];
-    assert_eq!(decision.category, Category::HYBRID);
+    assert_eq!(decision.kind, DecisionKind::Hybrid);
     assert_eq!(decision.conflicts, [vec![1, 2]]);
     assert!(decision.table.is_some());
+    assert_eq!(attempts_of(&results, 1), [AttemptKind::Default]);
 }
 
-/// When the state budget sends the witness pass to the widened attempt, the
-/// widened attempt does not resolve a conflict that only widening makes. In
-/// `WidenedTrust.g4`, both alternatives of decision 1 meet after
-/// `'b' 'b' 'b' 'b' 'a'` with an empty context, but only the second alternative
-/// can read `c b b b b a d e d x`.
+/// The widened build does not resolve a conflict that only widening makes.
+/// In `WidenedTrust.g4`, both alternatives of decision 1 meet after
+/// `'b' 'b' 'b' 'b' 'a'` with an empty context, but only the second
+/// alternative can read `c b b b b a d e d x`. The state escapes instead of
+/// accepting the first alternative.
 #[test]
 fn widened_competitors_get_no_uniform_trust() {
     let path = grammars_dir().join("parser").join("WidenedTrust.g4");
-    let results = classify(&path);
-    let decision = &results[1];
-    assert_eq!(
-        attempts_of(&results, 1),
-        [
-            AttemptKind::Unbounded { abort: true },
-            AttemptKind::Hybrid,
-            AttemptKind::Unbounded { abort: false },
-            AttemptKind::Widened { abort: false },
-        ]
-    );
-    assert_eq!(
-        decision.cost.attempts[2].outcome,
-        AttemptOutcome::StateBudget
-    );
-    assert_eq!(decision.category, Category::CONTEXT_SENSITIVE);
-    assert_eq!(decision.utrust_resolutions, 0);
-    assert!(decision.table.is_none());
-    assert!(!decision.is_fully_static());
-
-    let static_only = classify_with(&path, AtnFallback::Forbidden);
-    let decision = &static_only[1];
-    assert_eq!(decision.category, Category::HYBRID);
-    let types = token_types(&path, &["'a'", "'b'", "'d'", "'e'"]);
-    let (a, b, d, e) = (types[0], types[1], types[2], types[3]);
-    let table = decision.table.as_ref().expect("static-only table");
-    let conflict = walk(table, &[b, b, b, b, a, d, e]).expect("conflict state");
-    assert!(conflict.is_escape(), "the conflict is a reported escape");
-    assert!(
-        walk(table, &[b, b, b, b, a]).is_some_and(|state| state.accept == 0),
-        "the table does not decide after `'b' 'b' 'b' 'b' 'a'`"
-    );
+    let types = token_types(&path, &["'a'", "'b'"]);
+    let (a, b) = (types[0], types[1]);
+    for atn_fallback in [AtnFallback::Allowed, AtnFallback::Forbidden] {
+        let results = widened_outcomes_with(&path, atn_fallback);
+        let decision = &results[1];
+        assert_eq!(attempts_of(&results, 1), [AttemptKind::Widened]);
+        assert_eq!(decision.utrust_resolutions, 0, "{atn_fallback:?}");
+        assert!(!decision.is_fully_static(), "{atn_fallback:?}");
+        let table = decision.table.as_ref().expect("a partial table");
+        let conflict = walk(table, &[b, b, b, b, a]).expect("conflict state");
+        assert_eq!(
+            conflict.accept, CONFLICT_ESCAPE,
+            "{atn_fallback:?}: the table does not decide after `'b' 'b' 'b' 'b' 'a'`"
+        );
+        assert_eq!(conflict.conflicts, [1, 2], "{atn_fallback:?}");
+    }
 }
 
 /// The precedence filter of a widened precedence class keeps an exit config
 /// that widening made equal to an iterate config. In `WidenedPrecedence.g4`,
 /// above class 0 (`p <= 2`), the loop cannot iterate through `e op`. The other
-/// iterate reading of `'+' 'q' 'r'` owes `'a'`, so every class table above
-/// class 0 must predict the exit for `'+' 'q' 'r' EOF`.
+/// iterate reading of `'+' 'q' 'r'` owes `'a'`, so no class table above class
+/// 0 can predict the iterate for `'+' 'q' 'r' EOF`: it predicts the exit, or
+/// it keeps the exit in a state that escapes or tests a stack guard where
+/// widening merges the two readings.
 #[test]
 fn widened_precedence_filter_keeps_the_exit() {
     let path = grammars_dir().join("parser").join("WidenedPrecedence.g4");
     let types = token_types(&path, &["'+'", "'q'", "'r'"]);
     let tokens = [types[0], types[1], types[2], EOF];
-    for atn_fallback in [AtnFallback::Allowed, AtnFallback::Forbidden] {
-        let mut results = classify_with(&path, atn_fallback);
-        let decision = &mut results[1];
-        assert_eq!(decision.category, Category::LR_PRECEDENCE);
-        assert!(
-            decision
-                .cost
-                .attempts
-                .iter()
-                .any(|attempt| matches!(attempt.kind, AttemptKind::Widened { .. })),
-            "{atn_fallback:?}: a class falls back to the widened attempt"
-        );
-        if atn_fallback == AtnFallback::Forbidden {
-            assert!(decision.resolve_static_only(), "every class has a table");
-        }
-        let precedence = decision.precedence.as_ref().expect("precedence tables");
-        assert_eq!(precedence.cutoffs[0], 2);
-        assert_eq!(precedence.adaptive_classes, 0, "{atn_fallback:?}");
-        for (class, table) in precedence.tables.iter().enumerate().skip(1) {
-            let table = table.as_ref().expect("class table");
-            let prediction = (0..=tokens.len())
-                .filter_map(|length| walk(table, &tokens[..length]))
-                .find(|state| state.accept != 0);
-            assert!(
-                prediction.is_some_and(|state| state.accept == 2),
-                "{atn_fallback:?}: class {class} does not exit on `'+' 'q' 'r' EOF`"
+    for widened in [false, true] {
+        for atn_fallback in [AtnFallback::Allowed, AtnFallback::Forbidden] {
+            let results = if widened {
+                widened_outcomes_with(&path, atn_fallback)
+            } else {
+                outcomes_with(&path, atn_fallback)
+            };
+            let decision = &results[1];
+            assert_eq!(decision.kind, DecisionKind::Precedence);
+            assert_eq!(
+                decision
+                    .cost
+                    .attempts
+                    .iter()
+                    .all(|attempt| attempt.kind == AttemptKind::Widened),
+                widened,
+                "{atn_fallback:?}"
             );
+            let precedence = decision.precedence.as_ref().expect("precedence tables");
+            assert_eq!(precedence.cutoffs[0], 2);
+            assert_eq!(precedence.adaptive_classes, 0, "{atn_fallback:?}");
+            for (class, table) in precedence.tables.iter().enumerate().skip(1) {
+                let table = table.as_ref().expect("class table");
+                let prediction = (0..=tokens.len())
+                    .filter_map(|length| walk(table, &tokens[..length]))
+                    .find(|state| state.accept != 0);
+                assert!(
+                    prediction.is_some_and(|state| {
+                        state.accept == 2
+                            || (state.accept < 0
+                                && (state.conflicts.contains(&2) || state.viable_alts.contains(&2)))
+                    }),
+                    "{atn_fallback:?}, widened {widened}: class {class} iterates on \
+                     `'+' 'q' 'r' EOF`"
+                );
+            }
         }
     }
 }
 
-/// The results of a parallel classification do not depend on the thread
-/// count.
+/// The results of parallel table builds do not depend on the thread count.
 #[test]
-fn parallel_classification_matches_serial_classification() {
+fn parallel_builds_match_serial_builds() {
     let mut grammars = Vec::new();
     collect_grammars(&grammars_dir(), &mut grammars);
     grammars.push(fixture("vscode-cpp14/CPP14.g4"));
@@ -1946,22 +1967,22 @@ fn parallel_classification_matches_serial_classification() {
             };
             let parser = compilation.parser(parser_id).expect("parser artifact");
             for atn_fallback in [AtnFallback::Allowed, AtnFallback::Forbidden] {
-                let classify_on = |threads| {
-                    classifier(parser)
+                let build_on = |threads| {
+                    builder(parser)
                         .with_atn_fallback(atn_fallback)
                         .with_visit_budget(5_000)
-                        .classify_on(threads)
+                        .build_on(threads)
                 };
                 // The parallel run comes first, so that it fills the caches of
                 // the ATN states from more than one thread.
-                let parallel = classify_on(8);
-                let serial = classify_on(1);
+                let parallel = build_on(8);
+                let serial = build_on(1);
                 decisions += serial.len();
                 assert_eq!(serial, parallel, "{}", path.display());
             }
         }
     }
-    assert!(decisions > 800, "decisions classified: {decisions}");
+    assert!(decisions > 800, "decisions built: {decisions}");
 }
 
 /// Budget settings with the global visit budget `budget`.
@@ -2014,11 +2035,11 @@ fn spent_visit_budgets_emit_g4s193_warnings() {
     assert_eq!(
         warnings,
         [
-            "the analysis of parser decision 0 of rule 'stat' is slow: 2 of 3 build attempts \
-             spent the visit budget (100 configs); 216 configs visited, 11 DFA states built; \
-             most visited rules: expr 95%, stat 4%",
-            "the analysis of parser decision 3 of rule 'expr' is slow: 6 of 10 build attempts \
-             spent the visit budget (100 configs); 848 configs visited, 34 DFA states built; \
+            "the analysis of parser decision 0 of rule 'stat' is slow: 1 of 1 build attempts \
+             spent the visit budget (100 configs); 100 configs visited, 5 DFA states built; \
+             most visited rules: expr 96%, stat 4%",
+            "the analysis of parser decision 3 of rule 'expr' is slow: 3 of 4 build attempts \
+             spent the visit budget (100 configs); 308 configs visited, 12 DFA states built; \
              most visited rules: expr 89%, stat 10%",
         ]
     );
@@ -2039,7 +2060,7 @@ fn spent_visit_budgets_emit_g4s193_warnings() {
 #[test]
 fn decision_costs_account_for_every_visit() {
     for budget in [100, super::DEFAULT_VISIT_BUDGET] {
-        let results = classify_with_budget(&grammars_dir().join("Perf.g4"), budget);
+        let results = outcomes_with_budget(&grammars_dir().join("Perf.g4"), budget);
         for result in &results {
             let cost = &result.cost;
             assert!(cost.elapsed.is_none(), "no times without profiling");
@@ -2054,33 +2075,30 @@ fn decision_costs_account_for_every_visit() {
             assert_eq!(by_rule, cost.visits(), "decision {}", result.decision);
         }
         assert_eq!(attempts_of(&results, 1), []);
-        assert_eq!(
-            attempts_of(&results, 2),
-            [AttemptKind::Unbounded { abort: true }]
-        );
+        assert_eq!(attempts_of(&results, 2), [AttemptKind::Default]);
     }
 }
 
-/// The attempt codes name the precedence class of each attempt, the witness
-/// pass, and the static-only hybrid attempts of `--static-dfa-only`.
+/// The attempt codes name the precedence class of each attempt and the
+/// builds of `--static-dfa-only`.
 #[test]
 fn attempt_codes_follow_the_classes_and_the_fallback_policy() {
-    let results = classify_with_budget(
+    let results = outcomes_with_budget(
         &grammars_dir().join("parser").join("LoopFrontier.g4"),
         2_000,
     );
     assert_eq!(
         results[4].cost.attempts_text(),
-        "c0: U! H$; c1: U! H$; c2: U! H$; c3: U; c4: U"
+        "c0: D$; c1: D$; c2: D$; c3: D; c4: D"
     );
 
     let path = grammars_dir().join("ReferenceToATN.g4");
-    assert_eq!(classify(&path)[0].cost.attempts_text(), "U! H");
+    assert_eq!(outcomes(&path)[0].cost.attempts_text(), "D");
     assert_eq!(
-        classify_with(&path, AtnFallback::Forbidden)[0]
+        outcomes_with(&path, AtnFallback::Forbidden)[0]
             .cost
             .attempts_text(),
-        "U! S"
+        "S"
     );
 }
 
@@ -2147,7 +2165,7 @@ fn profiled_builds_time_every_decision_and_list_the_slowest() {
 /// each extra token adds only a few visits.
 #[test]
 fn single_token_alternatives_share_one_successor() {
-    fn keywords(count: usize) -> DecisionResult {
+    fn keywords(count: usize) -> DecisionOutcome {
         let mut source = format!("grammar Keywords{count};\ns : word X | word Y ;\nword :");
         for keyword in 0..count {
             source.push_str(&format!(" K{keyword} #k{keyword} |"));
@@ -2156,13 +2174,13 @@ fn single_token_alternatives_share_one_successor() {
         for keyword in 0..count {
             source.push_str(&format!("K{keyword} : 'k{keyword}' ;\n"));
         }
-        classify_source(&format!("Keywords{count}"), &source).remove(0)
+        outcomes_of_source(&format!("Keywords{count}"), &source).remove(0)
     }
 
     let few = keywords(2);
     let many = keywords(200);
-    assert_eq!(few.category, Category::LLK);
-    assert_eq!(many.category, few.category);
+    assert_eq!(few.kind, DecisionKind::Static);
+    assert_eq!(many.kind, few.kind);
     assert_eq!(many.k, few.k);
     assert_eq!(many.num_dfa_states, few.num_dfa_states);
     let start = &many.table.as_ref().expect("LL(k) table").states[0];
@@ -2502,7 +2520,7 @@ fn state_caps_cut_hybrid_tables_instead_of_failing_them() {
     let (_, build) = build_source_with("Fanout", FANOUT_GRAMMAR, AtnFallback::Allowed, &budgets);
     let decision = &build.report.decisions[0];
     assert_eq!(decision.rule, "a");
-    assert_eq!(decision.result.category, Category::HYBRID);
+    assert_eq!(decision.result.kind, DecisionKind::Hybrid);
     assert!(decision.result.budget_cutoff);
     assert_eq!(decision.result.num_dfa_states, 3);
 
@@ -2589,7 +2607,7 @@ fn split_operator_accepts(name: &str, source: &str, max_states: usize) -> Vec<Op
         .report
         .decisions
         .iter()
-        .find(|decision| decision.result.category == Category::LR_PRECEDENCE)
+        .find(|decision| decision.result.kind == DecisionKind::Precedence)
         .expect("a precedence loop decision");
     let precedence = decision.result.precedence.as_ref().expect("classes");
     precedence
@@ -2682,7 +2700,7 @@ s : a EOF ;
 a : ( A B | C D | E F ) X | A G Y ;
 A : 'a' ; B : 'b' ; C : 'c' ; D : 'd' ; E : 'e' ; F : 'f' ; G : 'g' ; X : 'x' ; Y : 'y' ;
 ";
-    let results = classify_source("Sinks", source);
+    let results = outcomes_of_source("Sinks", source);
     let decision = results
         .iter()
         .find(|result| result.table.is_some() && result.k == 2)
@@ -2758,9 +2776,9 @@ fn shared_accept_states_do_not_absorb_predicated_paths() {
     }
 }
 
-/// Classifies and resolves for `--static-dfa-only` a grammar written to a
-/// scratch directory.
-fn resolve_static_only_source(name: &str, source: &str) -> Vec<DecisionResult> {
+/// Builds and resolves for `--static-dfa-only` the tables of a grammar written
+/// to a scratch directory.
+fn resolve_static_only_source(name: &str, source: &str) -> Vec<DecisionOutcome> {
     static SCRATCH: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let scratch = SCRATCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let directory = std::env::temp_dir().join(format!(
@@ -2779,7 +2797,7 @@ fn resolve_static_only_source(name: &str, source: &str) -> Vec<DecisionResult> {
 /// states, and checks that the runtime cannot distinguish them.
 fn assert_runtime_equivalent(table: &StaticDfaTable, minimized: &StaticDfaTable) {
     let outcome = |state: &StaticDfaState| {
-        let accept = if state.accept == super::CONFLICT_ESCAPE && state.conflict_min_alt <= 0 {
+        let accept = if state.accept == CONFLICT_ESCAPE && state.conflict_min_alt <= 0 {
             super::ESCAPE
         } else {
             state.accept
@@ -2787,7 +2805,7 @@ fn assert_runtime_equivalent(table: &StaticDfaTable, minimized: &StaticDfaTable)
         (
             accept,
             if accept == 0 { state.fallback } else { 0 },
-            if accept == super::CONFLICT_ESCAPE {
+            if accept == CONFLICT_ESCAPE {
                 state.conflict_min_alt
             } else {
                 0
@@ -2861,7 +2879,7 @@ fn runtime_tables_are_minimized_and_equivalent() {
     ] {
         let path = grammars_dir().join(grammar);
         let results = match fallback {
-            AtnFallback::Allowed => classify(&path),
+            AtnFallback::Allowed => outcomes(&path),
             AtnFallback::Forbidden => resolve_static_only(&path),
         };
         for result in &results {
@@ -3091,10 +3109,11 @@ fn static_only_warnings_show_the_largest_tie_break_groups() {
     );
 }
 
-/// A `G4S190` warning for a frontier escape names the viable alternatives of
-/// the escape state when the decision has no conflict.
+/// With the adaptive fallback, a partial table is a normal table, and the
+/// pass reports no `G4S190`. Without it, a decision without a table gets a
+/// `G4S190` error with the reason.
 #[test]
-fn not_fully_static_warnings_name_the_viable_alternatives() {
+fn only_static_dfa_only_reports_decisions_without_a_static_prediction() {
     let budgets = ParserDfaBudgets {
         global: BudgetLimits {
             max_states: Some(12),
@@ -3102,20 +3121,51 @@ fn not_fully_static_warnings_name_the_viable_alternatives() {
             ..BudgetLimits::default()
         },
     };
-    // The direct accept of `e` gives the hybrid table enough coverage.
+    // The direct accept of `e` gives the partial table enough coverage.
     let source = TIE_GRAMMAR
         .replace("W Z Q ;", "W Z Q | E ;")
         .replace("Q : 'q' ;", "Q : 'q' ; E : 'e' ;");
     let (_, build) = build_source_with("Ties", &source, AtnFallback::Allowed, &budgets);
-    let message = &build
+    assert!(
+        build
+            .report
+            .decisions
+            .iter()
+            .any(|decision| decision.result.kind == DecisionKind::Hybrid
+                && decision.result.escapes > 0),
+        "{:?}",
+        build.report.decisions
+    );
+    assert!(
+        build
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "G4S190"),
+        "{:?}",
+        build.diagnostics
+    );
+
+    let source = "grammar PredStart;\ns : r EOF ;\nr : {p()}? A | A B ;\nA : 'a' ; B : 'b' ;\n";
+    let (_, build) = build_source_with(
+        "PredStart",
+        source,
+        AtnFallback::Forbidden,
+        &ParserDfaBudgets::default(),
+    );
+    let errors: Vec<_> = build
         .diagnostics
         .iter()
-        .find(|diagnostic| diagnostic.code == "G4S190")
-        .expect("a G4S190 warning")
-        .message;
-    assert!(
-        message.ends_with("; viable alternatives: alt 1 (X Y P, line 3), alt 2 (X Y Q, line 3)"),
-        "{message}"
+        .filter(|diagnostic| diagnostic.code == "G4S190")
+        .map(|diagnostic| (diagnostic.severity, diagnostic.message.as_str()))
+        .collect();
+    assert_eq!(
+        errors,
+        [(
+            Severity::Error,
+            "parser decision 0 of rule 'r' is not fully static: the decision depends on \
+             predicate 1:0, so the prediction is not input-only; --static-dfa-only requires a \
+             static table for every decision"
+        )]
     );
 }
 

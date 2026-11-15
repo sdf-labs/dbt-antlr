@@ -94,7 +94,6 @@ struct SelectionSettings {
     static_lexer_dfa: bool,
     static_parser_dfa: bool,
     static_dfa_only: bool,
-    report_decisions: bool,
     dump_dfas: Option<String>,
     profile_decisions: bool,
     report_only: bool,
@@ -111,7 +110,6 @@ impl SelectionSettings {
             static_lexer_dfa: options.static_lexer_dfa,
             static_parser_dfa: options.static_parser_dfa,
             static_dfa_only: options.static_dfa_only,
-            report_decisions: options.report_decisions,
             dump_dfas: options.dump_dfas.clone(),
             profile_decisions: options.profile_decisions,
             report_only: options.is_report_only(),
@@ -191,7 +189,6 @@ impl OptimizationPlan {
         }
         validate_selection(&selected)?;
         let static_parser_reports = StaticParserDfaSelection {
-            report_decisions: settings.report_decisions,
             dump_dfas: settings.dump_dfas,
             profile_decisions: settings.profile_decisions,
         };
@@ -285,7 +282,6 @@ fn configure_static_lexer_dfa(settings: &SelectionSettings) -> Option<Configured
 fn configure_static_parser_dfa(settings: &SelectionSettings) -> Option<ConfiguredPass> {
     let enabled = settings.static_parser_dfa
         || settings.static_dfa_only
-        || settings.report_decisions
         || settings.dump_dfas.is_some()
         || settings.profile_decisions;
     enabled.then_some(ConfiguredPass {
@@ -421,7 +417,6 @@ mod tests {
             static_lexer_dfa: false,
             static_parser_dfa: false,
             static_dfa_only: false,
-            report_decisions: false,
             dump_dfas: None,
             profile_decisions: false,
             report_only: false,
@@ -487,10 +482,6 @@ mod tests {
     fn parser_reports_select_the_parser_pass_and_force_report_only() {
         for selection in [
             StaticParserDfaSelection {
-                report_decisions: true,
-                ..StaticParserDfaSelection::default()
-            },
-            StaticParserDfaSelection {
                 dump_dfas: Some("all".to_owned()),
                 ..StaticParserDfaSelection::default()
             },
@@ -500,7 +491,6 @@ mod tests {
             },
         ] {
             let mut options = OptimizationOptions::new();
-            options.report_decisions(selection.report_decisions);
             options.profile_decisions(selection.profile_decisions);
             if let Some(spec) = &selection.dump_dfas {
                 options.dump_dfas(spec);
