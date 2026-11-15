@@ -2,7 +2,7 @@
 use dbt_antlr_runtime::prelude::*;
 use dbt_antlr_runtime::atn_simulator::LexerATNSimulatorManager as ATNSimulatorManager;
 
-dbt_antlr_runtime::check_version!("0","8");
+dbt_antlr_runtime::check_version!("0","9");
 pub const INT:i32=1; 
 pub const MUL:i32=2; 
 pub const DIV:i32=3; 
