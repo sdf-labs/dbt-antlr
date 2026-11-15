@@ -250,3 +250,41 @@ fn a_parser_grammar_without_its_lexer_is_an_error() {
     let stderr = fail(&["--static-dfa-only", "--explain", "a", "OrphanParser.g4"]);
     assert!(stderr.contains("OtherLexer"), "{stderr}");
 }
+
+#[test]
+fn a_stack_hijack_defers_the_guard() {
+    let args = [
+        "--static-dfa-only",
+        "--explain",
+        "SELECT INTERVAL '1' DAY + 1 + 2",
+        "Interval.g4",
+    ];
+    let output = run(&args);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("[VERDICT: STATIC-DFA DIVERGENCE]"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("via a stack guard that defers"), "{stdout}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "[stack-hijack hazard: when called from 'column' (line 8), defers 'DAY' '+' INT \
+             even when followed by '+']"
+        ),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn a_deferred_guard_can_build_another_tree() {
+    let report = explain(&[
+        "--static-dfa-only",
+        "--explain",
+        "SELECT INTERVAL '1' DAY + 1",
+        "Interval.g4",
+    ]);
+    assert!(report.contains("[VERDICT: SILENT DIVERGENCE]"), "{report}");
+    assert!(report.contains("via a stack guard that defers"), "{report}");
+}

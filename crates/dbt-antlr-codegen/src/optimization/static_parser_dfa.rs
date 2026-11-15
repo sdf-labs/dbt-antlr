@@ -31,7 +31,11 @@
 //! the warning also names the calls where the stack guard defers: the rule,
 //! the label of the alternative, and the line. `--dump-dfas` shows this caller
 //! for each invoking state of a danger set, for example
-//! `danger=[47 (query:25), 56 (expr#cast:30)]`.
+//! `danger=[47 (query:25), 56 (expr#cast:30)]`. The warning also shows the
+//! stack-hijack hazard of the guards (see `parser_dfa::hazard`): a guard that
+//! defers although the guarded alternative reads a token that the defer
+//! alternative cannot read. `--dump-dfas` shows each such hazard on the line
+//! of its guard group.
 //!
 //! Each decision has an analysis budget (see `parser_dfa::budget`). The
 //! budget options of the grammar, its rules, and its blocks set it.
@@ -52,8 +56,8 @@ use dbt_antlr_runtime::dfa::static_parser_dfa::{
 use super::parser_dfa::{
     AttemptOutcome, BudgetLimits, CONFLICT_ESCAPE, Category, DecisionBudget, DecisionClassifier,
     DecisionResult, DescentPlan, DescentRules, ESCAPE, EscapeResolution, EscapeResolutions,
-    HazardLevel, HijackVerdict, ParserDfaBudgets, StaticDfaTable, TieBreak, has_non_budget_option,
-    minimized_states,
+    GuardGroup, HazardLevel, HijackVerdict, ParserDfaBudgets, StackHijackVerdict, StaticDfaTable,
+    TieBreak, has_non_budget_option, minimized_states,
 };
 use crate::grammar::atn::{CompiledParser, FinalizedTransitionKind, left_corner_rules};
 use crate::grammar::diagnostic::Diagnostic;
@@ -84,6 +88,8 @@ const TOKEN_BRANCHES: &str = "G4S194";
 const TIE_BREAK_GROUPS: usize = 3;
 /// The danger callers that a `G4S192` warning names at most.
 const DANGER_CALLERS: usize = 3;
+/// The stack-hijack hazards that a `G4S192` warning shows at most.
+const STACK_HIJACKS: usize = 3;
 
 /// The minimum number of call sites that enter a rule, for a `G4S194`
 /// warning.
@@ -423,6 +429,21 @@ impl fmt::Display for InvokingState {
     }
 }
 
+impl InvokingState {
+    /// The caller for a sentence, for example `'command' (line 22)`.
+    fn called_from_text(&self) -> String {
+        let mut text = format!("'{}", self.rule);
+        if let Some(label) = &self.label {
+            text.push_str(&format!("#{label}"));
+        }
+        text.push('\'');
+        if let Some(line) = self.line {
+            text.push_str(&format!(" (line {line})"));
+        }
+        text
+    }
+}
+
 impl StaticParserDfaReport {
     /// A danger set with the caller of each invoking state, for example
     /// `[47 (query:25), 56 (expr#cast:30)]`.
@@ -481,7 +502,7 @@ impl StaticParserDfaReport {
     }
 
     /// The tie-break groups of `--static-dfa-only` with a high prefix-hijack
-    /// hazard.
+    /// hazard, and the guard groups with a stack-hijack hazard.
     fn hijack_hazards(&self) -> usize {
         self.decisions
             .iter()
@@ -556,14 +577,16 @@ pub(crate) struct StaticParserDecisionReport {
 
 impl StaticParserDecisionReport {
     /// The tie-break groups of `--static-dfa-only` with a high prefix-hijack
-    /// hazard.
+    /// hazard, and the guard groups with a stack-hijack hazard.
     fn hijack_hazards(&self) -> usize {
-        self.result
-            .static_only
-            .iter()
-            .flat_map(|resolved| &resolved.tie_breaks)
-            .filter(|group| group.level() == HazardLevel::High)
-            .count()
+        self.result.static_only.as_ref().map_or(0, |resolved| {
+            let prefix = resolved
+                .tie_breaks
+                .iter()
+                .filter(|group| group.level() == HazardLevel::High)
+                .count();
+            prefix + resolved.stack_hijacks().count()
+        })
     }
 
     /// The states that accept with the virtual alternative of a shared-descent
@@ -1147,7 +1170,7 @@ fn decision_dump_lines(
                 match table {
                     Some(table) => {
                         lines.push(format!("class {index}:"));
-                        lines.extend(table_dump_lines(report, table, with_paths));
+                        lines.extend(table_dump_lines(report, decision, table, with_paths));
                     }
                     None => lines.push(format!(
                         "class {index}: no static table: this precedence class runs on adaptivePredict"
@@ -1157,7 +1180,7 @@ fn decision_dump_lines(
         }
         (Some(table), None) => {
             lines.extend(descent_dump_lines(report, result.descent.as_ref()));
-            lines.extend(table_dump_lines(report, table, with_paths));
+            lines.extend(table_dump_lines(report, decision, table, with_paths));
         }
         (None, None) if matches!(result.category, Category::LL1 | Category::NON_GREEDY) => {
             lines.push(format!("  no table needed: {}", adaptive_reason(result)));
@@ -1169,6 +1192,7 @@ fn decision_dump_lines(
 
 fn table_dump_lines(
     report: &StaticParserDfaReport,
+    decision: &StaticParserDecisionReport,
     table: &StaticDfaTable,
     with_paths: bool,
 ) -> Vec<String> {
@@ -1196,8 +1220,18 @@ fn table_dump_lines(
             table.guard_pass.len()
         ));
         for (group, danger) in table.guard_groups.iter().enumerate() {
+            let hazard = decision
+                .result
+                .static_only
+                .iter()
+                .flat_map(|resolved| &resolved.guard_groups)
+                .find(|known| known.danger == *danger)
+                .and_then(|known| known.hazard.as_ref())
+                .filter(|hazard| matches!(hazard, StackHijackVerdict::Hijack { .. }))
+                .map(|hazard| stack_hazard_text(report, Some(hazard)))
+                .unwrap_or_default();
             lines.push(format!(
-                "    group {group}: danger={}",
+                "    group {group}: danger={}{hazard}",
                 report.danger_text(danger)
             ));
         }
@@ -1652,6 +1686,10 @@ fn static_only_diagnostics(report: &StaticParserDfaReport) -> Vec<Diagnostic> {
                     resolved.guarded_witness.as_deref(),
                     danger_callers_text(report, &resolved.guarded_danger),
                 ));
+                parts
+                    .last_mut()
+                    .expect("the guarded clause")
+                    .push_str(&stack_hijacks_text(report, resolved));
             }
             if resolved.min_alt > 0 {
                 parts.push(resolution_text(
@@ -2140,6 +2178,62 @@ fn hazard_text(
             " [unverified: the analysis did not separate the alternatives]".to_owned()
         }
     }
+}
+
+/// The stack-hijack verdict of a guard group, in brackets, for example
+/// ` [stack-hijack hazard: when called from 'command' (line 22), defers
+/// 'SETTINGS' ID even when followed by 'UNION']`.
+fn stack_hazard_text(
+    report: &StaticParserDfaReport,
+    hazard: Option<&StackHijackVerdict>,
+) -> String {
+    match hazard {
+        None => " [unverified: no analysis of the stack guard]".to_owned(),
+        Some(StackHijackVerdict::Covered) => " [benign stack guard]".to_owned(),
+        Some(StackHijackVerdict::Unknown) => " [stack guard, not verified]".to_owned(),
+        Some(StackHijackVerdict::Hijack { caller, extension }) => {
+            let (deferred, token) = extension.split_at(extension.len().saturating_sub(1));
+            let caller = report.invoking_states.get(caller).map_or_else(
+                || format!("invoking state {caller}"),
+                InvokingState::called_from_text,
+            );
+            let deferred = if deferred.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", path_text(&report.vocabulary, deferred))
+            };
+            format!(
+                " [stack-hijack hazard: when called from {caller}, defers{deferred} even when \
+                 followed by {}]",
+                path_text(&report.vocabulary, token)
+            )
+        }
+    }
+}
+
+/// The stack-hijack verdicts of the guard groups of a decision for a
+/// `G4S192` warning: each stack hijack, at most [`STACK_HIJACKS`] of them, or
+/// else the verdict of the most harmful group.
+fn stack_hijacks_text(report: &StaticParserDfaReport, resolved: &EscapeResolutions) -> String {
+    let hijacks: Vec<&GuardGroup> = resolved.stack_hijacks().collect();
+    if hijacks.is_empty() {
+        return resolved
+            .guard_groups
+            .first()
+            .map(|group| stack_hazard_text(report, group.hazard.as_ref()))
+            .unwrap_or_default();
+    }
+    let shown = hijacks.len().min(STACK_HIJACKS);
+    let mut text: String = hijacks[..shown]
+        .iter()
+        .map(|group| stack_hazard_text(report, group.hazard.as_ref()))
+        .collect();
+    match hijacks.len() - shown {
+        0 => {}
+        1 => text.push_str(" [and 1 more stack-hijack hazard]"),
+        more => text.push_str(&format!(" [and {more} more stack-hijack hazards]")),
+    }
+    text
 }
 
 /// One clause of a `G4S192` warning, for example `2 predicated states report a

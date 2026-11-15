@@ -1221,6 +1221,10 @@ fn static_dfa_only_keeps_the_stack_guards() {
         warning.contains("; danger callers: query:25, expr#cast:30)"),
         "the warning names the callers of the danger set: {warning}"
     );
+    assert!(
+        warning.ends_with("; danger callers: query:25, expr#cast:30) [stack guard, not verified]"),
+        "the analysis does not reach each guarded state of the group: {warning}"
+    );
     let manifest = output.optimization_manifest.expect("manifest written");
     assert!(
         manifest.contains(&format!("\"guardedStates\": {guarded}")),
@@ -1370,4 +1374,29 @@ fn cli_static_dfa_only_reports_and_fails() {
     assert!(stderr.contains("error[G4S190]"), "{stderr}");
     assert!(stderr.contains("warning[G4S192]"), "{stderr}");
     let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
+fn static_dfa_only_reports_stack_hijack_hazards() {
+    let output = emit_static_only(&grammars_dir().join("parser/StackHijack.g4"), true)
+        .expect("every decision resolves");
+    let warnings = output
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == "G4S192")
+        .map(|diagnostic| diagnostic.message())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        warnings,
+        [
+            "parser decision 2 of rule 'select' resolves its escape states without \
+             adaptivePredict: 1 guarded state returns the skip or the exit where the stack guard \
+             defers (witness: 'SETTINGS' ID '=' INT; danger caller: command:19) [stack-hijack \
+             hazard: when called from 'command' (line 19), defers 'SETTINGS' ID '=' INT even \
+             when followed by 'UNION']"
+        ]
+    );
+    let manifest = output.optimization_manifest.expect("manifest written");
+    assert!(manifest.contains("\"guardedStates\": 1"), "{manifest}");
+    assert!(manifest.contains("\"hijackHazards\": 1"), "{manifest}");
 }

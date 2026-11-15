@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 
 use dbt_antlr_runtime::dfa::static_parser_dfa::ParserContinuation;
 
-use super::hazard::StateHazard;
+use super::hazard::{StackHijackVerdict, StateHazard};
 use super::{CONFLICT_ESCAPE, ESCAPE, EscapeResolution, GUARDED};
 
 /// One DFA state of a decision table.
@@ -54,6 +54,9 @@ pub(crate) struct StaticDfaState {
     /// The prefix-hijack hazard of the guess of an escape state, under
     /// `--static-dfa-only`, when the analysis ran for the state.
     pub(crate) hazard: Option<StateHazard>,
+    /// The stack-hijack hazard of the guard of a guarded state, under
+    /// `--static-dfa-only`, when the analysis ran for the state.
+    pub(crate) stack_hazard: Option<StackHijackVerdict>,
     pub(crate) edges: Vec<StaticDfaEdge>,
 }
 

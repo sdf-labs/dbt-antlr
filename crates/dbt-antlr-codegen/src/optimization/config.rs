@@ -217,7 +217,6 @@ impl OptimizationPlan {
         &self.transforms
     }
 
-    /// The static DFA build passes selected by the plan, in canonical order.
     pub(crate) fn static_dfa_passes(&self) -> impl Iterator<Item = StaticDfaPass> + '_ {
         self.selected.iter().filter_map(|pass| match pass.stage {
             SelectedPassStage::StaticDfaBuilds(pass) => Some(pass),
@@ -229,8 +228,6 @@ impl OptimizationPlan {
         self.report_only
     }
 
-    /// Whether `--strict` reports implicit parser token definitions as
-    /// errors.
     pub(crate) const fn strict(&self) -> bool {
         self.strict
     }

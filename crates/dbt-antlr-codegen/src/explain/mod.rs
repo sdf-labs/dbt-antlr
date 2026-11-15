@@ -159,7 +159,6 @@ fn units<'c>(
         })
 }
 
-/// The explanation of one input.
 struct Explained {
     report: String,
     /// The static trace, the full `LL` trace, and their comparison; `None`
