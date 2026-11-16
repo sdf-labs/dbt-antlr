@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 /// trees and recognizer APIs.
 ///
 /// Static-only DFA generation ([`Self::static_dfa_only`]) selects both static
-/// DFA passes and removes every `adaptivePredict` fallback. As a result, the
+/// DFA passes and removes every `adaptive_predict` fallback. As a result, the
 /// generated parser can reject input that the grammar accepts. A part of the
 /// grammar that the static tables cannot decide stops the generation.
 ///

@@ -116,7 +116,7 @@ impl Deref for ANTLRError {
 ///
 /// A missing context models Java's `ParserRuleContext.EMPTY` (invoking
 /// state -1, no parent), which the ANTLR tool's interpreter tests pass as
-/// the outer context of `adaptivePredict`; its stack is empty.
+/// the outer context of `adaptive_predict`; its stack is empty.
 fn rule_stack<'input, 'arena, TF, P>(recog: &P) -> Vec<i32>
 where
     'input: 'arena,

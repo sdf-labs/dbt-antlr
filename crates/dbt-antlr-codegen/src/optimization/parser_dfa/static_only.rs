@@ -571,31 +571,28 @@ impl DecisionOutcome {
     /// [`DecisionOutcome::static_only`].
     ///
     /// Returns `false` and changes nothing when the generated parser still
-    /// needs `adaptivePredict` for the decision. This is the case when the
+    /// needs `adaptive_predict` for the decision. This is the case when the
     /// decision has no table, when a precedence class has no table, and for a
     /// non-greedy decision.
     pub(crate) fn resolve_static_only(&mut self) -> bool {
         let mut resolutions = EscapeResolutions::default();
         match self.kind {
             DecisionKind::Ll1 => {}
-            DecisionKind::NonGreedy | DecisionKind::Adaptive => return false,
-            DecisionKind::Precedence => {
-                let Some(precedence) = &mut self.precedence else {
-                    return false;
-                };
-                if precedence.adaptive_classes > 0 {
-                    return false;
-                }
-                for table in precedence.tables.iter_mut().flatten() {
-                    resolutions.merge(table.resolve_escapes());
-                }
-                precedence.escapes = 0;
-            }
+            DecisionKind::Adaptive => return false,
             DecisionKind::Static | DecisionKind::Hybrid => {
-                let Some(table) = &mut self.table else {
+                if let Some(precedence) = &mut self.precedence {
+                    if precedence.adaptive_classes > 0 {
+                        return false;
+                    }
+                    for table in precedence.tables.iter_mut().flatten() {
+                        resolutions.merge(table.resolve_escapes());
+                    }
+                    precedence.escapes = 0;
+                } else if let Some(table) = &mut self.table {
+                    resolutions.merge(table.resolve_escapes());
+                } else {
                     return false;
-                };
-                resolutions.merge(table.resolve_escapes());
+                }
             }
         }
         self.escapes = 0;

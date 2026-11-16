@@ -131,14 +131,14 @@ fn golden_corpus_decisions_get_their_kinds() {
                 DecisionKind::Ll1,
                 DecisionKind::Ll1,
                 DecisionKind::Static,
-                DecisionKind::Precedence,
+                DecisionKind::Static,
             ],
         ),
-        ("SimpleLR.g4", &[DecisionKind::Precedence]),
+        ("SimpleLR.g4", &[DecisionKind::Static]),
         ("VisitorBasic.g4", &[]),
         (
             "VisitorCalc.g4",
-            &[DecisionKind::Static, DecisionKind::Precedence],
+            &[DecisionKind::Static, DecisionKind::Static],
         ),
         (
             "ReferenceToATN.g4",
@@ -152,7 +152,7 @@ fn golden_corpus_decisions_get_their_kinds() {
                 DecisionKind::Static,
                 DecisionKind::Ll1,
                 DecisionKind::Static,
-                DecisionKind::Precedence,
+                DecisionKind::Hybrid,
             ],
         ),
     ];
@@ -168,7 +168,7 @@ fn golden_corpus_decisions_get_their_kinds() {
             DecisionKind::Ll1,
             DecisionKind::Hybrid,
             DecisionKind::Ll1,
-            DecisionKind::NonGreedy,
+            DecisionKind::Adaptive,
         ]
     );
     let results = outcomes(&shapes);
@@ -207,7 +207,7 @@ fn hybrid_tables_escape_at_the_conflict_state() {
 fn precedence_decisions_get_one_table_per_class() {
     let results = outcomes(&grammars_dir().join("SimpleLR.g4"));
     let decision = &results[0];
-    assert_eq!(decision.kind, DecisionKind::Precedence);
+    assert_eq!(decision.kind, DecisionKind::Static);
     let precedence = decision.precedence.as_ref().expect("precedence tables");
     assert_eq!(precedence.cutoffs, [2]);
     assert_eq!(precedence.tables.len(), 2);
@@ -237,11 +237,11 @@ fn non_greedy_decisions_are_flagged_without_a_table() {
     let shapes = fixture("parser-shapes").join("ParserShapes.g4");
     let results = outcomes(&shapes);
     let nongreedy = &results[3];
-    assert_eq!(nongreedy.kind, DecisionKind::NonGreedy);
+    assert_eq!(nongreedy.kind, DecisionKind::Adaptive);
     assert_eq!(nongreedy.no_table, Some(NoTableReason::NonGreedy));
     assert!(nongreedy.table.is_none());
     // The generated parser predicts a non-greedy subrule with
-    // `adaptivePredict`.
+    // `adaptive_predict`.
     assert!(!nongreedy.is_fully_static());
 }
 
@@ -574,7 +574,7 @@ fn fully_static_decisions_never_defer() {
             result.rule_index,
             result.kind
         );
-        if matches!(result.kind, DecisionKind::Ll1 | DecisionKind::NonGreedy) {
+        if result.kind == DecisionKind::Ll1 {
             // These kinds have no table.
             continue;
         }
@@ -742,7 +742,7 @@ fn compound_guarded_alternatives_are_not_substitutable() {
     let results = outcomes(&grammars_dir().join("parser").join("LoopVeto.g4"));
     let result = results
         .iter()
-        .find(|result| result.kind == DecisionKind::Precedence)
+        .find(|result| result.is_precedence_loop())
         .expect("the loop decision");
     assert_eq!(result.escapes, 2, "the vetoed conflict escapes");
     assert!(!result.is_fully_static());
@@ -770,7 +770,7 @@ fn simple_guarded_alternatives_need_no_escape() {
     let results = outcomes(&grammars_dir().join("parser").join("LoopSubst.g4"));
     let result = results
         .iter()
-        .find(|result| result.kind == DecisionKind::Precedence)
+        .find(|result| result.is_precedence_loop())
         .expect("the arithmetic loop decision");
     assert_eq!(result.escapes, 0);
     assert!(result.is_fully_static());
@@ -807,7 +807,7 @@ fn foreign_consumption_guards_the_iterate_reading() {
     let results = outcomes(&grammars_dir().join("parser").join("LoopFrontier.g4"));
     let result = results
         .iter()
-        .find(|result| result.kind == DecisionKind::Precedence)
+        .find(|result| result.is_precedence_loop())
         .expect("the arithmetic loop decision");
     assert_eq!(result.k, 4);
     assert_eq!(result.num_dfa_states, 88);
@@ -852,7 +852,7 @@ fn foreign_consumption_guards_the_iterate_reading() {
 
     let between = outcomes(&grammars_dir().join("parser").join("BetweenExpr.g4"));
     let boolean_loop = &between[3];
-    assert_eq!(boolean_loop.kind, DecisionKind::Precedence);
+    assert_eq!(boolean_loop.kind, DecisionKind::Hybrid);
     assert_eq!(boolean_loop.escapes, 0);
     assert_eq!(boolean_loop.guarded_iterates, 2);
 }
@@ -922,7 +922,7 @@ fn tokens_that_the_loop_does_not_own_veto_the_substitution() {
         let (result, _) = results
             .iter()
             .zip(&names)
-            .find(|(result, name)| result.kind == DecisionKind::Precedence && *name == rule)
+            .find(|(result, name)| result.is_precedence_loop() && *name == rule)
             .unwrap_or_else(|| panic!("the loop decision of {rule}"));
         let ends: Vec<&StaticDfaState> = result
             .precedence
@@ -956,7 +956,7 @@ fn foreign_rooted_obligations_guard_the_iterate_reading() {
     let results = outcomes(&path);
     let result = results
         .iter()
-        .find(|result| result.kind == DecisionKind::Precedence)
+        .find(|result| result.is_precedence_loop())
         .expect("the loop decision of `p`");
     assert_eq!(result.k, 4);
     assert_eq!(result.num_dfa_states, 27);
@@ -1212,7 +1212,7 @@ fn assert_no_runtime_escapes(results: &[DecisionOutcome]) {
                 if let Some(guard) = table.guard(state) {
                     assert!(
                         guard.defer_alt > 0,
-                        "decision {} state {state} defers to adaptivePredict ({guard:?})",
+                        "decision {} state {state} defers to adaptive_predict ({guard:?})",
                         result.decision
                     );
                 }
@@ -1342,14 +1342,14 @@ fn static_only_guards_iterates_that_consume_foreign_tokens() {
     let hybrid = outcomes(&path);
     let hybrid_loop = hybrid
         .iter()
-        .find(|result| result.kind == DecisionKind::Precedence)
+        .find(|result| result.is_precedence_loop())
         .expect("the operator loop");
     assert!(hybrid_loop.escapes > 0, "the cast state escapes");
 
     let results = resolve_static_only(&path);
     let alias_loop = results
         .iter()
-        .find(|result| result.kind == DecisionKind::Precedence)
+        .find(|result| result.is_precedence_loop())
         .expect("the operator loop");
     let resolved = alias_loop.static_only.as_ref().expect("resolved");
     assert!(resolved.guarded > 0);
@@ -1395,7 +1395,7 @@ fn guarded_states_have_their_own_guard_groups() {
     let results = outcomes(&grammars_dir().join("parser").join("LoopObligation.g4"));
     let p = results
         .iter()
-        .find(|result| result.kind == DecisionKind::Precedence)
+        .find(|result| result.is_precedence_loop())
         .expect("the `p` loop");
     let precedence = p.precedence.as_ref().expect("precedence tables");
     for table in precedence.tables.iter().flatten() {
@@ -1495,7 +1495,7 @@ fn static_only_rejects_decisions_without_a_static_prediction() {
         AtnFallback::Forbidden,
     );
     let nongreedy = &mut results[3];
-    assert_eq!(nongreedy.kind, DecisionKind::NonGreedy);
+    assert_eq!(nongreedy.kind, DecisionKind::Adaptive);
     assert!(!nongreedy.resolve_static_only());
     assert!(nongreedy.static_only.is_none());
 
@@ -1776,7 +1776,7 @@ fn one_build_per_decision() {
     let path = fixture("vscode-split").join("TParser.g4");
     let results = outcomes_with_budget(&path, super::DEFAULT_VISIT_BUDGET);
     for (decision, result) in results.iter().enumerate() {
-        if matches!(result.kind, DecisionKind::Ll1 | DecisionKind::NonGreedy) {
+        if result.kind == DecisionKind::Ll1 || result.no_table == Some(NoTableReason::NonGreedy) {
             continue;
         }
         let builds = result
@@ -1914,7 +1914,7 @@ fn widened_precedence_filter_keeps_the_exit() {
                 outcomes_with(&path, atn_fallback)
             };
             let decision = &results[1];
-            assert_eq!(decision.kind, DecisionKind::Precedence);
+            assert!(decision.is_precedence_loop());
             assert_eq!(
                 decision
                     .cost
@@ -2534,7 +2534,7 @@ fn state_caps_cut_hybrid_tables_instead_of_failing_them() {
         messages,
         [(
             "G4S192",
-            "parser decision 0 of rule 'a' resolves its escape states without adaptivePredict: \
+            "parser decision 0 of rule 'a' resolves its escape states without adaptive_predict: \
              1 undecided state predicts the minimum viable alternative (witness: 'a'); \
              tie-breaks: 1 state chooses alt 1 (A B X, line 3) over alt 2 (A C X, line 3), \
              alt 3 (A D X, line 3), alt 4 (A B Y, line 3) [prefix-hijack hazard: alt 2 \
@@ -2607,7 +2607,7 @@ fn split_operator_accepts(name: &str, source: &str, max_states: usize) -> Vec<Op
         .report
         .decisions
         .iter()
-        .find(|decision| decision.result.kind == DecisionKind::Precedence)
+        .find(|decision| decision.result.is_precedence_loop())
         .expect("a precedence loop decision");
     let precedence = decision.result.precedence.as_ref().expect("classes");
     precedence

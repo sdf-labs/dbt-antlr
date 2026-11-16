@@ -398,7 +398,7 @@ impl Explanation<'_> {
             Resolution::NoStaticTable => {
                 "no static table: --static-dfa-only rejects this decision (G4S190)".to_owned()
             }
-            Resolution::Adaptive => "adaptivePredict".to_owned(),
+            Resolution::Adaptive => "adaptive_predict".to_owned(),
             Resolution::FullLl => "full LL(*)".to_owned(),
         }
     }
@@ -412,7 +412,7 @@ impl Explanation<'_> {
             TableKind::GuardTaken => "a stack guard that takes its alternative",
             TableKind::GuardDeferred => "a stack guard that defers",
             TableKind::SyntaxError => "a predicated dead end",
-            TableKind::Escape => "an escape to adaptivePredict",
+            TableKind::Escape => "an escape to adaptive_predict",
             TableKind::Unknown => "the table",
         };
         let class = walk

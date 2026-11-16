@@ -282,7 +282,7 @@ impl<'a> WalkContext<'a> {
         Ok(defers)
     }
 
-    /// Permits the decision to predict with `adaptivePredict`.
+    /// Permits the decision to predict with `adaptive_predict`.
     ///
     /// # Errors
     ///
@@ -295,7 +295,7 @@ impl<'a> WalkContext<'a> {
             .is_some_and(|tables| tables.atn_fallback() == AtnFallback::Forbidden);
         if forbidden {
             return Err(unsupported(format!(
-                "parser decision {decision} needs adaptivePredict, which --static-dfa-only forbids"
+                "parser decision {decision} needs adaptive_predict, which --static-dfa-only forbids"
             )));
         }
         Ok(())

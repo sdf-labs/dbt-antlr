@@ -488,7 +488,7 @@ impl DecisionTableBuilder {
         let mut outcome = DecisionOutcome::new(decision, state);
 
         if state.is_nongreedy_decision() == Some(true) {
-            outcome.kind = DecisionKind::NonGreedy;
+            outcome.kind = DecisionKind::Adaptive;
             outcome.no_table = Some(NoTableReason::NonGreedy);
             return outcome;
         }
@@ -657,6 +657,7 @@ impl DecisionTableBuilder {
         let mut max_k = 0_i32;
         let mut total_states = 0_usize;
         let mut escapes = 0_usize;
+        let mut guarded = 0_usize;
         let mut first_failure: Option<NoTableReason> = None;
         let mut failed = 0_usize;
 
@@ -699,6 +700,7 @@ impl DecisionTableBuilder {
                     max_k = max_k.max(table.max_k);
                     total_states += table.states.len();
                     escapes += table.escapes();
+                    guarded += table.guarded();
                     tables[class_index] = Some(table);
                 }
                 None => {
@@ -713,8 +715,10 @@ impl DecisionTableBuilder {
         let total = tables.len();
         outcome.kind = if failed == total {
             DecisionKind::Adaptive
+        } else if failed > 0 || escapes > 0 || guarded > 0 {
+            DecisionKind::Hybrid
         } else {
-            DecisionKind::Precedence
+            DecisionKind::Static
         };
         if failed > 0 {
             outcome.no_table = Some(NoTableReason::PrecedenceClasses {

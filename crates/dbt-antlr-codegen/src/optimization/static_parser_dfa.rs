@@ -17,7 +17,7 @@
 //! writes the inventory.
 //!
 //! With the adaptive fallback, a decision without a table, or with a table
-//! that escapes, is normal: the generated parser calls `adaptivePredict`
+//! that escapes, is normal: the generated parser calls `adaptive_predict`
 //! there, and the pass reports nothing.
 //!
 //! A decision that spends the visit budget of the analysis gets a warning
@@ -28,7 +28,7 @@
 //!
 //! Under `--static-dfa-only`, the pass resolves the escape states of every
 //! partial table statically (see `parser_dfa::static_only`). A decision that
-//! still needs `adaptivePredict` is an error (`G4S190`), and a decision with
+//! still needs `adaptive_predict` is an error (`G4S190`), and a decision with
 //! resolved escape states gets a warning (`G4S192`). The warning names the
 //! alternatives that each guess chooses and drops, and ranks the guesses by
 //! their prefix-hijack hazard (see `parser_dfa::hazard`). For guarded states,
@@ -77,7 +77,7 @@ use crate::grammar::transform::SafetyClass;
 use crate::optimization::{AlternativeNames, alternative_names};
 
 /// The diagnostic code of the errors of the decisions that still need
-/// `adaptivePredict` under `--static-dfa-only`.
+/// `adaptive_predict` under `--static-dfa-only`.
 const NOT_FULLY_STATIC: &str = "G4S190";
 /// The diagnostic code of an unmatched `--dump-dfas` selector.
 const DUMP_SELECTOR_NO_MATCH: &str = "G4S191";
@@ -118,7 +118,7 @@ pub(crate) struct StaticParserTables {
     /// `true` per decision that has at least one static table.
     has_table: Vec<bool>,
     /// `true` per decision that keeps an adaptive path, so the generated code
-    /// has to defer to `adaptivePredict` when prediction returns no
+    /// has to defer to `adaptive_predict` when prediction returns no
     /// alternative.
     defers: Vec<bool>,
     /// The shared-descent groups each decision's table accepts with.
@@ -170,7 +170,7 @@ impl StaticParserTables {
             .flat_map(|plan| plan.groups.iter().map(|group| group.rule))
     }
 
-    /// Whether the generated parser can call `adaptivePredict` at all.
+    /// Whether the generated parser can call `adaptive_predict` at all.
     pub(crate) const fn atn_fallback(&self) -> AtnFallback {
         self.atn_fallback
     }
@@ -192,7 +192,7 @@ impl StaticParserDfa {
     ///
     /// With [`AtnFallback::Forbidden`], the escape states of every partial
     /// table are resolved statically, and every decision that still needs
-    /// `adaptivePredict` is an error.
+    /// `adaptive_predict` is an error.
     ///
     /// With `profile`, the report also records the wall-clock times of the
     /// table builds (`--profile-decisions`).
@@ -1006,7 +1006,7 @@ fn decision_dump_lines(
                         lines.extend(table_dump_lines(report, decision, table, with_paths));
                     }
                     None => lines.push(format!(
-                        "class {index}: no static table: this precedence class runs on adaptivePredict"
+                        "class {index}: no static table: this precedence class runs on adaptive_predict"
                     )),
                 }
             }
@@ -1106,7 +1106,7 @@ fn table_dump_lines(
             let deferred = if state.resolution == Some(EscapeResolution::Guarded) {
                 format!("alt={}", state.guard_defer_alt)
             } else {
-                "adaptivePredict".to_owned()
+                "adaptive_predict".to_owned()
             };
             line.push_str(&format!(
                 "GUARDED alt={}, or {deferred} when the parse stack reaches a guard root of group {} (danger={})",
@@ -1241,7 +1241,7 @@ fn no_table_text(result: &DecisionOutcome) -> String {
 fn reason_text(reason: &NoTableReason, budget: &DecisionBudget) -> String {
     match reason {
         NoTableReason::NonGreedy => "the decision is a non-greedy subrule, and the generated \
-                                     parser predicts non-greedy subrules only with adaptivePredict"
+                                     parser predicts non-greedy subrules only with adaptive_predict"
             .to_owned(),
         NoTableReason::TooManyAlternatives => {
             "the decision has too many alternatives for a static table".to_owned()
@@ -1421,7 +1421,7 @@ fn decision_number(text: &str) -> Option<usize> {
 }
 
 /// The `--static-dfa-only` diagnostics: a `G4S190` error for each decision that
-/// still needs `adaptivePredict`, and a `G4S192` warning for each decision with
+/// still needs `adaptive_predict`, and a `G4S192` warning for each decision with
 /// resolved escape states.
 fn static_only_diagnostics(report: &StaticParserDfaReport) -> Vec<Diagnostic> {
     report
@@ -1498,7 +1498,7 @@ fn static_only_diagnostics(report: &StaticParserDfaReport) -> Vec<Diagnostic> {
             (!parts.is_empty()).then(|| {
                 let mut message = format!(
                     "parser decision {} of rule '{}' resolves its escape states without \
-                     adaptivePredict: {}",
+                     adaptive_predict: {}",
                     decision.decision,
                     decision.rule,
                     parts.join(", ")
@@ -2340,7 +2340,7 @@ mod tests {
             (
                 NoTableReason::NonGreedy,
                 "the decision is a non-greedy subrule, and the generated parser predicts \
-                 non-greedy subrules only with adaptivePredict",
+                 non-greedy subrules only with adaptive_predict",
             ),
             (
                 NoTableReason::TooManyAlternatives,

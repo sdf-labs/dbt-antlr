@@ -4,7 +4,7 @@
 //!
 //! [`DecisionTableBuilder`] builds the static prediction table of each
 //! prediction decision of a compiled parser unit, so that the generated parser
-//! predicts without `adaptivePredict` wherever a table can decide. A state
+//! predicts without `adaptive_predict` wherever a table can decide. A state
 //! that no table can decide soundly escapes to the adaptive simulation, or,
 //! under `--static-dfa-only`, gets a static resolution. The tables drive
 //! `--static-parser-dfa`, `--dump-dfas`, `--profile-decisions`, and the

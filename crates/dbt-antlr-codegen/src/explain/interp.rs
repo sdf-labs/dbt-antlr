@@ -9,7 +9,7 @@
 //!   `--static-dfa-only` parser: the runtime walk of the static tables, the
 //!   inline token switch of an `LL(1)` decision, and the neutral parse of a
 //!   shared-descent group.
-//! - [`Oracle::FullLl`] predicts every decision with `adaptivePredict` in the
+//! - [`Oracle::FullLl`] predicts every decision with `adaptive_predict` in the
 //!   `LL` prediction mode.
 //!
 //! Both simulations stop at the first syntax error and record every
@@ -198,7 +198,7 @@ pub(super) enum TableKind {
     GuardDeferred,
     /// A predicated state that `--static-dfa-only` turned into a syntax error.
     SyntaxError,
-    /// An escape state: the table handed the decision to `adaptivePredict`.
+    /// An escape state: the table handed the decision to `adaptive_predict`.
     Escape,
     /// The walk ended in a state that the explanation cannot classify.
     Unknown,
@@ -267,7 +267,7 @@ pub(super) enum Resolution {
     /// A decision without a static table, which `--static-dfa-only` cannot
     /// predict (the generator reports `G4S190`).
     NoStaticTable,
-    /// `adaptivePredict` of a decision without a static table.
+    /// `adaptive_predict` of a decision without a static table.
     Adaptive,
     /// Full `LL` prediction (the oracle).
     FullLl,

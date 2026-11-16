@@ -860,7 +860,7 @@ fn static_dfa_only_parser_never_calls_adaptive_predict() {
 const FRONTIER_VALUE: &str = "( b AND NOT ( NOT c < ( d AND NOT e IN ( f ) ) ) )";
 
 /// The guarded states of the static-only table keep their stack guard: where
-/// the guard defers, they skip without adaptivePredict. So the static-only
+/// the guard defers, they skip without adaptive_predict. So the static-only
 /// parser matches the adaptive one inside and outside an assignment target,
 /// also at the lookahead budget.
 #[test]

@@ -749,7 +749,7 @@ fn dump_dfas_renders_the_built_table() {
 }
 
 /// With the adaptive fallback, a partial table is a normal table: the
-/// generated parser calls `adaptivePredict` where it escapes, and the pass
+/// generated parser calls `adaptive_predict` where it escapes, and the pass
 /// reports nothing.
 #[test]
 fn partial_tables_emit_no_g4s190_warnings() {
@@ -793,7 +793,7 @@ fn precedence_dumps_list_every_class() {
         panic!("one dump per parser unit: {:?}", output.reports);
     };
     assert!(
-        dump.contains("--- decision 0: rule 'a' (PRECEDENCE, k=1, 4 states) ---"),
+        dump.contains("--- decision 0: rule 'a' (STATIC, k=1, 4 states) ---"),
         "{dump}"
     );
     assert!(dump.contains("precedence classes: [2]"), "{dump}");
@@ -988,7 +988,7 @@ fn static_dfa_only_resolves_hybrid_tables_without_adaptive_predict() {
     assert_eq!(
         parser.matches("adaptive_predict(").count(),
         0,
-        "no decision falls back to adaptivePredict"
+        "no decision falls back to adaptive_predict"
     );
     let warnings = output
         .diagnostics
@@ -1003,7 +1003,7 @@ fn static_dfa_only_resolves_hybrid_tables_without_adaptive_predict() {
     assert_eq!(
         warnings,
         [
-            "parser decision 0 of rule 'a' resolves its escape states without adaptivePredict: \
+            "parser decision 0 of rule 'a' resolves its escape states without adaptive_predict: \
              1 conflict state predicts the minimum alternative (witness: ATN EOF); tie-breaks: \
              1 state chooses alt 1 (repeat (ID | ATN), line 3) over alt 2 (exit the loop) \
              [greedy choice, not verified]"
@@ -1252,7 +1252,7 @@ fn static_dfa_only_fails_on_a_parser_decision_without_a_table() {
             "G4S190",
             "parser decision 3 of rule 'nongreedy' is not fully static: the decision is a \
              non-greedy subrule, and the generated parser predicts non-greedy subrules only with \
-             adaptivePredict; --static-dfa-only requires a static table for every decision"
+             adaptive_predict; --static-dfa-only requires a static table for every decision"
         )]
     );
     assert!(
@@ -1326,7 +1326,7 @@ fn cli_static_dfa_only_reports_and_fails() {
     );
     let stdout = String::from_utf8(stdout).expect("stdout is utf-8");
     assert!(
-        stdout.contains("--- decision 3: rule 'nongreedy' (NON_GREEDY) ---"),
+        stdout.contains("--- decision 3: rule 'nongreedy' (ADAPTIVE) ---"),
         "the dump renders: {stdout}"
     );
     let stderr = String::from_utf8(stderr).expect("stderr is utf-8");
@@ -1349,7 +1349,7 @@ fn static_dfa_only_reports_stack_hijack_hazards() {
         warnings,
         [
             "parser decision 2 of rule 'select' resolves its escape states without \
-             adaptivePredict: 1 guarded state returns the skip or the exit where the stack guard \
+             adaptive_predict: 1 guarded state returns the skip or the exit where the stack guard \
              defers (witness: 'SETTINGS' ID '=' INT; danger caller: command:19) [stack-hijack \
              hazard: when called from 'command' (line 19), defers 'SETTINGS' ID '=' INT even \
              when followed by 'UNION']"

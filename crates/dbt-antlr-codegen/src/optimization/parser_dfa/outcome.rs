@@ -16,21 +16,17 @@ use super::{DecisionBudget, EscapeResolutions, StaticDfaTable};
 /// and `--profile-decisions`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(crate) enum DecisionKind {
-    /// The alternatives have disjoint first tokens: plain LL(1) code
-    /// predicts, without a table.
+    /// The alternatives have disjoint first tokens: plain LL(1) match arms in
+    /// code, no table or `adaptive_predict`.
     Ll1,
-    /// A non-greedy subrule: `adaptivePredict` predicts, without a table.
-    NonGreedy,
-    /// A table predicts every lookahead without `adaptivePredict`.
+    /// Fully covered by a static DFA table.
     Static,
-    /// A table predicts, but some of its states escape to `adaptivePredict`
-    /// or test a stack guard. `--static-dfa-only` resolves these states
-    /// statically.
+    /// Covered by a partial DFA table -- some of its states escape to
+    /// `adaptive_predict` or test a stack guard. `--static-dfa-only` resolves
+    /// these states statically (via heuristic guesses).
     Hybrid,
-    /// The precedence loop of a left-recursive rule: one table per
-    /// precedence class. A class without a table uses `adaptivePredict`.
-    Precedence,
-    /// No table: `adaptivePredict` predicts.
+    /// No static table: the whole decision is deferred to runtime
+    /// `adaptive_predict`.
     #[default]
     Adaptive,
 }
@@ -39,10 +35,8 @@ impl DecisionKind {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Ll1 => "LL1",
-            Self::NonGreedy => "NON_GREEDY",
             Self::Static => "STATIC",
             Self::Hybrid => "HYBRID",
-            Self::Precedence => "PRECEDENCE",
             Self::Adaptive => "ADAPTIVE",
         }
     }
@@ -58,7 +52,7 @@ impl Display for DecisionKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum NoTableReason {
     /// The generated parser predicts non-greedy subrules only with
-    /// `adaptivePredict`.
+    /// `adaptive_predict`.
     NonGreedy,
     /// The decision has more alternatives than a table can encode.
     TooManyAlternatives,
@@ -75,7 +69,7 @@ pub(crate) enum NoTableReason {
     /// The closure or the expansion of the start state spent the state cap
     /// or the visit budget.
     StartBudget,
-    /// The table escapes to `adaptivePredict` and decides too small a share
+    /// The table escapes to `adaptive_predict` and decides too small a share
     /// of the start lookahead to be worth emitting.
     LowCoverage { coverage_percent: u32 },
     /// Some precedence classes have no table. `first` is why the first of
@@ -140,7 +134,7 @@ pub(crate) struct DecisionOutcome {
     pub(crate) table: Option<StaticDfaTable>,
     pub(crate) precedence: Option<PrecedenceTables>,
     /// The escape states that `--static-dfa-only` resolved, set once every
-    /// table of the decision predicts without `adaptivePredict`.
+    /// table of the decision predicts without `adaptive_predict`.
     pub(crate) static_only: Option<EscapeResolutions>,
     /// The cost of the table builds of the decision.
     pub(crate) cost: DecisionCost,
@@ -223,49 +217,33 @@ impl DecisionOutcome {
         }
         match self.kind {
             DecisionKind::Ll1 | DecisionKind::Static => "0".to_owned(),
-            DecisionKind::NonGreedy | DecisionKind::Adaptive => "all".to_owned(),
-            DecisionKind::Hybrid if self.escapes > 0 => self.escapes.to_string(),
-            DecisionKind::Hybrid => format!("{}g", self.guarded_states()),
-            DecisionKind::Precedence => {
-                let adaptive_classes = self
-                    .precedence
-                    .as_ref()
-                    .map_or(0, |precedence| precedence.adaptive_classes);
-                if self.escapes == 0 && adaptive_classes == 0 {
-                    let guarded = self.guarded_states();
-                    return if guarded > 0 {
-                        format!("{guarded}g")
-                    } else {
-                        "0".to_owned()
-                    };
+            DecisionKind::Adaptive => "all".to_owned(),
+            DecisionKind::Hybrid => {
+                if let Some(precedence) = &self.precedence {
+                    if self.escapes == 0 && precedence.adaptive_classes == 0 {
+                        return format!("{}g", self.guarded_states());
+                    }
+                    let mut parts = Vec::new();
+                    if self.escapes > 0 {
+                        parts.push(format!("{}e", self.escapes));
+                    }
+                    if precedence.adaptive_classes > 0 {
+                        parts.push(format!("{}c", precedence.adaptive_classes));
+                    }
+                    return parts.join("+");
                 }
-                let mut parts = Vec::new();
                 if self.escapes > 0 {
-                    parts.push(format!("{}e", self.escapes));
+                    self.escapes.to_string()
+                } else {
+                    format!("{}g", self.guarded_states())
                 }
-                if adaptive_classes > 0 {
-                    parts.push(format!("{adaptive_classes}c"));
-                }
-                parts.join("+")
             }
         }
     }
 
     /// `true` when the generated parser predicts the decision without
-    /// `adaptivePredict`.
+    /// `adaptive_predict`.
     pub(crate) fn is_fully_static(&self) -> bool {
-        if self.static_only.is_some() {
-            return true;
-        }
-        match self.kind {
-            DecisionKind::Ll1 | DecisionKind::Static => true,
-            DecisionKind::Precedence => {
-                self.no_table.is_none()
-                    && self
-                        .tables()
-                        .all(|table| table.escapes() == 0 && table.guarded() == 0)
-            }
-            DecisionKind::NonGreedy | DecisionKind::Hybrid | DecisionKind::Adaptive => false,
-        }
+        self.static_only.is_some() || matches!(self.kind, DecisionKind::Ll1 | DecisionKind::Static)
     }
 }

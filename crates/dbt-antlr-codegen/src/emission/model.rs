@@ -337,7 +337,7 @@ pub struct ChoiceModel {
     /// for non-LL(1) choices.
     pub alt_look: Vec<Vec<TokenInfoModel>>,
     /// `Choice.tableCanDefer`: whether the static table prediction can return
-    /// no alternative and has to fall back to `adaptivePredict`.
+    /// no alternative and has to fall back to `adaptive_predict`.
     pub table_can_defer: bool,
 }
 
@@ -361,7 +361,7 @@ pub struct DescentGroupModel {
     /// The member alternative that every other token selects.
     pub default_alt: i32,
     /// The alternative a fallback predicts under `--static-dfa-only`; `None`
-    /// falls back to `adaptivePredict`.
+    /// falls back to `adaptive_predict`.
     pub static_fallback: Option<i32>,
 }
 
