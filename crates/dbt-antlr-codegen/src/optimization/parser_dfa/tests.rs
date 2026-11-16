@@ -3743,3 +3743,74 @@ fn direct_danger_callers_are_benign_guards() {
     let warning = static_only_warning(&build, "expr");
     assert!(warning.ends_with(" [benign stack guard]"), "{warning}");
 }
+
+#[test]
+fn reexpansion_respects_state_cap_and_prunes_unreachable_states_on_visit_cutoff() {
+    let source = "grammar ReexpandBudget;\n\
+                  top : ( r | r1 )? q X | r? q Y ;\n\
+                  r : '(' r ')' | B ;\n\
+                  r1 : '(' r1 ')' | B Z ;\n\
+                  q : K ( M1 M2 | N1 N2 ) ;\n\
+                  B : 'b' ; K : 'k' ; M1 : 'm1' ; M2 : 'm2' ; N1 : 'n1' ; N2 : 'n2' ; X : 'x' ; Y : 'y' ; Z : 'z' ;\n";
+    let build_with = |budgets: &ParserDfaBudgets| {
+        build_source_with("ReexpandBudget", source, AtnFallback::Allowed, budgets).1
+    };
+
+    let full = build_with(&ParserDfaBudgets::default());
+    let decision = full
+        .report
+        .decisions
+        .iter()
+        .rposition(|entry| entry.rule == "top" && entry.result.table.is_some())
+        .expect("top decision has a table");
+    let full_outcome = &full.report.decisions[decision].result;
+    let full_table = full_outcome.table.as_ref().expect("full table");
+    let exact_states = full_table.states.len();
+    assert!(!full_outcome.budget_cutoff);
+    assert!(full_table.depths().iter().all(|&depth| depth != usize::MAX));
+
+    let capped = build_with(&ParserDfaBudgets {
+        global: BudgetLimits {
+            max_states: Some(exact_states + 1),
+            max_k: None,
+            max_visits: None,
+        },
+    });
+    let capped_outcome = &capped.report.decisions[decision].result;
+    let capped_table = capped_outcome.table.as_ref().expect("capped table");
+    assert!(!capped_outcome.budget_cutoff);
+    assert_eq!(capped_table.states.len(), exact_states);
+    assert!(
+        capped_table
+            .depths()
+            .iter()
+            .all(|&depth| depth != usize::MAX)
+    );
+
+    let mut saw_pruned = false;
+    for visits in 1..full_outcome.cost.visits() {
+        let limited = build_with(&ParserDfaBudgets {
+            global: BudgetLimits {
+                max_states: None,
+                max_k: None,
+                max_visits: Some(visits),
+            },
+        });
+        let outcome = &limited.report.decisions[decision].result;
+        if let Some(table) = &outcome.table {
+            assert_eq!(outcome.num_dfa_states, table.states.len());
+            assert!(
+                table.depths().iter().all(|&depth| depth != usize::MAX),
+                "visits={visits} emitted unreachable state(s): {:#?}",
+                table.states
+            );
+            if outcome.budget_cutoff && table.states.len() < exact_states {
+                saw_pruned = true;
+            }
+        }
+    }
+    assert!(
+        saw_pruned,
+        "visit-budget sweep should exercise post-cutoff pruning"
+    );
+}

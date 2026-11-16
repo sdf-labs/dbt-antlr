@@ -973,6 +973,15 @@ where
             if facts.verdict != Verdict::Decide {
                 continue;
             }
+            if facts.expanded && self.attempt.exhausted {
+                if facts.depth > 0 {
+                    self.escape_frontier(number, &facts);
+                    continue;
+                }
+                self.attempt.failed = true;
+                self.attempt.start_exhausted = true;
+                break;
+            }
             // The frontier is a *creation* budget: a state that was already
             // expanded keeps its successors, even though re-expanding it
             // after a taint increase may now run past the frontier.
@@ -1008,9 +1017,9 @@ where
             // interned without an edge to it. A state that is expanded again
             // keeps its old edges in the DFA, but an escape state has no
             // edges in the table (see `Self::snapshot`).
+            let new_states = if facts.expanded { 0 } else { successors.len() };
             let cut_off = facts.depth > 0
-                && (self.closure.exhausted
-                    || self.states.len() + successors.len() > self.max_states);
+                && (self.closure.exhausted || self.states.len() + new_states > self.max_states);
             if cut_off {
                 self.attempt.exhausted |= self.closure.exhausted;
                 self.closure.exhausted = false;
@@ -1052,6 +1061,7 @@ where
         }
 
         if !self.attempt.failed {
+            self.prune_unreachable();
             self.finalize_guards();
             self.attach_continuations();
             // `finalize` drops a table with an escaping start state, so its
@@ -2144,47 +2154,99 @@ where
             }
         }
     }
-
-    fn snapshot(&self, hazards: &HashMap<i32, StateHazard>) -> StaticDfaTable {
-        let mut states: Vec<StaticDfaState> = self
-            .states
-            .iter()
-            .map(|state| {
-                let number = state.state_number();
-                let facts = self.info.get(&number);
-                let escape = facts.is_some_and(|facts| matches!(facts.verdict, Verdict::Escape(_)));
-                let viable_alts = if escape {
-                    let alts: BTreeSet<i32> = state
-                        .configs()
-                        .get_items()
-                        .map(|config| config.get_alt())
-                        .filter(|alt| *alt > 0)
-                        .collect();
-                    alts.into_iter().collect()
-                } else {
-                    Vec::new()
-                };
-                StaticDfaState {
-                    accept: facts.map_or(0, StateFacts::accept_value),
-                    fallback: facts.map_or(0, |facts| facts.fallback),
-                    depth: facts.map_or(0, |facts| facts.depth),
-                    conflicts: facts
-                        .map(|facts| facts.conflicts.clone())
-                        .unwrap_or_default(),
-                    conflict_min_alt: facts.map_or(0, |facts| facts.conflict_min_alt),
-                    guarded_alt: facts.map_or(0, |facts| facts.guarded_alt),
-                    guard_defer_alt: facts.map_or(0, |facts| facts.guard_defer_alt),
-                    guard_group: facts.map_or(0, |facts| facts.guard_group),
-                    continuation: facts.and_then(|facts| facts.continuation.clone()),
-                    viable_alts,
-                    predicated: facts.is_some_and(|facts| facts.predicated),
-                    resolution: None,
-                    hazard: hazards.get(&number).cloned(),
-                    stack_hazard: None,
-                    edges: Vec::new(),
+    fn prune_unreachable(&mut self) {
+        let mut edges: Vec<Vec<i32>> = vec![Vec::new(); self.states.len()];
+        for (from, _, to) in self.dfa.enumerate_edges() {
+            let from = from.state_number();
+            if self
+                .info
+                .get(&from)
+                .is_some_and(|facts| facts.verdict == Verdict::Decide)
+            {
+                edges[from as usize].push(to.state_number());
+            }
+        }
+        let mut reachable = vec![false; self.states.len()];
+        let mut queue = VecDeque::new();
+        if self.info.contains_key(&0) {
+            reachable[0] = true;
+            queue.push_back(0_i32);
+        }
+        let mut reached = 0;
+        while let Some(number) = queue.pop_front() {
+            reached += 1;
+            for &target in &edges[number as usize] {
+                if let Some(slot) = reachable.get_mut(target as usize)
+                    && !*slot
+                    && self.info.contains_key(&target)
+                {
+                    *slot = true;
+                    queue.push_back(target);
                 }
-            })
-            .collect();
+            }
+        }
+        if reached == self.states.len() {
+            return;
+        }
+        self.info
+            .retain(|number, _| reachable.get(*number as usize).copied().unwrap_or(false));
+        self.guard_candidates
+            .retain(|number| reachable.get(*number as usize).copied().unwrap_or(false));
+        self.guard_iterate_candidates
+            .retain(|number, _| reachable.get(*number as usize).copied().unwrap_or(false));
+        if let Some(first) = self.attempt.first_conflict_state
+            && !reachable.get(first as usize).copied().unwrap_or(false)
+        {
+            self.attempt.first_conflict_state = None;
+        }
+    }
+
+    fn snapshot(&mut self, hazards: &HashMap<i32, StateHazard>) -> StaticDfaTable {
+        let mut remap = vec![usize::MAX; self.states.len()];
+        let mut states: Vec<StaticDfaState> = Vec::with_capacity(self.info.len());
+        for state in &self.states {
+            let number = state.state_number();
+            let Some(facts) = self.info.get(&number) else {
+                continue;
+            };
+            remap[number as usize] = states.len();
+            let escape = matches!(facts.verdict, Verdict::Escape(_));
+            let viable_alts = if escape {
+                let alts: BTreeSet<i32> = state
+                    .configs()
+                    .get_items()
+                    .map(|config| config.get_alt())
+                    .filter(|alt| *alt > 0)
+                    .collect();
+                alts.into_iter().collect()
+            } else {
+                Vec::new()
+            };
+            states.push(StaticDfaState {
+                accept: facts.accept_value(),
+                fallback: facts.fallback,
+                depth: facts.depth,
+                conflicts: facts.conflicts.clone(),
+                conflict_min_alt: facts.conflict_min_alt,
+                guarded_alt: facts.guarded_alt,
+                guard_defer_alt: facts.guard_defer_alt,
+                guard_group: facts.guard_group,
+                continuation: facts.continuation.clone(),
+                viable_alts,
+                predicated: facts.predicated,
+                resolution: None,
+                hazard: hazards.get(&number).cloned(),
+                stack_hazard: None,
+                edges: Vec::new(),
+            });
+        }
+        if let Some(first) = self.attempt.first_conflict_state {
+            self.attempt.first_conflict_state = usize::try_from(first)
+                .ok()
+                .and_then(|old| remap.get(old).copied())
+                .filter(|&new| new != usize::MAX)
+                .and_then(|new| i32::try_from(new).ok());
+        }
 
         // Only a decision state keeps its edges: a state that the construction
         // expanded and then escaped, when a taint increase made it expand
@@ -2196,8 +2258,11 @@ where
                 .info
                 .get(&from)
                 .is_some_and(|facts| facts.verdict == Verdict::Decide);
-            let from = from as usize;
-            let to = to.state_number() as usize;
+            let from = remap.get(from as usize).copied().unwrap_or(usize::MAX);
+            let to = remap
+                .get(to.state_number() as usize)
+                .copied()
+                .unwrap_or(usize::MAX);
             if decides && from < per_state.len() && to < states.len() {
                 per_state[from].push((symbol as i32 - 1, to));
             }
