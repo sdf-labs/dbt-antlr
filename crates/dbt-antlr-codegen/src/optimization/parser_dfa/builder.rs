@@ -282,6 +282,70 @@ struct Attempt {
     descent: Option<DescentPlan>,
 }
 
+impl Attempt {
+    /// Turns what this attempt observed into a decision outcome: the kind, and
+    /// the table when the attempt earns one.
+    fn finalize(self, decision_state: ATNStateRef, atn_fallback: AtnFallback) -> DecisionOutcome {
+        let mut outcome = DecisionOutcome::new(self.decision, decision_state);
+        apply_facts(&mut outcome, &self);
+
+        if self.predicated {
+            outcome.no_table = Some(NoTableReason::PredicatedStart(outcome.first_predicate));
+            outcome.num_dfa_states = self.state_count;
+            return outcome;
+        }
+        let Some(table) = self.table else {
+            outcome.no_table = Some(NoTableReason::StartBudget);
+            outcome.num_dfa_states = self.state_count;
+            return outcome;
+        };
+
+        outcome.num_dfa_states = table.states.len();
+        outcome.k = table.max_k;
+        outcome.escapes = table.escapes();
+        outcome.coverage_percent = (table.start_coverage() * 100.0) as u32;
+        outcome.conflict_witness = table
+            .first_escape(CONFLICT_ESCAPE)
+            .or_else(|| {
+                self.first_conflict_state.and_then(|state| {
+                    usize::try_from(state)
+                        .ok()
+                        .filter(|state| *state < table.states.len())
+                })
+            })
+            .and_then(|state| table.witness(state));
+        if let Some(state) = table.first_escape(ESCAPE) {
+            outcome.budget_witness = table.witness(state);
+        }
+
+        // A table whose start state escapes answers nothing at all.
+        if table.states.first().is_none_or(StaticDfaState::is_escape) {
+            outcome.no_table = Some(NoTableReason::StartConflict);
+            return outcome;
+        }
+        if outcome.escapes > 0 || table.guarded() > 0 {
+            // Below the coverage threshold, the adaptive simulation decides
+            // almost every lookahead anyway, unless there is no adaptive
+            // simulation.
+            if atn_fallback == AtnFallback::Allowed
+                && outcome.coverage_percent < PARTIAL_MIN_COVERAGE_PERCENT
+            {
+                outcome.no_table = Some(NoTableReason::LowCoverage {
+                    coverage_percent: outcome.coverage_percent,
+                });
+                return outcome;
+            }
+            outcome.kind = DecisionKind::Hybrid;
+        } else {
+            outcome.kind = DecisionKind::Static;
+        }
+        outcome.budget_cutoff = self.budget_cutoff;
+        outcome.descent = used_groups(self.descent.as_ref(), &table);
+        outcome.table = Some(table);
+        outcome
+    }
+}
+
 /// Builds the static DFA tables of the decision states of one compiled parser
 /// unit.
 pub(crate) struct DecisionTableBuilder {
@@ -519,80 +583,18 @@ impl DecisionTableBuilder {
         analyze_hazards: bool,
         log: &mut CostLog,
     ) -> DecisionOutcome {
+        let decision_state = self.atn.decision_to_state[decision];
         #[cfg(test)]
         if self.widened {
             let widened = self.attempt(decision, 0, class, analyze_hazards, log);
-            return self.finalize(widened);
+            return widened.finalize(decision_state, self.atn_fallback);
         }
         let attempt = self.attempt(decision, i32::MAX, class, analyze_hazards, log);
         if attempt.start_exhausted {
             let widened = self.attempt(decision, 0, class, analyze_hazards, log);
-            return self.finalize(widened);
+            return widened.finalize(decision_state, self.atn_fallback);
         }
-        self.finalize(attempt)
-    }
-
-    /// Turns what one attempt observed into a decision outcome: the kind, and
-    /// the table when the attempt earns one.
-    fn finalize(&self, attempt: Attempt) -> DecisionOutcome {
-        let decision = attempt.decision;
-        let mut outcome = DecisionOutcome::new(decision, self.atn.decision_to_state[decision]);
-        apply_facts(&mut outcome, &attempt);
-
-        if attempt.predicated {
-            outcome.no_table = Some(NoTableReason::PredicatedStart(outcome.first_predicate));
-            outcome.num_dfa_states = attempt.state_count;
-            return outcome;
-        }
-        let Some(table) = attempt.table else {
-            outcome.no_table = Some(NoTableReason::StartBudget);
-            outcome.num_dfa_states = attempt.state_count;
-            return outcome;
-        };
-
-        outcome.num_dfa_states = table.states.len();
-        outcome.k = table.max_k;
-        outcome.escapes = table.escapes();
-        outcome.coverage_percent = (table.start_coverage() * 100.0) as u32;
-        outcome.conflict_witness = table
-            .first_escape(CONFLICT_ESCAPE)
-            .or_else(|| {
-                attempt.first_conflict_state.and_then(|state| {
-                    usize::try_from(state)
-                        .ok()
-                        .filter(|state| *state < table.states.len())
-                })
-            })
-            .and_then(|state| table.witness(state));
-        if let Some(state) = table.first_escape(ESCAPE) {
-            outcome.budget_witness = table.witness(state);
-        }
-
-        // A table whose start state escapes answers nothing at all.
-        if table.states.first().is_none_or(StaticDfaState::is_escape) {
-            outcome.no_table = Some(NoTableReason::StartConflict);
-            return outcome;
-        }
-        if outcome.escapes > 0 || table.guarded() > 0 {
-            // Below the coverage threshold, the adaptive simulation decides
-            // almost every lookahead anyway, unless there is no adaptive
-            // simulation.
-            if self.atn_fallback == AtnFallback::Allowed
-                && outcome.coverage_percent < PARTIAL_MIN_COVERAGE_PERCENT
-            {
-                outcome.no_table = Some(NoTableReason::LowCoverage {
-                    coverage_percent: outcome.coverage_percent,
-                });
-                return outcome;
-            }
-            outcome.kind = DecisionKind::Hybrid;
-        } else {
-            outcome.kind = DecisionKind::Static;
-        }
-        outcome.budget_cutoff = attempt.budget_cutoff;
-        outcome.descent = used_groups(attempt.descent.as_ref(), &table);
-        outcome.table = Some(table);
-        outcome
+        attempt.finalize(decision_state, self.atn_fallback)
     }
 
     fn is_precedence_loop_decision(&self, state: ATNStateRef) -> bool {
