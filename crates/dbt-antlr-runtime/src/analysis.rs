@@ -39,7 +39,7 @@ pub use crate::atn_state::{
     ATNStateRef, ATNStateType, BasicBlockStartState, PlusBlockStartState, RuleStartState,
     StarBlockStartState, StarLoopEntryState,
 };
-pub use crate::dfa::{DFAState, ProposedDFAState, DFA};
+pub use crate::dfa::{DFAState, LexerDFAState, ParserDFAState, ProposedDFAState, DFA};
 pub use crate::int_stream::EOF;
 pub use crate::interval_set::{IntervalSet, IntervalSetBuf};
 pub use crate::parser_atn_simulator::{MergeCache, ParserATNSimulator};

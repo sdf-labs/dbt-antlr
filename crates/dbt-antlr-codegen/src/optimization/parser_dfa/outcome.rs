@@ -211,23 +211,25 @@ impl DecisionOutcome {
             DecisionKind::Ll1 | DecisionKind::Static => "0".to_owned(),
             DecisionKind::Adaptive => "all".to_owned(),
             DecisionKind::Hybrid => {
+                let guarded = self.guarded_states();
+                let mut parts = Vec::new();
                 if let Some(precedence) = &self.precedence {
-                    if self.escapes == 0 && precedence.adaptive_classes == 0 {
-                        return format!("{}g", self.guarded_states());
-                    }
-                    let mut parts = Vec::new();
                     if self.escapes > 0 {
                         parts.push(format!("{}e", self.escapes));
                     }
                     if precedence.adaptive_classes > 0 {
                         parts.push(format!("{}c", precedence.adaptive_classes));
                     }
-                    return parts.join("+");
+                } else if self.escapes > 0 {
+                    parts.push(self.escapes.to_string());
                 }
-                if self.escapes > 0 {
-                    self.escapes.to_string()
+                if guarded > 0 {
+                    parts.push(format!("{guarded}g"));
+                }
+                if parts.is_empty() {
+                    "0".to_owned()
                 } else {
-                    format!("{}g", self.guarded_states())
+                    parts.join("+")
                 }
             }
         }
@@ -237,5 +239,76 @@ impl DecisionOutcome {
     /// `adaptive_predict`.
     pub(crate) fn is_fully_static(&self) -> bool {
         self.static_only.is_some() || matches!(self.kind, DecisionKind::Ll1 | DecisionKind::Static)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::table::StaticDfaState;
+    use super::super::{ESCAPE, GUARDED};
+    use super::*;
+
+    fn state(accept: i32) -> StaticDfaState {
+        StaticDfaState {
+            accept,
+            fallback: 0,
+            depth: 0,
+            conflicts: Vec::new(),
+            conflict_min_alt: 0,
+            guarded_alt: 0,
+            guard_defer_alt: 0,
+            guard_group: 0,
+            continuation: None,
+            viable_alts: Vec::new(),
+            predicated: false,
+            resolution: None,
+            hazard: None,
+            stack_hazard: None,
+            edges: Vec::new(),
+        }
+    }
+
+    fn table_with(escapes: usize, guarded: usize) -> StaticDfaTable {
+        let mut states = vec![state(1)];
+        states.extend((0..escapes).map(|_| state(ESCAPE)));
+        states.extend((0..guarded).map(|_| state(GUARDED)));
+        StaticDfaTable::finish(0, states)
+    }
+
+    #[test]
+    fn fallback_text_includes_guarded_states_alongside_escapes_and_classes() {
+        let hybrid = DecisionOutcome {
+            kind: DecisionKind::Hybrid,
+            escapes: 2,
+            table: Some(table_with(2, 3)),
+            ..DecisionOutcome::default()
+        };
+        assert_eq!(hybrid.fallback_text(), "2+3g");
+
+        let precedence = DecisionOutcome {
+            kind: DecisionKind::Hybrid,
+            escapes: 2,
+            precedence: Some(PrecedenceTables {
+                cutoffs: vec![1, 2],
+                tables: vec![Some(table_with(2, 3)), None],
+                adaptive_classes: 1,
+                escapes: 2,
+            }),
+            ..DecisionOutcome::default()
+        };
+        assert_eq!(precedence.fallback_text(), "2e+1c+3g");
+
+        let guarded_class_with_adaptive = DecisionOutcome {
+            kind: DecisionKind::Hybrid,
+            escapes: 0,
+            precedence: Some(PrecedenceTables {
+                cutoffs: vec![1],
+                tables: vec![Some(table_with(0, 4)), None],
+                adaptive_classes: 1,
+                escapes: 0,
+            }),
+            ..DecisionOutcome::default()
+        };
+        assert_eq!(guarded_class_with_adaptive.fallback_text(), "1c+4g");
     }
 }

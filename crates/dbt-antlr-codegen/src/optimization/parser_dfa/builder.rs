@@ -23,15 +23,15 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-use dbt_antlr_runtime::analysis::DFA;
 use dbt_antlr_runtime::analysis::{
-    ATN, ATNConfigSet, ATNStateRef, ATNStateType, Arena, BOUNDARY_TAINT, BitSet, Bump, DFAState,
-    EOF, FOREIGN_CONSUME_TAINT, FOREIGN_LINEAGE_TAINT, IATNSimulator, INTERIOR_TAINT, MIDWAY_TAINT,
-    PRECPRED_TAINT, PRED_TAINT, ParserATNSimulator, ParserATNSimulatorManager,
+    ATN, ATNConfigSet, ATNStateRef, ATNStateType, Arena, BOUNDARY_TAINT, BitSet, Bump, EOF,
+    FOREIGN_CONSUME_TAINT, FOREIGN_LINEAGE_TAINT, IATNSimulator, INTERIOR_TAINT, MIDWAY_TAINT,
+    PRECPRED_TAINT, PRED_TAINT, ParserATNSimulator, ParserATNSimulatorManager, ParserDFAState,
     PrecedencePredicateTransition, PredictionContext, PredictionContextRef, PredictionMode,
     ProposedDFAState, ROOTED_TAINT, RuleStartState, WIDENED_TAINT, all_subsets_conflict,
     all_subsets_equal, conflicting_alt_subsets, get_alts, has_sll_conflict_terminating_prediction,
 };
+use dbt_antlr_runtime::dfa::ParserDFA;
 use dbt_antlr_runtime::dfa::static_parser_dfa::{
     ContinuationConfigEntry, ContinuationContextNode, ParserContinuation, VIRTUAL_ALT_BASE,
 };
@@ -823,7 +823,6 @@ impl DecisionTableBuilder {
                 decision_state,
                 decision,
                 info: HashMap::new(),
-                states: Vec::new(),
                 accept_sinks: HashMap::new(),
                 queue: VecDeque::new(),
                 completion_depths: &self.completion_depths,
@@ -885,7 +884,7 @@ impl GuardSets {
 struct DecisionBuild<'b, 'sim, 'a> {
     atn: &'static ATN,
     simulator: &'b ParserATNSimulator<'sim>,
-    dfa: &'sim DFA<'sim, ATNConfigSet<'sim>>,
+    dfa: &'sim ParserDFA<'sim>,
     scratch: &'a Bump,
     closure: Closure<'static, 'a>,
     /// Widening bound: `i32::MAX` for the default attempt, `0` for the fully
@@ -936,12 +935,10 @@ struct DecisionBuild<'b, 'sim, 'a> {
     decision: usize,
     decision_state: ATNStateRef,
     info: HashMap<i32, StateFacts>,
-    /// DFA states in creation order; the index is the state number.
-    states: Vec<&'sim DFAState<'sim, ATNConfigSet<'sim>>>,
     /// For each alternative, the shared accept state of the config sets with
     /// only that viable alternative.
-    accept_sinks: HashMap<i32, &'sim DFAState<'sim, ATNConfigSet<'sim>>>,
-    queue: VecDeque<i32>,
+    accept_sinks: HashMap<i32, &'sim ParserDFAState<'sim>>,
+    queue: VecDeque<&'sim ParserDFAState<'sim>>,
     completion_depths: &'a [OnceLock<BitSet>],
     attempt: Attempt,
 }
@@ -966,8 +963,9 @@ where
             return self.take_attempt();
         }
 
-        while let Some(number) = self.queue.pop_front() {
-            let Some(facts) = self.info.get(&number).cloned() else {
+        while let Some(state) = self.queue.pop_front() {
+            let state_number = state.state_number();
+            let Some(facts) = self.info.get(&state_number).cloned() else {
                 continue;
             };
             if facts.verdict != Verdict::Decide {
@@ -975,7 +973,7 @@ where
             }
             if facts.expanded && self.attempt.exhausted {
                 if facts.depth > 0 {
-                    self.escape_frontier(number, &facts);
+                    self.escape_frontier(state_number, &facts);
                     continue;
                 }
                 self.attempt.failed = true;
@@ -989,22 +987,21 @@ where
                 let at_frontier = self.at_frontier(facts.depth);
                 let at_max_k = self.max_k.is_some_and(|max_k| facts.depth >= max_k);
                 if self.budget_spent || (at_frontier && (self.has_escape || at_max_k)) {
-                    self.escape_frontier(number, &facts);
+                    self.escape_frontier(state_number, &facts);
                     continue;
                 }
                 // Before the first escape, the table can still be fully
                 // static. A frontier state that a static resolution decides
                 // keeps it static, while its expansion can find conflicts
                 // that no resolution decides.
-                if at_frontier && self.resolve_frontier(number, &facts, false) {
+                if at_frontier && self.resolve_frontier(state_number, &facts, false) {
                     continue;
                 }
             }
-            if let Some(facts) = self.info.get_mut(&number) {
+            if let Some(facts) = self.info.get_mut(&state_number) {
                 facts.expanded = true;
             }
 
-            let state = self.states[number as usize];
             let closed = ClosedSet {
                 configs: state.configs().get_items().cloned().collect(),
                 taint: facts.taint.clone(),
@@ -1019,13 +1016,13 @@ where
             // edges in the table (see `Self::snapshot`).
             let new_states = if facts.expanded { 0 } else { successors.len() };
             let cut_off = facts.depth > 0
-                && (self.closure.exhausted || self.states.len() + new_states > self.max_states);
+                && (self.closure.exhausted || self.dfa.len() + new_states > self.max_states);
             if cut_off {
                 self.attempt.exhausted |= self.closure.exhausted;
                 self.closure.exhausted = false;
                 self.budget_spent = true;
                 self.attempt.budget_cutoff = true;
-                self.escape_frontier(number, &facts);
+                self.escape_frontier(state_number, &facts);
                 continue;
             }
             if self.closure.exhausted {
@@ -1128,13 +1125,13 @@ where
     /// state escapes (see [`Self::run`]).
     fn at_frontier(&self, depth: usize) -> bool {
         let state_cap = self.frontier.state_cap.min(self.max_states);
-        depth >= self.frontier.depth_cap || (self.states.len() >= state_cap && depth >= 2)
+        depth >= self.frontier.depth_cap || (self.dfa.len() >= state_cap && depth >= 2)
     }
 
     /// Moves the attempt out of the build, recording what it observed.
     fn take_attempt(&mut self) -> Attempt {
         self.attempt.decision = self.decision;
-        self.attempt.state_count = self.states.len();
+        self.attempt.state_count = self.dfa.len();
         self.attempt.facts = std::mem::take(&mut self.closure.facts);
         self.attempt.exhausted |= self.closure.exhausted;
         self.attempt.visits = self.closure.visits();
@@ -1237,7 +1234,10 @@ where
             }
             let mut eligible = true;
             let mut real_take = false;
-            for config in self.states[state as usize].configs().get_items() {
+            let Some(dfa_state) = self.dfa.get_state(state) else {
+                continue;
+            };
+            for config in dfa_state.configs().get_items() {
                 let taint = taint_of(&facts.taint, config);
                 if config.get_alt() == POSTFIX_TAKE_ALT && taint & WIDENED_TAINT == 0 {
                     real_take = true;
@@ -1353,7 +1353,10 @@ where
             }
             let mut eligible = true;
             let mut real_iterate = false;
-            for config in self.states[state as usize].configs().get_items() {
+            let Some(dfa_state) = self.dfa.get_state(state) else {
+                continue;
+            };
+            for config in dfa_state.configs().get_items() {
                 let taint = taint_of(&facts.taint, config);
                 if config.get_alt() == ITERATE_ALT
                     && taint & (WIDENED_TAINT | FOREIGN_CONSUME_TAINT) == 0
@@ -1430,14 +1433,15 @@ where
         if !self.allow_continuations {
             return;
         }
-        for number in 0..self.states.len() as i32 {
+        for state in self.dfa.get_states() {
+            let number = state.state_number();
             let Some(facts) = self.info.get(&number) else {
                 continue;
             };
             if facts.depth == 0 || facts.verdict != Verdict::Escape(ESCAPE) {
                 continue;
             }
-            let configs = self.states[number as usize].configs();
+            let configs = state.configs();
             if !continuation_is_faithful(configs, &facts.taint) {
                 continue;
             }
@@ -1456,7 +1460,7 @@ where
         &mut self,
         closed: ClosedSet<'a>,
         depth: usize,
-    ) -> Option<&'sim DFAState<'sim, ATNConfigSet<'sim>>> {
+    ) -> Option<&'sim ParserDFAState<'sim>> {
         let closed = self.closure.canonical_set(closed);
         let (facts, effects) = self.classify(&closed, depth);
         // An accept state with one viable alternative has no edges, and the
@@ -1477,16 +1481,13 @@ where
         let state = self.dfa.add_state(proposed, self.simulator);
         let number = state.state_number();
         let newly_interned = !self.info.contains_key(&number);
-        if number as usize >= self.states.len() {
-            self.states.push(state);
-        }
         if !newly_interned {
             // The same config set is reachable through paths whose taint
             // differs, and a DFA state's verdict is decided once. Widening,
             // precedence-guard or boundary taint on *any* path invalidates a
             // verdict that trusted the config set, so the state escapes
             // rather than carry a verdict the runtime could disagree with.
-            let state_configs = self.states[number as usize].configs();
+            let state_configs = state.configs();
             let mut new_trust_taint = 0;
             let mut verdict = Verdict::Decide;
             let mut resolved_conflict = false;
@@ -1515,11 +1516,11 @@ where
                 existing.predicated |= facts.predicated;
             }
             if new_trust_taint != 0 {
-                self.on_taint_increase(number, verdict, resolved_conflict);
+                self.on_taint_increase(state, verdict, resolved_conflict);
             } else if roots_grew && expanded && verdict == Verdict::Decide {
                 // The roots ride on the configs, so the successors of an
                 // expanded state must see the new roots too.
-                self.queue.push_back(number);
+                self.queue.push_back(state);
             }
             return Some(state);
         }
@@ -1534,7 +1535,7 @@ where
         self.has_escape |= matches!(facts.verdict, Verdict::Escape(_));
         self.info.insert(number, facts);
         if decide && !self.attempt.failed {
-            self.queue.push_back(number);
+            self.queue.push_back(state);
         }
         Some(state)
     }
@@ -1551,7 +1552,7 @@ where
         alt: i32,
         facts: StateFacts,
         effects: ClassifyEffects,
-    ) -> Option<&'sim DFAState<'sim, ATNConfigSet<'sim>>> {
+    ) -> Option<&'sim ParserDFAState<'sim>> {
         if let Some(state) = self.accept_sinks.get(&alt) {
             return Some(*state);
         }
@@ -1570,9 +1571,6 @@ where
         proposed.prediction = alt;
         let state = self.dfa.add_state(proposed, self.simulator);
         let number = state.state_number();
-        if number as usize >= self.states.len() {
-            self.states.push(state);
-        }
         if number as usize >= self.max_states {
             return None;
         }
@@ -1597,11 +1595,10 @@ where
         let Some(plan) = &self.descent else {
             return false;
         };
-        let configs: Vec<_> = self.states[number as usize]
-            .configs()
-            .get_items()
-            .cloned()
-            .collect();
+        let Some(dfa_state) = self.dfa.get_state(number) else {
+            return false;
+        };
+        let configs: Vec<_> = dfa_state.configs().get_items().cloned().collect();
         let mut live = BitSet::new();
         for config in &configs {
             live.insert(config.get_alt() as usize);
@@ -1624,7 +1621,10 @@ where
     /// take/skip pair of an optional-postfix decision.
     fn state_has_take_skip_pair(&self, number: i32) -> bool {
         let mut alts = BitSet::new();
-        for config in self.states[number as usize].configs().get_items() {
+        let Some(dfa_state) = self.dfa.get_state(number) else {
+            return false;
+        };
+        for config in dfa_state.configs().get_items() {
             alts.insert(config.get_alt() as usize);
         }
         is_take_skip_pair(&alts)
@@ -1661,11 +1661,11 @@ where
         facts: &StateFacts,
         escaping: bool,
     ) -> bool {
-        let configs: Vec<dbt_antlr_runtime::analysis::ATNConfig<'_>> = self.states[number as usize]
-            .configs()
-            .get_items()
-            .cloned()
-            .collect();
+        let Some(dfa_state) = self.dfa.get_state(number) else {
+            return false;
+        };
+        let configs: Vec<dbt_antlr_runtime::analysis::ATNConfig<'_>> =
+            dfa_state.configs().get_items().cloned().collect();
         let mut alts = BitSet::new();
         for config in &configs {
             alts.insert(config.get_alt() as usize);
@@ -1709,7 +1709,13 @@ where
     /// verdict that any path contradicts. A trusted accept therefore becomes an
     /// escape, while a decision state is queued again so its successors see
     /// the union of both paths' taint.
-    fn on_taint_increase(&mut self, number: i32, verdict: Verdict, resolved_conflict: bool) {
+    fn on_taint_increase(
+        &mut self,
+        state: &'sim ParserDFAState<'sim>,
+        verdict: Verdict,
+        resolved_conflict: bool,
+    ) {
+        let number = state.state_number();
         match verdict {
             // A single-viable-alternative accept does not depend on taint: no
             // other alternative survives the lookahead, so there is nothing a
@@ -1750,7 +1756,7 @@ where
                 }
             }
             Verdict::Accept(_) | Verdict::Escape(_) => {}
-            Verdict::Decide => self.queue.push_back(number),
+            Verdict::Decide => self.queue.push_back(state),
         }
     }
 
@@ -2028,11 +2034,10 @@ where
             let Some(facts) = self.info.get(&number).cloned() else {
                 continue;
             };
-            let configs: Vec<_> = self.states[number as usize]
-                .configs()
-                .get_items()
-                .cloned()
-                .collect();
+            let Some(dfa_state) = self.dfa.get_state(number) else {
+                continue;
+            };
+            let configs: Vec<_> = dfa_state.configs().get_items().cloned().collect();
             let alts: BTreeSet<i32> = configs
                 .iter()
                 .map(|config| config.get_alt())
@@ -2154,8 +2159,10 @@ where
             }
         }
     }
+
     fn prune_unreachable(&mut self) {
-        let mut edges: Vec<Vec<i32>> = vec![Vec::new(); self.states.len()];
+        let state_count = self.dfa.len();
+        let mut edges: Vec<Vec<i32>> = vec![Vec::new(); state_count];
         for (from, _, to) in self.dfa.enumerate_edges() {
             let from = from.state_number();
             if self
@@ -2166,7 +2173,7 @@ where
                 edges[from as usize].push(to.state_number());
             }
         }
-        let mut reachable = vec![false; self.states.len()];
+        let mut reachable = vec![false; state_count];
         let mut queue = VecDeque::new();
         if self.info.contains_key(&0) {
             reachable[0] = true;
@@ -2185,7 +2192,7 @@ where
                 }
             }
         }
-        if reached == self.states.len() {
+        if reached == state_count {
             return;
         }
         self.info
@@ -2202,9 +2209,9 @@ where
     }
 
     fn snapshot(&mut self, hazards: &HashMap<i32, StateHazard>) -> StaticDfaTable {
-        let mut remap = vec![usize::MAX; self.states.len()];
+        let mut remap = vec![usize::MAX; self.dfa.len()];
         let mut states: Vec<StaticDfaState> = Vec::with_capacity(self.info.len());
-        for state in &self.states {
+        for state in self.dfa.get_states() {
             let number = state.state_number();
             let Some(facts) = self.info.get(&number) else {
                 continue;

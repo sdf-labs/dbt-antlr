@@ -15,7 +15,6 @@ use crate::atn_config_set::{
 };
 use crate::atn_simulator::IATNSimulator;
 use crate::atn_state::{ATNStateRef, ATNStateType, StarLoopEntryState};
-use crate::dfa::dfa_state::{LexerDFAState, ParserDFAState};
 use crate::lexer_action::LexerAction;
 use crate::lexer_action_executor::LexerActionExecutor;
 use crate::prediction_context::NoopHasherBuilder;
@@ -38,6 +37,7 @@ use hashbrown::{Equivalent, HashSet};
 
 pub type LexerDFA<'sim> = DFA<'sim, LexerATNConfigSet<'sim>>;
 pub type ParserDFA<'sim> = DFA<'sim, ATNConfigSet<'sim>>;
+pub use crate::dfa::dfa_state::{LexerDFAState, ParserDFAState};
 
 ///Helper trait for scope management and temporary values not living long enough
 pub(crate) trait ScopeExt: Sized {
@@ -199,8 +199,9 @@ where
                     .map(move |(symbol, target)| (state, symbol, target))
             })
             .map(|(state, symbol, target)| {
-                let target =
-                    unsafe { (*DFAStateId::new(target).deref(self.chunks)).assume_init_ref() };
+                let target = unsafe {
+                    (*DFAStateId::new(target).deref_unchecked(self.chunks)).assume_init_ref()
+                };
                 (state, symbol, target)
             })
             .collect()
@@ -450,7 +451,8 @@ impl<'sim> DFA<'sim, ATNConfigSet<'sim>> {
         if target == -1 {
             return Some(self.get_error_state());
         }
-        let target = unsafe { (*DFAStateId::new(target).deref(self.chunks)).assume_init_ref() };
+        let target =
+            unsafe { (*DFAStateId::new(target).deref_unchecked(self.chunks)).assume_init_ref() };
         Some(target)
     }
 
@@ -462,6 +464,19 @@ impl<'sim> DFA<'sim, ATNConfigSet<'sim>> {
                 &'sim DFAState<'sim, ATNConfigSet<'sim>>,
             >(&*dfa_state::ERROR_DFA_STATE_REF)
         }
+    }
+
+    pub fn get_state(&self, state_number: i32) -> Option<&'sim ParserDFAState<'sim>> {
+        if state_number == -1 {
+            return Some(self.get_error_state());
+        }
+        if state_number < 0 || state_number as usize >= self.len() {
+            return None;
+        }
+
+        Some(unsafe {
+            (*DFAStateId::new(state_number).deref_unchecked(self.chunks)).assume_init_ref()
+        })
     }
 
     /// The dynamic state materialized from continuation `slot`, if it is
@@ -480,7 +495,9 @@ impl<'sim> DFA<'sim, ATNConfigSet<'sim>> {
         if state_number == UNMATERIALIZED_CONTINUATION {
             return None;
         }
-        Some(unsafe { (*DFAStateId::new(state_number).deref(self.chunks)).assume_init_ref() })
+        Some(unsafe {
+            (*DFAStateId::new(state_number).deref_unchecked(self.chunks)).assume_init_ref()
+        })
     }
 
     /// Caches the dynamic state materialized from continuation `slot`.
@@ -519,7 +536,8 @@ impl<'sim> DFA<'sim, LexerATNConfigSet<'sim>> {
         if target == -1 {
             return Some(self.get_error_state());
         }
-        let target = unsafe { (*DFAStateId::new(target).deref(self.chunks)).assume_init_ref() };
+        let target =
+            unsafe { (*DFAStateId::new(target).deref_unchecked(self.chunks)).assume_init_ref() };
         Some(target)
     }
 
@@ -975,7 +993,7 @@ impl DFAStateId {
     }
 
     #[inline(always)]
-    unsafe fn deref<'sim, CS>(
+    unsafe fn deref_unchecked<'sim, CS>(
         &self,
         roots: *const StateStoreRoots<'sim, CS>,
     ) -> *mut MaybeUninit<DFAState<'sim, CS>>
