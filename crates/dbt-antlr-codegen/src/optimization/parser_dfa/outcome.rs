@@ -105,24 +105,8 @@ pub(crate) struct DecisionOutcome {
     /// Longest lookahead of a finite table, `-1` when unbounded or unknown.
     pub(crate) k: i32,
     pub(crate) num_dfa_states: usize,
-    pub(crate) saw_predicate: bool,
-    pub(crate) first_predicate: Option<(i32, i32)>,
-    /// The decision is an optional-postfix (`X Y?`) shape.
-    pub(crate) has_postfix_shape: bool,
-    /// Conflict states the optional-postfix take rule resolved to take.
-    pub(crate) take_rule_fires: usize,
-    /// Conflict states a guarded take resolved.
-    pub(crate) guarded_takes: usize,
-    /// Conflict states a guarded iterate resolved under the stack guard.
-    pub(crate) guarded_iterates: usize,
-    /// Conflict states the iterate reading resolved outright.
-    pub(crate) iterate_accepts: usize,
-    /// States that accept with the virtual alternative of a shared-descent
-    /// group.
-    pub(crate) descent_group_states: usize,
     /// The shared-descent groups the table accepts with.
     pub(crate) descent: Option<DescentPlan>,
-    pub(crate) utrust_resolutions: usize,
     pub(crate) conflict_witness: Option<Vec<i32>>,
     pub(crate) budget_witness: Option<Vec<i32>>,
     /// The alternative sets of the conflicts that no static resolution
@@ -179,6 +163,14 @@ impl DecisionOutcome {
     /// The guarded states of the tables of the decision.
     pub(crate) fn guarded_states(&self) -> usize {
         self.tables().map(StaticDfaTable::guarded).sum()
+    }
+
+    /// The states that accept with the virtual alternative of a shared-descent
+    /// group.
+    pub(crate) fn descent_group_states(&self) -> usize {
+        self.tables()
+            .map(StaticDfaTable::descent_group_states)
+            .sum()
     }
 
     /// A short description of how the decision falls back at runtime: `0`

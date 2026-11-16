@@ -591,11 +591,7 @@ impl StaticParserDecisionReport {
     /// The states that accept with the virtual alternative of a shared-descent
     /// group, when the decision keeps its table.
     fn descent_group_states(&self) -> usize {
-        if self.result.descent.is_some() {
-            self.result.descent_group_states
-        } else {
-            0
-        }
+        self.result.descent_group_states()
     }
 }
 

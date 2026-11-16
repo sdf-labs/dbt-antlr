@@ -177,7 +177,6 @@ struct StateFacts {
 /// an already known config set must not count its conflicts twice.
 #[derive(Debug, Default)]
 struct ClassifyEffects {
-    utrust: bool,
     conflict: Option<Vec<i32>>,
     /// A take-vetoed conflict state that may resolve as a guarded take.
     guard_candidate: bool,
@@ -187,9 +186,6 @@ struct ClassifyEffects {
     /// The decision state of the attempt is behind a predicate, so the whole
     /// decision depends on parser state and no table can decide it.
     fail_predicated: bool,
-    /// The state accepts with the virtual alternative of a shared-descent
-    /// group.
-    descent_group: bool,
 }
 
 impl StateFacts {
@@ -257,52 +253,34 @@ struct Attempt {
     /// The visited configs by rule index.
     rule_visits: Vec<u64>,
     facts: ClosureFacts,
-    utrust_resolutions: usize,
     /// Alternative sets of the conflicts the construction did not resolve.
     conflicts: Vec<Vec<i32>>,
     /// DFA state number of the first conflict, for the report witness.
     first_conflict_state: Option<i32>,
     /// The decision state is behind a predicate: the decision is predicated.
     predicated: bool,
-    /// The decision is an optional-postfix (`X Y?`) shape.
-    has_postfix_shape: bool,
-    /// Conflict states the optional-postfix take rule resolved to take.
-    take_rule_fires: usize,
-    /// Conflict states a guarded take resolved.
-    guarded_takes: usize,
-    /// Conflict states a guarded iterate resolved under the stack guard.
-    guarded_iterates: usize,
-    /// Conflict states the iterate reading resolved outright, because no
-    /// invoking state can trip an iterate guard.
-    iterate_accepts: usize,
-    /// States that accept with the virtual alternative of a shared-descent
-    /// group.
-    descent_group_states: usize,
     /// The shared-descent plan of the attempt, when it had one.
     descent: Option<DescentPlan>,
 }
 
 impl Attempt {
-    /// Turns what this attempt observed into a decision outcome: the kind, and
-    /// the table when the attempt earns one.
     fn finalize(self, decision_state: ATNStateRef, atn_fallback: AtnFallback) -> DecisionOutcome {
         let mut outcome = DecisionOutcome::new(self.decision, decision_state);
-        apply_facts(&mut outcome, &self);
+        for conflict in &self.conflicts {
+            if !outcome.conflicts.contains(conflict) {
+                outcome.conflicts.push(conflict.clone());
+            }
+        }
 
         if self.predicated {
-            outcome.no_table = Some(NoTableReason::PredicatedStart(outcome.first_predicate));
-            outcome.num_dfa_states = self.state_count;
+            outcome.no_table = Some(NoTableReason::PredicatedStart(self.facts.first_predicate));
             return outcome;
         }
         let Some(table) = self.table else {
             outcome.no_table = Some(NoTableReason::StartBudget);
-            outcome.num_dfa_states = self.state_count;
             return outcome;
         };
 
-        outcome.num_dfa_states = table.states.len();
-        outcome.k = table.max_k;
-        outcome.escapes = table.escapes();
         outcome.coverage_percent = (table.start_coverage() * 100.0) as u32;
         outcome.conflict_witness = table
             .first_escape(CONFLICT_ESCAPE)
@@ -323,7 +301,8 @@ impl Attempt {
             outcome.no_table = Some(NoTableReason::StartConflict);
             return outcome;
         }
-        if outcome.escapes > 0 || table.guarded() > 0 {
+        let escapes = table.escapes();
+        if escapes > 0 || table.guarded() > 0 {
             // Below the coverage threshold, the adaptive simulation decides
             // almost every lookahead anyway, unless there is no adaptive
             // simulation.
@@ -339,6 +318,9 @@ impl Attempt {
         } else {
             outcome.kind = DecisionKind::Static;
         }
+        outcome.num_dfa_states = table.states.len();
+        outcome.k = table.max_k;
+        outcome.escapes = escapes;
         outcome.budget_cutoff = self.budget_cutoff;
         outcome.descent = used_groups(self.descent.as_ref(), &table);
         outcome.table = Some(table);
@@ -674,16 +656,6 @@ impl DecisionTableBuilder {
             let class_outcome =
                 self.build_table(outcome.decision, Some(class), first_failure.is_none(), log);
 
-            outcome.saw_predicate |= class_outcome.saw_predicate;
-            if outcome.first_predicate.is_none() {
-                outcome.first_predicate = class_outcome.first_predicate;
-            }
-            outcome.utrust_resolutions += class_outcome.utrust_resolutions;
-            outcome.guarded_takes += class_outcome.guarded_takes;
-            outcome.guarded_iterates += class_outcome.guarded_iterates;
-            outcome.iterate_accepts += class_outcome.iterate_accepts;
-            outcome.take_rule_fires += class_outcome.take_rule_fires;
-            outcome.has_postfix_shape |= class_outcome.has_postfix_shape;
             outcome.budget_cutoff |= class_outcome.budget_cutoff;
             for conflict in &class_outcome.conflicts {
                 if !outcome.conflicts.contains(conflict) {
@@ -802,7 +774,6 @@ impl DecisionTableBuilder {
         let decision_state = atn.decision_to_state[decision];
         let loop_block = precedence.map(|_| self.loop_block(decision));
         let postfix = self.postfix_shape(decision);
-        let has_postfix_shape = postfix.is_some();
         let budget = self.budget(decision);
         // A precedence class table is selected by the precedence, which a
         // group arm cannot see.
@@ -858,7 +829,6 @@ impl DecisionTableBuilder {
                 completion_depths: &self.completion_depths,
                 attempt: Attempt {
                     decision,
-                    has_postfix_shape,
                     ..Attempt::default()
                 },
             };
@@ -886,26 +856,6 @@ fn used_groups(plan: Option<&DescentPlan>, table: &StaticDfaTable) -> Option<Des
         .cloned()
         .collect();
     (!groups.is_empty()).then_some(DescentPlan { groups })
-}
-
-/// Merges the facts of one attempt into the decision outcome.
-fn apply_facts(outcome: &mut DecisionOutcome, attempt: &Attempt) {
-    outcome.saw_predicate |= attempt.facts.saw_predicate;
-    if outcome.first_predicate.is_none() {
-        outcome.first_predicate = attempt.facts.first_predicate;
-    }
-    outcome.utrust_resolutions += attempt.utrust_resolutions;
-    outcome.has_postfix_shape |= attempt.has_postfix_shape;
-    outcome.take_rule_fires += attempt.take_rule_fires;
-    outcome.guarded_takes += attempt.guarded_takes;
-    outcome.guarded_iterates += attempt.guarded_iterates;
-    outcome.iterate_accepts += attempt.iterate_accepts;
-    outcome.descent_group_states += attempt.descent_group_states;
-    for conflict in &attempt.conflicts {
-        if !outcome.conflicts.contains(conflict) {
-            outcome.conflicts.push(conflict.clone());
-        }
-    }
 }
 
 /// The stack-guard sets of one decision table.
@@ -1179,9 +1129,7 @@ where
         self.attempt.exhausted |= self.closure.exhausted;
         self.attempt.visits = self.closure.visits();
         self.attempt.rule_visits = self.closure.take_rule_visits();
-        if self.attempt.descent_group_states > 0 {
-            self.attempt.descent = self.descent.take();
-        }
+        self.attempt.descent = self.descent.take();
         std::mem::take(&mut self.attempt)
     }
 
@@ -1337,7 +1285,6 @@ where
                     facts.verdict = Verdict::Accept(POSTFIX_TAKE_ALT);
                     facts.resolved_conflict = true;
                 }
-                self.attempt.take_rule_fires += 1;
                 continue;
             }
             let group = guard.group_of(danger);
@@ -1347,7 +1294,6 @@ where
                 facts.guard_defer_alt = POSTFIX_SKIP_ALT;
                 facts.guard_group = group;
             }
-            self.attempt.guarded_takes += 1;
         }
         if !guard.groups.is_empty() {
             self.guard = Some(guard);
@@ -1449,14 +1395,12 @@ where
             facts.resolved_conflict = true;
             if danger.is_empty() {
                 facts.verdict = Verdict::Accept(ITERATE_ALT);
-                self.attempt.iterate_accepts += 1;
                 continue;
             }
             facts.verdict = Verdict::Escape(GUARDED);
             facts.guarded_alt = ITERATE_ALT;
             facts.guard_defer_alt = EXIT_ALT;
             facts.guard_group = guard.group_of(danger);
-            self.attempt.guarded_iterates += 1;
         }
         if !guard.groups.is_empty() {
             self.guard = Some(guard);
@@ -1663,7 +1607,6 @@ where
             // The group accept depends on the taint of the paths.
             facts.resolved_conflict = true;
         }
-        self.attempt.descent_group_states += 1;
         true
     }
 
@@ -1763,12 +1706,7 @@ where
             // different path could add. A *conflict-resolved* accept does: the
             // min-alt argument only holds while every path that reaches the
             // state is taint-free.
-            Verdict::Accept(alt) if resolved_conflict => {
-                // A group accept rests on the taint of the paths too (see
-                // `DescentPlan::group_for`).
-                if alt >= VIRTUAL_ALT_BASE {
-                    self.attempt.descent_group_states -= 1;
-                }
+            Verdict::Accept(_) if resolved_conflict => {
                 // A frontier state resolved by substitution carries no
                 // conflict, so it degrades to a plain escape: the runtime
                 // restarts the adaptive simulation, and the report keeps the
@@ -1814,17 +1752,11 @@ where
         if effects.guard_iterate_candidate {
             self.guard_iterate_candidates.insert(number, true);
         }
-        if effects.utrust {
-            self.attempt.utrust_resolutions += 1;
-        }
         if let Some(alts) = effects.conflict {
             self.attempt.conflicts.push(alts);
         }
         if effects.fail_predicated {
             self.attempt.predicated = true;
-        }
-        if effects.descent_group {
-            self.attempt.descent_group_states += 1;
         }
     }
 
@@ -1985,7 +1917,6 @@ where
                 }
             }
             if mirror_ok && real_take && self.keeps_caller_frames() {
-                self.attempt.take_rule_fires += 1;
                 facts.resolved_conflict = true;
                 facts.verdict = Verdict::Accept(POSTFIX_TAKE_ALT);
                 return (facts, effects);
@@ -2013,7 +1944,6 @@ where
             let min_alt = self.utrust_min_alt(closed, &conflicting, any_boundary, all_boundary);
             if min_alt > 0 {
                 facts.resolved_conflict = true;
-                effects.utrust = true;
                 facts.verdict = Verdict::Accept(min_alt);
                 return (facts, effects);
             }
@@ -2027,7 +1957,6 @@ where
             .map(|group| group.virtual_alt)
         {
             effects.guard_candidate = false;
-            effects.descent_group = true;
             facts.resolved_conflict = true;
             facts.verdict = Verdict::Accept(alt);
             return (facts, effects);

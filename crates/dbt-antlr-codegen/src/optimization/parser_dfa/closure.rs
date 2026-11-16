@@ -175,10 +175,7 @@ pub(super) struct PrecedenceClass {
 /// What one build attempt observed while closing config sets.
 #[derive(Debug, Default)]
 pub(super) struct ClosureFacts {
-    pub(super) saw_predicate: bool,
     pub(super) first_predicate: Option<(i32, i32)>,
-    pub(super) saw_precedence_predicate: bool,
-    pub(super) used_widening: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -968,7 +965,6 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                 }
                 TransitionType::Predicate => {
                     let predicate = transition.try_as::<PredicateTransition>().unwrap();
-                    self.facts.saw_predicate = true;
                     if self.facts.first_predicate.is_none() {
                         self.facts.first_predicate =
                             Some((predicate.rule_index(), predicate.pred_index()));
@@ -1053,7 +1049,6 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             .with_prediction_context(Some(new_context));
         let mut callee_taint = taint;
         if widened {
-            self.facts.used_widening = true;
             callee_taint |= WIDENED_TAINT;
         }
         let foreign_call = taint & BOUNDARY_TAINT != 0
@@ -1102,7 +1097,6 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             }
             return;
         }
-        self.facts.saw_precedence_predicate = true;
         let next = config.clone().with_state(predicate.get_target());
         self.closure(next, taint | PRECPRED_TAINT, depth, out);
     }

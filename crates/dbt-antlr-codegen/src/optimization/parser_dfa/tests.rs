@@ -226,8 +226,11 @@ fn predicated_branches_escape_while_the_loop_stays_static() {
     // FOLLOW chase reached through `{ready()}?` depend on the parse state, so
     // they escape and the table stays (Tier 3, per-config predicate taint).
     assert_eq!(plus.kind, DecisionKind::Hybrid);
-    assert!(plus.saw_predicate || plus.first_predicate.is_some());
     let table = plus.table.as_ref().expect("the loop keeps a hybrid table");
+    assert!(
+        table.states.iter().any(|state| state.predicated),
+        "the predicated branch escapes"
+    );
     assert!(table.escapes() > 0, "the predicated branch escapes");
     assert!(!plus.is_fully_static());
 }
@@ -812,8 +815,7 @@ fn foreign_consumption_guards_the_iterate_reading() {
     assert_eq!(result.k, 4);
     assert_eq!(result.num_dfa_states, 88);
     assert_eq!(result.escapes, 3, "the frontier states escape");
-    assert_eq!(result.guarded_iterates, 32);
-    assert_eq!(result.iterate_accepts, 0);
+    assert_eq!(result.guarded_states(), 32);
     assert!(!result.is_fully_static(), "a guard may defer");
     let classes = result.precedence.as_ref().expect("precedence tables");
     assert_eq!(classes.adaptive_classes, 0);
@@ -854,7 +856,7 @@ fn foreign_consumption_guards_the_iterate_reading() {
     let boolean_loop = &between[3];
     assert_eq!(boolean_loop.kind, DecisionKind::Hybrid);
     assert_eq!(boolean_loop.escapes, 0);
-    assert_eq!(boolean_loop.guarded_iterates, 2);
+    assert_eq!(boolean_loop.guarded_states(), 2);
 }
 
 /// The token types of `names`, each a literal (`'-'`) or a symbolic token name
@@ -961,8 +963,7 @@ fn foreign_rooted_obligations_guard_the_iterate_reading() {
     assert_eq!(result.k, 4);
     assert_eq!(result.num_dfa_states, 27);
     assert_eq!(result.escapes, 0);
-    assert_eq!(result.guarded_iterates, 10);
-    assert_eq!(result.iterate_accepts, 0);
+    assert_eq!(result.guarded_states(), 10);
     assert!(!result.is_fully_static());
     assert_eq!(result.fallback_text(), "10g");
 
@@ -1039,7 +1040,15 @@ fn new_invocations_after_the_skip_are_out_of_discipline() {
         let (result, _) = results
             .iter()
             .zip(&names)
-            .find(|(result, name)| result.has_postfix_shape && *name == rule)
+            .find(|(result, name)| {
+                result.kind != DecisionKind::Ll1
+                    && super::postfix::PostfixShape::analyze(
+                        atn,
+                        atn.decision_to_state[result.decision],
+                    )
+                    .is_some()
+                    && *name == rule
+            })
             .unwrap_or_else(|| panic!("the postfix decision of {rule}"));
         let table = result.table.as_ref().expect("a hybrid table");
         let state = walk(table, &tokens).expect("the path has edges");
@@ -1064,12 +1073,20 @@ fn new_invocations_after_the_skip_are_out_of_discipline() {
 #[test]
 fn optional_elements_after_the_postfix_starve_it() {
     let path = grammars_dir().join("parser").join("PostfixSibling.g4");
+    let atn = parser_atn(&path);
     let results = outcomes(&path);
     let names = rule_names(&path, &results);
     let shaped: Vec<&str> = results
         .iter()
         .zip(&names)
-        .filter(|(result, _)| result.has_postfix_shape)
+        .filter(|(result, _)| {
+            result.kind != DecisionKind::Ll1
+                && super::postfix::PostfixShape::analyze(
+                    atn,
+                    atn.decision_to_state[result.decision],
+                )
+                .is_some()
+        })
         .map(|(_, name)| name.as_str())
         .collect();
     assert_eq!(shaped, ["r", "q", "m"]);
@@ -1119,7 +1136,12 @@ fn skip_mirrors_need_the_take_path_of_the_popped_frame() {
 #[test]
 fn the_take_path_of_an_enclosing_invocation_mirrors_the_take() {
     let results = outcomes(&grammars_dir().join("parser").join("DanglingElse.g4"));
-    let fires: usize = results.iter().map(|result| result.take_rule_fires).sum();
+    let fires: usize = results
+        .iter()
+        .flat_map(DecisionOutcome::tables)
+        .flat_map(|table| &table.states)
+        .filter(|state| state.accept == 1 && state.conflicts == [1, 2])
+        .count();
     assert_eq!(fires, 1);
     assert!(results.iter().all(DecisionOutcome::is_fully_static));
 }
@@ -1130,16 +1152,26 @@ fn the_take_path_of_an_enclosing_invocation_mirrors_the_take() {
 /// reference Java tool reports.
 #[test]
 fn optional_postfix_shapes_are_guarded() {
-    let results = outcomes(&grammars_dir().join("parser").join("GuardExpr.g4"));
+    let path = grammars_dir().join("parser").join("GuardExpr.g4");
+    let atn = parser_atn(&path);
+    let results = outcomes(&path);
     let shaped: Vec<&DecisionOutcome> = results
         .iter()
-        .filter(|result| result.has_postfix_shape)
+        .filter(|result| {
+            super::postfix::PostfixShape::analyze(atn, atn.decision_to_state[result.decision])
+                .is_some()
+        })
         .collect();
     assert_eq!(shaped.len(), 1, "one `pred=predicate?` decision");
     assert_eq!(shaped[0].rule_index, 2, "the `expr` rule owns the shape");
-    let fires: usize = results.iter().map(|result| result.take_rule_fires).sum();
+    let fires: usize = results
+        .iter()
+        .flat_map(DecisionOutcome::tables)
+        .flat_map(|table| &table.states)
+        .filter(|state| state.accept == 1 && state.conflicts == [1, 2])
+        .count();
     assert_eq!(fires, 0);
-    let guarded: usize = results.iter().map(|result| result.guarded_takes).sum();
+    let guarded: usize = results.iter().map(DecisionOutcome::guarded_states).sum();
     assert_eq!(guarded, 8, "matching the reference Java tool");
     assert!(!shaped[0].is_fully_static(), "a guard may defer");
     let table = shaped[0].table.as_ref().expect("the hybrid table is kept");
@@ -1152,8 +1184,13 @@ fn optional_postfix_shapes_are_guarded() {
 
     // No shape means no report line either: the grammar corpus that has no
     // `X Y?` block must stay silent.
-    let plain = outcomes(&grammars_dir().join("CSV.g4"));
-    assert!(plain.iter().all(|result| !result.has_postfix_shape));
+    let csv = grammars_dir().join("CSV.g4");
+    let csv_atn = parser_atn(&csv);
+    let plain = outcomes(&csv);
+    assert!(plain.iter().all(|result| {
+        super::postfix::PostfixShape::analyze(csv_atn, csv_atn.decision_to_state[result.decision])
+            .is_none()
+    }));
 }
 
 /// Builds the tables of every decision of one grammar and resolves them for
@@ -1288,15 +1325,23 @@ fn static_only_turns_predicated_states_into_syntax_errors() {
 
 #[test]
 fn static_only_keeps_the_guard_of_guarded_takes() {
-    let results = resolve_static_only(&grammars_dir().join("parser").join("GuardExpr.g4"));
+    let path = grammars_dir().join("parser").join("GuardExpr.g4");
+    let atn = parser_atn(&path);
+    let results = resolve_static_only(&path);
     let shaped = results
         .iter()
-        .find(|result| result.has_postfix_shape)
+        .find(|result| {
+            super::postfix::PostfixShape::analyze(atn, atn.decision_to_state[result.decision])
+                .is_some()
+        })
         .expect("the `pred?` decision");
-    assert!(shaped.guarded_takes > 0, "the guarded takes stay guarded");
+    assert!(
+        shaped.guarded_states() > 0,
+        "the guarded takes stay guarded"
+    );
     assert!(shaped.is_fully_static());
     let table = shaped.table.as_ref().expect("the hybrid table is kept");
-    assert_eq!(table.guarded(), shaped.guarded_takes);
+    assert_eq!(table.guarded(), shaped.guarded_states());
     assert!(!table.guard_groups.is_empty(), "the guard can trip");
     assert!(!table.guard_pass.is_empty(), "the walk can continue");
     for state in table.states.iter().filter(|state| state.is_guarded()) {
@@ -1306,7 +1351,7 @@ fn static_only_keeps_the_guard_of_guarded_takes() {
         assert!((state.guard_group as usize) < table.guard_groups.len());
     }
     let resolved = shaped.static_only.as_ref().expect("resolved");
-    assert_eq!(resolved.guarded, shaped.guarded_takes);
+    assert_eq!(resolved.guarded, shaped.guarded_states());
     assert!(
         shaped
             .fallback_text()
@@ -1569,7 +1614,7 @@ fn shared_descent_groups_cure_the_escapes_of_the_fuzz_items() {
     let item = by_rule("item");
     assert_eq!(item.kind, DecisionKind::Static);
     assert_eq!(item.escapes, 0);
-    assert_eq!(item.descent_group_states, 15);
+    assert_eq!(item.descent_group_states(), 15);
     let plan = item.descent.as_ref().expect("item accepts with a group");
     let [group] = &plan.groups[..] else {
         panic!("one group: {plan:?}");
@@ -1606,7 +1651,7 @@ fn shared_descent_groups_share_a_one_token_prefix() {
         .iter()
         .find(|result| result.descent.is_some())
         .expect("the primary block accepts with a group");
-    assert_eq!(primary.descent_group_states, 8);
+    assert_eq!(primary.descent_group_states(), 8);
     assert_eq!(primary.escapes, 8);
     let group = &primary.descent.as_ref().unwrap().groups[0];
     assert_eq!(group.alts, [3, 4]);
@@ -1732,7 +1777,7 @@ fn shared_descent_excludes_rules_whose_shared_rule_conflicts_with_member_tails()
     assert!(
         results
             .iter()
-            .all(|result| result.descent.is_none() && result.descent_group_states == 0),
+            .all(|result| result.descent.is_none() && result.descent_group_states() == 0),
         "{results:?}"
     );
     // Distinct subrules `a` and `b` inside `r` that match the same input `ID`,
@@ -1754,7 +1799,7 @@ fn shared_descent_excludes_rules_whose_shared_rule_conflicts_with_member_tails()
     assert!(
         results
             .iter()
-            .all(|result| result.descent.is_none() && result.descent_group_states == 0),
+            .all(|result| result.descent.is_none() && result.descent_group_states() == 0),
         "{results:?}"
     );
 }
@@ -1882,9 +1927,15 @@ fn widened_competitors_get_no_uniform_trust() {
         let results = widened_outcomes_with(&path, atn_fallback);
         let decision = &results[1];
         assert_eq!(attempts_of(&results, 1), [AttemptKind::Widened]);
-        assert_eq!(decision.utrust_resolutions, 0, "{atn_fallback:?}");
         assert!(!decision.is_fully_static(), "{atn_fallback:?}");
         let table = decision.table.as_ref().expect("a partial table");
+        assert!(
+            !table
+                .states
+                .iter()
+                .any(|state| state.accept > 0 && state.conflicts.len() > 1),
+            "{atn_fallback:?}: no conflict state resolves to an alternative"
+        );
         let conflict = walk(table, &[b, b, b, b, a]).expect("conflict state");
         assert_eq!(
             conflict.accept, CONFLICT_ESCAPE,

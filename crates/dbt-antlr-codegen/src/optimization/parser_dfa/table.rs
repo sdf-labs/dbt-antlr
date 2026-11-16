@@ -4,7 +4,7 @@
 
 use std::collections::VecDeque;
 
-use dbt_antlr_runtime::dfa::static_parser_dfa::ParserContinuation;
+use dbt_antlr_runtime::dfa::static_parser_dfa::{ParserContinuation, VIRTUAL_ALT_BASE};
 
 use super::hazard::{StackHijackVerdict, StateHazard};
 use super::{CONFLICT_ESCAPE, ESCAPE, EscapeResolution, GUARDED};
@@ -130,6 +130,15 @@ impl StaticDfaTable {
         self.states
             .iter()
             .filter(|state| state.is_guarded())
+            .count()
+    }
+
+    /// The number of states that accept with the virtual alternative of a
+    /// shared-descent group.
+    pub(crate) fn descent_group_states(&self) -> usize {
+        self.states
+            .iter()
+            .filter(|state| state.accept >= VIRTUAL_ALT_BASE)
             .count()
     }
 
