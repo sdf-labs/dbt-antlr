@@ -9,7 +9,7 @@
 //! must not resolve it to the lowest alternative. `WidenedPrecedence.g4` is a
 //! precedence-class start state: the precedence filter must not drop the exit
 //! config that widening made equal to an iterate config. The table builder
-//! widens only after a start state that spent the visit budget, so the unit
+//! widens only after a spent budget without an earlier escape, so the unit
 //! tests of `dbt-antlr-codegen` force the widened build on these grammars. The
 //! generated tables here come from the default build, and must agree with the
 //! adaptive parser too.

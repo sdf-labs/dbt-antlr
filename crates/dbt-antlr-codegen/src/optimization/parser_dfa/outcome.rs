@@ -11,19 +11,16 @@ use super::descent::DescentPlan;
 use super::{DecisionBudget, EscapeResolutions, StaticDfaTable};
 
 /// How the generated parser predicts one decision.
-///
-/// The kinds are the vocabulary of the optimization manifest, `--dump-dfas`,
-/// and `--profile-decisions`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(crate) enum DecisionKind {
     /// The alternatives have disjoint first tokens: plain LL(1) match arms in
     /// code, no table or `adaptive_predict`.
     Ll1,
-    /// Fully covered by a static DFA table.
+    /// A table without escape states (it can still have runtime stack guards).
     Static,
     /// Covered by a partial DFA table -- some of its states escape to
-    /// `adaptive_predict` or test a stack guard. `--static-dfa-only` resolves
-    /// these states statically (via heuristic guesses).
+    /// `adaptive_predict`. `--static-dfa-only` resolves these states
+    /// statically (via heuristic guesses).
     Hybrid,
     /// No static table: the whole decision is deferred to runtime
     /// `adaptive_predict`.
@@ -208,9 +205,9 @@ impl DecisionOutcome {
             return parts.join("+");
         }
         match self.kind {
-            DecisionKind::Ll1 | DecisionKind::Static => "0".to_owned(),
+            DecisionKind::Ll1 => "0".to_owned(),
             DecisionKind::Adaptive => "all".to_owned(),
-            DecisionKind::Hybrid => {
+            DecisionKind::Static | DecisionKind::Hybrid => {
                 let guarded = self.guarded_states();
                 let mut parts = Vec::new();
                 if let Some(precedence) = &self.precedence {
@@ -238,7 +235,9 @@ impl DecisionOutcome {
     /// `true` when the generated parser predicts the decision without
     /// `adaptive_predict`.
     pub(crate) fn is_fully_static(&self) -> bool {
-        self.static_only.is_some() || matches!(self.kind, DecisionKind::Ll1 | DecisionKind::Static)
+        self.static_only.is_some()
+            || (matches!(self.kind, DecisionKind::Ll1 | DecisionKind::Static)
+                && self.guarded_states() == 0)
     }
 }
 
@@ -310,5 +309,14 @@ mod tests {
             ..DecisionOutcome::default()
         };
         assert_eq!(guarded_class_with_adaptive.fallback_text(), "1c+4g");
+
+        let static_guarded = DecisionOutcome {
+            kind: DecisionKind::Static,
+            escapes: 0,
+            table: Some(table_with(0, 4)),
+            ..DecisionOutcome::default()
+        };
+        assert_eq!(static_guarded.fallback_text(), "4g");
+        assert!(!static_guarded.is_fully_static());
     }
 }

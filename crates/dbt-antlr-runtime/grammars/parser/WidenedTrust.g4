@@ -2,8 +2,7 @@
 // makes (issue #84).
 //
 // In decision 1 of `a`, the alternative `B B B B a E` calls `a` again. The
-// widened build, which runs after a start state that spent the visit budget,
-// gives the inner `a` an empty context. After `'b' 'b' 'b' 'b' 'a'`, both
+// widened build, which runs after a spent budget without an earlier escape,
 // alternatives then meet at the same state with the same context. The real
 // stacks are different: only alternative 2 can read `c b b b b a d e d x`.
 // The padding alternatives make the table large.

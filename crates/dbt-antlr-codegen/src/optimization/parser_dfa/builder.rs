@@ -3,19 +3,21 @@
 //! The static DFA table builder: subset construction, frontiers, budgets, and
 //! trust rules.
 //!
-//! The builder makes one table per decision, or per precedence class, in one
-//! pass. A state that the construction cannot decide soundly escapes on its
-//! own: a predicate, a conflict that no static resolution decides, a taint
-//! that a later path adds, or a budget. The other states stay static. A
-//! decision gets no table when its start state cannot decide, when the table
-//! decides too little of the start lookahead, or when the generated parser
-//! cannot use a table for it (see [`NoTableReason`]).
+//! The builder makes one table per decision, or per precedence class. A state
+//! that the construction cannot decide soundly escapes on its own: a
+//! predicate, a conflict that no static resolution decides, a taint that a
+//! later path adds, or a budget. The other states stay static. A decision gets
+//! no table when its start state cannot decide, when the table decides too
+//! little of the start lookahead, or when the generated parser cannot use a
+//! table for it (see [`NoTableReason`]).
 //!
-//! Until the first state escapes, the table can still be fully static, so the
+//! Until the first state escapes, the table can still be static, so the
 //! construction expands up to the state cap of the decision. After the first
-//! escape, the table defers anyway, and the construction stops at the smaller
-//! frontier of a partial table (see [`Frontier`]). A `max_k` option of the
-//! grammar stops the construction at its depth from the start.
+//! escape, the table defers anyway, and the construction stops at [`Frontier`].
+//! When an escaping table expanded past [`Frontier`] before its first escape,
+//! a bounded pass retries within [`Frontier`]. A conflict-free budget cutoff
+//! or an exhausted start state retries with full widening. A `max_k` option
+//! stops the construction at its depth from the start.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::num::NonZeroUsize;
@@ -248,6 +250,11 @@ struct Attempt {
     /// Set when the attempt spent the state cap or the visit budget and
     /// escaped the states it cannot expand.
     budget_cutoff: bool,
+    /// Set when a conflict, predicate, or taint-increase escape occurred
+    /// before `cut_off` fired.
+    non_budget_escape: bool,
+    /// Set when pre-escape expansion expanded a state at [`Frontier`].
+    exceeded_frontier: bool,
     /// Configs the closures of the attempt visited.
     visits: u64,
     /// The visited configs by rule index.
@@ -302,7 +309,7 @@ impl Attempt {
             return outcome;
         }
         let escapes = table.escapes();
-        if escapes > 0 || table.guarded() > 0 {
+        if escapes > 0 {
             // Below the coverage threshold, the adaptive simulation decides
             // almost every lookahead anyway, unless there is no adaptive
             // simulation.
@@ -555,9 +562,9 @@ impl DecisionTableBuilder {
 
     /// Builds the table of one decision, or of one precedence class of it.
     ///
-    /// When the closure or the expansion of the start state spends the visit
-    /// budget, the full widening is the only way to get a table: the build
-    /// runs again with every caller frame dropped.
+    /// If the start state or a conflict-free build exhausts a budget, the build
+    /// retries with full widening. If an escaping table expanded past
+    /// [`Frontier`], a bounded pass retries within the frontier.
     fn build_table(
         &self,
         decision: usize,
@@ -566,17 +573,72 @@ impl DecisionTableBuilder {
         log: &mut CostLog,
     ) -> DecisionOutcome {
         let decision_state = self.atn.decision_to_state[decision];
+
         #[cfg(test)]
         if self.widened {
-            let widened = self.attempt(decision, 0, class, analyze_hazards, log);
-            return widened.finalize(decision_state, self.atn_fallback);
+            let widened = self.attempt(decision, 0, class, false, analyze_hazards, log);
+            return self.finish_partial(widened, 0, class, analyze_hazards, log);
         }
-        let attempt = self.attempt(decision, i32::MAX, class, analyze_hazards, log);
+
+        let attempt = self.attempt(decision, i32::MAX, class, false, analyze_hazards, log);
         if attempt.start_exhausted {
-            let widened = self.attempt(decision, 0, class, analyze_hazards, log);
-            return widened.finalize(decision_state, self.atn_fallback);
+            let widened = self.attempt(decision, 0, class, false, analyze_hazards, log);
+            return self.finish_partial(widened, 0, class, analyze_hazards, log);
         }
-        attempt.finalize(decision_state, self.atn_fallback)
+        let should_widen = attempt.budget_cutoff && !attempt.non_budget_escape;
+        let exceeded_frontier = attempt.exceeded_frontier;
+        let outcome = attempt.finalize(decision_state, self.atn_fallback);
+        if outcome.kind == DecisionKind::Static {
+            return outcome;
+        }
+        if should_widen {
+            let widened = self.attempt(decision, 0, class, false, analyze_hazards, log);
+            let widened_outcome = widened.finalize(decision_state, self.atn_fallback);
+            if widened_outcome.kind == DecisionKind::Static {
+                return widened_outcome;
+            }
+        }
+        if self.should_retry_bounded(decision, exceeded_frontier, class, &outcome) {
+            let bounded = self.attempt(decision, i32::MAX, class, true, analyze_hazards, log);
+            return bounded.finalize(decision_state, self.atn_fallback);
+        }
+        outcome
+    }
+
+    fn finish_partial(
+        &self,
+        attempt: Attempt,
+        depth_bound: i32,
+        class: Option<PrecedenceClass>,
+        analyze_hazards: bool,
+        log: &mut CostLog,
+    ) -> DecisionOutcome {
+        let decision = attempt.decision;
+        let decision_state = self.atn.decision_to_state[decision];
+        let exceeded_frontier = attempt.exceeded_frontier;
+        let outcome = attempt.finalize(decision_state, self.atn_fallback);
+        if outcome.kind == DecisionKind::Static {
+            return outcome;
+        }
+        if self.should_retry_bounded(decision, exceeded_frontier, class, &outcome) {
+            let bounded = self.attempt(decision, depth_bound, class, true, analyze_hazards, log);
+            return bounded.finalize(decision_state, self.atn_fallback);
+        }
+        outcome
+    }
+
+    fn should_retry_bounded(
+        &self,
+        decision: usize,
+        exceeded_frontier: bool,
+        class: Option<PrecedenceClass>,
+        outcome: &DecisionOutcome,
+    ) -> bool {
+        let may_gain_guards = class.is_some() || self.postfix_shape(decision).is_some();
+        exceeded_frontier
+            && (outcome.table.is_some()
+                || (may_gain_guards
+                    && matches!(outcome.no_table, Some(NoTableReason::LowCoverage { .. }))))
     }
 
     fn is_precedence_loop_decision(&self, state: ATNStateRef) -> bool {
@@ -641,7 +703,6 @@ impl DecisionTableBuilder {
         let mut max_k = 0_i32;
         let mut total_states = 0_usize;
         let mut escapes = 0_usize;
-        let mut guarded = 0_usize;
         let mut first_failure: Option<NoTableReason> = None;
         let mut failed = 0_usize;
 
@@ -674,7 +735,6 @@ impl DecisionTableBuilder {
                     max_k = max_k.max(table.max_k);
                     total_states += table.states.len();
                     escapes += table.escapes();
-                    guarded += table.guarded();
                     tables[class_index] = Some(table);
                 }
                 None => {
@@ -689,7 +749,7 @@ impl DecisionTableBuilder {
         let total = tables.len();
         outcome.kind = if failed == total {
             DecisionKind::Adaptive
-        } else if failed > 0 || escapes > 0 || guarded > 0 {
+        } else if failed > 0 || escapes > 0 {
             DecisionKind::Hybrid
         } else {
             DecisionKind::Static
@@ -722,11 +782,18 @@ impl DecisionTableBuilder {
         decision: usize,
         depth_bound: i32,
         precedence: Option<PrecedenceClass>,
+        enforce_frontier: bool,
         analyze_hazards: bool,
         log: &mut CostLog,
     ) -> Attempt {
         let started = self.profile.then(Instant::now);
-        let mut attempt = self.run_attempt(decision, depth_bound, precedence, analyze_hazards);
+        let mut attempt = self.run_attempt(
+            decision,
+            depth_bound,
+            precedence,
+            enforce_frontier,
+            analyze_hazards,
+        );
         let outcome = if attempt.exhausted {
             AttemptOutcome::VisitBudget
         } else if attempt.failed || attempt.budget_cutoff {
@@ -768,6 +835,7 @@ impl DecisionTableBuilder {
         decision: usize,
         depth_bound: i32,
         precedence: Option<PrecedenceClass>,
+        enforce_frontier: bool,
         analyze_hazards: bool,
     ) -> Attempt {
         let atn = self.atn;
@@ -805,6 +873,7 @@ impl DecisionTableBuilder {
                 ),
                 depth_bound,
                 frontier: Frontier::of(&budget, self.atn_fallback),
+                enforce_frontier,
                 max_states: budget.max_states,
                 max_k: budget.max_k,
                 has_escape: false,
@@ -892,6 +961,7 @@ struct DecisionBuild<'b, 'sim, 'a> {
     depth_bound: i32,
     /// The soft limits of the table once it has an escape state.
     frontier: Frontier,
+    enforce_frontier: bool,
     /// The state cap of the table.
     max_states: usize,
     /// The lookahead depth that a source set: the table stops expanding at
@@ -986,7 +1056,9 @@ where
             if !facts.expanded {
                 let at_frontier = self.at_frontier(facts.depth);
                 let at_max_k = self.max_k.is_some_and(|max_k| facts.depth >= max_k);
-                if self.budget_spent || (at_frontier && (self.has_escape || at_max_k)) {
+                if self.budget_spent
+                    || (at_frontier && (self.enforce_frontier || self.has_escape || at_max_k))
+                {
                     self.escape_frontier(state_number, &facts);
                     continue;
                 }
@@ -996,6 +1068,9 @@ where
                 // that no resolution decides.
                 if at_frontier && self.resolve_frontier(state_number, &facts, false) {
                     continue;
+                }
+                if at_frontier && !self.enforce_frontier {
+                    self.attempt.exceeded_frontier = true;
                 }
             }
             if let Some(facts) = self.info.get_mut(&state_number) {
@@ -1060,13 +1135,21 @@ where
         if !self.attempt.failed {
             self.prune_unreachable();
             self.finalize_guards();
-            self.attach_continuations();
             // `finalize` drops a table with an escaping start state, so its
-            // hazards are not needed.
+            // continuations and hazards are not needed.
             let start_decides = self.info.get(&0).is_some_and(|facts| {
                 !matches!(facts.verdict, Verdict::Escape(ESCAPE | CONFLICT_ESCAPE))
             });
-            let analyze = self.static_only && self.analyze_hazards && start_decides;
+            let has_escape = self
+                .info
+                .values()
+                .any(|facts| matches!(facts.verdict, Verdict::Escape(ESCAPE | CONFLICT_ESCAPE)));
+            let will_retry_partial = self.attempt.exceeded_frontier && start_decides && has_escape;
+            if !will_retry_partial {
+                self.attach_continuations();
+            }
+            let analyze =
+                self.static_only && self.analyze_hazards && start_decides && !will_retry_partial;
             let hazards = if analyze {
                 self.state_hazards()
             } else {
@@ -1532,7 +1615,11 @@ where
         }
         self.commit(number, effects);
         let decide = facts.verdict == Verdict::Decide;
-        self.has_escape |= matches!(facts.verdict, Verdict::Escape(_));
+        let is_escape = matches!(facts.verdict, Verdict::Escape(_));
+        self.has_escape |= is_escape;
+        if is_escape && !self.budget_spent {
+            self.attempt.non_budget_escape = true;
+        }
         self.info.insert(number, facts);
         if decide && !self.attempt.failed {
             self.queue.push_back(state);
@@ -1735,6 +1822,9 @@ where
                     self.attempt.first_conflict_state.get_or_insert(number);
                 }
                 self.has_escape = true;
+                if !self.budget_spent {
+                    self.attempt.non_budget_escape = true;
+                }
                 if let Some(facts) = self.info.get_mut(&number) {
                     // The taint of every path, the first one included.
                     let approximated = facts

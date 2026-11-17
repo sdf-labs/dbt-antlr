@@ -16,6 +16,7 @@ use crate::grammar::diagnostic::Severity;
 use crate::grammar::loader::LoadOptions;
 use crate::optimization::AtnFallback;
 
+use super::builder::{PARTIAL_DEPTH_CAP, STATIC_ONLY_DEPTH_CAP};
 use super::cost::{AttemptKind, AttemptOutcome};
 use super::loop_block::LoopBlock;
 use super::table::{StaticDfaState, StaticDfaTable};
@@ -854,9 +855,11 @@ fn foreign_consumption_guards_the_iterate_reading() {
 
     let between = outcomes(&grammars_dir().join("parser").join("BetweenExpr.g4"));
     let boolean_loop = &between[3];
-    assert_eq!(boolean_loop.kind, DecisionKind::Hybrid);
+    assert_eq!(boolean_loop.kind, DecisionKind::Static);
     assert_eq!(boolean_loop.escapes, 0);
     assert_eq!(boolean_loop.guarded_states(), 2);
+    assert_eq!(boolean_loop.fallback_text(), "2g");
+    assert!(!boolean_loop.is_fully_static());
 }
 
 /// The token types of `names`, each a literal (`'-'`) or a symbolic token name
@@ -1869,7 +1872,10 @@ fn builds_escape_where_the_visit_budget_runs_out() {
     assert_eq!(results[7].kind, DecisionKind::Hybrid);
     assert!(results[7].budget_cutoff);
     assert!(results[7].escapes > 0);
-    assert_eq!(attempts_of(&results, 7), [AttemptKind::Default]);
+    assert_eq!(
+        attempts_of(&results, 7),
+        [AttemptKind::Default, AttemptKind::Widened]
+    );
     assert_eq!(
         results[7].cost.attempts[0].outcome,
         AttemptOutcome::VisitBudget
@@ -2089,9 +2095,9 @@ fn spent_visit_budgets_emit_g4s193_warnings() {
             "the analysis of parser decision 0 of rule 'stat' is slow: 1 of 1 build attempts \
              spent the visit budget (100 configs); 100 configs visited, 5 DFA states built; \
              most visited rules: expr 96%, stat 4%",
-            "the analysis of parser decision 3 of rule 'expr' is slow: 3 of 4 build attempts \
-             spent the visit budget (100 configs); 308 configs visited, 12 DFA states built; \
-             most visited rules: expr 89%, stat 10%",
+            "the analysis of parser decision 3 of rule 'expr' is slow: 3 of 7 build attempts \
+             spent the visit budget (100 configs); 548 configs visited, 23 DFA states built; \
+             most visited rules: expr 88%, stat 11%",
         ]
     );
 
@@ -3812,5 +3818,345 @@ fn reexpansion_respects_state_cap_and_prunes_unreachable_states_on_visit_cutoff(
     assert!(
         saw_pruned,
         "visit-budget sweep should exercise post-cutoff pruning"
+    );
+}
+
+#[test]
+fn state_budget_cutoff_without_escape_widens_to_static() {
+    let source = "grammar WidenStatic;\n\
+                  options { max_dfa_states = 8; }\n\
+                  top : r1 | r2 ;\n\
+                  r1 : '(' r1 ')' | A X ;\n\
+                  r2 : '(' r2 ')' | A Y ;\n\
+                  A : 'a' ; X : 'x' ; Y : 'y' ;\n";
+    for (atn_fallback, first_attempt) in [
+        (AtnFallback::Allowed, AttemptKind::Default),
+        (AtnFallback::Forbidden, AttemptKind::StaticOnly),
+    ] {
+        let (_, build) = build_source_with(
+            "WidenStatic",
+            source,
+            atn_fallback,
+            &ParserDfaBudgets::default(),
+        );
+        let decision = build
+            .report
+            .decisions
+            .iter()
+            .find(|entry| entry.rule == "top")
+            .expect("top decision");
+        assert_eq!(
+            decision.result.kind,
+            DecisionKind::Static,
+            "{atn_fallback:?}"
+        );
+        assert_eq!(decision.result.escapes, 0, "{atn_fallback:?}");
+        assert_eq!(decision.result.guarded_states(), 0, "{atn_fallback:?}");
+        assert_eq!(
+            decision
+                .result
+                .cost
+                .attempts
+                .iter()
+                .map(|attempt| attempt.kind)
+                .collect::<Vec<_>>(),
+            [first_attempt, AttemptKind::Widened],
+            "{atn_fallback:?}"
+        );
+    }
+}
+
+#[test]
+fn budget_cutoff_after_non_budget_escape_skips_widening() {
+    let source = "grammar EscapeBeforeCutoff;\n\
+                  options { max_dfa_states = 8; }\n\
+                  top : A {true}? B | A C | D E1 E2 E3 ( F1 | F2 ) X | D E1 E2 E3 ( F1 | F2 ) Y ;\n\
+                  A : 'a' ; B : 'b' ; C : 'c' ; D : 'd' ;\n\
+                  E1 : 'e1' ; E2 : 'e2' ; E3 : 'e3' ; F1 : 'f1' ; F2 : 'f2' ;\n\
+                  X : 'x' ; Y : 'y' ;\n";
+    let (_, build) = build_source_with(
+        "EscapeBeforeCutoff",
+        source,
+        AtnFallback::Forbidden,
+        &ParserDfaBudgets::default(),
+    );
+    let decision = &build.report.decisions[0].result;
+    assert_eq!(decision.kind, DecisionKind::Hybrid);
+    assert!(decision.budget_cutoff);
+    assert_eq!(
+        decision
+            .cost
+            .attempts
+            .iter()
+            .map(|attempt| attempt.kind)
+            .collect::<Vec<_>>(),
+        [AttemptKind::StaticOnly]
+    );
+}
+
+#[test]
+fn widened_false_conflict_keeps_default_partial_table() {
+    let path = grammars_dir().join("parser").join("WidenedTrust.g4");
+    let compilation = compile(LoadOptions {
+        roots: vec![path],
+        library_directories: Vec::new(),
+    })
+    .expect("grammar compiles");
+    let parser = compilation
+        .parser(compilation.roots[0].parser.expect("parser root"))
+        .expect("parser artifact");
+    let budgets = vec![
+        super::DecisionBudget::default(),
+        super::DecisionBudget {
+            max_states: 50,
+            explicit_max_states: true,
+            ..super::DecisionBudget::default()
+        },
+    ];
+    let results = builder(parser)
+        .with_atn_fallback(AtnFallback::Forbidden)
+        .with_budgets(budgets)
+        .build_all();
+    let decision = &results[1];
+    assert_eq!(
+        attempts_of(&results, 1),
+        [AttemptKind::StaticOnly, AttemptKind::Widened]
+    );
+    assert_eq!(decision.kind, DecisionKind::Hybrid);
+    let table = decision.table.as_ref().expect("partial table kept");
+    assert!(
+        table.states.iter().all(|state| state.conflicts.is_empty()),
+        "widened false conflict must not replace default table"
+    );
+}
+
+#[test]
+fn frontier_bounds_late_escapes_and_conflict_free_static_only_cutoffs() {
+    let late_default = "grammar LateDefault;\n\
+                        top : A B C D E F {true}? G X | A B C D E F G Y | Z ;\n\
+                        A : 'a' ; B : 'b' ; C : 'c' ; D : 'd' ; E : 'e' ; F : 'f' ;\n\
+                        G : 'g' ; X : 'x' ; Y : 'y' ; Z : 'z' ;\n";
+    let (_, build) = build_source_with(
+        "LateDefault",
+        late_default,
+        AtnFallback::Allowed,
+        &ParserDfaBudgets::default(),
+    );
+    let decision = &build.report.decisions[0].result;
+    assert_eq!(decision.kind, DecisionKind::Hybrid);
+    assert!(decision.k <= PARTIAL_DEPTH_CAP as i32);
+    assert_eq!(
+        decision
+            .cost
+            .attempts
+            .iter()
+            .map(|attempt| attempt.kind)
+            .collect::<Vec<_>>(),
+        [AttemptKind::Default, AttemptKind::Default]
+    );
+
+    let late_static_only = "grammar LateStaticOnly;\n\
+                            top : T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11 T12 T13 T14 T15 T16 T17 T18 {true}? A X\n\
+                                | T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11 T12 T13 T14 T15 T16 T17 T18 A Y ;\n\
+                            T1 : 't1' ; T2 : 't2' ; T3 : 't3' ; T4 : 't4' ; T5 : 't5' ; T6 : 't6' ;\n\
+                            T7 : 't7' ; T8 : 't8' ; T9 : 't9' ; T10 : 't10' ; T11 : 't11' ; T12 : 't12' ;\n\
+                            T13 : 't13' ; T14 : 't14' ; T15 : 't15' ; T16 : 't16' ; T17 : 't17' ; T18 : 't18' ;\n\
+                            A : 'a' ; X : 'x' ; Y : 'y' ;\n";
+    let (_, build) = build_source_with(
+        "LateStaticOnly",
+        late_static_only,
+        AtnFallback::Forbidden,
+        &ParserDfaBudgets::default(),
+    );
+    let decision = &build.report.decisions[0].result;
+    assert_eq!(decision.kind, DecisionKind::Hybrid);
+    assert!(decision.k <= STATIC_ONLY_DEPTH_CAP as i32);
+    assert_eq!(
+        decision
+            .cost
+            .attempts
+            .iter()
+            .map(|attempt| attempt.kind)
+            .collect::<Vec<_>>(),
+        [AttemptKind::StaticOnly, AttemptKind::StaticOnly]
+    );
+
+    let deep_static_cutoff = "grammar DeepStaticOnlyCutoff;\n\
+                              options { max_dfa_states = 18; }\n\
+                              top : P P P P P P P P P P P P P P P P P P P P A X\n\
+                                  | P P P P P P P P P P P P P P P P P P P P A Y ;\n\
+                              A : 'a' ; P : 'p' ; X : 'x' ; Y : 'y' ;\n";
+    let (_, build) = build_source_with(
+        "DeepStaticOnlyCutoff",
+        deep_static_cutoff,
+        AtnFallback::Forbidden,
+        &ParserDfaBudgets::default(),
+    );
+    let decision = &build.report.decisions[0].result;
+    assert_eq!(decision.kind, DecisionKind::Hybrid);
+    assert!(decision.k <= STATIC_ONLY_DEPTH_CAP as i32);
+    assert_eq!(
+        decision
+            .cost
+            .attempts
+            .iter()
+            .map(|attempt| attempt.kind)
+            .collect::<Vec<_>>(),
+        [
+            AttemptKind::StaticOnly,
+            AttemptKind::Widened,
+            AttemptKind::StaticOnly,
+        ]
+    );
+}
+
+#[test]
+fn start_exhausted_widened_exceeding_frontier_retries_bounded_with_hazards() {
+    let source = "grammar StartExhaustedBounded;\n\
+                  options { max_dfa_visits = 350; }\n\
+                  entry : top 'u' | top 'v' ;\n\
+                  top : H P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 P11 P12 P13 P14 P15 P16 P17 P18 tail\n\
+                      | H P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 P11 P12 P13 P14 P15 P16 P17 P18 tail\n\
+                      | a0 'z' ;\n\
+                  a0 : c0 ; tail : 'a' ;\n\
+                  c0 : c1 | c2 ; c1 : c3 | c4 ; c2 : c3 | c4 ;\n\
+                  c3 : c5 | c6 ; c4 : c5 | c6 ; c5 : c7 | c8 ; c6 : c7 | c8 ;\n\
+                  c7 : c9 | c10 ; c8 : c9 | c10 ; c9 : c11 | c12 ; c10 : c11 | c12 ;\n\
+                  c11 : c13 | c14 ; c12 : c13 | c14 ; c13 : 'f' ; c14 : 'g' ;\n\
+                  H : 'h' ;\n\
+                  P1 : 'p1' ; P2 : 'p2' ; P3 : 'p3' ; P4 : 'p4' ; P5 : 'p5' ; P6 : 'p6' ;\n\
+                  P7 : 'p7' ; P8 : 'p8' ; P9 : 'p9' ; P10 : 'p10' ; P11 : 'p11' ; P12 : 'p12' ;\n\
+                  P13 : 'p13' ; P14 : 'p14' ; P15 : 'p15' ; P16 : 'p16' ; P17 : 'p17' ; P18 : 'p18' ;\n";
+    let (_, build) = build_source_with(
+        "StartExhaustedBounded",
+        source,
+        AtnFallback::Forbidden,
+        &ParserDfaBudgets::default(),
+    );
+    let decision = &build
+        .report
+        .decisions
+        .iter()
+        .find(|entry| entry.rule == "top")
+        .expect("top decision")
+        .result;
+    assert_eq!(decision.kind, DecisionKind::Hybrid, "{decision:#?}");
+    assert!(decision.k <= STATIC_ONLY_DEPTH_CAP as i32);
+    assert_eq!(
+        decision
+            .cost
+            .attempts
+            .iter()
+            .map(|attempt| attempt.kind)
+            .collect::<Vec<_>>(),
+        [
+            AttemptKind::StaticOnly,
+            AttemptKind::Widened,
+            AttemptKind::Widened,
+        ],
+        "{decision:#?}"
+    );
+    let resolved = decision.static_only.as_ref().expect("resolved");
+    assert!(
+        resolved
+            .tie_breaks
+            .iter()
+            .any(|group| group.hazard.is_some()),
+        "bounded widened retry must run hazard analysis: {resolved:?}"
+    );
+}
+
+#[test]
+fn guarded_zero_escape_table_past_frontier_stays_static_without_truncating() {
+    let source = "grammar GuardedPastFrontier;\n\
+                  prog : stmt+ EOF ;\n\
+                  stmt : 'set' expr K1 K2 K3 K4 '=' expr ';' | expr ';' ;\n\
+                  expr : value postfix? ;\n\
+                  postfix : K1 K2 K3 K4 '=' value ;\n\
+                  value : ID ;\n\
+                  K1 : 'k1' ; K2 : 'k2' ; K3 : 'k3' ; K4 : 'k4' ; ID : 'id' ;\n";
+    for (atn_fallback, expected_attempt) in [
+        (AtnFallback::Allowed, AttemptKind::Default),
+        (AtnFallback::Forbidden, AttemptKind::StaticOnly),
+    ] {
+        let (_, build) = build_source_with(
+            "GuardedPastFrontier",
+            source,
+            atn_fallback,
+            &ParserDfaBudgets::default(),
+        );
+        let decision = build
+            .report
+            .decisions
+            .iter()
+            .find(|entry| entry.rule == "expr")
+            .expect("expr decision");
+        assert_eq!(
+            decision.result.kind,
+            DecisionKind::Static,
+            "{atn_fallback:?}"
+        );
+        assert_eq!(decision.result.escapes, 0, "{atn_fallback:?}");
+        assert!(decision.result.guarded_states() > 0, "{atn_fallback:?}");
+        assert!(
+            decision.result.k > PARTIAL_DEPTH_CAP as i32,
+            "{atn_fallback:?}"
+        );
+        assert_eq!(
+            decision
+                .result
+                .cost
+                .attempts
+                .iter()
+                .map(|attempt| attempt.kind)
+                .collect::<Vec<_>>(),
+            [expected_attempt],
+            "{atn_fallback:?}"
+        );
+        if atn_fallback == AtnFallback::Forbidden {
+            let resolved = decision.result.static_only.as_ref().expect("resolved");
+            assert!(resolved.guarded > 0);
+            assert!(
+                resolved
+                    .guard_groups
+                    .iter()
+                    .any(|group| group.hazard.is_some()),
+                "guard hazard analysis must run"
+            );
+        }
+    }
+}
+
+#[test]
+fn low_coverage_past_frontier_skips_redundant_bounded_retry() {
+    let source = "grammar LowCoverageLateEscape;\n\
+                  top : head A B C D E {true}? F X\n\
+                      | head A B C D E F Y\n\
+                      | T12 ;\n\
+                  head : T1 | T2 | T3 | T4 | T5 | T6 | T7 | T8 | T9 | T10 | T11 ;\n\
+                  T1 : 't1' ; T2 : 't2' ; T3 : 't3' ; T4 : 't4' ;\n\
+                  T5 : 't5' ; T6 : 't6' ; T7 : 't7' ; T8 : 't8' ;\n\
+                  T9 : 't9' ; T10 : 't10' ; T11 : 't11' ; T12 : 't12' ;\n\
+                  A : 'a' ; B : 'b' ; C : 'c' ; D : 'd' ; E : 'e' ; F : 'f' ;\n\
+                  X : 'x' ; Y : 'y' ;\n";
+    let (_, build) = build_source_with(
+        "LowCoverageLateEscape",
+        source,
+        AtnFallback::Allowed,
+        &ParserDfaBudgets::default(),
+    );
+    let decision = &build.report.decisions[0].result;
+    assert!(matches!(
+        decision.no_table,
+        Some(NoTableReason::LowCoverage { .. })
+    ));
+    assert_eq!(
+        decision
+            .cost
+            .attempts
+            .iter()
+            .map(|attempt| attempt.kind)
+            .collect::<Vec<_>>(),
+        [AttemptKind::Default]
     );
 }
