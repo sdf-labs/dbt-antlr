@@ -3,7 +3,7 @@
 //! The analysis budgets of the static parser DFA construction.
 //!
 //! Each decision gets a [`DecisionBudget`]: the state cap of its table, the
-//! lookahead depth of a hybrid table, and the configs that one build attempt
+//! lookahead depth of a partial table, and the configs that one build attempt
 //! can visit. The limits come from these sources, from the highest priority
 //! to the lowest:
 //!
@@ -31,9 +31,9 @@ pub(crate) const DEFAULT_MAX_STATES: usize = 1000;
 /// The state cap alone does not limit the analysis time. The build-time
 /// closure explores every path, and the runtime explores a path only when the
 /// input needs it. Thus one state of a large grammar can close over tens of
-/// thousands of configs. When a static attempt spends this budget, the
-/// classifier tries a wider widening or a hybrid table. When a hybrid attempt
-/// spends it after the start state, the states that are not expanded escape.
+/// thousands of configs. When an attempt spends this budget after the start
+/// state, the states that are not expanded escape. When the start state spends
+/// it, the builder tries again with full widening.
 pub(crate) const DEFAULT_VISIT_BUDGET: u64 = 2_000_000;
 
 /// The visits that one state of the state cap adds to the visit budget when
@@ -45,7 +45,7 @@ const VISITS_PER_STATE: u64 = DEFAULT_VISIT_BUDGET / DEFAULT_MAX_STATES as u64;
 pub(crate) const MAX_STATES_OPTION: &str = "max_dfa_states";
 /// The short name of [`MAX_STATES_OPTION`].
 pub(crate) const MAX_STATES_ALIAS: &str = "max_states";
-/// The grammar option of the hybrid lookahead depth.
+/// The grammar option of the lookahead depth of a partial table.
 pub(crate) const MAX_K_OPTION: &str = "max_k";
 /// The grammar option of the visit budget.
 pub(crate) const MAX_VISITS_OPTION: &str = "max_dfa_visits";
@@ -102,7 +102,7 @@ fn parse_limit(value: &str, max: u64) -> Result<u64, String> {
 pub(crate) struct BudgetLimits {
     /// The state cap of a decision table.
     pub(crate) max_states: Option<usize>,
-    /// The depth at which a hybrid table stops.
+    /// The depth at which a partial table stops.
     pub(crate) max_k: Option<usize>,
     /// The configs that one build attempt can visit.
     pub(crate) max_visits: Option<u64>,
@@ -160,13 +160,13 @@ impl BudgetLimits {
 pub(crate) struct DecisionBudget {
     /// The state cap of one table of the decision.
     pub(crate) max_states: usize,
-    /// The depth at which a hybrid table stops, or `None` for the
-    /// default depth of the attempt.
+    /// The depth at which a partial table stops, or `None` for the default
+    /// depth of the attempt.
     pub(crate) max_k: Option<usize>,
     /// The configs that one build attempt can visit.
     pub(crate) max_visits: u64,
-    /// A source set the state cap. The default hybrid table then expands up
-    /// to the state cap too, and not only up to its own small cap.
+    /// A source set the state cap. A partial table then expands up to the
+    /// state cap too, and not only up to its own small cap.
     pub(crate) explicit_max_states: bool,
 }
 

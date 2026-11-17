@@ -10,9 +10,7 @@ use crate::lexer_action_executor::LexerActionExecutor;
 use crate::semantic_context::SemanticContext;
 use crate::PredictionContextCache;
 
-#[allow(dead_code)]
 pub type ParserDFAState<'sim> = DFAState<'sim, ATNConfigSet<'sim>>;
-#[allow(dead_code)]
 pub type LexerDFAState<'sim> = DFAState<'sim, LexerATNConfigSet<'sim>>;
 
 #[derive(Eq, PartialEq, Debug)]

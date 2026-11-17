@@ -104,7 +104,7 @@ mv "$STATIC_TMP/guardexprparser.rs" "$SCRIPT_DIR/tests/gen/guardexprparser_stati
 
 # The `--static-dfa-only` twin of the guarded-take witness: its guarded states
 # keep the stack guard and skip where the guard defers, so the differential test
-# parses the same corpus without adaptivePredict.
+# parses the same corpus without adaptive_predict.
 echo "Generating: guardexprparser_static_only"
 "$GEN_BIN" -no-listener --static-dfa-only -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/GuardExpr.g4"
 mv "$STATIC_TMP/guardexprparser.rs" "$SCRIPT_DIR/tests/gen/guardexprparser_static_only.rs"
@@ -136,7 +136,7 @@ done
 # The shared-descent witness with a one-token prefix, generated three ways: the
 # adaptive parser is the oracle of the differential tests, the static twin
 # parses `'(' e` once for the row-constructor/parens group, and the
-# `--static-dfa-only` twin takes the group's fallbacks without adaptivePredict.
+# `--static-dfa-only` twin takes the group's fallbacks without adaptive_predict.
 echo "Generating: parser/ParenExpr"
 "$GEN_BIN" -no-listener -o "$SCRIPT_DIR/tests/gen" "$SCRIPT_DIR/grammars/parser/ParenExpr.g4"
 echo "Generating: parenexprparser_static"

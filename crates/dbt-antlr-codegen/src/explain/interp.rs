@@ -9,7 +9,7 @@
 //!   `--static-dfa-only` parser: the runtime walk of the static tables, the
 //!   inline token switch of an `LL(1)` decision, and the neutral parse of a
 //!   shared-descent group.
-//! - [`Oracle::FullLl`] predicts every decision with `adaptivePredict` in the
+//! - [`Oracle::FullLl`] predicts every decision with `adaptive_predict` in the
 //!   `LL` prediction mode.
 //!
 //! Both simulations stop at the first syntax error and record every
@@ -42,7 +42,7 @@ use dbt_antlr_runtime::{Arena, PredictionMode};
 
 use super::lex::{ExplainLexer, LexerSpec};
 use crate::grammar::atn::DecisionLookahead;
-use crate::optimization::parser_dfa::{DecisionResult, EscapeResolution, StaticDfaTable};
+use crate::optimization::parser_dfa::{DecisionOutcome, EscapeResolution, StaticDfaTable};
 use crate::optimization::{DescentGroup, StaticParserTables};
 
 type ExplainTokens<'input, 'arena> = CommonTokenStream<
@@ -136,7 +136,7 @@ impl<'input, 'arena>
 
 /// The static prediction data of the parser under test.
 pub(super) struct StaticOracle<'r> {
-    pub(super) results: &'r [DecisionResult],
+    pub(super) results: &'r [DecisionOutcome],
     pub(super) tables: &'r StaticParserTables,
     pub(super) runtime: &'static RuntimeTables,
     /// The `LL(1)` lookahead of each disjoint decision, by decision number.
@@ -198,7 +198,7 @@ pub(super) enum TableKind {
     GuardDeferred,
     /// A predicated state that `--static-dfa-only` turned into a syntax error.
     SyntaxError,
-    /// An escape state: the table handed the decision to `adaptivePredict`.
+    /// An escape state: the table handed the decision to `adaptive_predict`.
     Escape,
     /// The walk ended in a state that the explanation cannot classify.
     Unknown,
@@ -267,7 +267,7 @@ pub(super) enum Resolution {
     /// A decision without a static table, which `--static-dfa-only` cannot
     /// predict (the generator reports `G4S190`).
     NoStaticTable,
-    /// `adaptivePredict` of a decision without a static table.
+    /// `adaptive_predict` of a decision without a static table.
     Adaptive,
     /// Full `LL` prediction (the oracle).
     FullLl,
@@ -903,7 +903,7 @@ impl<'input, 'arena> Simulation<'input, 'arena, '_, '_> {
 
     /// Walks the generation-time table of a decision over the lookahead to
     /// find the state where the runtime walk stops.
-    fn walk_table(&mut self, result: &DecisionResult) -> Option<TableWalk> {
+    fn walk_table(&mut self, result: &DecisionOutcome) -> Option<TableWalk> {
         let precedence = self.base.get_precedence().max(0);
         let (table, class) = match (&result.table, &result.precedence) {
             (Some(table), _) => (table, None),

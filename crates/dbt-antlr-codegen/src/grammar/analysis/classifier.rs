@@ -420,7 +420,7 @@ pub(crate) struct DecisionResult {
     pub(crate) table: Option<StaticDfaTable>,
     pub(crate) precedence: Option<PrecedenceTables>,
     /// The escape states that `--static-dfa-only` resolved, set once every
-    /// table of the decision predicts without `adaptivePredict`.
+    /// table of the decision predicts without `adaptive_predict`.
     pub(crate) static_only: Option<EscapeResolutions>,
     /// What the classification of the decision cost.
     pub(crate) cost: DecisionCost,

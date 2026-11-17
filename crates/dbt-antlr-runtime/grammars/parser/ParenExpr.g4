@@ -13,7 +13,7 @@
 // {rowConstructor, parens}: the parser parses `e` once after '(' and picks the
 // alternative from the next token. Deep nesting ('((((((x)))))') keeps the
 // subquery reading alive arbitrarily long; those paths still escape to
-// adaptivePredict. Grammar from the k3 reference runtime.
+// adaptive_predict. Grammar from the k3 reference runtime.
 grammar ParenExpr;
 
 s : e EOF ;

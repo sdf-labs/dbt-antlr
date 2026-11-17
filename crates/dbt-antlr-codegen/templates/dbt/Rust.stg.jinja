@@ -668,7 +668,7 @@ loop {
     `shared_descent!` invocation, which evaluates to the member alternative;
     the outer match then runs that alternative's ordinary arm, whose call of
     the shared rule takes the subtree of the neutral parse (`resumeTakeHook`).
-    A group's fallback is `adaptivePredict`, or under `--static-dfa-only` its
+    A group's fallback is `adaptive_predict`, or under `--static-dfa-only` its
     minimum member alternative. -#}
 {%- macro DescentAltBlock(choice, preamble, alts, groups, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});

@@ -143,8 +143,7 @@ pub fn emit_files_with_flags(
 pub struct EmittedOutput {
     /// Generated recognizer source files. Empty when
     /// [`OptimizationOptions::report_only`] is enabled or a report mode
-    /// implies it ([`OptimizationOptions::report_decisions`],
-    /// [`OptimizationOptions::dump_dfas`],
+    /// implies it ([`OptimizationOptions::dump_dfas`],
     /// [`OptimizationOptions::profile_decisions`]).
     pub files: Vec<EmittedFile>,
     /// Diagnostics that did not abort the run: warnings (for example
@@ -158,8 +157,8 @@ pub struct EmittedOutput {
     /// `<grammar>.optimizations.txt`, where `<grammar>` is the lowercase file
     /// stem of the grammar.
     pub optimization_manifest: Option<String>,
-    /// Rendered stdout reports of the selected passes (`--report-decisions`,
-    /// `--dump-dfas`, and `--profile-decisions`).
+    /// Rendered stdout reports of the selected passes (`--dump-dfas` and
+    /// `--profile-decisions`).
     pub reports: Vec<String>,
 }
 

@@ -1,26 +1,26 @@
-//! Static analysis seam for the tool-side parser DFA classifier.
+//! Static analysis seam for the tool-side parser DFA table builder.
 //! (Feature `static-dfa-build`.)
 //!
-//! `dbt-antlr-codegen` classifies the prediction decisions of a compiled parser
-//! at build time. The analysis is *not* a second DFA implementation: the
-//! classifier drives the runtime's own machinery.
+//! `dbt-antlr-codegen` builds the static DFA tables of the prediction decisions
+//! of a compiled parser at build time. The analysis is *not* a second DFA
+//! implementation: the table builder drives the runtime's own machinery.
 //!
 //! 1. A [`ParserATNSimulatorManager`] is created from the compiled unit's
 //!    `&'static ATN`; its `get_simulator` borrows an [`Arena`] and hands out the
 //!    parser [`ParserATNSimulator`].
-//! 2. The classifier interns its DFA states and token edges through [`DFA`]
+//! 2. The table builder interns its DFA states and token edges through [`DFA`]
 //!    itself (`DFA::add_state`, `DFA::set_edge`), so state deduplication, the
 //!    edge store, and the state budget accounting are the runtime's.
 //! 3. Closures run on [`MutableATNConfigSet`] with the same
 //!    [`MergeCache`] context merging as the lazy simulator, and conflicts are
 //!    decided by the same `prediction_mode` predicates the runtime uses.
 //!
-//! What the classifier adds on top is the part the lazy simulator cannot
+//! What the table builder adds on top is the part the lazy simulator cannot
 //! express, because it has no input: the subset construction over *token
 //! intervals*, the depth/size budgets that bound it on recursive grammars,
 //! and the taint bits (see [`BOUNDARY_TAINT`]) that record where the
 //! construction had to approximate. Everything in this module is
-//! crate-private machinery re-exported for the classifier; nothing here is
+//! crate-private machinery re-exported for the table builder; nothing here is
 //! meant for generated recognizers.
 
 pub use bit_set::BitSet;
@@ -39,7 +39,7 @@ pub use crate::atn_state::{
     ATNStateRef, ATNStateType, BasicBlockStartState, PlusBlockStartState, RuleStartState,
     StarBlockStartState, StarLoopEntryState,
 };
-pub use crate::dfa::{DFAState, ProposedDFAState, DFA};
+pub use crate::dfa::{DFAState, LexerDFAState, ParserDFAState, ProposedDFAState, DFA};
 pub use crate::int_stream::EOF;
 pub use crate::interval_set::{IntervalSet, IntervalSetBuf};
 pub use crate::parser_atn_simulator::{MergeCache, ParserATNSimulator};

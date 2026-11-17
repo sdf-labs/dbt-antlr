@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Konstantin Vyatkin
 pub(crate) mod action;
+// The parked offline grammar analyzer: not compiled (see its module docs).
+#[cfg(any())]
+mod analysis;
 pub(crate) mod atn;
 mod char_support;
 pub(crate) mod compiler;

@@ -4,7 +4,7 @@
 //! obligations of its positions.
 //!
 //! A precedence-class table predicts the iterate/exit conflict of a
-//! left-recursive rule's loop. The classifier resolves that conflict to
+//! left-recursive rule's loop. The builder resolves that conflict to
 //! *iterate* without exactness. The argument: every exit derivation of a
 //! sentence maps onto an iterate derivation of the same sentence. In the exit
 //! reading, an enclosing invocation of this same loop consumes the next

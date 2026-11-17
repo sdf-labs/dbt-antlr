@@ -162,15 +162,6 @@ impl Config {
         self
     }
 
-    /// Renders the parser decision report of the static parser DFA pass into
-    /// [`Generation::reports`] (`--report-decisions`, printed to stdout by the
-    /// CLI). Implies report-only mode. A run that writes files has the same
-    /// decisions in the `decisionInventory` of its optimization manifest.
-    pub const fn report_decisions(&mut self, enabled: bool) -> &mut Self {
-        self.optimization.report_decisions(enabled);
-        self
-    }
-
     /// Renders the static parser DFA tables matching `spec` into
     /// [`Generation::reports`] (`--dump-dfas <SPEC>`, printed to stdout by the
     /// CLI). Implies report-only mode.
@@ -310,7 +301,7 @@ impl Config {
     /// [`generate`](Config::generate) with the rest of the run output:
     /// compiler diagnostics (for example unreachable parser rules), transform
     /// notes (for example `pruned: ...` lines), and the reports of the report
-    /// modes (`report_decisions`, `dump_dfas`, `profile_decisions`).
+    /// modes (`dump_dfas`, `profile_decisions`).
     ///
     /// # Errors
     ///
@@ -372,8 +363,8 @@ impl Config {
     ) -> Result<Generation, EmitError> {
         if self.optimization.has_parser_reports() {
             return Err(EmitError::Config(
-                "report_decisions, dump_dfas, and profile_decisions need the in-process \
-                 generator; pinned-release generation cannot render their reports"
+                "dump_dfas and profile_decisions need the in-process generator; \
+                 pinned-release generation cannot render their reports"
                     .to_owned(),
             ));
         }
@@ -581,8 +572,8 @@ impl Generation {
         &self.optimization_messages
     }
 
-    /// Rendered reports of the report modes (`report_decisions`, `dump_dfas`,
-    /// and `profile_decisions`), in selection order.
+    /// Rendered reports of the report modes (`dump_dfas` and
+    /// `profile_decisions`), in selection order.
     pub fn reports(&self) -> &[String] {
         &self.reports
     }

@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 /// trees and recognizer APIs.
 ///
 /// Static-only DFA generation ([`Self::static_dfa_only`]) selects both static
-/// DFA passes and removes every `adaptivePredict` fallback. As a result, the
+/// DFA passes and removes every `adaptive_predict` fallback. As a result, the
 /// generated parser can reject input that the grammar accepts. A part of the
 /// grammar that the static tables cannot decide stops the generation.
 ///
@@ -37,7 +37,6 @@ pub struct OptimizationOptions {
     pub(crate) static_lexer_dfa: bool,
     pub(crate) static_parser_dfa: bool,
     pub(crate) static_dfa_only: bool,
-    pub(crate) report_decisions: bool,
     pub(crate) dump_dfas: Option<String>,
     pub(crate) profile_decisions: bool,
     pub(crate) report_only: bool,
@@ -116,13 +115,6 @@ impl OptimizationOptions {
         self
     }
 
-    /// Renders the parser decision report of the `static-parser-dfa` pass
-    /// (`--report-decisions`) and implies [`Self::report_only`].
-    pub const fn report_decisions(&mut self, enabled: bool) -> &mut Self {
-        self.report_decisions = enabled;
-        self
-    }
-
     /// Renders the static parser DFA tables matching `spec`
     /// (`--dump-dfas <SPEC>`) and implies [`Self::report_only`].
     pub fn dump_dfas(&mut self, spec: impl Into<String>) -> &mut Self {
@@ -162,8 +154,8 @@ impl OptimizationOptions {
     }
 
     /// Whether the selection prints instead of writing files: `--report-only`
-    /// or a report mode that implies it (`--report-decisions`,
-    /// `--dump-dfas`, `--profile-decisions`).
+    /// or a report mode that implies it (`--dump-dfas`,
+    /// `--profile-decisions`).
     pub(crate) const fn is_report_only(&self) -> bool {
         self.report_only || self.has_parser_reports()
     }
@@ -211,6 +203,6 @@ impl OptimizationOptions {
     /// Whether the selection prints parser reports, which only the in-process
     /// generator can render.
     pub(crate) const fn has_parser_reports(&self) -> bool {
-        self.report_decisions || self.dump_dfas.is_some() || self.profile_decisions
+        self.dump_dfas.is_some() || self.profile_decisions
     }
 }

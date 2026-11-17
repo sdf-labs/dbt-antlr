@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Bo Lin
 //! `--static-dfa-only` resolution of the escape states of decision tables.
 //!
-//! A hybrid table escapes to the adaptive simulation where the static
+//! A partial table escapes to the adaptive simulation where the static
 //! construction stopped. Without that fallback, each escape state gets a
 //! static verdict:
 //!
@@ -24,7 +24,7 @@
 //!   walk reports a syntax error. The table cannot evaluate the predicate.
 
 use super::hazard::{HazardLevel, HijackVerdict, StackHijackVerdict, StateHazard};
-use super::{CONFLICT_ESCAPE, Category, DecisionResult, ESCAPE, GUARDED, StaticDfaTable};
+use super::{CONFLICT_ESCAPE, DecisionKind, DecisionOutcome, ESCAPE, GUARDED, StaticDfaTable};
 
 /// How `--static-dfa-only` replaced one escape state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -565,23 +565,23 @@ impl StaticDfaTable {
     }
 }
 
-impl DecisionResult {
+impl DecisionOutcome {
     /// Resolves the escape states of every table of the decision for
     /// `--static-dfa-only` and records the result in
-    /// [`DecisionResult::static_only`].
+    /// [`DecisionOutcome::static_only`].
     ///
     /// Returns `false` and changes nothing when the generated parser still
-    /// needs `adaptivePredict` for the decision. This is the case when the
+    /// needs `adaptive_predict` for the decision. This is the case when the
     /// decision has no table, when a precedence class has no table, and for a
     /// non-greedy decision.
     pub(crate) fn resolve_static_only(&mut self) -> bool {
         let mut resolutions = EscapeResolutions::default();
-        match self.category {
-            Category::LL1 => {}
-            Category::NON_GREEDY => return false,
-            _ => {
+        match self.kind {
+            DecisionKind::Ll1 => {}
+            DecisionKind::Adaptive => return false,
+            DecisionKind::Static | DecisionKind::Hybrid => {
                 if let Some(precedence) = &mut self.precedence {
-                    if precedence.tables.is_empty() || precedence.adaptive_classes > 0 {
+                    if precedence.adaptive_classes > 0 {
                         return false;
                     }
                     for table in precedence.tables.iter_mut().flatten() {

@@ -13,7 +13,7 @@
 // Which reading survives depends on the CALL STACK (inside an assignment
 // target vs everywhere else), so the decision's take/skip conflict is
 // genuinely context-sensitive: the static table resolves it to take
-// guarded by a stack test that defers to adaptivePredict exactly when an
+// guarded by a stack test that defers to adaptive_predict exactly when an
 // invoking state of the assignment's `expr` call is present (the
 // epsilon-pop chase from the decision's block end reaches the
 // assignment's '=' position). Everywhere else take resolves statically.

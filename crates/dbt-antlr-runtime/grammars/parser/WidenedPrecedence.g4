@@ -1,9 +1,9 @@
 // Witness for the precedence filter of a widened precedence-class attempt
 // (issue #87).
 //
-// The chain `c0` to `c10` makes the unbounded attempts of two precedence
-// classes spend the state budget, so the classifier falls back to the widened
-// attempt. That attempt gives every rule call an empty context. In the class
+// The widened build, which runs after a start state that spent the visit
+// budget, gives every rule call an empty context. The chain `c0` to `c10`
+// makes the tables of the precedence classes large. In the class
 // of the right operand of `e '*' e`, the exit reading of `x*x+qr` returns to
 // the outer loop and reads `+ q r` through `e op`. The iterate reading reads
 // `+` through `e op 'a'`. Both readings call `op`, so after widening they meet

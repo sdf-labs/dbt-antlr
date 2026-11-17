@@ -1,18 +1,20 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Bo Lin
-//! Compile-time parser decision classification (tool side).
+//! Compile-time static DFA tables of the parser decisions (tool side).
 //!
-//! [`DecisionClassifier`] answers one question per prediction decision of a
-//! compiled parser unit: can an SLL DFA be built for it statically, and what
-//! does that DFA cost? The answer drives `--static-parser-dfa`,
-//! `--report-decisions`, `--dump-dfas`, `--profile-decisions`, and the
-//! `G4S190` and `G4S193` diagnostics. The budget of each decision (see
-//! [`DecisionBudget`]) limits the analysis.
+//! [`DecisionTableBuilder`] builds the static prediction table of each
+//! prediction decision of a compiled parser unit, so that the generated parser
+//! predicts without `adaptive_predict` wherever a table can decide. A state
+//! that no table can decide soundly escapes to the adaptive simulation, or,
+//! under `--static-dfa-only`, gets a static resolution. The tables drive
+//! `--static-parser-dfa`, `--dump-dfas`, `--profile-decisions`, and the
+//! `G4S190`, `G4S192`, and `G4S193` diagnostics. The budget of each decision
+//! (see [`DecisionBudget`]) limits the construction.
 //!
 //! # Where the machinery lives
 //!
-//! The classifier is a *driver*: it owns the analysis policy, the subset
-//! construction over token intervals, and the report vocabulary, while the
+//! The builder is a *driver*: it owns the construction policy, the subset
+//! construction over token intervals, and the frontier of a table, while the
 //! ATN/DFA mechanics stay in `dbt-antlr-runtime` behind the `static-dfa-build`
 //! feature (see `dbt_antlr_runtime::analysis`):
 //!
@@ -38,23 +40,25 @@
 //!
 //! # Output
 //!
-//! A decision ends in one [`Category`] plus, when the construction succeeded,
-//! a [`StaticDfaTable`] snapshot: the DFA states, their accept/fallback/escape
-//! verdicts, and their token edges. The snapshot is what `--dump-dfas` prints
-//! and what the table emission phase serializes, so it is plain owned data -
-//! the arena and the simulator are dropped as soon as a decision is done.
+//! A decision ends in one [`DecisionOutcome`]: its [`DecisionKind`], the
+//! [`NoTableReason`] when it has no table, and, when the construction
+//! succeeded, a [`StaticDfaTable`] snapshot: the DFA states, their
+//! accept/fallback/escape verdicts, and their token edges. The snapshot is
+//! what `--dump-dfas` prints and what the table emission phase serializes, so
+//! it is plain owned data - the arena and the simulator are dropped as soon as
+//! a decision is done.
 
 #[cfg(test)]
 mod tests;
 
 mod budget;
-mod category;
-mod classifier;
+mod builder;
 mod closure;
 mod cost;
 mod descent;
 mod hazard;
 mod loop_block;
+mod outcome;
 mod postfix;
 mod static_only;
 mod table;
@@ -66,11 +70,11 @@ pub(crate) use budget::{
     BUDGET_OPTIONS, BudgetLimits, DecisionBudget, ParserDfaBudgets, budget_option_problem,
     has_non_budget_option,
 };
-pub(crate) use category::Category;
-pub(crate) use classifier::{DecisionClassifier, DecisionResult};
+pub(crate) use builder::{DecisionTableBuilder, PARTIAL_MIN_COVERAGE_PERCENT};
 pub(crate) use cost::AttemptOutcome;
 pub(crate) use descent::{DescentGroup, DescentPlan, DescentRules, TailArm};
 pub(crate) use hazard::{HazardLevel, HijackVerdict, StackHijackVerdict};
+pub(crate) use outcome::{DecisionKind, DecisionOutcome, NoTableReason};
 pub(crate) use static_only::{EscapeResolution, EscapeResolutions, GuardGroup, TieBreak};
 pub(crate) use table::StaticDfaTable;
 pub(crate) use tables::{build_tables, minimized_states};

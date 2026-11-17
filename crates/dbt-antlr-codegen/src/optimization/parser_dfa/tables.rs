@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Bo Lin
-//! Assembly of the runtime table set from the classified decisions.
+//! Assembly of the runtime table set from the built decision tables.
 //!
-//! The classifier produces one [`StaticDfaTable`] per decision (or per
+//! The builder produces one [`StaticDfaTable`] per decision (or per
 //! precedence class) as an owned snapshot. This module turns those snapshots
 //! into the [`StaticParserTables`] image the runtime overlays: it normalizes the
 //! escape markers, merges the states that the runtime cannot distinguish,
@@ -18,10 +18,10 @@ use dbt_antlr_runtime::dfa::static_parser_dfa::{
 use std::collections::HashMap;
 
 use super::table::StaticDfaEdge;
-use super::{CONFLICT_ESCAPE, DecisionResult, ESCAPE, EscapeResolution, StaticDfaTable};
+use super::{CONFLICT_ESCAPE, DecisionOutcome, ESCAPE, EscapeResolution, StaticDfaTable};
 
 /// Builds the table set of one parser unit.
-pub(crate) fn build_tables(results: &[DecisionResult]) -> StaticParserTables {
+pub(crate) fn build_tables(results: &[DecisionOutcome]) -> StaticParserTables {
     let num_slots = results
         .iter()
         .filter(|result| result.table.is_some() || result.precedence.is_some())

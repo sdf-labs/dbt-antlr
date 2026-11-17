@@ -171,7 +171,6 @@ fn help_text_lists_the_static_lexer_dfa_flag() {
         "--static-lexer-dfa",
         "--static-parser-dfa",
         "--static-dfa-only",
-        "--report-decisions",
         "--dump-dfas",
         "--profile-decisions",
         "-q, --quiet",
@@ -516,35 +515,6 @@ fn static_parser_dfa_writes_the_manifest_entry() {
 }
 
 #[test]
-fn report_decisions_prints_the_decision_inventory() {
-    let output = emit_with(|options| {
-        options.report_decisions(true);
-    });
-    assert!(output.files.is_empty(), "report mode emits no files");
-    let manifest = output
-        .optimization_manifest
-        .expect("manifest is still rendered");
-    assert!(manifest.contains("\"reportOnly\": True"), "{manifest}");
-    let [report] = output.reports.as_slice() else {
-        panic!("one report per parser unit: {:?}", output.reports);
-    };
-    assert_eq!(
-        report.lines().next(),
-        Some("=== parser decision report: CSVParser (4 decisions) ==="),
-        "{report}"
-    );
-    assert!(report.contains("summary: LL1=4"), "{report}");
-    for row in [
-        "  0  csvFile     12  LL1       1          0         0",
-        "  1  row         21  LL1       1          0         0",
-        "  2  row         25  LL1       1          0         0",
-        "  3  field       32  LL1       1          0         0",
-    ] {
-        assert!(report.contains(row), "missing {row:?} in:\n{report}");
-    }
-}
-
-#[test]
 fn dump_dfas_prints_the_selected_decisions() {
     let output = emit_with(|options| {
         options.dump_dfas("row:1");
@@ -607,10 +577,6 @@ fn cli_report_modes_print_reports_and_write_no_files() {
     let _ = std::fs::remove_dir_all(&out_dir);
 
     for (flags, header) in [
-        (
-            vec!["--report-decisions".to_owned()],
-            "=== parser decision report: CSVParser (4 decisions) ===",
-        ),
         (
             vec!["--dump-dfas".to_owned(), "row".to_owned()],
             "=== static DFA dump: grammar CSVParser ===",
@@ -718,12 +684,12 @@ fn profile_decisions_prints_the_cost_of_each_decision() {
         lines[0],
         "=== parser decision profile: ReferenceToATNParser (2 decisions) ==="
     );
-    assert!(lines[1].starts_with("classification: "), "{profile}");
+    assert!(lines[1].starts_with("table builds: "), "{profile}");
     assert!(lines[1].contains(" summed over the decisions"), "{profile}");
     assert_eq!(
         &lines[2..4],
         [
-            "work: 2 build attempts; 124 configs visited; 10 DFA states built",
+            "work: 1 build attempts; 62 configs visited; 5 DFA states built",
             "budgets: 0 decisions spent the visit budget (2000000 configs); 0 decisions spent \
              the state budget (1000 states)",
         ]
@@ -748,7 +714,7 @@ fn profile_decisions_prints_the_cost_of_each_decision() {
         .iter()
         .map(|cell| cell.split('(').next().unwrap_or(cell))
         .collect();
-    assert_eq!(untimed, ["124", "10", "U!", "H", "a", "100%"], "{profile}");
+    assert_eq!(untimed, ["62", "5", "D", "a", "100%"], "{profile}");
     let ll1 = row("1");
     assert_eq!(ll1[..4], ["1", "a", "9", "LL1"], "{profile}");
     assert_eq!(ll1[5..], ["0", "0"], "{profile}");
@@ -782,32 +748,25 @@ fn dump_dfas_renders_the_built_table() {
     assert!(dump.contains("; path: ATN EOF"), "{dump}");
 }
 
+/// With the adaptive fallback, a partial table is a normal table: the
+/// generated parser calls `adaptive_predict` where it escapes, and the pass
+/// reports nothing.
 #[test]
-fn not_fully_static_decisions_emit_g4s190_warnings() {
+fn partial_tables_emit_no_g4s190_warnings() {
     let output = emit_grammar("ReferenceToATN.g4", |options| {
         options.static_parser_dfa(true);
     });
-    let warnings = output
-        .diagnostics
-        .iter()
-        .filter(|diagnostic| diagnostic.code() == "G4S190")
-        .map(|diagnostic| {
-            assert_eq!(diagnostic.severity(), Severity::Warning);
-            assert_eq!(
-                (diagnostic.line(), diagnostic.column()),
-                (Some(3), Some(4)),
-                "the warning is located on the rule block: {}",
-                diagnostic.message()
-            );
-            diagnostic.message()
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        warnings,
-        [
-            "parser decision 0 of rule 'a' is not fully static: 1 of 5 states escape to adaptivePredict; witness: ATN EOF; conflicting alternatives: alt 1 (repeat (ID | ATN), line 3), alt 2 (exit the loop)"
-        ]
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code() != "G4S190"),
+        "{:?}",
+        output.diagnostics
     );
+    let manifest = output.optimization_manifest.expect("manifest written");
+    assert!(manifest.contains("\"kind\": \"HYBRID\""), "{manifest}");
+    assert!(manifest.contains("\"escapeStates\": 1"), "{manifest}");
 }
 
 #[test]
@@ -834,7 +793,7 @@ fn precedence_dumps_list_every_class() {
         panic!("one dump per parser unit: {:?}", output.reports);
     };
     assert!(
-        dump.contains("--- decision 0: rule 'a' (LR_PRECEDENCE, k=1, 4 states) ---"),
+        dump.contains("--- decision 0: rule 'a' (STATIC, k=1, 4 states) ---"),
         "{dump}"
     );
     assert!(dump.contains("precedence classes: [2]"), "{dump}");
@@ -1029,7 +988,7 @@ fn static_dfa_only_resolves_hybrid_tables_without_adaptive_predict() {
     assert_eq!(
         parser.matches("adaptive_predict(").count(),
         0,
-        "no decision falls back to adaptivePredict"
+        "no decision falls back to adaptive_predict"
     );
     let warnings = output
         .diagnostics
@@ -1044,7 +1003,7 @@ fn static_dfa_only_resolves_hybrid_tables_without_adaptive_predict() {
     assert_eq!(
         warnings,
         [
-            "parser decision 0 of rule 'a' resolves its escape states without adaptivePredict: \
+            "parser decision 0 of rule 'a' resolves its escape states without adaptive_predict: \
              1 conflict state predicts the minimum alternative (witness: ATN EOF); tie-breaks: \
              1 state chooses alt 1 (repeat (ID | ATN), line 3) over alt 2 (exit the loop) \
              [greedy choice, not verified]"
@@ -1293,7 +1252,7 @@ fn static_dfa_only_fails_on_a_parser_decision_without_a_table() {
             "G4S190",
             "parser decision 3 of rule 'nongreedy' is not fully static: the decision is a \
              non-greedy subrule, and the generated parser predicts non-greedy subrules only with \
-             adaptivePredict; --static-dfa-only requires a static table for every decision"
+             adaptive_predict; --static-dfa-only requires a static table for every decision"
         )]
     );
     assert!(
@@ -1354,7 +1313,7 @@ fn cli_static_dfa_only_reports_and_fails() {
     let args = vec![
         "-n".to_owned(),
         "--static-dfa-only".to_owned(),
-        "--report-decisions".to_owned(),
+        "--dump-dfas=nongreedy".to_owned(),
         grammar.to_string_lossy().into_owned(),
     ];
     let mut stdout = Vec::new();
@@ -1367,8 +1326,8 @@ fn cli_static_dfa_only_reports_and_fails() {
     );
     let stdout = String::from_utf8(stdout).expect("stdout is utf-8");
     assert!(
-        stdout.contains("=== parser decision report: ParserShapes (4 decisions) ==="),
-        "the report renders: {stdout}"
+        stdout.contains("--- decision 3: rule 'nongreedy' (ADAPTIVE) ---"),
+        "the dump renders: {stdout}"
     );
     let stderr = String::from_utf8(stderr).expect("stderr is utf-8");
     assert!(stderr.contains("error[G4S190]"), "{stderr}");
@@ -1390,7 +1349,7 @@ fn static_dfa_only_reports_stack_hijack_hazards() {
         warnings,
         [
             "parser decision 2 of rule 'select' resolves its escape states without \
-             adaptivePredict: 1 guarded state returns the skip or the exit where the stack guard \
+             adaptive_predict: 1 guarded state returns the skip or the exit where the stack guard \
              defers (witness: 'SETTINGS' ID '=' INT; danger caller: command:19) [stack-hijack \
              hazard: when called from 'command' (line 19), defers 'SETTINGS' ID '=' INT even \
              when followed by 'UNION']"
