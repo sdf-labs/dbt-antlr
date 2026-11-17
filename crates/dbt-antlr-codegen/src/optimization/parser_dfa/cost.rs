@@ -15,8 +15,7 @@ pub(crate) enum AttemptKind {
     Default,
     /// The build of a `--static-dfa-only` table, with the larger frontier.
     StaticOnly,
-    /// The build with full widening, after the start state spent the visit
-    /// budget.
+    /// The build with full widening after a spent budget.
     Widened,
 }
 
