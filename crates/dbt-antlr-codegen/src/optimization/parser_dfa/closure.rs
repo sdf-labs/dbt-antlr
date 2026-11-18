@@ -445,6 +445,33 @@ impl<'atn, 'a> Closure<'atn, 'a> {
         self.visits.min(self.visit_budget)
     }
 
+    pub(super) fn remaining_visits(&self) -> u64 {
+        self.visit_budget.saturating_sub(self.visits)
+    }
+
+    pub(super) fn successors_capped(
+        &mut self,
+        closed: &ClosedSet<'a>,
+        max_call_visits: u64,
+    ) -> (Vec<(IntervalSetBuf, ClosedSet<'a>)>, bool) {
+        let global_budget = self.visit_budget;
+        let remaining_global = global_budget.saturating_sub(self.visits);
+        if max_call_visits >= remaining_global {
+            let successors = self.successors(closed);
+            return (successors, self.exhausted);
+        }
+        let capped_budget = self.visits.saturating_add(max_call_visits);
+        self.visit_budget = capped_budget;
+        let successors = self.successors(closed);
+        let hit_cap = self.exhausted;
+        self.visit_budget = global_budget;
+        if hit_cap {
+            self.visits = self.visits.min(capped_budget);
+            self.exhausted = false;
+        }
+        (successors, hit_cap)
+    }
+
     /// Runs `analysis` with `visits` more configs to visit, and then restores
     /// the facts, the visit counts, and the budget state of the closure. An
     /// analysis after the construction thus does not change what the attempt
