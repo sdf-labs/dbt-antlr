@@ -47,7 +47,9 @@ use super::hazard::{self, StackHijackVerdict, StateHazard};
 use super::loop_block::{
     EXIT_ALT, EXIT_FOREIGN, ITERATE_ALT, ITERATE_REAL, LoopBlock, is_iterate_exit_pair,
 };
-use super::outcome::{DecisionKind, DecisionOutcome, NoTableReason, PrecedenceTables};
+use super::outcome::{
+    BudgetCutoff, DecisionKind, DecisionOutcome, NoTableReason, PrecedenceTables,
+};
 use super::postfix::{GuardRegions, PostfixShape, epsilon_closure};
 use super::table::{StaticDfaEdge, StaticDfaState, StaticDfaTable};
 use super::{CONFLICT_ESCAPE, DecisionBudget, ESCAPE, GUARDED};
@@ -240,16 +242,16 @@ struct Attempt {
     decision: usize,
     state_count: usize,
     table: Option<StaticDfaTable>,
-    /// Set when the attempt has no table: the start state spent a budget.
-    failed: bool,
+    /// Set when the attempt has no table because the start state spent a budget.
+    failed: Option<BudgetCutoff>,
     /// Set when the closure or the expansion of the start state spent the
     /// visit budget.
     start_exhausted: bool,
     /// Set when the closures of the attempt spent the visit budget.
     exhausted: bool,
-    /// Set when the attempt spent the state cap or the visit budget and
-    /// escaped the states it cannot expand.
-    budget_cutoff: bool,
+    /// Set when the attempt spent a budget and escaped the states it cannot
+    /// expand.
+    budget_cutoff: Option<BudgetCutoff>,
     /// Set when a conflict, predicate, or taint-increase escape occurred
     /// before `cut_off` fired.
     non_budget_escape: bool,
@@ -284,7 +286,9 @@ impl Attempt {
             return outcome;
         }
         let Some(table) = self.table else {
-            outcome.no_table = Some(NoTableReason::StartBudget);
+            outcome.no_table = Some(NoTableReason::StartBudget(
+                self.failed.expect("failed attempt records its budget"),
+            ));
             return outcome;
         };
 
@@ -585,7 +589,7 @@ impl DecisionTableBuilder {
             let widened = self.attempt(decision, 0, class, false, analyze_hazards, log);
             return self.finish_partial(widened, 0, class, analyze_hazards, log);
         }
-        let should_widen = attempt.budget_cutoff && !attempt.non_budget_escape;
+        let should_widen = attempt.budget_cutoff.is_some() && !attempt.non_budget_escape;
         let exceeded_frontier = attempt.exceeded_frontier;
         let outcome = attempt.finalize(decision_state, self.atn_fallback);
         if outcome.kind == DecisionKind::Static {
@@ -717,7 +721,7 @@ impl DecisionTableBuilder {
             let class_outcome =
                 self.build_table(outcome.decision, Some(class), first_failure.is_none(), log);
 
-            outcome.budget_cutoff |= class_outcome.budget_cutoff;
+            BudgetCutoff::merge_opt(&mut outcome.budget_cutoff, class_outcome.budget_cutoff);
             for conflict in &class_outcome.conflicts {
                 if !outcome.conflicts.contains(conflict) {
                     outcome.conflicts.push(conflict.clone());
@@ -758,7 +762,9 @@ impl DecisionTableBuilder {
             outcome.no_table = Some(NoTableReason::PrecedenceClasses {
                 failed,
                 total,
-                first: Box::new(first_failure.unwrap_or(NoTableReason::StartBudget)),
+                first: Box::new(
+                    first_failure.expect("a failed precedence class records a no_table reason"),
+                ),
             });
         }
         if failed < total {
@@ -796,7 +802,7 @@ impl DecisionTableBuilder {
         );
         let outcome = if attempt.exhausted {
             AttemptOutcome::VisitBudget
-        } else if attempt.failed || attempt.budget_cutoff {
+        } else if attempt.failed.is_some() || attempt.budget_cutoff.is_some() {
             AttemptOutcome::StateBudget
         } else {
             AttemptOutcome::Finished
@@ -1020,12 +1026,12 @@ where
     fn run(&mut self) -> Attempt {
         let start = self.closure.start(self.decision_state);
         if self.closure.exhausted {
-            self.attempt.failed = true;
+            self.attempt.failed = Some(BudgetCutoff::Visits);
             self.attempt.start_exhausted = true;
             return self.take_attempt();
         }
         let Some(start_state) = self.intern(start, 0) else {
-            self.attempt.failed = true;
+            self.attempt.failed = Some(BudgetCutoff::States);
             return self.take_attempt();
         };
         self.dfa.set_s0(start_state);
@@ -1046,7 +1052,7 @@ where
                     self.escape_frontier(state_number, &facts);
                     continue;
                 }
-                self.attempt.failed = true;
+                self.attempt.failed = Some(BudgetCutoff::Visits);
                 self.attempt.start_exhausted = true;
                 break;
             }
@@ -1093,17 +1099,25 @@ where
             let cut_off = facts.depth > 0
                 && (self.closure.exhausted || self.dfa.len() + new_states > self.max_states);
             if cut_off {
+                let visit_cutoff = self.closure.exhausted;
+                let state_cutoff = self.dfa.len() + new_states > self.max_states;
+                let cutoff = match (state_cutoff, visit_cutoff) {
+                    (true, true) => BudgetCutoff::Both,
+                    (true, false) => BudgetCutoff::States,
+                    (false, true) => BudgetCutoff::Visits,
+                    (false, false) => unreachable!(),
+                };
                 self.attempt.exhausted |= self.closure.exhausted;
                 self.closure.exhausted = false;
                 self.budget_spent = true;
-                self.attempt.budget_cutoff = true;
+                BudgetCutoff::merge_opt(&mut self.attempt.budget_cutoff, Some(cutoff));
                 self.escape_frontier(state_number, &facts);
                 continue;
             }
             if self.closure.exhausted {
                 // Only the expansion of the start state gets here, and no
                 // table can do without it.
-                self.attempt.failed = true;
+                self.attempt.failed = Some(BudgetCutoff::Visits);
                 self.attempt.start_exhausted = true;
                 break;
             }
@@ -1112,12 +1126,12 @@ where
                 // Only the successors of the start state can run past the
                 // state cap here.
                 let Some(target) = self.intern(successor, facts.depth + 1) else {
-                    self.attempt.failed = true;
+                    self.attempt.failed = Some(BudgetCutoff::States);
                     break;
                 };
                 targets.push((label, target));
             }
-            if self.attempt.failed {
+            if self.attempt.failed.is_some() {
                 break;
             }
             for (label, target) in targets {
@@ -1132,7 +1146,7 @@ where
             }
         }
 
-        if !self.attempt.failed {
+        if self.attempt.failed.is_none() {
             self.prune_unreachable();
             self.finalize_guards();
             // `finalize` drops a table with an escaping start state, so its
@@ -1621,7 +1635,7 @@ where
             self.attempt.non_budget_escape = true;
         }
         self.info.insert(number, facts);
-        if decide && !self.attempt.failed {
+        if decide && self.attempt.failed.is_none() {
             self.queue.push_back(state);
         }
         Some(state)

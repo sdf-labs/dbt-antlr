@@ -21,8 +21,8 @@ use super::cost::{AttemptKind, AttemptOutcome};
 use super::loop_block::LoopBlock;
 use super::table::{StaticDfaState, StaticDfaTable};
 use super::{
-    BudgetLimits, CONFLICT_ESCAPE, DecisionKind, DecisionOutcome, DecisionTableBuilder,
-    NoTableReason, ParserDfaBudgets,
+    BudgetCutoff, BudgetLimits, CONFLICT_ESCAPE, DecisionKind, DecisionOutcome,
+    DecisionTableBuilder, NoTableReason, ParserDfaBudgets,
 };
 
 fn grammars_dir() -> PathBuf {
@@ -455,7 +455,10 @@ fn exhausted_start_state_yields_no_table() {
     let reference = outcomes_with_budget(&grammars_dir().join("ReferenceToATN.g4"), 1);
     let decision = &reference[0];
     assert_eq!(decision.kind, DecisionKind::Adaptive);
-    assert_eq!(decision.no_table, Some(NoTableReason::StartBudget));
+    assert_eq!(
+        decision.no_table,
+        Some(NoTableReason::StartBudget(BudgetCutoff::Visits))
+    );
     assert!(decision.table.is_none());
     assert!(!decision.is_fully_static());
 
@@ -469,7 +472,7 @@ fn exhausted_start_state_yields_no_table() {
         Some(NoTableReason::PrecedenceClasses {
             failed: classes.tables.len(),
             total: classes.tables.len(),
-            first: Box::new(NoTableReason::StartBudget),
+            first: Box::new(NoTableReason::StartBudget(BudgetCutoff::Visits)),
         })
     );
     assert!(classes.tables.iter().all(Option::is_none));
@@ -1870,7 +1873,7 @@ fn builds_escape_where_the_visit_budget_runs_out() {
         fixture("testcompositegrammars-testimportlargegrammar-110006096d").join("NewJava.g4");
     let results = outcomes_with_budget(&path, 2_000);
     assert_eq!(results[7].kind, DecisionKind::Hybrid);
-    assert!(results[7].budget_cutoff);
+    assert_eq!(results[7].budget_cutoff, Some(BudgetCutoff::Visits));
     assert!(results[7].escapes > 0);
     assert_eq!(
         attempts_of(&results, 7),
@@ -1896,7 +1899,7 @@ fn precedence_classes_keep_tables_where_the_visit_budget_runs_out() {
     assert_eq!(precedence.adaptive_classes, 0);
     assert_eq!(precedence.tables.len(), 5);
     assert!(precedence.tables.iter().all(Option::is_some));
-    assert!(results[4].budget_cutoff);
+    assert_eq!(results[4].budget_cutoff, Some(BudgetCutoff::Visits));
 }
 
 /// A table with a conflict escape does not fall back to full widening. Here
@@ -2578,7 +2581,7 @@ fn state_caps_cut_hybrid_tables_instead_of_failing_them() {
     let decision = &build.report.decisions[0];
     assert_eq!(decision.rule, "a");
     assert_eq!(decision.result.kind, DecisionKind::Hybrid);
-    assert!(decision.result.budget_cutoff);
+    assert_eq!(decision.result.budget_cutoff, Some(BudgetCutoff::States));
     assert_eq!(decision.result.num_dfa_states, 3);
 
     let (_, build) = build_source_with("Fanout", FANOUT_GRAMMAR, AtnFallback::Forbidden, &budgets);
@@ -2591,13 +2594,13 @@ fn state_caps_cut_hybrid_tables_instead_of_failing_them() {
         messages,
         [(
             "G4S192",
-            "parser decision 0 of rule 'a' resolves its escape states without adaptive_predict: \
+            "decision 0 of rule 'a' applied heuristic resolution of escape states: \
              1 undecided state predicts the minimum viable alternative (witness: 'a'); \
              tie-breaks: 1 state chooses alt 1 (A B X, line 3) over alt 2 (A C X, line 3), \
              alt 3 (A D X, line 3), alt 4 (A B Y, line 3) [prefix-hijack hazard: alt 2 \
              (A C X, line 3) reads 'c' after 'a', and alt 1 cannot]; the analysis budget (4 \
-             states or 2000000 visited configs) stopped the lookahead; raise it with the \
-             max_dfa_states and max_dfa_visits options of the grammar, the rule, or the block"
+             states) stopped the lookahead; raise it with the max_dfa_states option of the \
+             grammar, the rule, or the block"
         )]
     );
 
@@ -2608,6 +2611,72 @@ fn state_caps_cut_hybrid_tables_instead_of_failing_them() {
         &ParserDfaBudgets::default(),
     );
     assert!(build.diagnostics.is_empty(), "{:?}", build.diagnostics);
+}
+
+#[test]
+fn visit_budget_cutoff_reports_max_dfa_visits_in_g4s192() {
+    let source = "grammar VisitCutoff;\n\
+                  options { max_dfa_visits = 60; }\n\
+                  top : 'k' 'p' a0 'x' | 'k' 'p' a0 'y' | 'z' ;\n\
+                  a0 : c0 ;\n\
+                  c0 : c1 | c2 ; c1 : c3 | c4 ; c2 : c3 | c4 ;\n\
+                  c3 : c5 | c6 ; c4 : c5 | c6 ; c5 : c7 | c8 ; c6 : c7 | c8 ;\n\
+                  c7 : 'f' | 'g' ; c8 : 'h' | 'i' ;\n";
+    let (_, build) = build_source_with(
+        "VisitCutoff",
+        source,
+        AtnFallback::Forbidden,
+        &ParserDfaBudgets::default(),
+    );
+    let decision = build
+        .report
+        .decisions
+        .iter()
+        .find(|entry| entry.rule == "top")
+        .expect("top decision");
+    assert_eq!(decision.result.kind, DecisionKind::Hybrid);
+    assert_eq!(decision.result.budget_cutoff, Some(BudgetCutoff::Visits));
+    let warning = build
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "G4S192")
+        .expect("a G4S192 warning");
+    assert!(
+        warning.message.contains(
+            "the analysis budget (60 visited configs) stopped the lookahead; \
+             raise it with the max_dfa_visits option of the grammar, the rule, or the block"
+        ),
+        "{}",
+        warning.message
+    );
+}
+
+#[test]
+fn start_state_state_cap_reports_states_in_g4s190() {
+    let budgets = ParserDfaBudgets {
+        global: BudgetLimits {
+            max_states: Some(2),
+            ..BudgetLimits::default()
+        },
+    };
+    let (_, build) = build_source_with("Fanout", FANOUT_GRAMMAR, AtnFallback::Forbidden, &budgets);
+    let decision = &build.report.decisions[0];
+    assert_eq!(
+        decision.result.no_table,
+        Some(NoTableReason::StartBudget(BudgetCutoff::States))
+    );
+    let error = build
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "G4S190")
+        .expect("a G4S190 error");
+    assert!(
+        error
+            .message
+            .contains("the SLL DFA exceeded the analysis budget (2 states)"),
+        "{}",
+        error.message
+    );
 }
 
 const SPLIT_OPERATOR_GRAMMAR: &str = "grammar Split;
@@ -3772,7 +3841,7 @@ fn reexpansion_respects_state_cap_and_prunes_unreachable_states_on_visit_cutoff(
     let full_outcome = &full.report.decisions[decision].result;
     let full_table = full_outcome.table.as_ref().expect("full table");
     let exact_states = full_table.states.len();
-    assert!(!full_outcome.budget_cutoff);
+    assert_eq!(full_outcome.budget_cutoff, None);
     assert!(full_table.depths().iter().all(|&depth| depth != usize::MAX));
 
     let capped = build_with(&ParserDfaBudgets {
@@ -3784,7 +3853,7 @@ fn reexpansion_respects_state_cap_and_prunes_unreachable_states_on_visit_cutoff(
     });
     let capped_outcome = &capped.report.decisions[decision].result;
     let capped_table = capped_outcome.table.as_ref().expect("capped table");
-    assert!(!capped_outcome.budget_cutoff);
+    assert_eq!(capped_outcome.budget_cutoff, None);
     assert_eq!(capped_table.states.len(), exact_states);
     assert!(
         capped_table
@@ -3810,7 +3879,9 @@ fn reexpansion_respects_state_cap_and_prunes_unreachable_states_on_visit_cutoff(
                 "visits={visits} emitted unreachable state(s): {:#?}",
                 table.states
             );
-            if outcome.budget_cutoff && table.states.len() < exact_states {
+            if outcome.budget_cutoff == Some(BudgetCutoff::Visits)
+                && table.states.len() < exact_states
+            {
                 saw_pruned = true;
             }
         }
@@ -3882,7 +3953,7 @@ fn budget_cutoff_after_non_budget_escape_skips_widening() {
     );
     let decision = &build.report.decisions[0].result;
     assert_eq!(decision.kind, DecisionKind::Hybrid);
-    assert!(decision.budget_cutoff);
+    assert_eq!(decision.budget_cutoff, Some(BudgetCutoff::States));
     assert_eq!(
         decision
             .cost

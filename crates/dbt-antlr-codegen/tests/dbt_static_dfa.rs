@@ -1003,7 +1003,7 @@ fn static_dfa_only_resolves_hybrid_tables_without_adaptive_predict() {
     assert_eq!(
         warnings,
         [
-            "parser decision 0 of rule 'a' resolves its escape states without adaptive_predict: \
+            "decision 0 of rule 'a' applied heuristic resolution of escape states: \
              1 conflict state predicts the minimum alternative (witness: ATN EOF); tie-breaks: \
              1 state chooses alt 1 (repeat (ID | ATN), line 3) over alt 2 (exit the loop) \
              [greedy choice, not verified]"
@@ -1117,7 +1117,7 @@ fn static_dfa_only_guesses_the_minimum_viable_alternative_at_the_frontier() {
         panic!("one resolved decision: {warnings:?}");
     };
     assert!(
-        warning.starts_with("parser decision 1 of rule 'e' resolves its escape states"),
+        warning.starts_with("decision 1 of rule 'e' applied heuristic resolution of escape states"),
         "{warning}"
     );
     let clause = " undecided states predict the minimum viable alternative (witness: '('";
@@ -1348,8 +1348,8 @@ fn static_dfa_only_reports_stack_hijack_hazards() {
     assert_eq!(
         warnings,
         [
-            "parser decision 2 of rule 'select' resolves its escape states without \
-             adaptive_predict: 1 guarded state returns the skip or the exit where the stack guard \
+            "decision 2 of rule 'select' applied heuristic resolution of escape states: \
+             1 guarded state returns the skip or the exit where the stack guard \
              defers (witness: 'SETTINGS' ID '=' INT; danger caller: command:19) [stack-hijack \
              hazard: when called from 'command' (line 19), defers 'SETTINGS' ID '=' INT even \
              when followed by 'UNION']"

@@ -45,6 +45,38 @@ impl Display for DecisionKind {
     }
 }
 
+/// Which analysis budget was exhausted and stopped a table build.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BudgetCutoff {
+    /// The DFA state cap (`max_dfa_states`) stopped the build.
+    States,
+    /// The closure visit budget (`max_dfa_visits`) stopped the build.
+    Visits,
+    /// Both the DFA state cap and the closure visit budget stopped the build.
+    Both,
+}
+
+impl BudgetCutoff {
+    /// Combines two budget cutoffs into one.
+    pub(crate) const fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::States, Self::States) => Self::States,
+            (Self::Visits, Self::Visits) => Self::Visits,
+            _ => Self::Both,
+        }
+    }
+
+    /// Merges `other` into `target`.
+    pub(crate) fn merge_opt(target: &mut Option<Self>, other: Option<Self>) {
+        if let Some(other) = other {
+            *target = Some(match *target {
+                Some(current) => current.merge(other),
+                None => other,
+            });
+        }
+    }
+}
+
 /// Why a decision, or a precedence class of it, has no static table.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum NoTableReason {
@@ -63,9 +95,8 @@ pub(crate) enum NoTableReason {
     /// The start state has an SLL conflict that no static resolution
     /// decides.
     StartConflict,
-    /// The closure or the expansion of the start state spent the state cap
-    /// or the visit budget.
-    StartBudget,
+    /// The closure or the expansion of the start state spent a budget.
+    StartBudget(BudgetCutoff),
     /// The table escapes to `adaptive_predict` and decides too small a share
     /// of the start lookahead to be worth emitting.
     LowCoverage { coverage_percent: u32 },
@@ -121,9 +152,8 @@ pub(crate) struct DecisionOutcome {
     pub(crate) cost: DecisionCost,
     /// The analysis budget of the decision.
     pub(crate) budget: DecisionBudget,
-    /// The table escapes the states that the state cap or the visit budget
-    /// did not let the construction expand.
-    pub(crate) budget_cutoff: bool,
+    /// The budget that stopped the construction and made the table escape.
+    pub(crate) budget_cutoff: Option<BudgetCutoff>,
 }
 
 impl DecisionOutcome {

@@ -74,7 +74,7 @@ pub(crate) use builder::{DecisionTableBuilder, PARTIAL_MIN_COVERAGE_PERCENT};
 pub(crate) use cost::AttemptOutcome;
 pub(crate) use descent::{DescentGroup, DescentPlan, DescentRules, TailArm};
 pub(crate) use hazard::{HazardLevel, HijackVerdict, StackHijackVerdict};
-pub(crate) use outcome::{DecisionKind, DecisionOutcome, NoTableReason};
+pub(crate) use outcome::{BudgetCutoff, DecisionKind, DecisionOutcome, NoTableReason};
 pub(crate) use static_only::{EscapeResolution, EscapeResolutions, GuardGroup, TieBreak};
 pub(crate) use table::StaticDfaTable;
 pub(crate) use tables::{build_tables, minimized_states};

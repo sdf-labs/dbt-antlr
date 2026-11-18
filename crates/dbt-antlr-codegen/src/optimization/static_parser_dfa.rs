@@ -58,11 +58,11 @@ use dbt_antlr_runtime::dfa::static_parser_dfa::{
 };
 
 use super::parser_dfa::{
-    AttemptOutcome, BudgetLimits, CONFLICT_ESCAPE, DecisionBudget, DecisionKind, DecisionOutcome,
-    DecisionTableBuilder, DescentPlan, DescentRules, ESCAPE, EscapeResolution, EscapeResolutions,
-    GuardGroup, HazardLevel, HijackVerdict, NoTableReason, PARTIAL_MIN_COVERAGE_PERCENT,
-    ParserDfaBudgets, StackHijackVerdict, StaticDfaTable, TieBreak, has_non_budget_option,
-    minimized_states,
+    AttemptOutcome, BudgetCutoff, BudgetLimits, CONFLICT_ESCAPE, DecisionBudget, DecisionKind,
+    DecisionOutcome, DecisionTableBuilder, DescentPlan, DescentRules, ESCAPE, EscapeResolution,
+    EscapeResolutions, GuardGroup, HazardLevel, HijackVerdict, NoTableReason,
+    PARTIAL_MIN_COVERAGE_PERCENT, ParserDfaBudgets, StackHijackVerdict, StaticDfaTable, TieBreak,
+    has_non_budget_option, minimized_states,
 };
 use crate::grammar::atn::{CompiledParser, FinalizedTransitionKind, left_corner_rules};
 use crate::grammar::diagnostic::Diagnostic;
@@ -1254,9 +1254,9 @@ fn reason_text(reason: &NoTableReason, budget: &DecisionBudget) -> String {
         NoTableReason::StartConflict => {
             "SLL cannot separate the alternatives; only full-context prediction can".to_owned()
         }
-        NoTableReason::StartBudget => format!(
-            "the SLL DFA exceeded the analysis budget ({} states or {} visited configs)",
-            budget.max_states, budget.max_visits
+        NoTableReason::StartBudget(cutoff) => format!(
+            "the SLL DFA exceeded the analysis budget ({})",
+            budget_limit_text(*cutoff, budget)
         ),
         NoTableReason::LowCoverage { coverage_percent } => format!(
             "the partial table decides {coverage_percent}% of the start lookahead, less than the \
@@ -1273,18 +1273,30 @@ fn reason_text(reason: &NoTableReason, budget: &DecisionBudget) -> String {
     }
 }
 
-/// The text that tells how to raise the budget that cut a partial table.
-fn budget_cutoff_text(result: &DecisionOutcome) -> String {
+fn budget_limit_text(cutoff: BudgetCutoff, budget: &DecisionBudget) -> String {
+    match cutoff {
+        BudgetCutoff::States => format!("{} states", budget.max_states),
+        BudgetCutoff::Visits => format!("{} visited configs", budget.max_visits),
+        BudgetCutoff::Both => format!(
+            "{} states and {} visited configs",
+            budget.max_states, budget.max_visits
+        ),
+    }
+}
+
+fn budget_cutoff_text(cutoff: BudgetCutoff, budget: &DecisionBudget) -> String {
+    let option = match cutoff {
+        BudgetCutoff::States => "the max_dfa_states option",
+        BudgetCutoff::Visits => "the max_dfa_visits option",
+        BudgetCutoff::Both => "the max_dfa_states and max_dfa_visits options",
+    };
     format!(
-        "the analysis budget ({} states or {} visited configs) stopped the lookahead; \
-         raise it with the max_dfa_states and max_dfa_visits options of the grammar, \
-         the rule, or the block",
-        result.budget.max_states, result.budget.max_visits
+        "the analysis budget ({}) stopped the lookahead; \
+         raise it with {option} of the grammar, the rule, or the block",
+        budget_limit_text(cutoff, budget)
     )
 }
 
-/// The text of a witness path, `None` when there is no witness or the path is
-/// empty.
 fn witness_text(vocabulary: &[String], witness: Option<&[i32]>) -> Option<String> {
     witness
         .filter(|witness| !witness.is_empty())
@@ -1300,7 +1312,6 @@ fn vocabulary_line(vocabulary: &[String]) -> String {
     format!("vocabulary: EOF=-1{tokens}")
 }
 
-/// Joins report blocks, keeping one blank line between them.
 fn render_blocks(blocks: &[String]) -> String {
     let mut text = blocks.join("\n");
     if !blocks.is_empty() {
@@ -1493,15 +1504,14 @@ fn static_only_diagnostics(report: &StaticParserDfaReport) -> Vec<Diagnostic> {
             }
             (!parts.is_empty()).then(|| {
                 let mut message = format!(
-                    "parser decision {} of rule '{}' resolves its escape states without \
-                     adaptive_predict: {}",
+                    "decision {} of rule '{}' applied heuristic resolution of escape states: {}",
                     decision.decision,
                     decision.rule,
                     parts.join(", ")
                 );
                 message.push_str(&tie_break_text(report, decision));
-                if result.budget_cutoff {
-                    message.push_str(&format!("; {}", budget_cutoff_text(result)));
+                if let Some(cutoff) = result.budget_cutoff {
+                    message.push_str(&format!("; {}", budget_cutoff_text(cutoff, &result.budget)));
                 }
                 Diagnostic::warning(STATIC_ONLY_RESOLVED, span, message)
             })
@@ -2325,7 +2335,7 @@ fn find_element_in_alt(
 
 #[cfg(test)]
 mod tests {
-    use super::{DecisionBudget, NoTableReason, reason_text};
+    use super::{BudgetCutoff, DecisionBudget, NoTableReason, budget_cutoff_text, reason_text};
 
     /// Each reason of a decision without a table has its own text, and a
     /// precedence decision tells why its first class has no table.
@@ -2359,9 +2369,16 @@ mod tests {
                 "SLL cannot separate the alternatives; only full-context prediction can",
             ),
             (
-                NoTableReason::StartBudget,
-                "the SLL DFA exceeded the analysis budget (1000 states or 2000000 visited \
-                 configs)",
+                NoTableReason::StartBudget(BudgetCutoff::States),
+                "the SLL DFA exceeded the analysis budget (1000 states)",
+            ),
+            (
+                NoTableReason::StartBudget(BudgetCutoff::Visits),
+                "the SLL DFA exceeded the analysis budget (2000000 visited configs)",
+            ),
+            (
+                NoTableReason::StartBudget(BudgetCutoff::Both),
+                "the SLL DFA exceeded the analysis budget (1000 states and 2000000 visited configs)",
             ),
             (
                 NoTableReason::LowCoverage {
@@ -2383,5 +2400,26 @@ mod tests {
         for (reason, text) in cases {
             assert_eq!(reason_text(&reason, &budget), text, "{reason:?}");
         }
+    }
+
+    #[test]
+    fn budget_cutoff_texts_name_the_exhausted_budget() {
+        let budget = DecisionBudget::default();
+        assert_eq!(
+            budget_cutoff_text(BudgetCutoff::States, &budget),
+            "the analysis budget (1000 states) stopped the lookahead; raise it with the \
+             max_dfa_states option of the grammar, the rule, or the block"
+        );
+        assert_eq!(
+            budget_cutoff_text(BudgetCutoff::Visits, &budget),
+            "the analysis budget (2000000 visited configs) stopped the lookahead; raise it with \
+             the max_dfa_visits option of the grammar, the rule, or the block"
+        );
+        assert_eq!(
+            budget_cutoff_text(BudgetCutoff::Both, &budget),
+            "the analysis budget (1000 states and 2000000 visited configs) stopped the lookahead; \
+             raise it with the max_dfa_states and max_dfa_visits options of the grammar, the rule, \
+             or the block"
+        );
     }
 }
