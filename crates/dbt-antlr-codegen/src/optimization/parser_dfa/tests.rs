@@ -2096,7 +2096,7 @@ fn spent_visit_budgets_emit_g4s193_warnings() {
         warnings,
         [
             "the analysis of parser decision 0 of rule 'stat' is slow: 1 of 1 build attempts \
-             spent the visit budget (100 configs); 100 configs visited, 5 DFA states built; \
+             spent the visit budget (100 configs); 100 configs visited, 6 DFA states built; \
              most visited rules: expr 96%, stat 4%",
             "the analysis of parser decision 3 of rule 'expr' is slow: 3 of 7 build attempts \
              spent the visit budget (100 configs); 548 configs visited, 23 DFA states built; \
@@ -4230,4 +4230,38 @@ fn low_coverage_past_frontier_skips_redundant_bounded_retry() {
             .collect::<Vec<_>>(),
         [AttemptKind::Default]
     );
+}
+
+#[test]
+fn smaller_config_sets_expand_first_at_equal_depth() {
+    let source = "grammar CheapFirst;\n\
+                  options { max_dfa_visits = 90; }\n\
+                  top : ( '-' 's' | '-' 'n' | 'a' big 'x' | 'a' big 'y' ) ;\n\
+                  big : c0 ;\n\
+                  c0 : c1 | c2 ; c1 : c3 | c4 ; c2 : c3 | c4 ;\n\
+                  c3 : c5 | c6 ; c4 : c5 | c6 ; c5 : 'p' | 'q' ; c6 : 'r' | 't' ;\n";
+    let (_, build) = build_source_with(
+        "CheapFirst",
+        source,
+        AtnFallback::Forbidden,
+        &ParserDfaBudgets::default(),
+    );
+    let token = |name: &str| {
+        build
+            .report
+            .vocabulary
+            .iter()
+            .position(|display| display == name)
+            .map(|index| index as i32 + 1)
+            .expect("token in vocabulary")
+    };
+    let decision = build
+        .report
+        .decisions
+        .iter()
+        .find(|entry| entry.rule == "top")
+        .expect("top decision");
+    let table = decision.result.table.as_ref().expect("table");
+    assert_eq!(accept_after(table, &[token("'-'"), token("'s'")]), Some(1));
+    assert_eq!(accept_after(table, &[token("'-'"), token("'n'")]), Some(2));
 }

@@ -19,7 +19,7 @@
 //! or an exhausted start state retries with full widening. A `max_k` option
 //! stops the construction at its depth from the start.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -899,7 +899,8 @@ impl DecisionTableBuilder {
                 decision,
                 info: HashMap::new(),
                 accept_sinks: HashMap::new(),
-                queue: VecDeque::new(),
+                queue: BinaryHeap::new(),
+                next_queue_seq: 0,
                 completion_depths: &self.completion_depths,
                 attempt: Attempt {
                     decision,
@@ -952,6 +953,33 @@ impl GuardSets {
             }
         };
         index as u32
+    }
+}
+
+struct QueuedState<'sim> {
+    depth: usize,
+    configs: usize,
+    seq: usize,
+    state: &'sim ParserDFAState<'sim>,
+}
+
+impl Eq for QueuedState<'_> {}
+
+impl PartialEq for QueuedState<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        (self.depth, self.configs, self.seq) == (other.depth, other.configs, other.seq)
+    }
+}
+
+impl Ord for QueuedState<'_> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (other.depth, other.configs, other.seq).cmp(&(self.depth, self.configs, self.seq))
+    }
+}
+
+impl PartialOrd for QueuedState<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -1014,7 +1042,8 @@ struct DecisionBuild<'b, 'sim, 'a> {
     /// For each alternative, the shared accept state of the config sets with
     /// only that viable alternative.
     accept_sinks: HashMap<i32, &'sim ParserDFAState<'sim>>,
-    queue: VecDeque<&'sim ParserDFAState<'sim>>,
+    queue: BinaryHeap<QueuedState<'sim>>,
+    next_queue_seq: usize,
     completion_depths: &'a [OnceLock<BitSet>],
     attempt: Attempt,
 }
@@ -1023,6 +1052,17 @@ impl<'b, 'sim, 'a> DecisionBuild<'b, 'sim, 'a>
 where
     'sim: 'a,
 {
+    fn push_queue(&mut self, state: &'sim ParserDFAState<'sim>, depth: usize) {
+        let seq = self.next_queue_seq;
+        self.next_queue_seq += 1;
+        self.queue.push(QueuedState {
+            depth,
+            configs: state.configs().length(),
+            seq,
+            state,
+        });
+    }
+
     fn run(&mut self) -> Attempt {
         let start = self.closure.start(self.decision_state);
         if self.closure.exhausted {
@@ -1039,7 +1079,7 @@ where
             return self.take_attempt();
         }
 
-        while let Some(state) = self.queue.pop_front() {
+        while let Some(QueuedState { state, .. }) = self.queue.pop() {
             let state_number = state.state_number();
             let Some(facts) = self.info.get(&state_number).cloned() else {
                 continue;
@@ -1617,7 +1657,8 @@ where
             } else if roots_grew && expanded && verdict == Verdict::Decide {
                 // The roots ride on the configs, so the successors of an
                 // expanded state must see the new roots too.
-                self.queue.push_back(state);
+                let existing_depth = self.info.get(&number).map_or(0, |existing| existing.depth);
+                self.push_queue(state, existing_depth);
             }
             return Some(state);
         }
@@ -1636,7 +1677,7 @@ where
         }
         self.info.insert(number, facts);
         if decide && self.attempt.failed.is_none() {
-            self.queue.push_back(state);
+            self.push_queue(state, depth);
         }
         Some(state)
     }
@@ -1860,7 +1901,10 @@ where
                 }
             }
             Verdict::Accept(_) | Verdict::Escape(_) => {}
-            Verdict::Decide => self.queue.push_back(state),
+            Verdict::Decide => {
+                let depth = self.info.get(&number).map_or(0, |facts| facts.depth);
+                self.push_queue(state, depth);
+            }
         }
     }
 
