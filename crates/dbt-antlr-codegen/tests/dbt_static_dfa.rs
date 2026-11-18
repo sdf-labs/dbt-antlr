@@ -809,6 +809,42 @@ fn precedence_dumps_list_every_class() {
     );
 }
 
+/// The class of the right operand of `=` follows the tokens that consume the
+/// operand inside an enclosing `expr`: the `)` of `CAST ( ... )` and of
+/// `( ... )`, and the `=` of the enclosing operator loop. Without them the
+/// `'AS' 'INT64'` of `CAST ( x = y AS INT64 )` accepts as a plain alias.
+#[test]
+fn precedence_class_dump_keeps_the_in_rule_follows() {
+    let output = emit_grammar("parser/InlineAlias.g4", |options| {
+        options.static_parser_dfa(true).dump_dfas("expr");
+    });
+    let [dump] = output.reports.as_slice() else {
+        panic!("one dump per parser unit: {:?}", output.reports);
+    };
+    assert!(
+        dump.contains("precedence classes: [5, 6, 7]"),
+        "the loop has the operand classes: {dump}"
+    );
+    let (_, rest) = dump
+        .split_once("class 2:\n")
+        .unwrap_or_else(|| panic!("class 2 of the `=` operand: {dump}"));
+    let (class_2, _) = rest
+        .split_once("class 3:\n")
+        .unwrap_or_else(|| panic!("class 3 after class 2: {rest}"));
+    assert!(
+        class_2.contains("')'(15) ->"),
+        "the class follows the `)` of the enclosing cast: {class_2}"
+    );
+    assert!(
+        class_2.contains("'AND'..'='(11..12) ->"),
+        "the class follows the `=` of the enclosing loop: {class_2}"
+    );
+    assert!(
+        class_2.contains("ESCAPE; error-recovery fallback alt=1; viable alts 1, 2"),
+        "the alias state escapes instead of accepting: {class_2}"
+    );
+}
+
 #[test]
 fn static_parser_dfa_emits_table_prediction_for_hybrid_decisions() {
     let output = emit_grammar("ReferenceToATN.g4", |options| {
