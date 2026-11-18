@@ -19,7 +19,7 @@
 //! or an exhausted start state retries with full widening. A `max_k` option
 //! stops the construction at its depth from the start.
 
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -901,6 +901,7 @@ impl DecisionTableBuilder {
                 accept_sinks: HashMap::new(),
                 queue: BinaryHeap::new(),
                 next_queue_seq: 0,
+                depth1_budget: None,
                 completion_depths: &self.completion_depths,
                 attempt: Attempt {
                     decision,
@@ -958,6 +959,7 @@ impl GuardSets {
 
 struct QueuedState<'sim> {
     depth: usize,
+    expanded: bool,
     configs: usize,
     seq: usize,
     state: &'sim ParserDFAState<'sim>,
@@ -967,13 +969,19 @@ impl Eq for QueuedState<'_> {}
 
 impl PartialEq for QueuedState<'_> {
     fn eq(&self, other: &Self) -> bool {
-        (self.depth, self.configs, self.seq) == (other.depth, other.configs, other.seq)
+        (self.depth, self.expanded, self.configs, self.seq)
+            == (other.depth, other.expanded, other.configs, other.seq)
     }
 }
 
 impl Ord for QueuedState<'_> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (other.depth, other.configs, other.seq).cmp(&(self.depth, self.configs, self.seq))
+        (other.depth, other.expanded, other.configs, other.seq).cmp(&(
+            self.depth,
+            self.expanded,
+            self.configs,
+            self.seq,
+        ))
     }
 }
 
@@ -1044,6 +1052,7 @@ struct DecisionBuild<'b, 'sim, 'a> {
     accept_sinks: HashMap<i32, &'sim ParserDFAState<'sim>>,
     queue: BinaryHeap<QueuedState<'sim>>,
     next_queue_seq: usize,
+    depth1_budget: Option<(usize, u64)>,
     completion_depths: &'a [OnceLock<BitSet>],
     attempt: Attempt,
 }
@@ -1052,15 +1061,35 @@ impl<'b, 'sim, 'a> DecisionBuild<'b, 'sim, 'a>
 where
     'sim: 'a,
 {
-    fn push_queue(&mut self, state: &'sim ParserDFAState<'sim>, depth: usize) {
+    fn push_queue(&mut self, state: &'sim ParserDFAState<'sim>, depth: usize, expanded: bool) {
         let seq = self.next_queue_seq;
         self.next_queue_seq += 1;
         self.queue.push(QueuedState {
             depth,
+            expanded,
             configs: state.configs().length(),
             seq,
             state,
         });
+    }
+
+    fn remaining_depth1_states(&self, current_state: i32) -> usize {
+        let mut seen = HashSet::new();
+        seen.insert(current_state);
+        for item in &self.queue {
+            if item.depth != 1 {
+                continue;
+            }
+            let number = item.state.state_number();
+            if self
+                .info
+                .get(&number)
+                .is_some_and(|facts| !facts.expanded && facts.verdict == Verdict::Decide)
+            {
+                seen.insert(number);
+            }
+        }
+        seen.len()
     }
 
     fn run(&mut self) -> Attempt {
@@ -1128,7 +1157,26 @@ where
                 taint: facts.taint.clone(),
                 roots: facts.roots.clone(),
             };
-            let successors = self.closure.successors(&closed);
+            let (successors, visit_cutoff) = if facts.depth == 1 && !facts.expanded {
+                let remaining_depth1 = self.remaining_depth1_states(state_number);
+                let remaining_visits = self.closure.remaining_visits();
+                let (initial_depth1, initial_remaining) = *self
+                    .depth1_budget
+                    .get_or_insert((remaining_depth1, remaining_visits));
+                let avg = (initial_remaining / initial_depth1 as u64).max(1);
+                let fair_share = (remaining_visits / remaining_depth1 as u64).max(1);
+                let reserve_per_state = (avg / 2).min(fair_share);
+                let above_reserve = remaining_visits.saturating_sub(
+                    (remaining_depth1 as u64 - 1).saturating_mul(reserve_per_state),
+                );
+                let per_state_cap = avg.saturating_mul(5).max(fair_share);
+                let slice = per_state_cap.min(above_reserve).max(fair_share);
+                self.closure.successors_capped(&closed, slice)
+            } else {
+                let successors = self.closure.successors(&closed);
+                (successors, self.closure.exhausted)
+            };
+            let global_visit_exhausted = self.closure.exhausted;
             // Past the start state, the table escapes the states that it has
             // no budget to expand instead of failing. The check before the
             // interning assumes that every successor is new, so no state is
@@ -1136,20 +1184,20 @@ where
             // keeps its old edges in the DFA, but an escape state has no
             // edges in the table (see `Self::snapshot`).
             let new_states = if facts.expanded { 0 } else { successors.len() };
-            let cut_off = facts.depth > 0
-                && (self.closure.exhausted || self.dfa.len() + new_states > self.max_states);
+            let state_cutoff = facts.depth > 0 && self.dfa.len() + new_states > self.max_states;
+            let cut_off = facts.depth > 0 && (visit_cutoff || state_cutoff);
             if cut_off {
-                let visit_cutoff = self.closure.exhausted;
-                let state_cutoff = self.dfa.len() + new_states > self.max_states;
                 let cutoff = match (state_cutoff, visit_cutoff) {
                     (true, true) => BudgetCutoff::Both,
                     (true, false) => BudgetCutoff::States,
                     (false, true) => BudgetCutoff::Visits,
                     (false, false) => unreachable!(),
                 };
-                self.attempt.exhausted |= self.closure.exhausted;
+                self.attempt.exhausted |= global_visit_exhausted;
                 self.closure.exhausted = false;
-                self.budget_spent = true;
+                if state_cutoff || global_visit_exhausted {
+                    self.budget_spent = true;
+                }
                 BudgetCutoff::merge_opt(&mut self.attempt.budget_cutoff, Some(cutoff));
                 self.escape_frontier(state_number, &facts);
                 continue;
@@ -1658,7 +1706,7 @@ where
                 // The roots ride on the configs, so the successors of an
                 // expanded state must see the new roots too.
                 let existing_depth = self.info.get(&number).map_or(0, |existing| existing.depth);
-                self.push_queue(state, existing_depth);
+                self.push_queue(state, existing_depth, true);
             }
             return Some(state);
         }
@@ -1677,7 +1725,7 @@ where
         }
         self.info.insert(number, facts);
         if decide && self.attempt.failed.is_none() {
-            self.push_queue(state, depth);
+            self.push_queue(state, depth, false);
         }
         Some(state)
     }
@@ -1902,8 +1950,11 @@ where
             }
             Verdict::Accept(_) | Verdict::Escape(_) => {}
             Verdict::Decide => {
-                let depth = self.info.get(&number).map_or(0, |facts| facts.depth);
-                self.push_queue(state, depth);
+                if let Some(facts) = self.info.get(&number)
+                    && facts.expanded
+                {
+                    self.push_queue(state, facts.depth, true);
+                }
             }
         }
     }
