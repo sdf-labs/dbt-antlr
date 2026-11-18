@@ -1172,22 +1172,14 @@ impl<'atn, 'a> Closure<'atn, 'a> {
         let Some(class) = self.precedence else {
             return false;
         };
-        self.call_info(target.get_state_number())
-            .is_some_and(|call| call.precedence == 0 && call.target_rule_index == class.rule_index)
+        self.call_infos(target.get_state_number())
+            .iter()
+            .any(|call| call.precedence == 0 && call.target_rule_index == class.rule_index)
     }
 
     /// Every invocation that returns into `follow_state_number`.
     fn call_infos(&self, follow_state_number: i32) -> &[CallInfo] {
         self.call_sites.call_infos(follow_state_number)
-    }
-
-    /// One invocation of `follow_state_number`: the last recorded one.
-    ///
-    /// The predicate resolution below still reads a single invocation. A
-    /// follow state with several invocations can make that record ambiguous,
-    /// which is why the class filter does not read it.
-    fn call_info(&self, follow_state_number: i32) -> Option<CallInfo> {
-        self.call_infos(follow_state_number).last().copied()
     }
 
     /// Evaluates a precedence predicate from the call sites recorded on the
@@ -1207,15 +1199,23 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             if return_state == ATNStateRef::empty_return() {
                 return None;
             }
-            let call = self.call_info(return_state.get_state_number())?;
-            if call.target_rule_index != rule {
-                return None;
+            // Only the invocations of `rule` can be the frame that returns
+            // here. A follow state can also carry calls of other rules.
+            let mut matched = false;
+            for call in self.call_infos(return_state.get_state_number()) {
+                if call.target_rule_index != rule {
+                    continue;
+                }
+                matched = true;
+                let outcome = value >= call.precedence;
+                match agreed {
+                    None => agreed = Some(outcome),
+                    Some(previous) if previous != outcome => return None,
+                    Some(_) => {}
+                }
             }
-            let outcome = value >= call.precedence;
-            match agreed {
-                None => agreed = Some(outcome),
-                Some(previous) if previous != outcome => return None,
-                Some(_) => {}
+            if !matched {
+                return None;
             }
         }
         agreed

@@ -145,12 +145,14 @@ fn golden_corpus_decisions_get_their_kinds() {
             "ReferenceToATN.g4",
             &[DecisionKind::Hybrid, DecisionKind::Ll1],
         ),
-        // The shared-descent group of `expr ';' | expr '.'` cures every
-        // conflict of the first decision.
+        // The shared-descent group of `expr ';' | expr '.'` cures the
+        // conflicts of the first decision, except one state where a
+        // precedence predicate is ambiguous (the operands of `expr` share a
+        // follow state). That state escapes.
         (
             "Perf.g4",
             &[
-                DecisionKind::Static,
+                DecisionKind::Hybrid,
                 DecisionKind::Ll1,
                 DecisionKind::Static,
                 DecisionKind::Hybrid,
@@ -1749,10 +1751,13 @@ fn shared_descent_groups_cure_the_escapes_of_the_fuzz_items() {
     };
 
     // `item : e 'as' name | e`: one parse of `e`, then 'as' or anything else.
+    // One state of the group escapes: a precedence predicate in its config set
+    // is ambiguous there, because the operands of `e` share a follow state, so
+    // the group is not trusted at that state. The rest of the group holds.
     let item = by_rule("item");
-    assert_eq!(item.kind, DecisionKind::Static);
-    assert_eq!(item.escapes, 0);
-    assert_eq!(item.descent_group_states(), 15);
+    assert_eq!(item.kind, DecisionKind::Hybrid);
+    assert_eq!(item.escapes, 1);
+    assert_eq!(item.descent_group_states(), 14);
     let plan = item.descent.as_ref().expect("item accepts with a group");
     let [group] = &plan.groups[..] else {
         panic!("one group: {plan:?}");
