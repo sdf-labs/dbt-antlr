@@ -204,6 +204,138 @@ fn hybrid_tables_escape_at_the_conflict_state() {
     assert_eq!(decision.conflict_witness.as_deref(), Some(&[2, -1][..]));
 }
 
+/// The operands of `expr '=' expr` and `expr 'AND' expr` end their
+/// alternatives at the same loop state, so both calls return into one follow
+/// state. The call-site record keeps both invocations. A class filter that
+/// read only one invocation dropped the other operand's follow set from its
+/// class table.
+#[test]
+fn call_sites_keep_every_invocation_of_a_shared_follow_state() {
+    use std::collections::BTreeSet;
+
+    use super::closure::CallSites;
+
+    let path = grammars_dir().join("parser/InlineAlias.g4");
+    let compilation = compile(LoadOptions {
+        roots: vec![path],
+        library_directories: Vec::new(),
+    })
+    .expect("grammar compiles");
+    let parser = compilation
+        .roots
+        .first()
+        .and_then(|root| root.parser)
+        .and_then(|id| compilation.parser(id))
+        .expect("InlineAlias has a parser");
+    let sites = CallSites::of(parser.atn);
+    let expr = parser
+        .semantic
+        .recognizer
+        .rule_names
+        .iter()
+        .position(|name| *name == "expr")
+        .expect("expr is a rule") as i32;
+
+    let calls = sites.calls_to(expr);
+    let mut shared: Vec<(i32, Vec<i32>)> = calls
+        .iter()
+        .map(|call| {
+            let precedences: BTreeSet<i32> = calls
+                .iter()
+                .filter(|other| other.follow == call.follow)
+                .map(|other| other.precedence)
+                .collect();
+            (call.follow, precedences.into_iter().collect::<Vec<i32>>())
+        })
+        .filter(|(_, precedences)| precedences.len() > 1)
+        .collect();
+    shared.sort();
+    shared.dedup();
+    let [(follow, precedences)] = shared.as_slice() else {
+        panic!("one follow state is shared by operands of two precedences: {shared:?}");
+    };
+    assert_eq!(precedences, &[6, 7], "the '=' and 'AND' operand calls");
+
+    // `alias` returns into the same loop state as the two operator operands.
+    let alias = parser
+        .semantic
+        .recognizer
+        .rule_names
+        .iter()
+        .position(|name| *name == "alias")
+        .expect("alias is a rule") as i32;
+    let infos: Vec<(i32, i32)> = sites
+        .call_infos(*follow)
+        .iter()
+        .map(|info| (info.target_rule_index, info.precedence))
+        .collect();
+    let mut expected = vec![(expr, 6), (expr, 7), (alias, 0)];
+    expected.sort_unstable();
+    let mut actual = infos.clone();
+    actual.sort_unstable();
+    assert_eq!(
+        actual, expected,
+        "every invocation of follow state {follow} is kept: {infos:?}"
+    );
+}
+
+/// The class table of the right operand of `=` keeps the return paths that
+/// leave `expr` into an enclosing invocation: the `)` of `CAST ( ... )` and of
+/// `( ... )`, and the `=` of the enclosing operator loop.
+///
+/// Without them the `'AS' 'INT64'` of `CAST ( x = y AS INT64 )` looked like a
+/// plain alias, and the parse failed at the `)`.
+#[test]
+fn precedence_class_keeps_the_in_rule_return_paths() {
+    let path = grammars_dir().join("parser/InlineAlias.g4");
+    let results = outcomes(&path);
+    let decision = results
+        .iter()
+        .find(|result| result.is_precedence_loop())
+        .expect("InlineAlias has a precedence loop");
+    let precedence = decision
+        .precedence
+        .as_ref()
+        .expect("the loop has precedence tables");
+    let cutoffs = &precedence.cutoffs;
+    // Class `index` covers `cutoffs[index - 1] + 1 ..= cutoffs[index]`, and
+    // class 0 covers `0 ..= cutoffs[0]`.
+    let class_of = |value: i32| {
+        (1..=cutoffs.len())
+            .find(|&index| {
+                let lo = cutoffs[index - 1] + 1;
+                let hi = cutoffs.get(index).copied().unwrap_or(i32::MAX);
+                lo <= value && value <= hi
+            })
+            .unwrap_or(0)
+    };
+    let table = precedence.tables[class_of(7)]
+        .as_ref()
+        .expect("the class of the '=' operand has a table");
+
+    for token in token_types(&path, &["'='", "')'"]) {
+        assert!(
+            table.states[0]
+                .edges
+                .iter()
+                .any(|edge| edge.lo <= token && token <= edge.hi),
+            "the class table follows token {token} out of the loop"
+        );
+    }
+
+    let cast = token_types(&path, &["'AS'", "'INT64'", "')'"]);
+    let alias = walk(table, &cast[..2]).expect("the path after `'AS' 'INT64'`");
+    assert_eq!(
+        alias.accept, 0,
+        "the alias does not decide before it reads the follow token: {alias:?}"
+    );
+    let close = walk(table, &cast).expect("the path after `'AS' 'INT64' ')'`");
+    assert!(
+        close.is_escape() && close.viable_alts == [1, 2],
+        "the `')'` after `'AS' 'INT64'` escapes with both alternatives: {close:?}"
+    );
+}
+
 #[test]
 fn precedence_decisions_get_one_table_per_class() {
     let results = outcomes(&grammars_dir().join("SimpleLR.g4"));
@@ -1956,11 +2088,16 @@ fn widened_competitors_get_no_uniform_trust() {
 
 /// The precedence filter of a widened precedence class keeps an exit config
 /// that widening made equal to an iterate config. In `WidenedPrecedence.g4`,
-/// above class 0 (`p <= 2`), the loop cannot iterate through `e op`. The other
-/// iterate reading of `'+' 'q' 'r'` owes `'a'`, so no class table above class
-/// 0 can predict the iterate for `'+' 'q' 'r' EOF`: it predicts the exit, or
-/// it keeps the exit in a state that escapes or tests a stack guard where
-/// widening merges the two readings.
+/// the class of the right operand of `e '*' e` (`p = 5`) cannot iterate
+/// through `e op`. The `e op 'a'` reading owes `'a'` after `'q' 'r'`, so the
+/// class table cannot predict the iterate on `'+' 'q' 'r' EOF`. It predicts
+/// the exit, or it keeps the exit in a state that escapes or tests a stack
+/// guard.
+///
+/// The operands of `'*'` and of `e op` share the follow state they return
+/// into, so the class filter tests each invocation. A class that cannot come
+/// from `'*'` drops that return edge. It decides the same lookahead from its
+/// own operator alternatives at the first token.
 #[test]
 fn widened_precedence_filter_keeps_the_exit() {
     let path = grammars_dir().join("parser").join("WidenedPrecedence.g4");
@@ -1987,20 +2124,37 @@ fn widened_precedence_filter_keeps_the_exit() {
             let precedence = decision.precedence.as_ref().expect("precedence tables");
             assert_eq!(precedence.cutoffs[0], 2);
             assert_eq!(precedence.adaptive_classes, 0, "{atn_fallback:?}");
+            // The `e '*' e` alternative calls its right operand at
+            // precedence 5: that class owns the shared return edge.
+            let operand = 5;
             for (class, table) in precedence.tables.iter().enumerate().skip(1) {
                 let table = table.as_ref().expect("class table");
+                let lo = precedence.cutoffs[class - 1] + 1;
+                let hi = precedence.cutoffs.get(class).copied().unwrap_or(i32::MAX);
                 let prediction = (0..=tokens.len())
                     .filter_map(|length| walk(table, &tokens[..length]))
                     .find(|state| state.accept != 0);
-                assert!(
-                    prediction.is_some_and(|state| {
-                        state.accept == 2
-                            || (state.accept < 0
-                                && (state.conflicts.contains(&2) || state.viable_alts.contains(&2)))
-                    }),
-                    "{atn_fallback:?}, widened {widened}: class {class} iterates on \
-                     `'+' 'q' 'r' EOF`"
-                );
+                if lo <= operand && operand <= hi {
+                    assert!(
+                        prediction.is_some_and(|state| {
+                            state.accept == 2
+                                || (state.accept < 0
+                                    && (state.conflicts.contains(&2)
+                                        || state.viable_alts.contains(&2)))
+                        }),
+                        "{atn_fallback:?}, widened {widened}: class {class} iterates on \
+                         `'+' 'q' 'r' EOF`"
+                    );
+                } else {
+                    // The class decides from its own alternatives, at its first
+                    // token.
+                    assert!(
+                        (0..=1).any(|length| walk(table, &tokens[..length])
+                            .is_some_and(|state| state.accept > 0)),
+                        "{atn_fallback:?}, widened {widened}: class {class} decides from its \
+                         own alternatives on `'+'`, {prediction:?}"
+                    );
+                }
             }
         }
     }
@@ -2099,7 +2253,7 @@ fn spent_visit_budgets_emit_g4s193_warnings() {
              spent the visit budget (100 configs); 100 configs visited, 6 DFA states built; \
              most visited rules: expr 93%, stat 7%",
             "the analysis of parser decision 3 of rule 'expr' is slow: 3 of 7 build attempts \
-             spent the visit budget (100 configs); 548 configs visited, 23 DFA states built; \
+             spent the visit budget (100 configs); 572 configs visited, 23 DFA states built; \
              most visited rules: expr 88%, stat 11%",
         ]
     );

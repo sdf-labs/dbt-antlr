@@ -989,6 +989,10 @@ fn inline_alias_static_dfa_only_parser_never_calls_adaptive_predict() {
 /// exits where the `CAST` operand is on the stack, and keeps the alias
 /// everywhere else. The `AND` states have their own guard group, so the
 /// `CAST` operand does not make an `AND` exit.
+///
+/// The right operand of `=` is its own precedence class, and the class table
+/// keeps the return paths into an enclosing `expr`. So `CAST` closes after an
+/// `=` operand, and the alias binds inside that operand.
 #[test]
 fn inline_alias_static_dfa_only_matches_the_adaptive_engine() {
     for input in [
@@ -996,6 +1000,9 @@ fn inline_alias_static_dfa_only_matches_the_adaptive_engine() {
         "SELECT x AS INT64",
         "SELECT ( x AS INT64 )",
         "SELECT CAST ( x AS INT64 )",
+        "SELECT CAST ( x = y AS INT64 )",
+        "SELECT CAST ( x = y AS a AS INT64 )",
+        "SELECT CAST ( x = y = z AS INT64 )",
         "SELECT CAST ( x AS y AS INT64 )",
         "SELECT CAST ( ( x AS inner ) AS INT64 ) AS outer",
         "SELECT CAST ( CAST ( x AS t ) AS INT64 )",
