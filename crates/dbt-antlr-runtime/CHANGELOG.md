@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-runtime-v0.9.0...dbt-antlr-runtime-v0.10.0) - 2026-11-18
+
+### Other
+
+- *(codegen)* order DFA expansion at equal depth by config-set size ([#112](https://github.com/sdf-labs/dbt-antlr/pull/112))
+- *(codegen)* retry conflict-free budget cutoffs with widening and bound late-escaping tables ([#105](https://github.com/sdf-labs/dbt-antlr/pull/105)) ([#107](https://github.com/sdf-labs/dbt-antlr/pull/107))
+- *(codegen)* [**breaking**] build static parser DFA tables with DecisionTableBuilder ([#104](https://github.com/sdf-labs/dbt-antlr/pull/104))
+
 ## [0.9.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-runtime-v0.8.1...dbt-antlr-runtime-v0.9.0) - 2026-11-15
 
 ### Added
