@@ -46,7 +46,7 @@ use dbt_antlr_runtime::analysis::{
     TOKEN_MIN_USER_TOKEN_TYPE, TransitionType,
 };
 
-use super::closure::{in_popped_frame, positions_owing_input, rule_positions};
+use super::closure::{CallSites, in_popped_frame, positions_owing_input, rule_positions};
 
 /// The optional-postfix shape of one decision.
 #[derive(Clone, Debug)]
@@ -345,7 +345,7 @@ pub(super) fn collect_guard_roots(
     state: ATNStateRef,
     context: Option<PredictionContextRef<'_>>,
     mirror: &dyn Fn(ATNStateRef) -> bool,
-    sites: &HashMap<i32, i32>,
+    sites: &CallSites,
     out: &mut BTreeSet<i32>,
 ) {
     let Some(context) = context.filter(|context| !context.is_empty()) else {
@@ -360,7 +360,7 @@ fn collect_roots_in(
     state: ATNStateRef,
     context: &PredictionContextRef<'_>,
     mirror: &dyn Fn(ATNStateRef) -> bool,
-    sites: &HashMap<i32, i32>,
+    sites: &CallSites,
     out: &mut BTreeSet<i32>,
     visited: &mut HashSet<*const ()>,
 ) {
@@ -381,8 +381,15 @@ fn collect_roots_in(
                 if return_state == ATNStateRef::empty_return() {
                     out.insert(state.get_state_number());
                 } else if !mirror(return_state) {
+                    // A follow state can carry several invocations, and the
+                    // runtime frame can be any of them.
                     let number = return_state.get_state_number();
-                    out.insert(sites.get(&number).copied().unwrap_or(number));
+                    match sites.sites_of(number) {
+                        Some(found) => out.extend(found.iter().copied()),
+                        None => {
+                            out.insert(number);
+                        }
+                    }
                 }
             }
         }

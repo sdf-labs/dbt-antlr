@@ -205,9 +205,9 @@ pub(super) struct RuleCall {
 
 #[derive(Debug, Default)]
 pub(super) struct CallSites {
-    /// The state that makes each invocation, for the guard-root analysis of
+    /// The states that make the invocations, for the guard-root analysis of
     /// optional-postfix and precedence-loop decisions.
-    site_by_follow_state: HashMap<i32, i32>,
+    site_by_follow_state: HashMap<i32, BTreeSet<i32>>,
     /// Every invocation that returns into each follow state.
     call_infos_by_follow_state: HashMap<i32, Vec<CallInfo>>,
     /// The invocations of each rule, by the rule index of the called rule, in
@@ -228,7 +228,9 @@ impl CallSites {
                     let target_rule_index = rule_transition.get_target().get_rule_index();
                     sites
                         .site_by_follow_state
-                        .insert(follow_state, state.get_state_number());
+                        .entry(follow_state)
+                        .or_default()
+                        .insert(state.get_state_number());
                     let info = CallInfo {
                         target_rule_index,
                         precedence: rule_transition.precedence(),
@@ -263,6 +265,11 @@ impl CallSites {
             .ok()
             .and_then(|rule| self.calls_to_rule.get(rule))
             .map_or(&[], Vec::as_slice)
+    }
+
+    /// The invoking states that return into `follow_state_number`.
+    pub(super) fn sites_of(&self, follow_state_number: i32) -> Option<&BTreeSet<i32>> {
+        self.site_by_follow_state.get(&follow_state_number)
     }
 
     /// Every invocation that returns into `follow_state_number`.
@@ -785,7 +792,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
         mut taint: i32,
         roots: u32,
     ) -> Step<'a> {
-        let sites = &self.call_sites.site_by_follow_state;
+        let sites = &self.call_sites;
         let mut new_roots: BTreeSet<i32> = BTreeSet::new();
         // A boundary-popped configuration consumes on behalf of "some caller".
         // When that caller is an enclosing invocation of this loop, the

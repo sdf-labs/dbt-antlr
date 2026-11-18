@@ -208,9 +208,9 @@ fn hybrid_tables_escape_at_the_conflict_state() {
 
 /// The operands of `expr '=' expr` and `expr 'AND' expr` end their
 /// alternatives at the same loop state, so both calls return into one follow
-/// state. The call-site record keeps both invocations. A class filter that
-/// read only one invocation dropped the other operand's follow set from its
-/// class table.
+/// state. The call-site record keeps both invocations and both invoking
+/// states. A class filter that read only one invocation dropped the other
+/// operand's follow set from its class table.
 #[test]
 fn call_sites_keep_every_invocation_of_a_shared_follow_state() {
     use std::collections::BTreeSet;
@@ -278,6 +278,20 @@ fn call_sites_keep_every_invocation_of_a_shared_follow_state() {
     assert_eq!(
         actual, expected,
         "every invocation of follow state {follow} is kept: {infos:?}"
+    );
+
+    // The guard-root analysis walks the invoking states of a follow state, so
+    // it needs every site too.
+    let recorded: BTreeSet<i32> = sites.sites_of(*follow).cloned().unwrap_or_default();
+    let rule_count = parser.semantic.recognizer.rule_names.len() as i32;
+    let expected: BTreeSet<i32> = (0..rule_count)
+        .flat_map(|rule| sites.calls_to(rule))
+        .filter(|call| call.follow == *follow)
+        .map(|call| call.site)
+        .collect();
+    assert_eq!(
+        recorded, expected,
+        "every invoking state of follow state {follow} is recorded"
     );
 }
 
