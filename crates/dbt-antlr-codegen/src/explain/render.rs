@@ -353,7 +353,11 @@ impl Explanation<'_> {
             ));
         }
         let sll = self.probe?;
+        let walk_kind = ours.walk().map(|walk| walk.kind);
         Some(match sll {
+            Some(sll) if sll == oracle_alt && walk_kind == Some(TableKind::MinAlt) => format!(
+                "static SLL conflict. Unbounded SLL(*) also chooses alt {oracle_alt}, so this is not a lookahead budget limit: static table construction hit an SLL conflict under static closure approximation (such as nested precedence predicates or widened contexts). Raising max_dfa_states, max_dfa_visits, or max_k does not help. Left-factor or restructure the conflicting alternatives in rule '{rule}'."
+            ),
             Some(sll) if sll == oracle_alt => format!(
                 "lookahead budget. Unbounded SLL(*) also chooses alt {oracle_alt}, so a longer static lookahead decides this input. Left-factor the alternatives, or raise the max_dfa_states, max_dfa_visits, or max_k option of rule '{rule}' or of its block."
             ),

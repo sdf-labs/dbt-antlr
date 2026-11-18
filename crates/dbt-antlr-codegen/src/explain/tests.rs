@@ -280,3 +280,56 @@ fn a_decision_without_a_static_table_fails_under_static_dfa_only() {
     );
     assert!(run.report.contains("(G4S190)"), "{}", run.report);
 }
+
+const CASE_MIN_ALT: &str = "grammar CaseMinAlt;
+start: SELECT expr CASE? EOF;
+expr
+    : CASE (expr WHEN expr END | )
+    | PLUS expr
+    | expr PLUS expr
+    | (PLUS? NUM)
+    | WHEN
+    ;
+SELECT: 'SELECT';
+CASE: 'CASE';
+WHEN: 'WHEN';
+THEN: 'THEN';
+END: 'END';
+PLUS: '+';
+NUM: [0-9]+;
+ID: [a-z]+;
+WS: [ \\t\\r\\n]+ -> skip;
+";
+
+#[test]
+fn a_static_sll_conflict_where_runtime_sll_agrees_with_ll_is_not_a_lookahead_budget_limit() {
+    let run = run(
+        "CaseMinAlt",
+        CASE_MIN_ALT,
+        "SELECT CASE + CASE CASE WHEN 1 END",
+        true,
+    );
+    let Verdict::Divergence { step } = run.verdict else {
+        panic!("{}", run.report);
+    };
+    let walk = run.static_trace.events[step]
+        .walk()
+        .expect("a table predicts `expr`");
+    assert_eq!(walk.kind, TableKind::MinAlt, "{}", run.report);
+    assert!(
+        run.report.contains("root cause: static SLL conflict."),
+        "{}",
+        run.report
+    );
+    assert!(
+        !run.report.contains("root cause: lookahead budget"),
+        "{}",
+        run.report
+    );
+    assert!(
+        run.report
+            .contains("Raising max_dfa_states, max_dfa_visits, or max_k does not help."),
+        "{}",
+        run.report
+    );
+}
