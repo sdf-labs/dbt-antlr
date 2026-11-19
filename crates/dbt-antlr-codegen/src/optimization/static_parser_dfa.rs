@@ -44,7 +44,7 @@
 //! Each decision has an analysis budget (see `parser_dfa::budget`). The
 //! budget options of the grammar, its rules, and its blocks set it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -400,7 +400,7 @@ pub(crate) struct StaticParserDfaReport {
 
 /// The rule that an invoking state calls from, the label of the alternative
 /// that holds the call, and the source line of the call.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct InvokingState {
     pub(crate) rule: String,
     pub(crate) label: Option<String>,
@@ -500,13 +500,47 @@ impl StaticParserDfaReport {
             .sum()
     }
 
-    /// The tie-break groups of `--static-dfa-only` with a high prefix-hijack
-    /// hazard, and the guard groups with a stack-hijack hazard.
+    /// Returns the total count of high prefix-hijack and deduplicated
+    /// stack-hijack hazards across all decisions.
     fn hijack_hazards(&self) -> usize {
         self.decisions
             .iter()
-            .map(StaticParserDecisionReport::hijack_hazards)
+            .map(|decision| self.decision_hijack_hazards(decision))
             .sum()
+    }
+
+    fn decision_hijack_hazards(&self, decision: &StaticParserDecisionReport) -> usize {
+        decision.result.static_only.as_ref().map_or(0, |resolved| {
+            let prefix = resolved
+                .tie_breaks
+                .iter()
+                .filter(|group| group.level() == HazardLevel::High)
+                .count();
+            prefix + self.unique_stack_hijacks(resolved).len()
+        })
+    }
+
+    fn unique_stack_hijacks<'a>(&'a self, resolved: &'a EscapeResolutions) -> Vec<&'a GuardGroup> {
+        #[derive(Eq, Hash, PartialEq)]
+        enum CallerKey<'a> {
+            Known(&'a InvokingState),
+            State(i32),
+        }
+
+        let mut seen = HashSet::new();
+        resolved
+            .stack_hijacks()
+            .filter(|group| {
+                let Some(StackHijackVerdict::Hijack { caller, .. }) = group.hazard.as_ref() else {
+                    return true;
+                };
+                let key = match self.invoking_states.get(caller) {
+                    Some(known) => CallerKey::Known(known),
+                    None => CallerKey::State(*caller),
+                };
+                seen.insert(key)
+            })
+            .collect()
     }
 
     /// The escape states that `--static-dfa-only` resolved, summed over the
@@ -575,19 +609,6 @@ pub(crate) struct StaticParserDecisionReport {
 }
 
 impl StaticParserDecisionReport {
-    /// The tie-break groups of `--static-dfa-only` with a high prefix-hijack
-    /// hazard, and the guard groups with a stack-hijack hazard.
-    fn hijack_hazards(&self) -> usize {
-        self.result.static_only.as_ref().map_or(0, |resolved| {
-            let prefix = resolved
-                .tie_breaks
-                .iter()
-                .filter(|group| group.level() == HazardLevel::High)
-                .count();
-            prefix + resolved.stack_hijacks().count()
-        })
-    }
-
     /// The states that accept with the virtual alternative of a shared-descent
     /// group, when the decision keeps its table.
     fn descent_group_states(&self) -> usize {
@@ -623,7 +644,7 @@ fn parser_report_value(parser: &StaticParserDfaReport, sources: &SourceSet) -> V
                 parser
                     .decisions
                     .iter()
-                    .map(|decision| decision_report_value(decision, sources)),
+                    .map(|decision| decision_report_value(parser, decision, sources)),
             ),
         ),
     ])
@@ -631,7 +652,11 @@ fn parser_report_value(parser: &StaticParserDfaReport, sources: &SourceSet) -> V
 
 /// One entry of the decision inventory in the manifest. The counts of the
 /// entries add up to the counts of their parser.
-fn decision_report_value(decision: &StaticParserDecisionReport, sources: &SourceSet) -> Value {
+fn decision_report_value(
+    parser: &StaticParserDfaReport,
+    decision: &StaticParserDecisionReport,
+    sources: &SourceSet,
+) -> Value {
     let result = &decision.result;
     let resolved = result.static_only.clone().unwrap_or_default();
     object(vec![
@@ -652,7 +677,10 @@ fn decision_report_value(decision: &StaticParserDecisionReport, sources: &Source
         ("minAltStates", Value::from(resolved.min_alt)),
         ("minViableAltStates", Value::from(resolved.min_viable_alt)),
         ("syntaxErrorStates", Value::from(resolved.syntax_error)),
-        ("hijackHazards", Value::from(decision.hijack_hazards())),
+        (
+            "hijackHazards",
+            Value::from(parser.decision_hijack_hazards(decision)),
+        ),
         (
             "descentGroupStates",
             Value::from(decision.descent_group_states()),
@@ -1987,7 +2015,7 @@ fn stack_hazard_text(
 /// `G4S192` warning: each stack hijack, at most [`STACK_HIJACKS`] of them, or
 /// else the verdict of the most harmful group.
 fn stack_hijacks_text(report: &StaticParserDfaReport, resolved: &EscapeResolutions) -> String {
-    let hijacks: Vec<&GuardGroup> = resolved.stack_hijacks().collect();
+    let hijacks = report.unique_stack_hijacks(resolved);
     if hijacks.is_empty() {
         return resolved
             .guard_groups
@@ -2335,7 +2363,15 @@ fn find_element_in_alt(
 
 #[cfg(test)]
 mod tests {
-    use super::{BudgetCutoff, DecisionBudget, NoTableReason, budget_cutoff_text, reason_text};
+    use std::collections::BTreeMap;
+
+    use super::{
+        AlternativeNames, AtnFallback, BudgetCutoff, DecisionBudget, DecisionOutcome,
+        EscapeResolutions, GuardGroup, InvokingState, NoTableReason, SourceSpan,
+        StackHijackVerdict, StaticParserDecisionReport, StaticParserDfaReport, budget_cutoff_text,
+        reason_text, stack_hijacks_text,
+    };
+    use crate::grammar::frontend::SourceId;
 
     /// Each reason of a decision without a table has its own text, and a
     /// precedence decision tells why its first class has no table.
@@ -2420,6 +2456,140 @@ mod tests {
             "the analysis budget (1000 states and 2000000 visited configs) stopped the lookahead; \
              raise it with the max_dfa_states and max_dfa_visits options of the grammar, the rule, \
              or the block"
+        );
+    }
+
+    fn dummy_report(invoking_states: BTreeMap<i32, InvokingState>) -> StaticParserDfaReport {
+        StaticParserDfaReport {
+            grammar: "TestParser".to_owned(),
+            source_span: SourceSpan::empty(SourceId::new(0)),
+            vocabulary: vec!["'DAY'".to_owned(), "'+'".to_owned(), "INT".to_owned()],
+            rule_names: vec!["expr".to_owned()],
+            invoking_states,
+            decisions: Vec::new(),
+            atn_fallback: AtnFallback::Forbidden,
+            budget: DecisionBudget::default(),
+            profile: None,
+        }
+    }
+
+    fn hijack_group(
+        danger: Vec<i32>,
+        states: usize,
+        caller: i32,
+        extension: Vec<i32>,
+    ) -> GuardGroup {
+        GuardGroup {
+            danger,
+            states,
+            witness: Some(vec![1]),
+            hazard: Some(StackHijackVerdict::Hijack { caller, extension }),
+        }
+    }
+
+    #[test]
+    fn stack_hijacks_deduplicate_per_caller() {
+        let mut invoking_states = BTreeMap::new();
+        invoking_states.insert(
+            10,
+            InvokingState {
+                rule: "column".to_owned(),
+                label: None,
+                line: Some(8),
+            },
+        );
+        invoking_states.insert(
+            11,
+            InvokingState {
+                rule: "column".to_owned(),
+                label: None,
+                line: Some(8),
+            },
+        );
+        invoking_states.insert(
+            20,
+            InvokingState {
+                rule: "select".to_owned(),
+                label: Some("proj".to_owned()),
+                line: Some(12),
+            },
+        );
+        let report = dummy_report(invoking_states);
+        let resolved = EscapeResolutions {
+            guarded: 4,
+            guard_groups: vec![
+                hijack_group(vec![10], 5, 10, vec![1, 2, 3, 2]),
+                hijack_group(vec![10, 20], 3, 10, vec![1, 2, 3, 2]),
+                hijack_group(vec![11], 2, 11, vec![1, 2]),
+                hijack_group(vec![20], 1, 20, vec![1, 2]),
+            ],
+            ..EscapeResolutions::default()
+        };
+
+        assert_eq!(report.unique_stack_hijacks(&resolved).len(), 2);
+        let decision = StaticParserDecisionReport {
+            decision: 0,
+            state: 0,
+            rule: "expr".to_owned(),
+            source_span: SourceSpan::empty(SourceId::new(0)),
+            alternatives: AlternativeNames::default(),
+            result: DecisionOutcome {
+                static_only: Some(resolved.clone()),
+                ..DecisionOutcome::default()
+            },
+        };
+        assert_eq!(report.decision_hijack_hazards(&decision), 2);
+        let text = stack_hijacks_text(&report, &resolved);
+        assert_eq!(
+            text,
+            " [stack-hijack hazard: when called from 'column' (line 8), defers 'DAY' '+' INT even \
+             when followed by '+'] [stack-hijack hazard: when called from 'select#proj' (line 12), \
+             defers 'DAY' even when followed by '+']"
+        );
+
+        let unmapped = EscapeResolutions {
+            guarded: 2,
+            guard_groups: vec![
+                hijack_group(vec![99], 3, 99, vec![1, 2]),
+                hijack_group(vec![99, 100], 1, 99, vec![1, 2]),
+            ],
+            ..EscapeResolutions::default()
+        };
+        assert_eq!(report.unique_stack_hijacks(&unmapped).len(), 1);
+    }
+
+    #[test]
+    fn stack_hijack_overflow_counts_only_unique_callers() {
+        let mut invoking_states = BTreeMap::new();
+        for (state, line) in [(10, 1), (20, 2), (30, 3), (40, 4)] {
+            invoking_states.insert(
+                state,
+                InvokingState {
+                    rule: "caller".to_owned(),
+                    label: None,
+                    line: Some(line),
+                },
+            );
+        }
+        let report = dummy_report(invoking_states);
+        let resolved = EscapeResolutions {
+            guarded: 6,
+            guard_groups: vec![
+                hijack_group(vec![10], 6, 10, vec![1, 2]),
+                hijack_group(vec![10, 20], 5, 10, vec![1, 2]),
+                hijack_group(vec![20], 4, 20, vec![1, 2]),
+                hijack_group(vec![30], 3, 30, vec![1, 2]),
+                hijack_group(vec![30, 40], 2, 30, vec![1, 2]),
+                hijack_group(vec![40], 1, 40, vec![1, 2]),
+            ],
+            ..EscapeResolutions::default()
+        };
+
+        assert_eq!(report.unique_stack_hijacks(&resolved).len(), 4);
+        let text = stack_hijacks_text(&report, &resolved);
+        assert!(
+            text.ends_with(" [and 1 more stack-hijack hazard]"),
+            "{text}"
         );
     }
 }
