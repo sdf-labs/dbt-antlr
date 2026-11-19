@@ -845,6 +845,52 @@ fn precedence_class_dump_keeps_the_in_rule_follows() {
     );
 }
 
+/// The invoking-state numbers of the first guard group in a `--dump-dfas`
+/// report. The caller names after each number include source lines and are
+/// not part of the assertion.
+fn first_guard_danger_states(dump: &str) -> Vec<i32> {
+    let line = dump
+        .lines()
+        .find(|line| line.trim_start().starts_with("group 0: danger=["))
+        .unwrap_or_else(|| panic!("a first guard group: {dump}"));
+    line.split_once("danger=[")
+        .and_then(|(_, rest)| rest.split_once(']'))
+        .map(|(numbers, _)| {
+            numbers
+                .split(',')
+                .map(|number| {
+                    number
+                        .split_whitespace()
+                        .next()
+                        .expect("a danger state number")
+                        .parse()
+                        .expect("an integer danger state")
+                })
+                .collect()
+        })
+        .expect("a danger set")
+}
+
+/// A rooted and an unrooted path that merge at the same `(state, alt)` keep
+/// every caller root (issue #81). The exit reading of the `e` loop roots on
+/// the `WRAP` stack first; the `CAST` and `CAST2` callers are clean readers of
+/// the same state, and each must contribute its own invoking state to the
+/// danger set.
+#[test]
+fn merged_rooted_and_clean_lineages_keep_every_caller_root() {
+    let output = emit_grammar("parser/Repro4TwoCastWithWrap.g4", |options| {
+        options.static_parser_dfa(true).dump_dfas("e");
+    });
+    let [dump] = output.reports.as_slice() else {
+        panic!("one dump per parser unit: {:?}", output.reports);
+    };
+    assert_eq!(
+        first_guard_danger_states(dump),
+        [7, 15, 24],
+        "the danger set names the WRAP, CAST, and CAST2 callers: {dump}"
+    );
+}
+
 #[test]
 fn static_parser_dfa_emits_table_prediction_for_hybrid_decisions() {
     let output = emit_grammar("ReferenceToATN.g4", |options| {
