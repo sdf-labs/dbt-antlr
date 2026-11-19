@@ -2179,6 +2179,37 @@ fn widened_precedence_filter_keeps_the_exit() {
     }
 }
 
+/// An empty context is the entry stack of the decision, not a wildcard.
+/// In `UnsoundSimple.g4`, decision 1 of `a` has alternative 1 on the entry
+/// stack and alternative 3 inside the nested `a` after `'b' 'p' 'a'`. Only
+/// alternative 3 can read `c b p a d e d x`, so the state escapes instead of
+/// accepting alternative 1.
+#[test]
+fn an_entry_stack_does_not_attest_a_caller_frame() {
+    let path = grammars_dir().join("parser").join("UnsoundSimple.g4");
+    let types = token_types(&path, &["'b'", "'p'", "'a'"]);
+    let (b, p, a) = (types[0], types[1], types[2]);
+    for atn_fallback in [AtnFallback::Allowed, AtnFallback::Forbidden] {
+        let results = outcomes_with(&path, atn_fallback);
+        assert_eq!(rule_names(&path, &results)[1], "a", "{atn_fallback:?}");
+        let attempt = match atn_fallback {
+            AtnFallback::Allowed => AttemptKind::Default,
+            AtnFallback::Forbidden => AttemptKind::StaticOnly,
+        };
+        assert_eq!(attempts_of(&results, 1), [attempt], "{atn_fallback:?}");
+        let decision = &results[1];
+        assert_eq!(decision.kind, DecisionKind::Hybrid, "{atn_fallback:?}");
+        assert!(!decision.is_fully_static(), "{atn_fallback:?}");
+        let table = decision.table.as_ref().expect("a partial table");
+        let conflict = walk(table, &[b, p, a]).expect("conflict state");
+        assert_eq!(conflict.conflicts, [1, 2, 3], "{atn_fallback:?}");
+        assert_eq!(
+            conflict.accept, CONFLICT_ESCAPE,
+            "{atn_fallback:?}: the table does not decide after `'b' 'p' 'a'`"
+        );
+    }
+}
+
 /// The results of parallel table builds do not depend on the thread count.
 #[test]
 fn parallel_builds_match_serial_builds() {
