@@ -27,6 +27,11 @@
 //!   known* precedence class currently being built, or, when the class is not
 //!   known, from the call sites recorded on the context path.
 //!
+//! A follow state can carry several invocations: the operands of two operator
+//! alternatives can return into the same loop state. The call-site records
+//! keep every invocation of each follow state. A class allows a return edge
+//! when any invocation of that follow state fits the class.
+//!
 //! Taints are kept in a side map keyed by `(state number, alternative)`
 //! instead of on the configs themselves: [`ATNConfig`] identity ignores
 //! `reaches_into_outer_context`, so a tainted and an untainted path to the
@@ -178,10 +183,12 @@ pub(super) struct ClosureFacts {
     pub(super) first_predicate: Option<(i32, i32)>,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct CallInfo {
-    target_rule_index: i32,
-    precedence: i32,
+/// One invocation of a rule: the rule it calls and the precedence argument of
+/// the call.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct CallInfo {
+    pub(super) target_rule_index: i32,
+    pub(super) precedence: i32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -198,11 +205,11 @@ pub(super) struct RuleCall {
 
 #[derive(Debug, Default)]
 pub(super) struct CallSites {
-    /// The state that makes each invocation, for the guard-root analysis of
+    /// The states that make the invocations, for the guard-root analysis of
     /// optional-postfix and precedence-loop decisions.
-    site_by_follow_state: HashMap<i32, i32>,
-    /// The rule and the precedence of each invocation.
-    call_by_follow_state: HashMap<i32, CallInfo>,
+    site_by_follow_state: HashMap<i32, BTreeSet<i32>>,
+    /// Every invocation that returns into each follow state.
+    call_infos_by_follow_state: HashMap<i32, Vec<CallInfo>>,
     /// The invocations of each rule, by the rule index of the called rule, in
     /// ATN state order.
     calls_to_rule: Vec<Vec<RuleCall>>,
@@ -221,14 +228,20 @@ impl CallSites {
                     let target_rule_index = rule_transition.get_target().get_rule_index();
                     sites
                         .site_by_follow_state
-                        .insert(follow_state, state.get_state_number());
-                    sites.call_by_follow_state.insert(
-                        follow_state,
-                        CallInfo {
-                            target_rule_index,
-                            precedence: rule_transition.precedence(),
-                        },
-                    );
+                        .entry(follow_state)
+                        .or_default()
+                        .insert(state.get_state_number());
+                    let info = CallInfo {
+                        target_rule_index,
+                        precedence: rule_transition.precedence(),
+                    };
+                    let infos = sites
+                        .call_infos_by_follow_state
+                        .entry(follow_state)
+                        .or_default();
+                    if !infos.contains(&info) {
+                        infos.push(info);
+                    }
                     if let Some(calls) = usize::try_from(target_rule_index)
                         .ok()
                         .and_then(|rule| sites.calls_to_rule.get_mut(rule))
@@ -251,6 +264,18 @@ impl CallSites {
         usize::try_from(rule)
             .ok()
             .and_then(|rule| self.calls_to_rule.get(rule))
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// The invoking states that return into `follow_state_number`.
+    pub(super) fn sites_of(&self, follow_state_number: i32) -> Option<&BTreeSet<i32>> {
+        self.site_by_follow_state.get(&follow_state_number)
+    }
+
+    /// Every invocation that returns into `follow_state_number`.
+    pub(super) fn call_infos(&self, follow_state_number: i32) -> &[CallInfo] {
+        self.call_infos_by_follow_state
+            .get(&follow_state_number)
             .map_or(&[], Vec::as_slice)
     }
 }
@@ -767,7 +792,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
         mut taint: i32,
         roots: u32,
     ) -> Step<'a> {
-        let sites = &self.call_sites.site_by_follow_state;
+        let sites = &self.call_sites;
         let mut new_roots: BTreeSet<i32> = BTreeSet::new();
         // A boundary-popped configuration consumes on behalf of "some caller".
         // When that caller is an enclosing invocation of this loop, the
@@ -1132,29 +1157,36 @@ impl<'atn, 'a> Closure<'atn, 'a> {
         let Some(class) = self.precedence else {
             return false;
         };
-        if depth < 0 {
+        if depth < 0 || target.get_rule_index() != class.rule_index {
             return false;
         }
-        self.call_info(target.get_state_number())
-            .is_some_and(|call| {
-                call.target_rule_index == class.rule_index
-                    && (call.precedence < class.lo || call.precedence > class.hi)
-            })
+        // The class fixes the precedence of the frame that pops (`lo..=hi`).
+        // That frame came from an invocation of the rule with a call precedence
+        // in `lo..=hi`. A follow state can carry several invocations, so the
+        // return edge is impossible only when none of them fits the class.
+        let mut in_rule = self
+            .call_infos(target.get_state_number())
+            .iter()
+            .filter(|info| info.target_rule_index == class.rule_index)
+            .peekable();
+        if in_rule.peek().is_none() {
+            return false;
+        }
+        in_rule.all(|info| !(class.lo..=class.hi).contains(&info.precedence))
     }
 
     fn precedence_starts_self_call(&self, target: ATNStateRef) -> bool {
         let Some(class) = self.precedence else {
             return false;
         };
-        self.call_info(target.get_state_number())
-            .is_some_and(|call| call.precedence == 0 && call.target_rule_index == class.rule_index)
+        self.call_infos(target.get_state_number())
+            .iter()
+            .any(|call| call.precedence == 0 && call.target_rule_index == class.rule_index)
     }
 
-    fn call_info(&self, follow_state_number: i32) -> Option<CallInfo> {
-        self.call_sites
-            .call_by_follow_state
-            .get(&follow_state_number)
-            .copied()
+    /// Every invocation that returns into `follow_state_number`.
+    fn call_infos(&self, follow_state_number: i32) -> &[CallInfo] {
+        self.call_sites.call_infos(follow_state_number)
     }
 
     /// Evaluates a precedence predicate from the call sites recorded on the
@@ -1174,15 +1206,23 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             if return_state == ATNStateRef::empty_return() {
                 return None;
             }
-            let call = self.call_info(return_state.get_state_number())?;
-            if call.target_rule_index != rule {
-                return None;
+            // Only the invocations of `rule` can be the frame that returns
+            // here. A follow state can also carry calls of other rules.
+            let mut matched = false;
+            for call in self.call_infos(return_state.get_state_number()) {
+                if call.target_rule_index != rule {
+                    continue;
+                }
+                matched = true;
+                let outcome = value >= call.precedence;
+                match agreed {
+                    None => agreed = Some(outcome),
+                    Some(previous) if previous != outcome => return None,
+                    Some(_) => {}
+                }
             }
-            let outcome = value >= call.precedence;
-            match agreed {
-                None => agreed = Some(outcome),
-                Some(previous) if previous != outcome => return None,
-                Some(_) => {}
+            if !matched {
+                return None;
             }
         }
         agreed

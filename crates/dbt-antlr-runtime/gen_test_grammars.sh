@@ -109,10 +109,14 @@ echo "Generating: guardexprparser_static_only"
 "$GEN_BIN" -no-listener --static-dfa-only -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/GuardExpr.g4"
 mv "$STATIC_TMP/guardexprparser.rs" "$SCRIPT_DIR/tests/gen/guardexprparser_static_only.rs"
 
-# The inline-alias witness of guarded iterates under `--static-dfa-only`: the
-# adaptive parser is the oracle of the static-only twin.
+# The inline-alias witness of guarded iterates, generated three ways: the
+# adaptive parser is the oracle of the `--static-parser-dfa` and
+# `--static-dfa-only` twins.
 echo "Generating: parser/InlineAlias"
 "$GEN_BIN" -no-listener -o "$SCRIPT_DIR/tests/gen" "$SCRIPT_DIR/grammars/parser/InlineAlias.g4"
+echo "Generating: inlinealiasparser_static"
+"$GEN_BIN" -no-listener --static-parser-dfa -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/InlineAlias.g4"
+mv "$STATIC_TMP/inlinealiasparser.rs" "$SCRIPT_DIR/tests/gen/inlinealiasparser_static.rs"
 echo "Generating: inlinealiasparser_static_only"
 "$GEN_BIN" -no-listener --static-dfa-only -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/InlineAlias.g4"
 mv "$STATIC_TMP/inlinealiasparser.rs" "$SCRIPT_DIR/tests/gen/inlinealiasparser_static_only.rs"

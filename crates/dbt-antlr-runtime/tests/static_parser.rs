@@ -4,7 +4,8 @@
 //! tables, `LrDfa.g4` precedence dispatch, the `FuzzExpr.g4` static-vs-adaptive
 //! differential, the `SDFA` table image, the D5 escape handoff, and the
 //! `--static-dfa-only` resolution of the `GuardExpr.g4` and `InlineAlias.g4`
-//! escape and guarded states.
+//! escape and guarded states. The hybrid twin of `InlineAlias.g4` runs the same
+//! differential as the adaptive parser.
 
 #[rustfmt::skip]
 mod gen {
@@ -22,6 +23,7 @@ mod gen {
     pub mod guardexprparser_static_only;
     pub mod inlinealiaslexer;
     pub mod inlinealiasparser;
+    pub mod inlinealiasparser_static;
     pub mod inlinealiasparser_static_only;
     pub mod loopfrontierlexer;
     pub mod loopfrontierparser;
@@ -977,6 +979,15 @@ fn parse_alias_both(input: &str) -> [(String, Vec<String>); 2] {
     ]
 }
 
+/// Parses `input` with the adaptive and the `--static-parser-dfa` `InlineAlias`
+/// parsers, and returns the tree and the syntax errors of each.
+fn parse_alias_hybrid(input: &str) -> [(String, Vec<String>); 2] {
+    [
+        parse_alias_with!(inlinealiasparser, input),
+        parse_alias_with!(inlinealiasparser_static, input),
+    ]
+}
+
 #[test]
 fn inline_alias_static_dfa_only_parser_never_calls_adaptive_predict() {
     let src = include_str!("gen/inlinealiasparser_static_only.rs");
@@ -984,11 +995,62 @@ fn inline_alias_static_dfa_only_parser_never_calls_adaptive_predict() {
     assert_eq!(src.matches("adaptive_predict(").count(), 0);
 }
 
+#[test]
+fn inline_alias_hybrid_parser_keeps_the_adaptive_fallback() {
+    let src = include_str!("gen/inlinealiasparser_static.rs");
+    assert!(src.contains("dfa_predict("), "expected table prediction");
+    assert!(src.contains("adaptive_predict("), "expected the fallback");
+}
+
+/// The hybrid parser agrees with the adaptive parser on every input of the
+/// witness. The alias and the `CAST` `AS` share a follow set, and the right
+/// operand of `=` is its own precedence class. So the static table must keep
+/// the return paths into an enclosing `expr`. Otherwise `CAST ( x = y AS
+/// INT64 )` reads the `'AS' 'INT64'` of the cast as an alias.
+///
+/// The `AND` inputs that follow `=` or a second `AND` inside `CAST` are
+/// hybrid-only. `--static-dfa-only` resolves a deferring guard to the exit.
+#[test]
+fn inline_alias_static_parser_dfa_matches_the_adaptive_engine() {
+    for input in [
+        "SELECT x AS a , y = z AS b FROM t",
+        "SELECT x AS INT64",
+        "SELECT ( x AS INT64 )",
+        "SELECT CAST ( x AS INT64 )",
+        "SELECT CAST ( x = y AS INT64 )",
+        "SELECT CAST ( x = y AS a AS INT64 )",
+        "SELECT CAST ( x = y = z AS INT64 )",
+        "SELECT CAST ( x = y AND z AS INT64 )",
+        "SELECT CAST ( x AS y AS INT64 )",
+        "SELECT CAST ( ( x AS inner ) AS INT64 ) AS outer",
+        "SELECT CAST ( CAST ( x AS t ) AS INT64 )",
+        "SELECT CAST ( a AND b AS INT64 )",
+        "SELECT CAST ( a AND b = c AS INT64 )",
+        "SELECT CAST ( a AND b = c AS INT64 ) AS d",
+        "SELECT CAST ( a AND b = c AND d AS INT64 )",
+        "SELECT ( CAST ( a AS t ) AND b ) AS c",
+        "SELECT a ROWS BETWEEN x AND y",
+        "SELECT a ROWS BETWEEN CAST ( x AS INT64 ) AND y",
+        "SELECT a ROWS BETWEEN x AS b AND y",
+        "CREATE VIEW v ORDER BY d AS SELECT x FROM t",
+        "CREATE VIEW v ORDER BY d AS a , e AS SELECT x",
+        "CREATE VIEW v ORDER BY CAST ( d AS t ) AS SELECT x",
+    ] {
+        let [adaptive, hybrid] = parse_alias_hybrid(input);
+        assert!(adaptive.1.is_empty(), "{input:?}: {adaptive:?}");
+        assert_eq!(hybrid, adaptive, "{input:?}");
+    }
+}
+
 /// The alias is a postfix operator of the recursive expression, and `AS` also
 /// follows the operand of `CAST`. The static-only guard of the operator loop
 /// exits where the `CAST` operand is on the stack, and keeps the alias
 /// everywhere else. The `AND` states have their own guard group, so the
 /// `CAST` operand does not make an `AND` exit.
+///
+/// The right operand of `=` is its own precedence class, and the class table
+/// keeps the return paths into an enclosing `expr`. So `CAST` closes after an
+/// `=` operand, and the alias binds inside that operand.
 #[test]
 fn inline_alias_static_dfa_only_matches_the_adaptive_engine() {
     for input in [
@@ -996,6 +1058,9 @@ fn inline_alias_static_dfa_only_matches_the_adaptive_engine() {
         "SELECT x AS INT64",
         "SELECT ( x AS INT64 )",
         "SELECT CAST ( x AS INT64 )",
+        "SELECT CAST ( x = y AS INT64 )",
+        "SELECT CAST ( x = y AS a AS INT64 )",
+        "SELECT CAST ( x = y = z AS INT64 )",
         "SELECT CAST ( x AS y AS INT64 )",
         "SELECT CAST ( ( x AS inner ) AS INT64 ) AS outer",
         "SELECT CAST ( CAST ( x AS t ) AS INT64 )",
