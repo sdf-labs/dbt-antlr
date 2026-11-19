@@ -155,6 +155,8 @@ fn the_precedence_filter_keeps_a_widened_exit() {
         "x*x+qra*x+qr",
         "x+qr*x+qr",
         "x u u u u u u u u u u u end t10a t9a t8a t7a t6a t5a t4a t3a t2a t1a t0a m1",
+        "x*x u u u u u u u u u u u end t10a t9a t8a t7a t6a t5a t4a t3a t2a t1a t0a",
+        "x*x u u u u u u u u u u u end t10a t9a t8a t7a t6a t5a t4a t3a t2a t1a t0a m1",
     ] {
         let adaptive = precedence_adaptive(input);
         assert!(adaptive.is_valid(), "{input}: {adaptive:?}");
