@@ -1087,6 +1087,50 @@ fn static_dfa_only_resolves_hybrid_tables_without_adaptive_predict() {
     );
 }
 
+/// The static-only resolution of the entry-context conflict of
+/// `UnsoundSimple.g4` predicts an alternative that the analysis cannot verify,
+/// so the mode reports it instead of staying silent. The decision never
+/// reaches `adaptive_predict`.
+#[test]
+fn static_dfa_only_reports_the_entry_context_guess() {
+    let output = emit_static_only(&grammars_dir().join("parser/UnsoundSimple.g4"), false)
+        .expect("the table resolves");
+    let parser = lexer_content(&output, "unsoundsimpleparser.rs");
+    assert_eq!(
+        parser.matches("adaptive_predict(").count(),
+        0,
+        "no decision falls back to adaptive_predict"
+    );
+    let warnings = output
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == "G4S192")
+        .map(|diagnostic| {
+            assert_eq!(diagnostic.severity(), Severity::Warning);
+            diagnostic.message()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 1, "{:?}", output.diagnostics);
+    assert!(
+        warnings[0].starts_with("decision 1 of rule 'a' applied heuristic resolution"),
+        "{}",
+        warnings[0]
+    );
+    assert!(
+        warnings[0].contains("(witness: 'b' 'p' 'a')"),
+        "{}",
+        warnings[0]
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code() != "G4S190"),
+        "{:?}",
+        output.diagnostics
+    );
+}
+
 #[test]
 fn static_dfa_only_dumps_annotate_the_resolved_states() {
     let mut optimization = OptimizationOptions::new();

@@ -2800,7 +2800,7 @@ where
             };
             for context in contexts {
                 let assured = attestations.iter().any(|config| {
-                    top_prefix_wildcard_match(
+                    context_covers(
                         config.get_context().expect("config has a context"),
                         context,
                         self.scratch,
@@ -3015,27 +3015,30 @@ fn sum_depths(left: &BitSet, right: &BitSet) -> BitSet {
     out
 }
 
-/// `true` when every branch of `shadow` reaches `exact`, treating a widened
-/// joint (`$` under a return state) as matching anything.
-fn top_prefix_wildcard_match<'a>(
+/// `true` when every stack that `exact` names is also a stack of `shadow`.
+///
+/// An empty context is the entry stack of the decision, not a wildcard: it
+/// continues with the caller of the decision, so it matches only another
+/// empty context.
+fn context_covers<'a>(
     shadow: PredictionContextRef<'a>,
     exact: PredictionContextRef<'a>,
     scratch: &'a Bump,
 ) -> bool {
     if exact.length() > 1 {
         for i in 0..exact.length() {
-            if !top_prefix_wildcard_match(shadow, branch(exact, i, scratch), scratch) {
+            if !context_covers(shadow, branch(exact, i, scratch), scratch) {
                 return false;
             }
         }
         return true;
     }
     if shadow.is_empty() {
-        return true;
+        return exact.is_empty();
     }
     if shadow.length() > 1 {
         for i in 0..shadow.length() {
-            if top_prefix_wildcard_match(branch(shadow, i, scratch), exact, scratch) {
+            if context_covers(branch(shadow, i, scratch), exact, scratch) {
                 return true;
             }
         }
@@ -3045,14 +3048,8 @@ fn top_prefix_wildcard_match<'a>(
         return false;
     }
     let return_state = shadow.get_return_state(0);
-    if return_state == ATNStateRef::empty_return() {
-        return true;
-    }
-    if exact.get_return_state(0) == ATNStateRef::empty_return() {
-        return false;
-    }
     return_state == exact.get_return_state(0)
-        && top_prefix_wildcard_match(
+        && context_covers(
             shadow
                 .get_parent(0)
                 .unwrap_or_else(PredictionContextRef::new_empty),
