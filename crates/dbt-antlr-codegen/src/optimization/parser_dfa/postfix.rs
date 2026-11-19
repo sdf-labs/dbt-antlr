@@ -55,6 +55,10 @@ pub(super) struct PostfixShape {
     /// requires every descended skip configuration's deepest frame to return
     /// into this state.
     pub(super) block_end_state: ATNStateRef,
+    /// The epsilon closure of [`Self::block_end_state`]. A root in it trips
+    /// the guard on every stack, so the closure is the decision's own
+    /// consumption region for the guard-root analysis.
+    block_end_closure: Arc<BitSet>,
     /// The positions of the take alternative, from the decision to the block
     /// end. Rule calls contribute their follow states.
     take_states: Arc<BitSet>,
@@ -91,6 +95,7 @@ impl PostfixShape {
 
         Some(Self {
             block_end_state: block,
+            block_end_closure: Arc::new(epsilon_closure(block)),
             take_states: Arc::new(rule_positions(transitions[0].get_target(), Some(block))),
             midway_states: Arc::new(positions_owing_input(
                 atn,
@@ -156,6 +161,13 @@ impl PostfixShape {
 
     fn is_take_state(&self, state: ATNStateRef) -> bool {
         self.take_states.contains(state.get_state_number() as usize)
+    }
+
+    /// Whether `state` lies in the epsilon closure of the block end: a skip
+    /// root there would trip the guard on every stack.
+    pub(super) fn within_block_end(&self, state: ATNStateRef) -> bool {
+        self.block_end_closure
+            .contains(state.get_state_number() as usize)
     }
 }
 
@@ -345,11 +357,14 @@ pub(super) fn collect_guard_roots(
     state: ATNStateRef,
     context: Option<PredictionContextRef<'_>>,
     mirror: &dyn Fn(ATNStateRef) -> bool,
+    empty_root: &dyn Fn(ATNStateRef) -> bool,
     sites: &CallSites,
     out: &mut BTreeSet<i32>,
 ) {
     let Some(context) = context.filter(|context| !context.is_empty()) else {
-        out.insert(state.get_state_number());
+        if empty_root(state) {
+            out.insert(state.get_state_number());
+        }
         return;
     };
     let mut visited: HashSet<*const ()> = HashSet::new();

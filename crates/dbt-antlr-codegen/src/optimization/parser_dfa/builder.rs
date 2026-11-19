@@ -28,10 +28,11 @@ use std::time::Instant;
 use dbt_antlr_runtime::analysis::{
     ATN, ATNConfigSet, ATNStateRef, ATNStateType, Arena, BOUNDARY_TAINT, BitSet, Bump, EOF,
     FOREIGN_CONSUME_TAINT, FOREIGN_LINEAGE_TAINT, IATNSimulator, INTERIOR_TAINT, MIDWAY_TAINT,
-    PRECPRED_TAINT, PRED_TAINT, ParserATNSimulator, ParserATNSimulatorManager, ParserDFAState,
-    PrecedencePredicateTransition, PredictionContext, PredictionContextRef, PredictionMode,
-    ProposedDFAState, ROOTED_TAINT, RuleStartState, WIDENED_TAINT, all_subsets_conflict,
-    all_subsets_equal, conflicting_alt_subsets, get_alts, has_sll_conflict_terminating_prediction,
+    MIXED_ROOT_TAINT, PRECPRED_TAINT, PRED_TAINT, ParserATNSimulator, ParserATNSimulatorManager,
+    ParserDFAState, PrecedencePredicateTransition, PredictionContext, PredictionContextRef,
+    PredictionMode, ProposedDFAState, ROOTED_TAINT, RuleStartState, UNROOTED_TAINT, WIDENED_TAINT,
+    all_subsets_conflict, all_subsets_equal, conflicting_alt_subsets, get_alts,
+    has_sll_conflict_terminating_prediction,
 };
 use dbt_antlr_runtime::dfa::ParserDFA;
 use dbt_antlr_runtime::dfa::static_parser_dfa::{
@@ -109,6 +110,8 @@ const TRUST_TAINT: i32 = WIDENED_TAINT
     | FOREIGN_LINEAGE_TAINT
     | MIDWAY_TAINT
     | ROOTED_TAINT
+    | UNROOTED_TAINT
+    | MIXED_ROOT_TAINT
     | INTERIOR_TAINT;
 
 /// The alternative of an optional-postfix decision that takes the postfix
@@ -876,6 +879,7 @@ impl DecisionTableBuilder {
                     loop_block,
                     postfix.clone(),
                     budget.max_visits,
+                    self.atn_fallback != AtnFallback::Forbidden,
                 ),
                 depth_bound,
                 frontier: Frontier::of(&budget, self.atn_fallback),
@@ -1433,6 +1437,9 @@ where
                 // A widening-born skip is an analysis artifact unless it is
                 // rooted: then its bottom frame is a real follow state and the
                 // guard covers its realizability.
+                // UNROOTED_TAINT needs no veto here: consume clears it on the
+                // foreign consumption that collects roots, so a skip that
+                // still carries it has not consumed outside the decision yet.
                 if taint & (WIDENED_TAINT | ROOTED_TAINT) == WIDENED_TAINT {
                     eligible = false;
                     break;
@@ -1554,6 +1561,9 @@ where
                 // Foreign consumption must be rooted: then the stack guard
                 // covers its realizability. A widening-born exit is an analysis
                 // artifact unless it is rooted too.
+                // UNROOTED_TAINT needs no veto here: consume clears it on the
+                // foreign consumption that collects roots, so an exit that
+                // still carries it has not consumed outside the loop yet.
                 if taint & FOREIGN_CONSUME_TAINT != 0 && taint & ROOTED_TAINT == 0 {
                     eligible = false;
                     break;
@@ -1684,7 +1694,15 @@ where
                 expanded = existing.expanded;
                 for (key, taint) in &facts.taint {
                     let entry = existing.taint.entry(*key).or_insert(0);
-                    new_trust_taint |= *taint & !*entry & TRUST_TAINT;
+                    let prior = *entry;
+                    new_trust_taint |= *taint & !prior & TRUST_TAINT;
+                    if !self.static_only
+                        && (prior & ROOTED_TAINT != 0) != (*taint & ROOTED_TAINT != 0)
+                    {
+                        let mixed = MIXED_ROOT_TAINT | UNROOTED_TAINT;
+                        new_trust_taint |= mixed & !prior;
+                        *entry |= mixed;
+                    }
                     *entry |= *taint;
                 }
                 for (key, roots) in &facts.roots {

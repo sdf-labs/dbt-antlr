@@ -43,9 +43,10 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use dbt_antlr_runtime::analysis::{
     ATN, ATNConfig, ATNStateRef, ATNStateType, BOUNDARY_TAINT, BitSet, Bump, EOF,
     FOREIGN_CONSUME_TAINT, FOREIGN_LINEAGE_TAINT, INTERIOR_TAINT, IntervalSetBuf, MIDWAY_TAINT,
-    MergeCache, MutableATNConfigSet, NotSetTransition, PRECPRED_TAINT, PRED_TAINT,
-    PrecedencePredicateTransition, PredicateTransition, PredictionContext, PredictionContextRef,
-    ROOTED_TAINT, RuleTransition, TOKEN_MIN_USER_TOKEN_TYPE, TransitionType, WIDENED_TAINT,
+    MIXED_ROOT_TAINT, MergeCache, MutableATNConfigSet, NotSetTransition, PRECPRED_TAINT,
+    PRED_TAINT, PrecedencePredicateTransition, PredicateTransition, PredictionContext,
+    PredictionContextRef, ROOTED_TAINT, RuleTransition, TOKEN_MIN_USER_TOKEN_TYPE, TransitionType,
+    UNROOTED_TAINT, WIDENED_TAINT,
 };
 
 use super::loop_block::LoopBlock;
@@ -333,28 +334,43 @@ struct SetBuilder<'a> {
     /// The explored `(config, taint, chasing)` keys with the depth of their
     /// first exploration and the guard roots they were explored with.
     busy: HashMap<(ATNConfig<'a>, i32, bool), (i32, BTreeSet<i32>)>,
+    /// See [`Closure::reroot_merged`].
+    reroot_merged: bool,
 }
 
 impl<'a> SetBuilder<'a> {
-    fn new() -> Self {
+    fn new(reroot_merged: bool) -> Self {
         Self {
             configs: Vec::new(),
             seen: HashSet::new(),
             taint: Taint::new(),
             roots: GuardRoots::new(),
             busy: HashMap::new(),
+            reroot_merged,
         }
     }
 
     fn record(&mut self, config: &ATNConfig<'a>, taint: i32, roots: &BTreeSet<i32>) {
         let key = (config.get_state().get_state_number(), config.get_alt());
         let slot = self.taint.entry(key).or_insert(0);
+        let prior = *slot;
         *slot |= taint;
+        if self.reroot_merged && (prior & ROOTED_TAINT != 0) != (taint & ROOTED_TAINT != 0) {
+            // The key now holds both rooted and unrooted paths. The unrooted
+            // one must collect its own roots even though ROOTED_TAINT is set.
+            *slot |= MIXED_ROOT_TAINT | UNROOTED_TAINT;
+        }
         if taint & BOUNDARY_TAINT == 0 {
             // Remember that this config is reachable without popping the
             // decision boundary: a later boundary-pop path must not turn the
             // usage into "all configs crossed the boundary".
             *slot |= INTERIOR_TAINT;
+        }
+        if self.reroot_merged && taint & ROOTED_TAINT == 0 {
+            // At least one path to this key is not rooted yet. Keep the fact
+            // next to the OR-ed ROOTED_TAINT bit: a rooted and a clean path
+            // can merge, and the clean path must still collect its roots.
+            *slot |= UNROOTED_TAINT;
         }
         if !roots.is_empty() {
             self.roots
@@ -422,6 +438,11 @@ pub(super) struct Closure<'atn, 'a> {
     /// `true` while the closure explores known configs again only to give
     /// them more guard roots.
     propagating_roots: bool,
+    /// `true` when the table keeps the adaptive fallback. Only then can a
+    /// guard set grown by a merged lineage defer safely: the runtime hands the
+    /// decision to `adaptive_predict`. Under `--static-dfa-only` a deferring
+    /// guard resolves to a fixed alternative, so the previous root set stays.
+    reroot_merged: bool,
 }
 
 impl<'atn, 'a> Closure<'atn, 'a> {
@@ -435,6 +456,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
         loop_block: Option<LoopBlock>,
         postfix: Option<PostfixShape>,
         visit_budget: u64,
+        reroot_merged: bool,
     ) -> Self {
         Self {
             atn,
@@ -456,6 +478,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             roots: RootPool::new(),
             current_roots: 0,
             propagating_roots: false,
+            reroot_merged,
         }
     }
 
@@ -539,7 +562,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
         decision_state: ATNStateRef,
         context: PredictionContextRef<'a>,
     ) -> ClosedSet<'a> {
-        let mut out = SetBuilder::new();
+        let mut out = SetBuilder::new(self.reroot_merged);
         self.decision_state = decision_state;
         self.precedence_start = self.precedence.is_some();
         for (index, transition) in decision_state.get_transitions().iter().enumerate() {
@@ -557,7 +580,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
 
     /// The configs of `closed` after they read `token`, closed.
     pub(super) fn step(&mut self, closed: &ClosedSet<'a>, token: i32) -> ClosedSet<'a> {
-        let mut out = SetBuilder::new();
+        let mut out = SetBuilder::new(self.reroot_merged);
         for config in &closed.configs {
             let mut taint = closed.taint_of(config);
             if taint & BOUNDARY_TAINT != 0 {
@@ -766,7 +789,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                 successors[known].0.add_set(&label);
                 continue;
             }
-            let mut out = SetBuilder::new();
+            let mut out = SetBuilder::new(self.reroot_merged);
             for &number in &sequence {
                 let step = &steps[number];
                 self.current_roots = step.roots;
@@ -794,6 +817,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
     ) -> Step<'a> {
         let sites = &self.call_sites;
         let mut new_roots: BTreeSet<i32> = BTreeSet::new();
+        let mut rooted_here = false;
         // A boundary-popped configuration consumes on behalf of "some caller".
         // When that caller is an enclosing invocation of this loop, the
         // consumption is the loop's own and the enter/exit substitution still
@@ -804,32 +828,45 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             && !block.is_loop_consumption(source.get_state(), source.get_context(), taint)
         {
             let in_loop = taint & (FOREIGN_LINEAGE_TAINT | MIDWAY_TAINT) == 0;
+            let reroot = taint & ROOTED_TAINT != 0;
             taint |= FOREIGN_CONSUME_TAINT;
-            if source.get_alt() == ITERATE_EXIT_ALT && taint & ROOTED_TAINT == 0 {
+            if source.get_alt() == ITERATE_EXIT_ALT
+                && (taint & ROOTED_TAINT == 0 || taint & UNROOTED_TAINT != 0)
+            {
                 taint |= ROOTED_TAINT;
                 collect_guard_roots(
                     source.get_state(),
                     source.get_context(),
                     &|state| in_loop && block.is_loop_state(state),
+                    &|state| !reroot || !block.is_loop_state(state),
                     sites,
                     &mut new_roots,
                 );
+                rooted_here = true;
             }
         }
         if let Some(postfix) = self.postfix.as_ref()
             && source.get_alt() == POSTFIX_SKIP_ALT
-            && taint & ROOTED_TAINT == 0
+            && (taint & ROOTED_TAINT == 0 || taint & UNROOTED_TAINT != 0)
             && !postfix.skip_mirrors(source.get_state(), source.get_context(), taint)
         {
             let in_take = taint & (FOREIGN_LINEAGE_TAINT | MIDWAY_TAINT) == 0;
+            let reroot = taint & ROOTED_TAINT != 0;
             taint |= ROOTED_TAINT;
             collect_guard_roots(
                 source.get_state(),
                 source.get_context(),
                 &|state| in_take && state == postfix.block_end_state,
+                &|state| !reroot || !postfix.within_block_end(state),
                 sites,
                 &mut new_roots,
             );
+            rooted_here = true;
+        }
+        if rooted_here {
+            // This consumption collected the roots of every branch of its
+            // context, so no merged path at this key is unrooted any more.
+            taint &= !UNROOTED_TAINT;
         }
         let roots = if new_roots.is_empty() {
             roots
@@ -997,6 +1034,13 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             // below inherits the taint, exactly like the runtime closure, where
             // the marker lives on the config that keeps being passed down.
             taint = (taint & !INTERIOR_TAINT) | BOUNDARY_TAINT;
+            if taint & ROOTED_TAINT != 0 && taint & MIXED_ROOT_TAINT != 0 {
+                // The lineage popped into an unknown caller. Its old roots
+                // describe the frames it left, not the caller that the next
+                // foreign consumption will read, so that consumption must
+                // collect the new root even though the lineage is rooted.
+                taint |= UNROOTED_TAINT;
+            }
             out.insert(config.clone(), taint, self.roots.get(self.current_roots));
         } else if !state.has_epsilon_only_transitions() {
             out.insert(config.clone(), taint, self.roots.get(self.current_roots));
@@ -1274,7 +1318,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             }
         }
 
-        let mut out = SetBuilder::new();
+        let mut out = SetBuilder::new(self.reroot_merged);
         for config in closed.configs {
             let state_number = config.get_state().get_state_number();
             let widened = (taint_of(&closed.taint, &config)

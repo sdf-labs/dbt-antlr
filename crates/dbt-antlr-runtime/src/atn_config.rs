@@ -49,6 +49,20 @@ pub const FOREIGN_LINEAGE_TAINT: i32 = 128;
 /// for that alternative, not for the decision.
 pub const MIDWAY_TAINT: i32 = 256;
 
+/// The set holds at least one path that has not been rooted yet. A
+/// [`ROOTED_TAINT`] path and a clean path can merge at the same
+/// `(state, alternative)` key, and the OR-ed taint then claims that the clean
+/// path is rooted too. The analysis keeps both facts so that the next foreign
+/// consumption still collects the clean path's guard roots, and clears this
+/// bit once that consumption roots every branch of its context.
+pub const UNROOTED_TAINT: i32 = 512;
+
+/// A [`ROOTED_TAINT`] path and a path without it merged at the same
+/// `(state, alternative)` key. The key keeps the fact after its unrooted paths
+/// have collected their roots, because a later boundary pop opens a caller
+/// frame that the roots collected so far do not describe.
+pub const MIXED_ROOT_TAINT: i32 = 1024;
+
 #[derive(Clone)]
 pub struct ATNConfig<'ephemeral> {
     state: ATNStateRef,

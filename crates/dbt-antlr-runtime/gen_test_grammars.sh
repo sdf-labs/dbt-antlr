@@ -121,6 +121,18 @@ echo "Generating: inlinealiasparser_static_only"
 "$GEN_BIN" -no-listener --static-dfa-only -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/InlineAlias.g4"
 mv "$STATIC_TMP/inlinealiasparser.rs" "$SCRIPT_DIR/tests/gen/inlinealiasparser_static_only.rs"
 
+# The merged-root witness of issue #81: a rooted and an unrooted lineage meet
+# at the same (state, alt) of the `e` loop. Generated three ways, so the
+# adaptive parser is the oracle of both static twins.
+echo "Generating: parser/Repro4TwoCastWithWrap"
+"$GEN_BIN" -no-listener -o "$SCRIPT_DIR/tests/gen" "$SCRIPT_DIR/grammars/parser/Repro4TwoCastWithWrap.g4"
+echo "Generating: repro4twocastwithwrapparser_static"
+"$GEN_BIN" -no-listener --static-parser-dfa -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/Repro4TwoCastWithWrap.g4"
+mv "$STATIC_TMP/repro4twocastwithwrapparser.rs" "$SCRIPT_DIR/tests/gen/repro4twocastwithwrapparser_static.rs"
+echo "Generating: repro4twocastwithwrapparser_static_only"
+"$GEN_BIN" -no-listener --static-dfa-only -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/Repro4TwoCastWithWrap.g4"
+mv "$STATIC_TMP/repro4twocastwithwrapparser.rs" "$SCRIPT_DIR/tests/gen/repro4twocastwithwrapparser_static_only.rs"
+
 # The full-context witness: a call of `send` as the parse entry predicts its
 # operator loop with an empty outer context (tests/full_context.rs).
 echo "Generating: parser/LoopVeto"

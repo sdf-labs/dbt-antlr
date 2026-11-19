@@ -31,6 +31,10 @@ mod gen {
     pub mod loopobligationlexer;
     pub mod loopobligationparser;
     pub mod loopobligationparser_static;
+    pub mod repro4twocastwithwraplexer;
+    pub mod repro4twocastwithwrapparser;
+    pub mod repro4twocastwithwrapparser_static;
+    pub mod repro4twocastwithwrapparser_static_only;
     pub mod lrdfalexer;
     pub mod lrdfaparser;
     pub mod staticdfalexer;
@@ -1433,4 +1437,56 @@ fn guarded_obligations_match_the_adaptive_engine() {
         parse_obligation_static("prior a [ x : b [ y : z ] ] . c").unwrap(),
         "(s (p prior (p (p a) [ x : (p (p b) [ y : (p z) ]) ]) . c) <EOF>)"
     );
+}
+
+/// Parses `input` with one generated `Repro4TwoCastWithWrap` parser module and
+/// returns the tree and the syntax errors.
+macro_rules! parse_two_cast_with {
+    ($parser:ident, $input:expr) => {
+        Arena::with(|arena| {
+            let lexer = gen::repro4twocastwithwraplexer::Repro4TwoCastWithWrapLexer::<
+                _,
+                CommonTokenFactory,
+            >::new(arena, InputStream::new($input));
+            let tokens = CommonTokenStream::new(lexer);
+            let mut parser = gen::$parser::Repro4TwoCastWithWrapParser::new(arena, tokens);
+            let listener = CollectingErrorListener::default();
+            let messages = listener.messages.clone();
+            parser.remove_error_listeners();
+            parser.add_error_listener(Box::new(listener));
+            let tree = match parser.stmt() {
+                Ok(ctx) => string_tree(ctx, parser.get_rule_names()),
+                Err(error) => format!("ERR {error}"),
+            };
+            let errors = messages.borrow().clone();
+            (tree, errors)
+        })
+    };
+}
+
+/// A rooted and an unrooted lineage merge at the same `(state, alt)` of the
+/// `e` loop (issue #81). The clean lineage must still collect the `CAST` and
+/// `CAST2` caller roots, so both static twins parse the inputs exactly like
+/// the adaptive parser.
+#[test]
+fn merged_caller_roots_match_the_adaptive_engine() {
+    for input in [
+        "CAST ( a * b + y AS t u )",
+        "CAST2 ( a * b + y AS t u )",
+        "CAST ( a * b + ( y ) AS t u )",
+        "CAST2 ( a * b + ( y ) AS t u )",
+        "CAST ( a * b + y AS t u ONLY_HIGH AS v w )",
+        "WRAP a * b + y !",
+        "a * b + y",
+    ] {
+        let adaptive = parse_two_cast_with!(repro4twocastwithwrapparser, input);
+        let hybrid = parse_two_cast_with!(repro4twocastwithwrapparser_static, input);
+        let static_only = parse_two_cast_with!(repro4twocastwithwrapparser_static_only, input);
+        assert!(
+            adaptive.1.is_empty(),
+            "the adaptive parser accepts {input:?}: {adaptive:?}"
+        );
+        assert_eq!(hybrid, adaptive, "hybrid divergence on {input:?}");
+        assert_eq!(static_only, adaptive, "static-only divergence on {input:?}");
+    }
 }
