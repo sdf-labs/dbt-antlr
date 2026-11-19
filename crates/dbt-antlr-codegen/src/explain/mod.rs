@@ -53,6 +53,9 @@ pub(crate) struct ExplainRequest {
     /// A lexer grammar that tokenizes the input, for a parser grammar whose
     /// lexer the compilation does not load.
     pub(crate) lexer: Option<PathBuf>,
+    /// Whether to include verbose sections (syntax error details and static
+    /// guesses) in the report.
+    pub(crate) verbose: bool,
 }
 
 /// What an `--explain` run prints.
@@ -287,6 +290,7 @@ fn explain_units(
         ll_trace: &ll_trace,
         verdict,
         probe,
+        verbose: request.verbose,
     }
     .render();
     Ok(Explained {

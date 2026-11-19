@@ -25,7 +25,7 @@
 //!   --optimize-precedence-ladders collapse precedence ladders into left-recursive rules
 //!   --explain <INPUT>             explain how the static DFA parser parses INPUT, compared
 //!                                 with full LL (needs --static-dfa-only or
-//!                                 --static-parser-dfa; implies report-only)
+//!                                 --static-parser-dfa; implies report-only and quiet warnings)
 //!   --explain-file <PATH>         like --explain, with the input in PATH (- reads stdin)
 //!   --start-rule <NAME>           the parser rule that --explain starts from
 //!                                 (default: the first rule)
@@ -34,6 +34,7 @@
 //!                                 (G4S030) as errors
 //!   -q, --quiet                   print only error diagnostics on stderr: no warnings
 //!                                 and no transform notes (the summary line stays)
+//!   -v, --verbose                 show full --explain details and analysis warnings on stderr
 //! ```
 
 use std::io::Write;
@@ -63,7 +64,7 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   --optimize-precedence-ladders collapse precedence ladders into left-recursive rules
   --explain <INPUT>             explain how the static DFA parser parses INPUT, compared
                                 with full LL (needs --static-dfa-only or
-                                --static-parser-dfa; implies report-only)
+                                --static-parser-dfa; implies report-only and quiet warnings)
   --explain-file <PATH>         like --explain, with the input in PATH (- reads stdin)
   --start-rule <NAME>           the parser rule that --explain starts from
                                 (default: the first rule)
@@ -72,6 +73,7 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
                                 (G4S030) as errors
   -q, --quiet                   print only error diagnostics on stderr: no warnings
                                 and no transform notes (the summary line stays)
+  -v, --verbose                 show full --explain details and analysis warnings on stderr
 ";
 
 /// Parsed command line.
@@ -97,6 +99,30 @@ struct CliArgs {
     lexer: Option<PathBuf>,
     strict: bool,
     quiet: bool,
+    verbose: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HiddenWarnings {
+    None,
+    Quiet,
+    ExplainDefault,
+}
+
+impl CliArgs {
+    const fn hide_warnings(&self) -> bool {
+        self.quiet || (self.explain.is_some() && !self.verbose)
+    }
+
+    const fn hidden_warnings(&self) -> HiddenWarnings {
+        if self.quiet {
+            HiddenWarnings::Quiet
+        } else if self.explain.is_some() && !self.verbose {
+            HiddenWarnings::ExplainDefault
+        } else {
+            HiddenWarnings::None
+        }
+    }
 }
 
 /// Where the `--explain` input comes from.
@@ -127,6 +153,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let mut lexer = None;
     let mut strict = false;
     let mut quiet = false;
+    let mut verbose = false;
     let mut ignored = Vec::new();
 
     let mut index = 0;
@@ -192,6 +219,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
             }
             "--strict" => strict = true,
             "-q" | "--quiet" => quiet = true,
+            "-v" | "--verbose" => verbose = true,
             "-h" | "-help" | "--help" => return Err(miette::miette!("{USAGE}")),
             _ if arg.starts_with("-D") => ignored.push(arg),
             _ if arg.starts_with('-') && arg.len() > 1 => {
@@ -205,7 +233,10 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         }
     }
 
-    if !quiet {
+    if quiet && verbose {
+        miette::bail!("cannot combine -q/--quiet with -v/--verbose\n{USAGE}");
+    }
+    if !quiet && !(explain.is_some() && !verbose) {
         for arg in ignored {
             writeln!(stderr, "warning: ignoring option {arg}").into_diagnostic()?;
         }
@@ -237,6 +268,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         lexer,
         strict,
         quiet,
+        verbose,
     })
 }
 
@@ -358,7 +390,7 @@ fn failure(
         .iter()
         .any(|diagnostic| diagnostic.severity() == crate::Severity::Error)
     {
-        let finished = write_diagnostics(stderr, diagnostics, &[], cli.quiet)
+        let finished = write_diagnostics(stderr, diagnostics, &[], cli.hide_warnings())
             .and_then(|()| finish(stderr, cli, diagnostics));
         return match finished {
             Err(report) => report.wrap_err(context),
@@ -368,18 +400,23 @@ fn failure(
     miette::Report::from_err(error).wrap_err(context)
 }
 
-/// Writes the summary line of the diagnostics to `stderr`, also with
-/// `--quiet`, and fails when a diagnostic is an error. A run without
-/// diagnostics writes no summary.
+/// Writes the summary line of the diagnostics to `stderr` and fails when a
+/// diagnostic is an error. Non-`--explain` runs without diagnostics write no
+/// summary.
 fn finish(
     stderr: &mut impl Write,
     cli: &CliArgs,
     diagnostics: &[crate::Diagnostic],
 ) -> miette::Result<()> {
-    if diagnostics.is_empty() {
+    if diagnostics.is_empty() && cli.explain.is_none() {
         return Ok(());
     }
-    writeln!(stderr, "{}", summary(&cli.grammar, diagnostics, cli.quiet)).into_diagnostic()?;
+    writeln!(
+        stderr,
+        "{}",
+        summary(&cli.grammar, diagnostics, cli.hidden_warnings())
+    )
+    .into_diagnostic()?;
     let errors = diagnostics
         .iter()
         .filter(|diagnostic| diagnostic.severity() == crate::Severity::Error)
@@ -392,18 +429,23 @@ fn finish(
 
 /// The summary line of `diagnostics`, for example
 /// `summary: T.g4: 0 errors, 3 warnings (2 G4S192, 1 G4S193)`.
-fn summary(grammar: &std::path::Path, diagnostics: &[crate::Diagnostic], quiet: bool) -> String {
+fn summary(
+    grammar: &std::path::Path,
+    diagnostics: &[crate::Diagnostic],
+    hidden_warnings: HiddenWarnings,
+) -> String {
     let name = grammar.file_name().map_or_else(
         || grammar.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
     );
     let (_, errors) = tally(diagnostics, crate::Severity::Error, "error");
     let (warning_count, warnings) = tally(diagnostics, crate::Severity::Warning, "warning");
-    let hidden = match warning_count {
-        0 => "",
-        _ if !quiet => "",
-        1 => "; --quiet hid the warning",
-        _ => "; --quiet hid the warnings",
+    let hidden = match (warning_count, hidden_warnings) {
+        (0, _) | (_, HiddenWarnings::None) => "",
+        (1, HiddenWarnings::Quiet) => "; --quiet hid the warning",
+        (_, HiddenWarnings::Quiet) => "; --quiet hid the warnings",
+        (1, HiddenWarnings::ExplainDefault) => "; pass -v to show the warning",
+        (_, HiddenWarnings::ExplainDefault) => "; pass -v to show the warnings",
     };
     format!("summary: {name}: {errors}, {warnings}{hidden}")
 }
@@ -478,6 +520,7 @@ fn run_explain(
         input_name,
         start_rule: cli.start_rule.clone(),
         lexer: cli.lexer.clone(),
+        verbose: cli.verbose,
     };
     let output = match crate::explain::explain(&cli.grammar, &cli.lib_dirs, &options, &request) {
         Ok(output) => output,
@@ -487,7 +530,7 @@ fn run_explain(
         stderr,
         &output.diagnostics,
         &output.optimization_messages,
-        cli.quiet,
+        cli.hide_warnings(),
     )?;
     for report in &output.reports {
         write!(stdout, "{report}").into_diagnostic()?;
@@ -570,6 +613,18 @@ mod tests {
     }
 
     #[test]
+    fn verbose_flag_and_alias_parse_and_conflict_with_quiet() {
+        for flag in ["-v", "--verbose"] {
+            let cli = parse(&[flag, "T.g4"]).expect("flag parses");
+            assert!(cli.verbose, "{flag} sets verbose");
+        }
+        let cli = parse(&["T.g4"]).expect("minimal command line parses");
+        assert!(!cli.verbose);
+        assert!(parse(&["-q", "-v", "T.g4"]).is_err());
+        assert!(parse(&["--quiet", "--verbose", "T.g4"]).is_err());
+    }
+
+    #[test]
     fn quiet_hides_the_ignored_option_warning() {
         let mut stderr = Vec::new();
         let args = ["-Dlanguage=Rust", "T.g4", "-q"].map(str::to_owned);
@@ -596,16 +651,20 @@ mod tests {
             diagnostic("G4S192", crate::Severity::Warning),
         ];
         assert_eq!(
-            super::summary(grammar, &diagnostics, false),
+            super::summary(grammar, &diagnostics, super::HiddenWarnings::None),
             "summary: T.g4: 0 errors, 3 warnings (2 G4S192, 1 G4S193)"
         );
         assert_eq!(
-            super::summary(grammar, &diagnostics, true),
+            super::summary(grammar, &diagnostics, super::HiddenWarnings::Quiet),
             "summary: T.g4: 0 errors, 3 warnings (2 G4S192, 1 G4S193); --quiet hid the warnings"
+        );
+        assert_eq!(
+            super::summary(grammar, &diagnostics, super::HiddenWarnings::ExplainDefault),
+            "summary: T.g4: 0 errors, 3 warnings (2 G4S192, 1 G4S193); pass -v to show the warnings"
         );
         let diagnostics = [diagnostic("G4S190", crate::Severity::Error)];
         assert_eq!(
-            super::summary(grammar, &diagnostics, true),
+            super::summary(grammar, &diagnostics, super::HiddenWarnings::Quiet),
             "summary: T.g4: 1 error (1 G4S190), 0 warnings"
         );
     }

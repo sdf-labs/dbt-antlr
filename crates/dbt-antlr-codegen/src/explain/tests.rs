@@ -18,8 +18,17 @@ struct Run {
     verdict: Verdict,
 }
 
-/// Explains `input` against the combined grammar `source`.
 fn run(name: &str, source: &str, input: &str, static_only: bool) -> Run {
+    run_with_verbose(name, source, input, static_only, false)
+}
+
+fn run_with_verbose(
+    name: &str,
+    source: &str,
+    input: &str,
+    static_only: bool,
+    verbose: bool,
+) -> Run {
     static RUNS: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
         "dbt-antlr-explain-{}-{name}-{}",
@@ -44,6 +53,7 @@ fn run(name: &str, source: &str, input: &str, static_only: bool) -> Run {
         input_name: "<test>".to_owned(),
         start_rule: None,
         lexer: None::<PathBuf>,
+        verbose,
     };
     let explained = explain_units(&compilation, parser, lexer, plan.atn_fallback(), &request)
         .expect("the explanation runs");
@@ -145,9 +155,22 @@ fn an_sll_conflict_is_context_sensitivity() {
         run.report
     );
     assert!(
-        run.report.contains("[completed subtree] [DIVERGENCE]"),
+        run.report.contains("[SUGGESTED REMEDIATION]"),
         "{}",
         run.report
+    );
+    assert!(
+        !run.report.contains("[STATIC GUESSES"),
+        "default report hides static guesses:\n{}",
+        run.report
+    );
+    let verbose_run = run_with_verbose("Context", CONTEXT, "x a y", true, true);
+    assert!(
+        verbose_run
+            .report
+            .contains("[completed subtree] [DIVERGENCE]"),
+        "{}",
+        verbose_run.report
     );
 }
 

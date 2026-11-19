@@ -178,6 +178,7 @@ impl ParserSpec {
 pub(super) struct Frame {
     pub(super) rule: usize,
     pub(super) start: isize,
+    pub(super) invoking_state: i32,
 }
 
 /// How the static parser chose the alternative of a table decision.
@@ -644,6 +645,7 @@ impl<'input, 'arena> Simulation<'input, 'arena, '_, '_> {
             frames.push(Frame {
                 rule: node.get_rule_index(),
                 start: ParserRuleContext::start(node).get_token_index(),
+                invoking_state: node.get_invoking_state(),
             });
             context = node.get_parent();
         }

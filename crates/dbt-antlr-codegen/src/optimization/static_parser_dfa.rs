@@ -422,7 +422,7 @@ impl fmt::Display for InvokingState {
 
 impl InvokingState {
     /// The caller for a sentence, for example `'command' (line 22)`.
-    fn called_from_text(&self) -> String {
+    pub(crate) fn called_from_text(&self) -> String {
         let mut text = format!("'{}", self.rule);
         if let Some(label) = &self.label {
             text.push_str(&format!("#{label}"));
