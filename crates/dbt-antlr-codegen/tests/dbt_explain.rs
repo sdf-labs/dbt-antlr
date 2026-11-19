@@ -1,7 +1,7 @@
 #![cfg(feature = "generator")]
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Bo Lin
-//! Integration tests for `--explain` and `--explain-file`: the differential
+//! Integration tests for `--explain`, `--explain-file`, and `--explain-batch`: the differential
 //! fault localizer of static parser DFAs.
 //!
 //! The commands run in `tests/fixtures/explain` with relative paths, so the
@@ -387,4 +387,107 @@ fn a_deferred_guard_can_build_another_tree() {
     ]);
     assert!(report.contains("[VERDICT: SILENT DIVERGENCE]"), "{report}");
     assert!(report.contains("via a stack guard that defers"), "{report}");
+}
+
+#[allow(clippy::disallowed_methods)]
+#[test]
+fn explain_batch_file_with_start_rules_and_summary() {
+    let report = explain(&[
+        "--static-dfa-only",
+        "--explain-batch",
+        "batch-cases.txt",
+        "Budget.g4",
+    ]);
+    insta::assert_snapshot!("explain_batch_file", report);
+}
+
+#[test]
+fn explain_batch_stdin_with_custom_delimiter() {
+    use std::io::Write as _;
+    use std::process::Stdio;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_dbt-antlr-codegen"))
+        .args([
+            "--static-dfa-only",
+            "--explain-batch",
+            "-",
+            "--explain-delimiter",
+            "===",
+            "Budget.g4",
+        ])
+        .current_dir(fixtures())
+        .env("NO_COLOR", "1")
+        .env("COLUMNS", "4096")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("dbt-antlr-codegen spawns");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin is piped")
+        .write_all(b"=== ok ===\na b c ;\n=== stat-div [start_rule=stat] ===\na b = c ;\n")
+        .expect("writes batch stdin");
+    let output = child.wait_with_output().expect("waits for child");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+    assert!(
+        stdout.contains("[1/2] ok (start rule: prog, 4 tokens): AGREE"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("--- [2/2] stat-div (start rule: stat, 5 tokens) ---"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("[VERDICT: STATIC-DFA DIVERGENCE]"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn explain_batch_unknown_per_case_start_rule_is_an_error() {
+    use std::io::Write as _;
+    use std::process::Stdio;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_dbt-antlr-codegen"))
+        .args(["--static-dfa-only", "--explain-batch", "-", "Budget.g4"])
+        .current_dir(fixtures())
+        .env("NO_COLOR", "1")
+        .env("COLUMNS", "4096")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("dbt-antlr-codegen spawns");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin is piped")
+        .write_all(b"--- bad [start_rule=missing_rule] ---\na b c ;\n")
+        .expect("writes batch stdin");
+    let output = child.wait_with_output().expect("waits for child");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("has no rule"), "{stderr}");
+    assert!(stderr.contains("missing_rule"), "{stderr}");
+}
+
+#[test]
+fn missing_batch_file_is_an_error() {
+    let stderr = fail(&[
+        "--static-dfa-only",
+        "--explain-batch",
+        "missing-batch.txt",
+        "Budget.g4",
+    ]);
+    assert!(
+        stderr.contains("cannot read --explain-batch missing-batch.txt"),
+        "{stderr}"
+    );
 }

@@ -28,6 +28,9 @@
 //!                                 --static-parser-dfa; implies report-only)
 //!   --explain-file <PATH>         like --explain, with the input in PATH (- reads stdin;
 //!                                 repeatable)
+//!   --explain-batch <PATH>        multi-input file split by separator lines
+//!                                 (`--- name [start_rule=rule] ---`; - reads stdin; repeatable)
+//!   --explain-delimiter <STR>     separator delimiter for --explain-batch (default: ---)
 //!   --start-rule <NAME>           the parser rule that --explain starts from
 //!                                 (default: the first rule)
 //!   --lexer <Lexer.g4>            the lexer grammar that tokenizes the --explain input
@@ -68,6 +71,9 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
                                 --static-parser-dfa; implies report-only)
   --explain-file <PATH>         like --explain, with the input in PATH (- reads stdin;
                                 repeatable)
+  --explain-batch <PATH>        multi-input file split by separator lines
+                                (`--- name [start_rule=rule] ---`; - reads stdin; repeatable)
+  --explain-delimiter <STR>     separator delimiter for --explain-batch (default: ---)
   --start-rule <NAME>           the parser rule that --explain starts from
                                 (default: the first rule)
   --lexer <Lexer.g4>            the lexer grammar that tokenizes the --explain input
@@ -97,6 +103,7 @@ struct CliArgs {
     optimize_ladders: bool,
     report_only: bool,
     explain: Vec<ExplainInput>,
+    explain_delimiter: Option<String>,
     start_rule: Option<String>,
     lexer: Option<PathBuf>,
     strict: bool,
@@ -114,6 +121,7 @@ impl CliArgs {
 enum ExplainInput {
     Text(String),
     File(PathBuf),
+    Batch(PathBuf),
 }
 
 fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArgs> {
@@ -133,6 +141,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let mut optimize_ladders = false;
     let mut report_only = false;
     let mut explain = Vec::new();
+    let mut explain_delimiter = None;
     let mut start_rule = None;
     let mut lexer = None;
     let mut strict = false;
@@ -176,14 +185,29 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
             "--prune-unreachable-rules" => prune_unreachable = true,
             "--inline-trivial-rules" => inline_trivial = true,
             "--optimize-precedence-ladders" => optimize_ladders = true,
-            "--explain" | "--explain-file" => {
+            "--explain" | "--explain-file" | "--explain-batch" => {
                 let value = value_after(arg, args, &mut index)?;
-                let input = if arg == "--explain" {
-                    ExplainInput::Text(value)
-                } else {
-                    ExplainInput::File(PathBuf::from(value))
+                let input = match arg.as_str() {
+                    "--explain" => ExplainInput::Text(value),
+                    "--explain-file" => ExplainInput::File(PathBuf::from(value)),
+                    _ => ExplainInput::Batch(PathBuf::from(value)),
                 };
                 explain.push(input);
+            }
+            "--explain-delimiter" => {
+                let value = value_after(arg, args, &mut index)?;
+                if explain_delimiter.replace(value).is_some() {
+                    miette::bail!("expected at most one --explain-delimiter\n{USAGE}");
+                }
+            }
+            _ if arg.starts_with("--explain-delimiter=") => {
+                let value = arg.strip_prefix("--explain-delimiter=").unwrap_or_default();
+                if value.is_empty() {
+                    miette::bail!("option --explain-delimiter expects a value\n{USAGE}");
+                }
+                if explain_delimiter.replace(value.to_owned()).is_some() {
+                    miette::bail!("expected at most one --explain-delimiter\n{USAGE}");
+                }
             }
             "--start-rule" => {
                 if start_rule
@@ -224,14 +248,36 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         miette::bail!("missing grammar file\n{USAGE}");
     };
     if explain.is_empty() && (start_rule.is_some() || lexer.is_some()) {
-        miette::bail!("--start-rule and --lexer need --explain or --explain-file\n{USAGE}");
+        miette::bail!(
+            "--start-rule and --lexer need --explain, --explain-file, or --explain-batch\n{USAGE}"
+        );
+    }
+    let has_batch = explain
+        .iter()
+        .any(|input| matches!(input, ExplainInput::Batch(_)));
+    if let Some(delimiter) = &explain_delimiter {
+        if !has_batch {
+            miette::bail!("--explain-delimiter needs --explain-batch\n{USAGE}");
+        }
+        if delimiter.is_empty() || delimiter.chars().any(char::is_whitespace) {
+            miette::bail!(
+                "invalid --explain-delimiter '{delimiter}': delimiter must be non-empty and contain no whitespace\n{USAGE}"
+            );
+        }
     }
     let stdin_count = explain
         .iter()
-        .filter(|input| matches!(input, ExplainInput::File(path) if path.as_os_str() == "-"))
+        .filter(|input| {
+            matches!(
+                input,
+                ExplainInput::File(path) | ExplainInput::Batch(path) if path.as_os_str() == "-"
+            )
+        })
         .count();
     if stdin_count > 1 {
-        miette::bail!("expected at most one --explain-file reading from stdin (-)\n{USAGE}");
+        miette::bail!(
+            "expected at most one --explain-file or --explain-batch reading from stdin (-)\n{USAGE}"
+        );
     }
     Ok(CliArgs {
         grammar,
@@ -250,6 +296,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         optimize_ladders,
         report_only,
         explain,
+        explain_delimiter,
         start_rule,
         lexer,
         strict,
@@ -461,7 +508,7 @@ fn tally(
     (total, format!("{total} {noun}{plural} ({codes})"))
 }
 
-/// Runs `--explain` / `--explain-file`.
+/// Runs `--explain` / `--explain-file` / `--explain-batch`.
 fn run_explain(
     cli: &CliArgs,
     stdout: &mut impl Write,
@@ -473,6 +520,10 @@ fn run_explain(
         .filter(|input| matches!(input, ExplainInput::Text(_)))
         .count();
     let mut inline_index = 0_usize;
+    let delimiter = cli
+        .explain_delimiter
+        .as_deref()
+        .unwrap_or(crate::explain::batch::DEFAULT_DELIMITER);
     let mut cases = Vec::with_capacity(cli.explain.len());
     for source in &cli.explain {
         match source {
@@ -509,6 +560,24 @@ fn run_explain(
                     input_name: path.display().to_string(),
                     start_rule: None,
                 });
+            }
+            ExplainInput::Batch(path) if path.as_os_str() == "-" => {
+                let mut text = String::new();
+                std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)
+                    .into_diagnostic()
+                    .wrap_err("cannot read the --explain-batch input from stdin")?;
+                let parsed = crate::explain::batch::parse_batch(&text, "<stdin>", delimiter)
+                    .map_err(|error| miette::miette!("{error}"))?;
+                cases.extend(parsed);
+            }
+            ExplainInput::Batch(path) => {
+                let text = std::fs::read_to_string(path)
+                    .into_diagnostic()
+                    .wrap_err_with(|| format!("cannot read --explain-batch {}", path.display()))?;
+                let source_name = path.display().to_string();
+                let parsed = crate::explain::batch::parse_batch(&text, &source_name, delimiter)
+                    .map_err(|error| miette::miette!("{error}"))?;
+                cases.extend(parsed);
             }
         }
     }
@@ -771,11 +840,53 @@ mod tests {
                 super::ExplainInput::Text("b".to_owned()),
             ]
         );
+        let cli = parse(&[
+            "--explain-batch",
+            "cases.txt",
+            "--explain-delimiter",
+            "===",
+            "T.g4",
+        ])
+        .expect("explain batch parses");
+        assert_eq!(
+            cli.explain,
+            vec![super::ExplainInput::Batch(std::path::PathBuf::from(
+                "cases.txt"
+            ))]
+        );
+        assert_eq!(cli.explain_delimiter.as_deref(), Some("==="));
+
+        let cli = parse(&[
+            "--explain-batch",
+            "cases.txt",
+            "--explain-delimiter=###",
+            "T.g4",
+        ])
+        .expect("explain batch with = delimiter parses");
+        assert_eq!(cli.explain_delimiter.as_deref(), Some("###"));
     }
 
     #[test]
     fn explain_flags_are_checked() {
         assert!(parse(&["--explain-file", "-", "--explain-file", "-", "T.g4"]).is_err());
+        assert!(parse(&["--explain-file", "-", "--explain-batch", "-", "T.g4"]).is_err());
+        assert!(parse(&["--explain-batch", "-", "--explain-batch", "-", "T.g4"]).is_err());
+        assert!(parse(&["--explain-delimiter", "===", "T.g4"]).is_err());
+        assert!(parse(&["--explain", "a", "--explain-delimiter", "===", "T.g4"]).is_err());
+        assert!(parse(&["--explain-batch", "f", "--explain-delimiter=", "T.g4"]).is_err());
+        assert!(parse(&["--explain-batch", "f", "--explain-delimiter", "a b", "T.g4"]).is_err());
+        assert!(
+            parse(&[
+                "--explain-batch",
+                "f",
+                "--explain-delimiter",
+                "===",
+                "--explain-delimiter",
+                "###",
+                "T.g4",
+            ])
+            .is_err()
+        );
         assert!(
             parse(&[
                 "--explain",
