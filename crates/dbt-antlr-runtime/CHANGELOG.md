@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-runtime-v0.10.0...dbt-antlr-runtime-v0.10.1) - 2026-11-19
+
+### Fixed
+
+- *(codegen)* keep guard roots of merged clean lineages ([#119](https://github.com/sdf-labs/dbt-antlr/pull/119))
+- *(codegen)* do not attest a caller frame from the decision's empty context ([#91](https://github.com/sdf-labs/dbt-antlr/pull/91)) ([#117](https://github.com/sdf-labs/dbt-antlr/pull/117))
+- *(codegen)* keep every call of a shared follow state in precedence tables ([#83](https://github.com/sdf-labs/dbt-antlr/pull/83)) ([#115](https://github.com/sdf-labs/dbt-antlr/pull/115))
+
+### Tests
+
+- *(runtime)* add WidenedPrecedence frontier witness ([#92](https://github.com/sdf-labs/dbt-antlr/pull/92)) ([#121](https://github.com/sdf-labs/dbt-antlr/pull/121))
+
 ## [0.10.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-runtime-v0.9.0...dbt-antlr-runtime-v0.10.0) - 2026-11-18
 
 ### Other
