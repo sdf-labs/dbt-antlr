@@ -252,17 +252,56 @@ fn explain_needs_a_static_parser_mode() {
     );
 }
 
+#[allow(clippy::disallowed_methods)]
 #[test]
-fn explain_takes_one_input() {
-    let stderr = fail(&[
+fn multiple_explain_inputs_collapse_agree_and_summarize() {
+    let report = explain(&[
         "--static-dfa-only",
         "--explain",
         "a b c ;",
+        "--explain",
+        "d e f ;",
+        "--explain",
+        "a b = c ;",
         "--explain-file",
         "two-statements.txt",
+        "--explain",
+        "a b ;",
+        "--explain",
+        "a # b ;",
         "Budget.g4",
     ]);
-    assert!(stderr.contains("at most one --explain"), "{stderr}");
+    insta::assert_snapshot!("multi_explain_batch", report);
+}
+
+#[test]
+fn multiple_explain_inputs_verbose_expands_agree() {
+    let report = explain(&[
+        "-v",
+        "--static-dfa-only",
+        "--explain",
+        "a b c ;",
+        "--explain",
+        "a b = c ;",
+        "Budget.g4",
+    ]);
+    assert!(report.contains("--- [1/2] <inline #1>"), "{report}");
+    assert!(report.contains("[VERDICT: AGREE]"), "{report}");
+    assert!(report.contains("[STATIC GUESSES"), "{report}");
+    assert!(report.contains("=== batch summary:"), "{report}");
+}
+
+#[test]
+fn duplicate_stdin_explain_file_is_an_error() {
+    let stderr = fail(&[
+        "--static-dfa-only",
+        "--explain-file",
+        "-",
+        "--explain-file",
+        "-",
+        "Budget.g4",
+    ]);
+    assert!(stderr.contains("at most one --explain-file"), "{stderr}");
 }
 
 #[test]

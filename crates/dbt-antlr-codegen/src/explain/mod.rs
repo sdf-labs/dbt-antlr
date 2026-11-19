@@ -30,25 +30,37 @@ mod tests;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use dbt_antlr_runtime::atn_simulator::ParserATNSimulatorManager;
 use dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables as RuntimeTables;
 
 use crate::emission::compile_grammar_with;
 use crate::error::EmitError;
 use crate::grammar::atn::{CompiledLexer, CompiledParser};
 use crate::grammar::compiler::Compilation;
-use crate::optimization::{AtnFallback, OptimizationOptions, OptimizationPlan};
+use crate::optimization::{
+    AtnFallback, OptimizationOptions, OptimizationPlan, StaticParserDfaReport,
+};
 
 use interp::{Oracle, ParserSpec, StaticOracle};
 use lex::{LexerSpec, leak_str, leak_strings};
 
-/// One `--explain` run.
+/// One input to explain against a compiled grammar.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct ExplainRequest {
+pub(crate) struct ExplainCase {
     /// The input text.
     pub(crate) input: String,
     /// How the report names the input.
     pub(crate) input_name: String,
-    /// The parser rule to start from. The default is the first rule.
+    /// Optional start rule override for this input.
+    pub(crate) start_rule: Option<String>,
+}
+
+/// One `--explain` invocation, with one or more inputs.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ExplainRequest {
+    /// Inputs to explain in order.
+    pub(crate) cases: Vec<ExplainCase>,
+    /// Default parser rule to start from. The first rule is the fallback.
     pub(crate) start_rule: Option<String>,
     /// A lexer grammar that tokenizes the input, for a parser grammar whose
     /// lexer the compilation does not load.
@@ -68,8 +80,8 @@ pub(crate) struct ExplainOutput {
     pub(crate) reports: Vec<String>,
 }
 
-/// Compiles the grammar at `grammar_path` and explains how its static parser
-/// handles `request.input`.
+/// Compiles the grammar at `grammar_path` once and explains how its static
+/// parser handles every case in `request.cases`.
 pub(crate) fn explain(
     grammar_path: &Path,
     library_dirs: &[PathBuf],
@@ -79,6 +91,11 @@ pub(crate) fn explain(
     if !options.static_parser_dfa && !options.static_dfa_only {
         return Err(EmitError::Config(
             "--explain compares a static DFA parser with full LL; add --static-dfa-only or --static-parser-dfa".to_owned(),
+        ));
+    }
+    if request.cases.is_empty() {
+        return Err(EmitError::Config(
+            "--explain needs at least one input".to_owned(),
         ));
     }
     let mut options = options.clone();
@@ -109,7 +126,9 @@ pub(crate) fn explain(
         None => None,
     };
     let (parser, lexer) = units(&compilation, lexer_compilation.as_ref())?;
-    reports.push(explain_units(&compilation, parser, lexer, plan.atn_fallback(), request)?.report);
+    let session = ExplainSession::new(&compilation, parser, lexer, plan.atn_fallback())?;
+    let report = session.explain_request(request)?;
+    reports.push(report);
     Ok(ExplainOutput {
         diagnostics,
         optimization_messages,
@@ -170,6 +189,285 @@ struct Explained {
     traces: Option<(interp::Trace, interp::Trace, diff::Verdict)>,
 }
 
+/// Prepared static and full-LL interpreters for explaining one or more inputs
+/// against a single compiled grammar.
+struct ExplainSession<'c> {
+    rule_names: &'c [String],
+    report: &'c StaticParserDfaReport,
+    mode: &'static str,
+    lexer_spec: LexerSpec,
+    spec: ParserSpec,
+    static_oracle: Oracle<'c>,
+    static_manager: &'static ParserATNSimulatorManager,
+    ll_manager: &'static ParserATNSimulatorManager,
+    sll_manager: &'static ParserATNSimulatorManager,
+}
+
+impl<'c> ExplainSession<'c> {
+    fn new(
+        compilation: &'c Compilation,
+        parser: &'c CompiledParser,
+        lexer: &'c CompiledLexer,
+        fallback: AtnFallback,
+    ) -> Result<Self, EmitError> {
+        let recognizer = &parser.semantic.recognizer;
+        let report = compilation
+            .optimization_report()
+            .static_parser_dfa
+            .iter()
+            .find(|report| report.grammar == parser.semantic.unit.name)
+            .ok_or_else(|| {
+                EmitError::Config("the static parser DFA pass did not run".to_owned())
+            })?;
+        let tables = compilation
+            .static_parser_tables(parser.semantic.unit.id)
+            .ok_or_else(|| {
+                EmitError::Config("the static parser DFA pass built no tables".to_owned())
+            })?;
+        let words = tables.words();
+        let runtime: &'static RuntimeTables = if words.is_empty() {
+            Box::leak(Box::default())
+        } else {
+            let words: &'static [u32] = Box::leak(words.into_boxed_slice());
+            Box::leak(Box::new(RuntimeTables::from_image(words).map_err(
+                |error| EmitError::Config(format!("invalid static parser DFA tables: {error}")),
+            )?))
+        };
+        let results = report
+            .decisions
+            .iter()
+            .map(|decision| decision.result.clone())
+            .collect::<Vec<_>>();
+        let mut call_sites = HashMap::new();
+        for decision in 0..results.len() {
+            if let Some(plan) = tables.descent(decision) {
+                for group in &plan.groups {
+                    call_sites.insert(
+                        (decision, group.virtual_alt),
+                        Box::leak(group.call_sites.clone().into_boxed_slice()) as &'static [i32],
+                    );
+                }
+            }
+        }
+        let spec = ParserSpec {
+            grammar_file_name: leak_str(&recognizer.name),
+            rule_names: leak_strings(&recognizer.rule_names),
+            literal_names: recognizer.literal_names.clone(),
+            symbolic_names: recognizer.symbolic_names.clone(),
+            atn: parser.atn,
+        };
+        let static_manager: &'static ParserATNSimulatorManager = Box::leak(Box::new(
+            ParserATNSimulatorManager::new_with_static_parser_tables(spec.atn, runtime),
+        ));
+        let ll_manager: &'static ParserATNSimulatorManager =
+            Box::leak(Box::new(ParserATNSimulatorManager::new(spec.atn)));
+        let sll_manager: &'static ParserATNSimulatorManager =
+            Box::leak(Box::new(ParserATNSimulatorManager::new(spec.atn)));
+        let static_oracle = Oracle::Static(StaticOracle {
+            results,
+            tables,
+            ll1: ll1_decisions(parser),
+            call_sites,
+            static_only: fallback == AtnFallback::Forbidden,
+        });
+        Ok(Self {
+            rule_names: &recognizer.rule_names,
+            report,
+            mode: match fallback {
+                AtnFallback::Forbidden => "--static-dfa-only",
+                AtnFallback::Allowed => "--static-parser-dfa",
+            },
+            lexer_spec: LexerSpec::new(lexer),
+            spec,
+            static_oracle,
+            static_manager,
+            ll_manager,
+            sll_manager,
+        })
+    }
+
+    fn resolve_start_rule(&self, name: Option<&str>) -> Result<(usize, &'c str), EmitError> {
+        let index = match name {
+            Some(name) => self
+                .rule_names
+                .iter()
+                .position(|rule| rule == name)
+                .ok_or_else(|| {
+                    EmitError::Config(format!(
+                        "parser grammar {} has no rule {name}; a grammar transform can remove or inline a rule unless --entry-rule {name} keeps it",
+                        self.report.grammar
+                    ))
+                })?,
+            None => 0,
+        };
+        let rule_name = self.rule_names.get(index).ok_or_else(|| {
+            EmitError::Config(format!(
+                "parser grammar {} has no rules",
+                self.report.grammar
+            ))
+        })?;
+        Ok((index, rule_name.as_str()))
+    }
+
+    fn explain_request(&self, request: &ExplainRequest) -> Result<String, EmitError> {
+        let resolved: Vec<(usize, &'c str)> = request
+            .cases
+            .iter()
+            .map(|case| {
+                self.resolve_start_rule(
+                    case.start_rule.as_deref().or(request.start_rule.as_deref()),
+                )
+            })
+            .collect::<Result<_, _>>()?;
+        if let [case] = request.cases.as_slice() {
+            let (start_rule, start_rule_name) = resolved[0];
+            return Ok(self
+                .explain_single(case, start_rule, start_rule_name, request.verbose)
+                .report);
+        }
+        let total = request.cases.len();
+        let mut entries = Vec::with_capacity(total);
+        for (index, (case, (start_rule, start_rule_name))) in
+            request.cases.iter().zip(resolved).enumerate()
+        {
+            entries.push(self.explain_batch_case(
+                index + 1,
+                total,
+                case,
+                start_rule,
+                start_rule_name,
+                request.verbose,
+            ));
+        }
+        Ok(render::render_batch(
+            &self.report.grammar,
+            self.mode,
+            &entries,
+        ))
+    }
+
+    fn explain_single(
+        &self,
+        case: &ExplainCase,
+        start_rule: usize,
+        start_rule_name: &str,
+        verbose: bool,
+    ) -> Explained {
+        let lexed = self.lexer_spec.tokenize(&case.input);
+        if !lexed.errors.is_empty() {
+            return Explained {
+                report: render::render_lexer_errors(
+                    &self.report.grammar,
+                    &case.input_name,
+                    &case.input,
+                    &lexed.errors,
+                ),
+                traces: None,
+            };
+        }
+        let (static_trace, ll_trace, verdict, probe) = self.simulate_case(&case.input, start_rule);
+        let report = render::Explanation {
+            start_rule: start_rule_name,
+            mode: self.mode,
+            input_name: &case.input_name,
+            input: &case.input,
+            lexed: &lexed,
+            report: self.report,
+            static_trace: &static_trace,
+            ll_trace: &ll_trace,
+            verdict,
+            probe,
+            verbose,
+        }
+        .render();
+        Explained {
+            report,
+            traces: Some((static_trace, ll_trace, verdict)),
+        }
+    }
+
+    fn explain_batch_case(
+        &self,
+        index: usize,
+        total: usize,
+        case: &ExplainCase,
+        start_rule: usize,
+        start_rule_name: &str,
+        verbose: bool,
+    ) -> render::BatchEntry {
+        let lexed = self.lexer_spec.tokenize(&case.input);
+        if !lexed.errors.is_empty() {
+            return render::render_lexer_errors_in_batch(
+                index,
+                total,
+                &case.input_name,
+                &case.input,
+                &lexed.errors,
+            );
+        }
+        let (static_trace, ll_trace, verdict, probe) = self.simulate_case(&case.input, start_rule);
+        render::Explanation {
+            start_rule: start_rule_name,
+            mode: self.mode,
+            input_name: &case.input_name,
+            input: &case.input,
+            lexed: &lexed,
+            report: self.report,
+            static_trace: &static_trace,
+            ll_trace: &ll_trace,
+            verdict,
+            probe,
+            verbose,
+        }
+        .render_in_batch(index, total)
+    }
+
+    fn simulate_case(
+        &self,
+        input: &str,
+        start_rule: usize,
+    ) -> (
+        interp::Trace,
+        interp::Trace,
+        diff::Verdict,
+        Option<Option<i32>>,
+    ) {
+        let static_trace = interp::simulate(
+            &self.spec,
+            &self.lexer_spec,
+            input,
+            &self.static_oracle,
+            self.static_manager,
+            start_rule,
+        );
+        let ll_trace = interp::simulate(
+            &self.spec,
+            &self.lexer_spec,
+            input,
+            &Oracle::FullLl { probe: None },
+            self.ll_manager,
+            start_rule,
+        );
+        let verdict = diff::compare(&static_trace, &ll_trace);
+        let probe = match verdict {
+            diff::Verdict::Divergence { step } => {
+                interp::simulate(
+                    &self.spec,
+                    &self.lexer_spec,
+                    input,
+                    &Oracle::FullLl { probe: Some(step) },
+                    self.sll_manager,
+                    start_rule,
+                )
+                .probe
+            }
+            _ => None,
+        };
+        (static_trace, ll_trace, verdict, probe)
+    }
+}
+
+#[cfg(test)]
 fn explain_units(
     compilation: &Compilation,
     parser: &CompiledParser,
@@ -177,126 +475,14 @@ fn explain_units(
     fallback: AtnFallback,
     request: &ExplainRequest,
 ) -> Result<Explained, EmitError> {
-    let recognizer = &parser.semantic.recognizer;
-    let start_rule = match &request.start_rule {
-        Some(name) => recognizer
-            .rule_names
-            .iter()
-            .position(|rule| rule == name)
-            .ok_or_else(|| {
-                EmitError::Config(format!(
-                    "parser grammar {} has no rule {name}; a grammar transform can remove or inline a rule unless --entry-rule {name} keeps it",
-                    recognizer.name
-                ))
-            })?,
-        None => 0,
-    };
-    let start_rule_name = recognizer.rule_names.get(start_rule).ok_or_else(|| {
-        EmitError::Config(format!("parser grammar {} has no rules", recognizer.name))
-    })?;
-    let report = compilation
-        .optimization_report()
-        .static_parser_dfa
-        .iter()
-        .find(|report| report.grammar == parser.semantic.unit.name)
-        .ok_or_else(|| EmitError::Config("the static parser DFA pass did not run".to_owned()))?;
-    let tables = compilation
-        .static_parser_tables(parser.semantic.unit.id)
-        .ok_or_else(|| {
-            EmitError::Config("the static parser DFA pass built no tables".to_owned())
-        })?;
-
-    let lexer_spec = LexerSpec::new(lexer);
-    let lexed = lexer_spec.tokenize(&request.input);
-    if !lexed.errors.is_empty() {
-        return Ok(Explained {
-            report: render::render_lexer_errors(
-                &recognizer.name,
-                &request.input_name,
-                &request.input,
-                &lexed.errors,
-            ),
-            traces: None,
-        });
-    }
-
-    let words = tables.words();
-    let runtime: &'static RuntimeTables = if words.is_empty() {
-        Box::leak(Box::default())
-    } else {
-        let words: &'static [u32] = Box::leak(words.into_boxed_slice());
-        Box::leak(Box::new(RuntimeTables::from_image(words).map_err(
-            |error| EmitError::Config(format!("invalid static parser DFA tables: {error}")),
-        )?))
-    };
-    let results = report
-        .decisions
-        .iter()
-        .map(|decision| decision.result.clone())
-        .collect::<Vec<_>>();
-    let spec = ParserSpec {
-        grammar_file_name: leak_str(&recognizer.name),
-        rule_names: leak_strings(&recognizer.rule_names),
-        literal_names: recognizer.literal_names.clone(),
-        symbolic_names: recognizer.symbolic_names.clone(),
-        atn: parser.atn,
-    };
-    let static_oracle = Oracle::Static(StaticOracle {
-        results: &results,
-        tables,
-        runtime,
-        ll1: ll1_decisions(parser),
-        static_only: fallback == AtnFallback::Forbidden,
-    });
-    let static_trace = interp::simulate(
-        &spec,
-        &lexer_spec,
-        &request.input,
-        &static_oracle,
-        start_rule,
-    );
-    let ll_trace = interp::simulate(
-        &spec,
-        &lexer_spec,
-        &request.input,
-        &Oracle::FullLl { probe: None },
-        start_rule,
-    );
-    let verdict = diff::compare(&static_trace, &ll_trace);
-    let probe = match verdict {
-        diff::Verdict::Divergence { step } => {
-            interp::simulate(
-                &spec,
-                &lexer_spec,
-                &request.input,
-                &Oracle::FullLl { probe: Some(step) },
-                start_rule,
-            )
-            .probe
-        }
-        _ => None,
-    };
-    let report = render::Explanation {
-        start_rule: start_rule_name,
-        mode: match fallback {
-            AtnFallback::Forbidden => "--static-dfa-only",
-            AtnFallback::Allowed => "--static-parser-dfa",
-        },
-        input_name: &request.input_name,
-        input: &request.input,
-        lexed: &lexed,
-        report,
-        static_trace: &static_trace,
-        ll_trace: &ll_trace,
-        verdict,
-        probe,
-        verbose: request.verbose,
-    }
-    .render();
-    Ok(Explained {
-        report,
-        traces: Some((static_trace, ll_trace, verdict)),
-    })
+    let session = ExplainSession::new(compilation, parser, lexer, fallback)?;
+    let case = request
+        .cases
+        .first()
+        .ok_or_else(|| EmitError::Config("--explain needs at least one input".to_owned()))?;
+    let (start_rule, start_rule_name) =
+        session.resolve_start_rule(case.start_rule.as_deref().or(request.start_rule.as_deref()))?;
+    Ok(session.explain_single(case, start_rule, start_rule_name, request.verbose))
 }
 
 /// The `LL(1)` lookahead of each decision that the generated parser decides
