@@ -876,6 +876,7 @@ impl DecisionTableBuilder {
                     loop_block,
                     postfix.clone(),
                     budget.max_visits,
+                    self.atn_fallback == AtnFallback::Forbidden,
                 ),
                 depth_bound,
                 frontier: Frontier::of(&budget, self.atn_fallback),

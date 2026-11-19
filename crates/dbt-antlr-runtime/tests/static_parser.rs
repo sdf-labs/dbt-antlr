@@ -33,6 +33,10 @@ mod gen {
     pub mod loopobligationparser_static;
     pub mod lrdfalexer;
     pub mod lrdfaparser;
+    pub mod repro4twocastwithwraplexer;
+    pub mod repro4twocastwithwrapparser;
+    pub mod repro4twocastwithwrapparser_static;
+    pub mod repro4twocastwithwrapparser_static_only;
     pub mod staticdfalexer;
     pub mod staticdfaparser;
 }
@@ -1082,6 +1086,109 @@ fn inline_alias_static_dfa_only_matches_the_adaptive_engine() {
         cast.0.contains("(expr CAST ( (expr x) AS (type INT64) ))"),
         "the cast closes: {cast:?}"
     );
+}
+
+/// Parses `input` with one generated `Repro4TwoCastWithWrap` parser module,
+/// and returns the tree and the syntax errors.
+macro_rules! parse_two_cast_with {
+    ($parser:ident, $input:expr) => {
+        Arena::with(|arena| {
+            let lexer = gen::repro4twocastwithwraplexer::Repro4TwoCastWithWrapLexer::<
+                _,
+                CommonTokenFactory,
+            >::new(arena, InputStream::new($input));
+            let tokens = CommonTokenStream::new(lexer);
+            let mut parser = gen::$parser::Repro4TwoCastWithWrapParser::new(arena, tokens);
+            let listener = CollectingErrorListener::default();
+            let messages = listener.messages.clone();
+            parser.remove_error_listeners();
+            parser.add_error_listener(Box::new(listener));
+            let tree = match parser.stmt() {
+                Ok(ctx) => string_tree(ctx, parser.get_rule_names()),
+                Err(error) => format!("ERR {error}"),
+            };
+            let messages = messages.borrow().clone();
+            (tree, messages)
+        })
+    };
+}
+
+/// Parses `input` with the adaptive and the `--static-parser-dfa`
+/// `Repro4TwoCastWithWrap` parsers, and returns the tree and the syntax
+/// errors of each.
+fn parse_two_cast_hybrid(input: &str) -> [(String, Vec<String>); 2] {
+    [
+        parse_two_cast_with!(repro4twocastwithwrapparser, input),
+        parse_two_cast_with!(repro4twocastwithwrapparser_static, input),
+    ]
+}
+
+/// Parses `input` with the adaptive and the `--static-dfa-only`
+/// `Repro4TwoCastWithWrap` parsers, and returns the tree and the syntax
+/// errors of each.
+fn parse_two_cast_static_only(input: &str) -> [(String, Vec<String>); 2] {
+    [
+        parse_two_cast_with!(repro4twocastwithwrapparser, input),
+        parse_two_cast_with!(repro4twocastwithwrapparser_static_only, input),
+    ]
+}
+
+/// Issue #81: the exit reading of the operator loop of `e` roots at its
+/// first foreign consumption on the `WRAP` stack, and the full-context
+/// follow chase carries the rooted taint to the follow positions of the
+/// `CAST` and `CAST2` callers. The guard of the iterate reading must still
+/// defer on all three callers; a guard that lost the `CAST` roots iterates
+/// into the `'+' sub 'AS' ID ID 'ONLY_HIGH'` alternative inside a `CAST`
+/// frame, a syntax error on valid input.
+#[test]
+fn follow_chase_roots_hybrid_match_the_adaptive_engine() {
+    // The tables must carry the guards, or the differential below would only
+    // compare the adaptive engine with itself.
+    Arena::with(|arena| {
+        let manager = gen::repro4twocastwithwrapparser_static::parser_simulator_manager();
+        let simulator = manager.get_simulator(arena);
+        let tables = simulator
+            .static_parser_tables()
+            .expect("the parser has static tables");
+        assert!(
+            tables.tables().iter().any(|table| table.has_guards()),
+            "the operator loop of `e` carries stack guards"
+        );
+    });
+    for input in [
+        "CAST ( a * b + y AS t u )",
+        "CAST2 ( a * b + y AS t u )",
+        "CAST ( a + ( ( b ) ) AS t u )",
+        "WRAP a + b !",
+        "a * b + y",
+    ] {
+        let [adaptive, hybrid] = parse_two_cast_hybrid(input);
+        assert!(adaptive.1.is_empty(), "{input:?}: {adaptive:?}");
+        assert_eq!(hybrid, adaptive, "{input:?}");
+    }
+}
+
+/// The same differential without the adaptive fallback: the deferring guard
+/// resolves to the exit, so the `CAST` and `CAST2` wrappers close.
+///
+/// `--static-dfa-only` keeps the minimal roots of the first foreign
+/// consumption of a lineage: its deferral resolves without adaptive, so the
+/// hybrid root recollection does not run (see `Closure::consume`). Inputs
+/// that reach the guarded state only through a `sub` parenthesis, like
+/// `CAST ( a + ( ( b ) ) AS t u )`, still misparse in this mode — the same
+/// pre-existing limitation as on main.
+#[test]
+fn follow_chase_roots_static_dfa_only_match_the_adaptive_engine() {
+    for input in [
+        "CAST ( a * b + y AS t u )",
+        "CAST2 ( a * b + y AS t u )",
+        "WRAP a + b !",
+        "a * b + y",
+    ] {
+        let [adaptive, static_only] = parse_two_cast_static_only(input);
+        assert!(adaptive.1.is_empty(), "{input:?}: {adaptive:?}");
+        assert_eq!(static_only, adaptive, "{input:?}");
+    }
 }
 
 fn parse_frontier_static(input: &str) -> String {

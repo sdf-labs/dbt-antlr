@@ -402,6 +402,13 @@ pub(super) struct Closure<'atn, 'a> {
     /// The optional-postfix shape of the decision, when it has one: skip
     /// consumption outside its discipline records guard roots.
     postfix: Option<PostfixShape>,
+    /// `true` for a `--static-dfa-only` build: its guarded states resolve a
+    /// deferral without the adaptive fallback, so they keep the minimal roots
+    /// of the first foreign consumption of each lineage. Only a hybrid build
+    /// extends the roots at a later foreign consumption: there a missing
+    /// deferral is a wrong static choice, and an extra deferral is a safe
+    /// fallback to `adaptive_predict`.
+    static_only: bool,
     /// The decision state of the build, set by [`Closure::start`].
     decision_state: ATNStateRef,
     /// Configs visited by this closure, across all roots of the attempt.
@@ -435,6 +442,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
         loop_block: Option<LoopBlock>,
         postfix: Option<PostfixShape>,
         visit_budget: u64,
+        static_only: bool,
     ) -> Self {
         Self {
             atn,
@@ -448,6 +456,7 @@ impl<'atn, 'a> Closure<'atn, 'a> {
             precedence_start: false,
             loop_block,
             postfix,
+            static_only,
             decision_state: ATNStateRef::invalid(),
             visits: 0,
             rule_visits: vec![0; atn.rule_to_start_state.len()],
@@ -805,8 +814,11 @@ impl<'atn, 'a> Closure<'atn, 'a> {
         {
             let in_loop = taint & (FOREIGN_LINEAGE_TAINT | MIDWAY_TAINT) == 0;
             taint |= FOREIGN_CONSUME_TAINT;
-            if source.get_alt() == ITERATE_EXIT_ALT && taint & ROOTED_TAINT == 0 {
-                taint |= ROOTED_TAINT;
+            if source.get_alt() == ITERATE_EXIT_ALT {
+                // The guard roots must cover the stack of this consumption:
+                // a lineage that rooted on one caller's stack, or a config
+                // that the full-context follow chase reached at another
+                // caller, still owes the roots of this stack.
                 collect_guard_roots(
                     source.get_state(),
                     source.get_context(),
@@ -814,15 +826,31 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                     sites,
                     &mut new_roots,
                 );
+                if taint & ROOTED_TAINT != 0 {
+                    // A lineage collects the roots of its first foreign
+                    // consumption. A hybrid build adds the roots of this stack
+                    // at a later foreign consumption too, unless it consumes
+                    // inside the decision's own rule: that is the exit reading
+                    // rejoining an enclosing invocation of the same loop, and
+                    // the loop of that invocation governs what comes next.
+                    if self.static_only
+                        || source.get_state().get_rule_index()
+                            == self.decision_state.get_rule_index()
+                        || new_roots.is_subset(self.roots.get(roots))
+                    {
+                        new_roots.clear();
+                    }
+                }
+                if !new_roots.is_empty() {
+                    taint |= ROOTED_TAINT;
+                }
             }
         }
         if let Some(postfix) = self.postfix.as_ref()
             && source.get_alt() == POSTFIX_SKIP_ALT
-            && taint & ROOTED_TAINT == 0
             && !postfix.skip_mirrors(source.get_state(), source.get_context(), taint)
         {
             let in_take = taint & (FOREIGN_LINEAGE_TAINT | MIDWAY_TAINT) == 0;
-            taint |= ROOTED_TAINT;
             collect_guard_roots(
                 source.get_state(),
                 source.get_context(),
@@ -830,6 +858,23 @@ impl<'atn, 'a> Closure<'atn, 'a> {
                 sites,
                 &mut new_roots,
             );
+            if taint & ROOTED_TAINT != 0 {
+                // A lineage collects the roots of its first foreign
+                // consumption. A hybrid build adds the roots of this stack at
+                // a later foreign consumption too, unless it consumes inside
+                // the decision's own rule: that is the skip reading rejoining
+                // an enclosing invocation of the same rule, and that
+                // invocation governs what comes next.
+                if self.static_only
+                    || source.get_state().get_rule_index() == self.decision_state.get_rule_index()
+                    || new_roots.is_subset(self.roots.get(roots))
+                {
+                    new_roots.clear();
+                }
+            }
+            if !new_roots.is_empty() {
+                taint |= ROOTED_TAINT;
+            }
         }
         let roots = if new_roots.is_empty() {
             roots

@@ -3678,6 +3678,50 @@ fn guard_danger_sets_name_their_callers() {
     );
 }
 
+/// Issue #81: in the operator loop of `Repro4TwoCastWithWrap.g4`, the exit
+/// reading roots at its first foreign consumption on the `WRAP` stack, and
+/// the full-context follow chase carries the rooted taint to the follow
+/// positions of the `CAST` and `CAST2` callers, so their stacks never
+/// collect a guard root. The guarded states must keep the guard roots of
+/// every live caller, so each danger set names the `WRAP`, `CAST`, and
+/// `CAST2` invoking states (stmt lines 20, 21, and 22).
+#[test]
+fn follow_chase_keeps_the_roots_of_every_live_caller() {
+    let path = grammars_dir()
+        .join("parser")
+        .join("Repro4TwoCastWithWrap.g4");
+    let compilation = compile(LoadOptions {
+        roots: vec![path],
+        library_directories: Vec::new(),
+    })
+    .expect("grammar compiles");
+    let parser = compilation
+        .parser(compilation.roots[0].parser.expect("parser root"))
+        .expect("parser artifact");
+    let build = crate::optimization::StaticParserDfa::build(
+        parser,
+        &compilation.sources,
+        AtnFallback::Allowed,
+        false,
+        &ParserDfaBudgets::default(),
+    );
+    let (dump, diagnostics) = crate::optimization::StaticParserDfa::render_dfa_dump(
+        std::slice::from_ref(&build.report),
+        "e",
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let danger_lines: Vec<&str> = dump
+        .lines()
+        .filter(|line| line.contains(": danger="))
+        .collect();
+    assert!(!danger_lines.is_empty(), "{dump}");
+    for line in danger_lines {
+        for caller in ["(stmt:20)", "(stmt:21)", "(stmt:22)"] {
+            assert!(line.contains(caller), "{line} misses {caller}");
+        }
+    }
+}
+
 /// The most harmful tie-break group comes first, before a group with a lower
 /// alternative.
 #[test]
