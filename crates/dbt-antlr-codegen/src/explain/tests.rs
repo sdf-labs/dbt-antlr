@@ -333,3 +333,24 @@ fn a_static_sll_conflict_where_runtime_sll_agrees_with_ll_is_not_a_lookahead_bud
         run.report
     );
 }
+
+#[test]
+fn downgraded_guarded_states_agree_with_full_ll() {
+    let postfix = "grammar DowngradedTakeExplain;
+start : s EOF ;
+s : 'IF' s tail? | wrap | 'X' ;
+tail : 'P'* 'K' 'Z' ;
+wrap : 'W' s 'P' ;
+";
+    let iterate = "grammar DowngradedIterateExplain;
+s : e EOF ;
+wrap : 'W' e 'P' ;
+e : e 'P' | e 'Q' | e '+' e | e 'Q' | wrap | 'x' ;
+";
+    for static_only in [false, true] {
+        let take_run = run("DowngradedTakeExplain", postfix, "IFWIFXPKZ", static_only);
+        assert_eq!(take_run.verdict, Verdict::Agree, "{}", take_run.report);
+        let iter_run = run("DowngradedIterateExplain", iterate, "Wx+xPQ", static_only);
+        assert_eq!(iter_run.verdict, Verdict::Agree, "{}", iter_run.report);
+    }
+}

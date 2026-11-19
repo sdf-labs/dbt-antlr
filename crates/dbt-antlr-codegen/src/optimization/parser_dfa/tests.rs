@@ -4507,3 +4507,128 @@ fn depth1_visit_slice_prevents_expensive_prefix_from_starving_siblings() {
     assert_eq!(accept_after(table, &[token("'b'"), token("'q'")]), Some(4));
     assert_eq!(accept_after(table, &[token("'b'"), token("'r'")]), Some(5));
 }
+
+fn state_after(table: &StaticDfaTable, tokens: &[i32]) -> Option<usize> {
+    let mut state = 0;
+    for token in tokens {
+        state = table.states[state]
+            .edges
+            .iter()
+            .find(|edge| edge.lo <= *token && *token <= edge.hi)?
+            .target;
+    }
+    Some(state)
+}
+
+#[test]
+fn downgraded_postfix_take_accept_becomes_guarded() {
+    let source = "grammar DowngradedTake;\n\
+                  start : s EOF ;\n\
+                  s : 'IF' s tail? | wrap | 'X' ;\n\
+                  tail : 'P'* 'K' 'Z' ;\n\
+                  wrap : 'W' s 'P' ;\n";
+    for atn_fallback in [AtnFallback::Allowed, AtnFallback::Forbidden] {
+        let (_, build) = build_source_with(
+            "DowngradedTake",
+            source,
+            atn_fallback,
+            &ParserDfaBudgets::default(),
+        );
+        let token = |name: &str| {
+            build
+                .report
+                .vocabulary
+                .iter()
+                .position(|display| display == name)
+                .map(|index| index as i32 + 1)
+                .expect("token in vocabulary")
+        };
+        let decision = build
+            .report
+            .decisions
+            .iter()
+            .find(|entry| entry.decision == 0)
+            .expect("tail? decision");
+        assert_eq!(
+            decision.result.kind,
+            DecisionKind::Static,
+            "{atn_fallback:?}"
+        );
+        assert_eq!(decision.result.escapes, 0, "{atn_fallback:?}");
+        assert_eq!(decision.result.guarded_states(), 1, "{atn_fallback:?}");
+        let table = decision.result.table.as_ref().expect("table");
+        let clean = state_after(table, &[token("'K'")]).expect("state after 'K'");
+        let tainted =
+            state_after(table, &[token("'P'"), token("'K'")]).expect("state after 'P' 'K'");
+        assert_eq!(
+            clean, tainted,
+            "{atn_fallback:?}: both paths share one DFA state"
+        );
+        let shared = &table.states[clean];
+        assert!(shared.is_guarded(), "{atn_fallback:?}: {shared:?}");
+        assert_eq!(shared.guarded_alt, 1, "{atn_fallback:?}");
+        assert_eq!(shared.guard_defer_alt, 2, "{atn_fallback:?}");
+        if atn_fallback == AtnFallback::Forbidden {
+            let resolved = decision.result.static_only.as_ref().expect("resolved");
+            assert_eq!(resolved.min_alt, 0);
+            assert_eq!(resolved.min_viable_alt, 0);
+            assert_eq!(resolved.guarded, 1);
+        }
+    }
+}
+
+/// Both `e 'Q'` alternatives keep the exit lineage at the start so `'Q'`
+/// accepts cleanly before `'P' 'Q'` adds taint.
+#[test]
+fn downgraded_loop_iterate_accept_becomes_guarded() {
+    let source = "grammar DowngradedIterate;\n\
+                  s : e EOF ;\n\
+                  wrap : 'W' e 'P' ;\n\
+                  e : e 'P' | e 'Q' | e '+' e | e 'Q' | wrap | 'x' ;\n";
+    for atn_fallback in [AtnFallback::Allowed, AtnFallback::Forbidden] {
+        let (_, build) = build_source_with(
+            "DowngradedIterate",
+            source,
+            atn_fallback,
+            &ParserDfaBudgets::default(),
+        );
+        let token = |name: &str| {
+            build
+                .report
+                .vocabulary
+                .iter()
+                .position(|display| display == name)
+                .map(|index| index as i32 + 1)
+                .expect("token in vocabulary")
+        };
+        let decision = build
+            .report
+            .decisions
+            .iter()
+            .find(|entry| entry.decision == 2)
+            .expect("loop decision");
+        let precedence = decision
+            .result
+            .precedence
+            .as_ref()
+            .expect("precedence tables");
+        let table = precedence.tables[2].as_ref().expect("class 2 table");
+        let clean = state_after(table, &[token("'Q'")]).expect("state after 'Q'");
+        let tainted =
+            state_after(table, &[token("'P'"), token("'Q'")]).expect("state after 'P' 'Q'");
+        assert_eq!(
+            clean, tainted,
+            "{atn_fallback:?}: both paths share one DFA state"
+        );
+        let shared = &table.states[clean];
+        assert!(shared.is_guarded(), "{atn_fallback:?}: {shared:?}");
+        assert_eq!(shared.guarded_alt, 1, "{atn_fallback:?}");
+        assert_eq!(shared.guard_defer_alt, 2, "{atn_fallback:?}");
+        if atn_fallback == AtnFallback::Forbidden {
+            assert_eq!(decision.result.kind, DecisionKind::Static);
+            let resolved = decision.result.static_only.as_ref().expect("resolved");
+            assert_eq!(resolved.min_alt, 0);
+            assert_eq!(resolved.min_viable_alt, 0);
+        }
+    }
+}
