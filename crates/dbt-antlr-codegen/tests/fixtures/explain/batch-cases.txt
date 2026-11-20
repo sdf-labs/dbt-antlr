@@ -1,0 +1,11 @@
+--- valid-prog ---
+a b c ;
+--- multi-line-ok ---
+a b c ;
+d e f ;
+--- budget-divergence ---
+a b = c ;
+--- single-stat [start_rule=stat] ---
+a b = c ;
+--- ---
+a b ;

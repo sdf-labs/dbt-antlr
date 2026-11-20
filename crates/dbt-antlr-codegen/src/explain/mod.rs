@@ -20,6 +20,7 @@
 //! When full `LL` also fails at the same place, the grammar itself rejects
 //! the input.
 
+pub(crate) mod batch;
 mod diff;
 mod interp;
 mod lex;
