@@ -114,6 +114,8 @@ pub(crate) fn build_parser_file_context(
                 .filter(|words| !words.is_empty())
                 .map(|words| StaticParserTablesModel { words }),
         },
+        omit_sync: static_tables
+            .is_some_and(|tables| tables.atn_fallback() == AtnFallback::Forbidden),
     };
 
     Ok(ParserFileContext {

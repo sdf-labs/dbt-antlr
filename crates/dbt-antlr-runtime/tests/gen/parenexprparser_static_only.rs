@@ -762,7 +762,6 @@ where
 		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(32);
-		recog.err_handler.sync(&mut recog.base)?;
 		match {
 			let _vap = recog.base.dfa_predict_virtual(1)?;
 			match _vap {
@@ -807,7 +806,6 @@ where
 				recog.base.set_state(13);
 				recog.e_rec(0)?;
 				recog.base.set_state(16); 
-				recog.err_handler.sync(&mut recog.base)?;
 				_la = recog.base.input.la(1);
 				loop {
 					{
@@ -819,7 +817,6 @@ where
 					}
 					}
 					recog.base.set_state(18); 
-					recog.err_handler.sync(&mut recog.base)?;
 					_la = recog.base.input.la(1);
 					if !(_la==ParenExpr_T__1) {break}
 				}
@@ -870,14 +867,12 @@ where
 		let tmp = recog.input.lt(-1);
 		recog.base.with_mut_ctx(|ctx| { ctx.set_stop(tmp.map(|t| t as _)); });
 		recog.base.set_state(42);
-		recog.err_handler.sync(&mut recog.base)?;
 		_alt = { let _sdp = recog.base.dfa_predict(3)?; _sdp };
 		while { _alt!=2 && _alt!=INVALID_ALT } {
 			if _alt==1 {
 				recog.trigger_exit_rule_event()?;
 				{
 				recog.base.set_state(40);
-				recog.err_handler.sync(&mut recog.base)?;
 				match { let _sdp = recog.base.dfa_predict(2)?; _sdp } {
 					1 =>{
 						{
@@ -938,7 +933,6 @@ where
 				} 
 			}
 			recog.base.set_state(44);
-			recog.err_handler.sync(&mut recog.base)?;
 			_alt = { let _sdp = recog.base.dfa_predict(3)?; _sdp };
 		}
 		}
@@ -1193,7 +1187,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, QContext<TF::Tok>, RULE_q, 4, |_parentctx| QContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena QContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(52);
-		recog.err_handler.sync(&mut recog.base)?;
 		match recog.base.input.la(1) {
 		    ParenExpr_T__7  => {
 		        /*------- Outer Most Alt 1 -------*/

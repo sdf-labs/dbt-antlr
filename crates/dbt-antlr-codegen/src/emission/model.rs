@@ -275,6 +275,8 @@ pub struct ParserModel {
     pub funcs: Vec<RuleFunctionModel>,
     pub sempred_funcs: Vec<RuleActionFunctionModel>,
     pub atn: PackedAtnModel,
+    /// True when `--static-dfa-only` omits `err_handler.sync` calls in choice blocks.
+    pub omit_sync: bool,
 }
 
 /// Mirrors `RuleFunction`. When `left_recursive` is set, the template

@@ -107,6 +107,7 @@ impl OptimizationOptions {
     ///   minimum conflicting alternative. A state where the lookahead budget
     ///   stops predicts its minimum viable alternative. A predicated state
     ///   reports a syntax error.
+    /// - Generated parser choice blocks omit `err_handler.sync` calls.
     ///
     /// In report-only mode, these failures are error diagnostics and the
     /// reports are still rendered.

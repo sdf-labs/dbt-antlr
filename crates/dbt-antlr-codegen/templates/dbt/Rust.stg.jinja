@@ -532,10 +532,12 @@ let _local_ctx_fn = |recog: &Self| -> &'arena {{ currentOuterMostAltCodeBlock.al
 {% endif %}{% if ops %}{{ Ops(ops, parser, file) }}
 {% endif %}}
 {%- endmacro -%}
+{%- macro sync(parser, indent="") -%}
+{% if not parser.omitSync %}{{ indent }}{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;{{ "\n" }}{% endif %}
+{%- endmacro -%}
 {%- macro LL1AltBlock(choice, preamble, alts, error, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
-{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-{% if preamble %}{{ Ops(preamble, parser, file) }}
+{{ sync(parser) }}{% if preamble %}{{ Ops(preamble, parser, file) }}
 {% endif %}match {{ self() }}.base.input.la(1) {
 {% for alt in alts %}    {{ cases(choice.altLook[loop.index0], parser) }} => {
 {{ Op(alt, parser, file) | st_indent("        ") }}{{ "}" }}
@@ -544,8 +546,7 @@ let _local_ctx_fn = |recog: &Self| -> &'arena {{ currentOuterMostAltCodeBlock.al
 {%- endmacro -%}
 {%- macro LL1OptionalBlock(choice, alts, error, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
-{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-match {{ self() }}.base.input.la(1) {
+{{ sync(parser) }}match {{ self() }}.base.input.la(1) {
 {% for alt in alts %}{{ cases(choice.altLook[loop.index0], parser) }}
 	=> {
 {{ Op(alt, parser, file) | st_indent("    	") }}
@@ -557,40 +558,35 @@ match {{ self() }}.base.input.la(1) {
     a commented-out else branch; not ported. -#}
 {%- macro LL1OptionalBlockSingleAlt(choice, expr, alts, preamble, error, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
-{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-{% if preamble %}{{ Ops(preamble, parser, file) }}
+{{ sync(parser) }}{% if preamble %}{{ Ops(preamble, parser, file) }}
 {% endif %}if {{ Op(expr, parser, file) }} {
 {{ Ops(alts, parser, file) | st_indent("\t") }}
 }{{ "\n" }}
 {%- endmacro -%}
 {%- macro LL1StarBlockSingleAlt(choice, loopExpr, alts, preamble, iteration, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
-{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-{% if preamble %}{{ Ops(preamble, parser, file) }}
+{{ sync(parser) }}{% if preamble %}{{ Ops(preamble, parser, file) }}
 {% endif %}while {{ Op(loopExpr, parser, file) }} {
 {{ Ops(alts, parser, file) | st_indent("\t") }}
 	{{ self() }}.base.set_state({{ choice.loopBackStateNumber }});
-	{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-{% if iteration %}{{ Ops(iteration, parser, file) | st_indent("\t") }}
+{{ sync(parser, "\t") }}{% if iteration %}{{ Ops(iteration, parser, file) | st_indent("\t") }}
 {% endif %}}
 {%- endmacro -%}
 {%- macro LL1PlusBlockSingleAlt(choice, loopExpr, alts, preamble, iteration, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.blockStartStateNumber }}); {{ "" }}
-{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-{% if preamble %}{{ Ops(preamble, parser, file) }}
+{{ sync(parser) }}{% if preamble %}{{ Ops(preamble, parser, file) }}
 {% endif %}loop {
 {{ Ops(alts, parser, file) | st_indent("\t") }}
 	{{ self() }}.base.set_state({{ choice.stateNumber }}); {{ "" }}
-	{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-{% if iteration %}{{ Ops(iteration, parser, file) | st_indent("\t") }}
+{{ sync(parser, "\t") }}{% if iteration %}{{ Ops(iteration, parser, file) | st_indent("\t") }}
 {% endif %}	if !({{ Op(loopExpr, parser, file) }}) {break}
 }
 {%- endmacro -%}
+
 {#- LL(*) stuff -#}
 {%- macro AltBlock(choice, preamble, alts, error, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
-{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-{% if preamble %}{{ Ops(preamble, parser, file) }}
+{{ sync(parser) }}{% if preamble %}{{ Ops(preamble, parser, file) }}
 {% endif %}match {{ self() }}.get_interpreter().adaptive_predict({{ choice.decision }},&mut {{ self() }}.base)? {
 {% for alt in alts %}
 	{{ loop.index }} =>{
@@ -603,8 +599,7 @@ match {{ self() }}.base.input.la(1) {
 {%- endmacro -%}
 {%- macro OptionalBlock(choice, alts, error, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
-{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-match {{ self() }}.get_interpreter().adaptive_predict({{ choice.decision }},&mut {{ self() }}.base)? {
+{{ sync(parser) }}match {{ self() }}.get_interpreter().adaptive_predict({{ choice.decision }},&mut {{ self() }}.base)? {
 {% for alt in alts %}
 	x if x == {{ loop.index }}{% if not choice.greedy %}+1{% endif %}=>{
 {{ Op(alt, parser, file) | st_indent("\t\t") }}
@@ -615,22 +610,19 @@ match {{ self() }}.get_interpreter().adaptive_predict({{ choice.decision }},&mut
 {%- endmacro -%}
 {%- macro StarBlock(choice, alts, iteration, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
-{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-_alt = {{ self() }}.get_interpreter().adaptive_predict({{ choice.decision }},&mut {{ self() }}.base)?;
+{{ sync(parser) }}_alt = {{ self() }}.get_interpreter().adaptive_predict({{ choice.decision }},&mut {{ self() }}.base)?;
 while { _alt!={{ choice.exitAlt }} && _alt!=INVALID_ALT } {
 	if _alt==1{% if not choice.greedy %}+1{% endif %} {
 {% if iteration %}{{ Ops(iteration, parser, file) | st_indent("\t\t") }}
 {% endif %}{{ Ops(alts, parser, file) | st_indent("\t\t") }} {{ "" }}
 	}
 	{{ self() }}.base.set_state({{ choice.loopBackStateNumber }});
-	{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-	_alt = {{ self() }}.get_interpreter().adaptive_predict({{ choice.decision }},&mut {{ self() }}.base)?;
+{{ sync(parser, "\t") }}	_alt = {{ self() }}.get_interpreter().adaptive_predict({{ choice.decision }},&mut {{ self() }}.base)?;
 }
 {%- endmacro -%}
 {%- macro PlusBlock(choice, alts, error, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.blockStartStateNumber }}); {{ "" }}
-{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-_alt = 1{% if not choice.greedy %}+1{% endif %};
+{{ sync(parser) }}_alt = 1{% if not choice.greedy %}+1{% endif %};
 loop {
 	match _alt {
 {% for alt in alts %}
@@ -641,8 +633,7 @@ loop {
 	_ => Err({{ Op(error, parser, file) }})?
 	}
 	{{ self() }}.base.set_state({{ choice.loopBackStateNumber }}); {{ "" }}
-	{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-	_alt = {{ self() }}.get_interpreter().adaptive_predict({{ choice.decision }},&mut {{ self() }}.base)?;
+{{ sync(parser, "\t") }}	_alt = {{ self() }}.get_interpreter().adaptive_predict({{ choice.decision }},&mut {{ self() }}.base)?;
 	if _alt=={{ choice.exitAlt }} || _alt==INVALID_ALT { break }
 }
 {%- endmacro -%}
@@ -651,8 +642,7 @@ loop {
 {%- endmacro -%}
 {%- macro DFAAltBlock(choice, preamble, alts, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
-{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-{% if preamble %}{{ Ops(preamble, parser, file) }}
+{{ sync(parser) }}{% if preamble %}{{ Ops(preamble, parser, file) }}
 {% endif %}match {{ staticDFAPredict(choice) }} {
 {% for alt in alts %}
 	{{ loop.index }} =>{
@@ -672,8 +662,7 @@ loop {
     minimum member alternative. -#}
 {%- macro DescentAltBlock(choice, preamble, alts, groups, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
-{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-{% if preamble %}{{ Ops(preamble, parser, file) }}
+{{ sync(parser) }}{% if preamble %}{{ Ops(preamble, parser, file) }}
 {% endif %}match {
 	let _vap = {{ self() }}.base.dfa_predict_virtual({{ choice.decision }})?;
 	match _vap {
@@ -709,8 +698,7 @@ if let Some(_node) = self.base.resume_take(RULE_{{ currentRule.name }})? {
 {%- endmacro -%}
 {%- macro DFAOptionalBlock(choice, alts, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
-{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-match {{ staticDFAPredict(choice) }} {
+{{ sync(parser) }}match {{ staticDFAPredict(choice) }} {
 {% for alt in alts %}
 	x if x == {{ loop.index }} =>{
 {{ Op(alt, parser, file) | st_indent("\t\t") }}
@@ -721,22 +709,19 @@ match {{ staticDFAPredict(choice) }} {
 {%- endmacro -%}
 {%- macro DFAStarBlock(choice, alts, iteration, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
-{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-_alt = {{ staticDFAPredict(choice) }};
+{{ sync(parser) }}_alt = {{ staticDFAPredict(choice) }};
 while { _alt!={{ choice.exitAlt }} && _alt!=INVALID_ALT } {
 	if _alt==1 {
 {% if iteration %}{{ Ops(iteration, parser, file) | st_indent("\t\t") }}
 {% endif %}{{ Ops(alts, parser, file) | st_indent("\t\t") }} {{ "" }}
 	}
 	{{ self() }}.base.set_state({{ choice.loopBackStateNumber }});
-	{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-	_alt = {{ staticDFAPredict(choice) }};
+{{ sync(parser, "\t") }}	_alt = {{ staticDFAPredict(choice) }};
 }
 {%- endmacro -%}
 {%- macro DFAPlusBlock(choice, alts, error, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.blockStartStateNumber }}); {{ "" }}
-{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-_alt = 1;
+{{ sync(parser) }}_alt = 1;
 loop {
 	match _alt {
 {% for alt in alts %}
@@ -747,8 +732,7 @@ loop {
 	_ => Err({{ Op(error, parser, file) }})?
 	}
 	{{ self() }}.base.set_state({{ choice.loopBackStateNumber }}); {{ "" }}
-	{{ self() }}.err_handler.sync(&mut {{ self() }}.base)?;
-	_alt = {{ staticDFAPredict(choice) }};
+{{ sync(parser, "\t") }}	_alt = {{ staticDFAPredict(choice) }};
 	if _alt=={{ choice.exitAlt }} || _alt==INVALID_ALT { break }
 }
 {%- endmacro -%}
