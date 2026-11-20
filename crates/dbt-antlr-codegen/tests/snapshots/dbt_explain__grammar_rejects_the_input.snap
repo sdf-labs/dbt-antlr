@@ -15,9 +15,3 @@ input: <inline> (3 tokens)
   1 | a b ;
     |     ^
   expected: ID
-  rule stack:
-    prog (from token 0 'a' (line 1:1))
-    stat (from token 0 'a' (line 1:1))
-
-[STATIC GUESSES BEFORE THE ERROR: 1 (1 on the rule stack, 0 in completed subtrees)]
-  step 0, token 0 'a' (line 1:1): decision 1 in rule 'stat' s2 -> alt 1 via MinViableAlt [rule stack]

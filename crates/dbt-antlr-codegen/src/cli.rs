@@ -34,6 +34,7 @@
 //!                                 (G4S030) as errors
 //!   -q, --quiet                   print only error diagnostics on stderr: no warnings
 //!                                 and no transform notes (the summary line stays)
+//!   -v, --verbose                 show full --explain details
 //! ```
 
 use std::io::Write;
@@ -72,6 +73,7 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
                                 (G4S030) as errors
   -q, --quiet                   print only error diagnostics on stderr: no warnings
                                 and no transform notes (the summary line stays)
+  -v, --verbose                 show full --explain details
 ";
 
 /// Parsed command line.
@@ -97,6 +99,7 @@ struct CliArgs {
     lexer: Option<PathBuf>,
     strict: bool,
     quiet: bool,
+    verbose: bool,
 }
 
 /// Where the `--explain` input comes from.
@@ -127,6 +130,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let mut lexer = None;
     let mut strict = false;
     let mut quiet = false;
+    let mut verbose = false;
     let mut ignored = Vec::new();
 
     let mut index = 0;
@@ -192,6 +196,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
             }
             "--strict" => strict = true,
             "-q" | "--quiet" => quiet = true,
+            "-v" | "--verbose" => verbose = true,
             "-h" | "-help" | "--help" => return Err(miette::miette!("{USAGE}")),
             _ if arg.starts_with("-D") => ignored.push(arg),
             _ if arg.starts_with('-') && arg.len() > 1 => {
@@ -237,6 +242,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         lexer,
         strict,
         quiet,
+        verbose,
     })
 }
 
@@ -368,15 +374,15 @@ fn failure(
     miette::Report::from_err(error).wrap_err(context)
 }
 
-/// Writes the summary line of the diagnostics to `stderr`, also with
-/// `--quiet`, and fails when a diagnostic is an error. A run without
-/// diagnostics writes no summary.
+/// Writes the summary line of the diagnostics to `stderr` and fails when a
+/// diagnostic is an error. Non-`--explain` runs without diagnostics write no
+/// summary.
 fn finish(
     stderr: &mut impl Write,
     cli: &CliArgs,
     diagnostics: &[crate::Diagnostic],
 ) -> miette::Result<()> {
-    if diagnostics.is_empty() {
+    if diagnostics.is_empty() && cli.explain.is_none() {
         return Ok(());
     }
     writeln!(stderr, "{}", summary(&cli.grammar, diagnostics, cli.quiet)).into_diagnostic()?;
@@ -390,6 +396,8 @@ fn finish(
     Ok(())
 }
 
+const QUIET_HINT_WARNING_THRESHOLD: usize = 12;
+
 /// The summary line of `diagnostics`, for example
 /// `summary: T.g4: 0 errors, 3 warnings (2 G4S192, 1 G4S193)`.
 fn summary(grammar: &std::path::Path, diagnostics: &[crate::Diagnostic], quiet: bool) -> String {
@@ -399,13 +407,20 @@ fn summary(grammar: &std::path::Path, diagnostics: &[crate::Diagnostic], quiet: 
     );
     let (_, errors) = tally(diagnostics, crate::Severity::Error, "error");
     let (warning_count, warnings) = tally(diagnostics, crate::Severity::Warning, "warning");
-    let hidden = match warning_count {
-        0 => "",
-        _ if !quiet => "",
-        1 => "; --quiet hid the warning",
-        _ => "; --quiet hid the warnings",
+    let suffix = if warning_count == 0 {
+        ""
+    } else if quiet {
+        if warning_count == 1 {
+            "; --quiet hid the warning"
+        } else {
+            "; --quiet hid the warnings"
+        }
+    } else if warning_count > QUIET_HINT_WARNING_THRESHOLD {
+        "; pass -q to hide warnings"
+    } else {
+        ""
     };
-    format!("summary: {name}: {errors}, {warnings}{hidden}")
+    format!("summary: {name}: {errors}, {warnings}{suffix}")
 }
 
 /// The number of `severity` diagnostics and its text with the count of each
@@ -478,6 +493,7 @@ fn run_explain(
         input_name,
         start_rule: cli.start_rule.clone(),
         lexer: cli.lexer.clone(),
+        verbose: cli.verbose,
     };
     let output = match crate::explain::explain(&cli.grammar, &cli.lib_dirs, &options, &request) {
         Ok(output) => output,
@@ -570,6 +586,20 @@ mod tests {
     }
 
     #[test]
+    fn verbose_flag_and_alias_parse_and_allow_quiet() {
+        for flag in ["-v", "--verbose"] {
+            let cli = parse(&[flag, "T.g4"]).expect("flag parses");
+            assert!(cli.verbose, "{flag} sets verbose");
+        }
+        let cli = parse(&["T.g4"]).expect("minimal command line parses");
+        assert!(!cli.verbose);
+        let cli = parse(&["-q", "-v", "T.g4"]).expect("-q and -v combine");
+        assert!(cli.quiet && cli.verbose);
+        let cli = parse(&["--quiet", "--verbose", "T.g4"]).expect("--quiet and --verbose combine");
+        assert!(cli.quiet && cli.verbose);
+    }
+
+    #[test]
     fn quiet_hides_the_ignored_option_warning() {
         let mut stderr = Vec::new();
         let args = ["-Dlanguage=Rust", "T.g4", "-q"].map(str::to_owned);
@@ -602,6 +632,24 @@ mod tests {
         assert_eq!(
             super::summary(grammar, &diagnostics, true),
             "summary: T.g4: 0 errors, 3 warnings (2 G4S192, 1 G4S193); --quiet hid the warnings"
+        );
+        let dozen = (0..12)
+            .map(|_| diagnostic("G4S192", crate::Severity::Warning))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            super::summary(grammar, &dozen, false),
+            "summary: T.g4: 0 errors, 12 warnings (12 G4S192)"
+        );
+        let bakers_dozen = (0..13)
+            .map(|_| diagnostic("G4S192", crate::Severity::Warning))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            super::summary(grammar, &bakers_dozen, false),
+            "summary: T.g4: 0 errors, 13 warnings (13 G4S192); pass -q to hide warnings"
+        );
+        assert_eq!(
+            super::summary(grammar, &bakers_dozen, true),
+            "summary: T.g4: 0 errors, 13 warnings (13 G4S192); --quiet hid the warnings"
         );
         let diagnostics = [diagnostic("G4S190", crate::Severity::Error)];
         assert_eq!(

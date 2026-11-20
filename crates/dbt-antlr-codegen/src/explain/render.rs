@@ -16,15 +16,15 @@ use super::interp::{
 };
 use super::lex::{LexError, Lexed};
 use crate::optimization::StaticParserDfaReport;
+use crate::optimization::parser_dfa::BudgetCutoff;
 
-/// The expected tokens that a syntax error lists at most.
+/// Maximum number of "expected tokens" to show in a syntax error.
 const EXPECTED_TOKENS: usize = 12;
-/// The lookahead tokens of a table walk that the report shows at most.
+/// Maximum number of lookahead tokens of a table walk to show in the report.
 const LOOKAHEAD_TOKENS: usize = 8;
-/// The static guesses that the report lists at most.
+/// Maximum number of static guesses listed in the report.
 const LISTED_GUESSES: usize = 10;
 
-/// Everything the report shows.
 pub(super) struct Explanation<'a> {
     pub(super) start_rule: &'a str,
     pub(super) mode: &'static str,
@@ -37,36 +37,7 @@ pub(super) struct Explanation<'a> {
     pub(super) verdict: Verdict,
     /// The SLL prediction at the divergent decision.
     pub(super) probe: Option<Option<i32>>,
-}
-
-/// Renders the report of a lexer failure: the parsers do not run.
-pub(super) fn render_lexer_errors(
-    grammar: &str,
-    input_name: &str,
-    input: &str,
-    errors: &[LexError],
-) -> String {
-    let mut out = String::new();
-    let _ = writeln!(out, "=== explain: {grammar} ===");
-    let _ = writeln!(out, "input: {input_name}");
-    let _ = writeln!(out);
-    let _ = writeln!(out, "[VERDICT: LEXER ERROR]");
-    let _ = writeln!(
-        out,
-        "  The lexer rejects the input, so no parser decision ran. Fix the input or the lexer grammar first."
-    );
-    for error in errors {
-        let _ = writeln!(out);
-        let _ = writeln!(
-            out,
-            "[LEXER ERROR @ line {}:{}] {}",
-            error.line,
-            error.column + 1,
-            error.message
-        );
-        source_excerpt(&mut out, input, error.line, error.column, 1);
-    }
-    out
+    pub(super) verbose: bool,
 }
 
 impl Explanation<'_> {
@@ -93,14 +64,25 @@ impl Explanation<'_> {
             Verdict::Inconclusive { step } => self.inconclusive_section(&mut out, step),
             Verdict::Agree | Verdict::GrammarRejects | Verdict::StaticFailure { step: None } => {}
         }
-        if let Outcome::Failed(error) = &self.static_trace.outcome {
-            let _ = writeln!(out);
-            self.error_section(&mut out, self.mode, error);
-        } else if let Outcome::Failed(error) = &self.ll_trace.outcome {
-            let _ = writeln!(out);
-            self.error_section(&mut out, "full LL(*)", error);
+        let show_error = self.verbose
+            || matches!(
+                self.verdict,
+                Verdict::GrammarRejects
+                    | Verdict::StaticFailure { step: None }
+                    | Verdict::Inconclusive { .. }
+            );
+        if show_error {
+            if let Outcome::Failed(error) = &self.static_trace.outcome {
+                let _ = writeln!(out);
+                self.error_section(&mut out, self.mode, error);
+            } else if let Outcome::Failed(error) = &self.ll_trace.outcome {
+                let _ = writeln!(out);
+                self.error_section(&mut out, "full LL(*)", error);
+            }
         }
-        self.guesses_section(&mut out);
+        if self.verbose {
+            self.guesses_section(&mut out);
+        }
         out
     }
 
@@ -124,11 +106,11 @@ impl Explanation<'_> {
             ),
             Verdict::Divergence { .. } if !static_failed && !ll_failed => (
                 "SILENT DIVERGENCE",
-                "Both parsers accept this input, but the static parser builds another parse tree than full LL(*).".to_owned(),
+                "Both parsers accept this input, but the static parser builds a different parse tree from full LL(*).".to_owned(),
             ),
             Verdict::Divergence { .. } => (
                 "STATIC-DFA DIVERGENCE",
-                "The static parser chooses another alternative than full LL(*). Full LL(*) also rejects the input later, so the input has another error too.".to_owned(),
+                "Both parsers reject this input, but the static parser chooses a different alternative from full LL(*), so they report different errors.".to_owned(),
             ),
             Verdict::StaticFailure { .. } if !ll_failed => (
                 "STATIC-DFA SYNTAX ERROR",
@@ -140,7 +122,7 @@ impl Explanation<'_> {
             Verdict::StaticFailure { .. } => (
                 "STATIC-DFA SYNTAX ERROR",
                 format!(
-                    "The {} parser fails without an earlier divergent choice. Full LL(*) also rejects the input later, so the input has another error too.",
+                    "Both parsers reject this input. The {} parser fails without an earlier divergent choice, but full LL(*) rejects the input later, so they report different errors.",
                     self.mode
                 ),
             ),
@@ -238,10 +220,10 @@ impl Explanation<'_> {
             "    full LL(*) chose {}",
             self.alt_name(ours.decision, oracle_alt)
         );
-        if let Some(cause) = self.root_cause(ours, our_alt, oracle_alt) {
-            let _ = writeln!(out, "  root cause: {cause}");
+        let diagnosis = self.diagnose_divergence(ours, our_alt, oracle_alt);
+        if let Some(diagnosis) = &diagnosis {
+            let _ = writeln!(out, "  root cause: {}", diagnosis.cause);
         }
-        self.dump_hint(out, ours.decision);
         if let Outcome::Failed(error) = &self.static_trace.outcome {
             let distance = self.distance(ours.token_index, error.token_index);
             let later = match distance {
@@ -255,6 +237,11 @@ impl Explanation<'_> {
                 self.token_text(error.token_index)
             );
         }
+        let mut remediations = diagnosis.map_or_else(Vec::new, |diagnosis| diagnosis.remediations);
+        if let Some(hint) = self.dump_hint(ours.decision) {
+            remediations.push(hint);
+        }
+        self.remediation_section(out, &remediations);
     }
 
     fn static_failure_section(&self, out: &mut String, step: usize) {
@@ -280,7 +267,11 @@ impl Explanation<'_> {
                 self.alt_name(ours.decision, alt)
             );
         }
-        self.dump_hint(out, ours.decision);
+        let mut remediations = self.static_failure_remediations(ours);
+        if let Some(hint) = self.dump_hint(ours.decision) {
+            remediations.push(hint);
+        }
+        self.remediation_section(out, &remediations);
     }
 
     fn inconclusive_section(&self, out: &mut String, step: usize) {
@@ -307,19 +298,24 @@ impl Explanation<'_> {
         }
     }
 
-    /// Points to the `--dump-dfas` dump of a decision that has a static table.
-    fn dump_hint(&self, out: &mut String, decision: usize) {
+    fn remediation_section(&self, out: &mut String, remediations: &[String]) {
+        if remediations.is_empty() {
+            return;
+        }
+        let _ = writeln!(out);
+        let _ = writeln!(out, "[SUGGESTED REMEDIATION]");
+        for item in remediations {
+            let _ = writeln!(out, "  - {item}");
+        }
+    }
+
+    fn dump_hint(&self, decision: usize) -> Option<String> {
         let has_table = self
             .report
             .decisions
             .get(decision)
             .is_some_and(|decision| decision.result.has_table());
-        if has_table {
-            let _ = writeln!(
-                out,
-                "  hint: inspect the table with `--dump-dfas {decision}`"
-            );
-        }
+        has_table.then(|| format!("Inspect the table with `--dump-dfas {decision}`."))
     }
 
     fn decision_headline(&self, out: &mut String, event: &DecisionEvent) {
@@ -338,35 +334,151 @@ impl Explanation<'_> {
         );
     }
 
-    fn root_cause(&self, ours: &DecisionEvent, our_alt: i32, oracle_alt: i32) -> Option<String> {
+    fn diagnose_divergence(
+        &self,
+        ours: &DecisionEvent,
+        our_alt: i32,
+        oracle_alt: i32,
+    ) -> Option<Diagnosis> {
         let rule = self.rule_name(ours.rule);
         if matches!(ours.resolution, Resolution::DescentFallback { .. }) {
-            return Some(
-                "the shared-descent group could not start its neutral parse and took its minimum member alternative.".to_owned(),
-            );
+            return Some(Diagnosis {
+                cause: "shared-descent fallback. The group did not start its neutral parse and took its minimum member alternative.".to_owned(),
+                remediations: vec![format!(
+                    "Left-factor the shared prefix in rule '{rule}' so this decision does not rely on a shared-descent neutral parse."
+                )],
+            });
         }
         if let Some(walk) = ours.walk()
             && matches!(walk.kind, TableKind::GuardTaken | TableKind::GuardDeferred)
         {
-            return Some(format!(
-                "the runtime stack guard of the table chose this side. The guard sees only the parse stack, not the tokens after the lookahead of rule '{rule}'."
-            ));
+            let caller = (walk.kind == TableKind::GuardDeferred)
+                .then(|| self.active_danger_caller(ours, walk))
+                .flatten();
+            let suggestion = match caller {
+                Some(caller) => format!(
+                    "Refactor caller {caller} or rule '{rule}' so the stack guard does not defer, or raise the lookahead budget of rule '{rule}'."
+                ),
+                None => format!(
+                    "Refactor rule '{rule}' or its callers so the decision does not rely on a stack guard, or raise the lookahead budget of rule '{rule}'."
+                ),
+            };
+            return Some(Diagnosis {
+                cause: format!(
+                    "runtime stack guard. The guard sees only the parse stack, not the tokens after the lookahead of rule '{rule}'."
+                ),
+                remediations: vec![suggestion],
+            });
         }
         let sll = self.probe?;
         let walk_kind = ours.walk().map(|walk| walk.kind);
         Some(match sll {
-            Some(sll) if sll == oracle_alt && walk_kind == Some(TableKind::MinAlt) => format!(
-                "static SLL conflict. Unbounded SLL(*) also chooses alt {oracle_alt}, so this is not a lookahead budget limit: static table construction hit an SLL conflict under static closure approximation (such as nested precedence predicates or widened contexts). Raising max_dfa_states, max_dfa_visits, or max_k does not help. Left-factor or restructure the conflicting alternatives in rule '{rule}'."
-            ),
-            Some(sll) if sll == oracle_alt => format!(
-                "lookahead budget. Unbounded SLL(*) also chooses alt {oracle_alt}, so a longer static lookahead decides this input. Left-factor the alternatives, or raise the max_dfa_states, max_dfa_visits, or max_k option of rule '{rule}' or of its block."
-            ),
-            Some(sll) if sll == our_alt => format!(
-                "context sensitivity. SLL(*) also chooses alt {our_alt}: only full-context LL(*) sees that the tokens after rule '{rule}' select alt {oracle_alt}. A larger lookahead budget does not help. Change the grammar so that the caller decides, for example inline the rule at this call site."
-            ),
-            Some(sll) => format!("SLL(*) chooses alt {sll} here."),
-            None => "SLL(*) prediction fails at this decision.".to_owned(),
+            Some(sll) if sll == oracle_alt && walk_kind == Some(TableKind::MinAlt) => Diagnosis {
+                cause: format!(
+                    "static SLL conflict. Unbounded SLL(*) also chooses alt {oracle_alt}, so this is not a lookahead budget limit: static table construction hit an SLL conflict under static closure approximation."
+                ),
+                remediations: vec![
+                    "Raising max_dfa_states, max_dfa_visits, or max_k will not help here."
+                        .to_owned(),
+                    format!(
+                        "Left-factor or restructure the conflicting alternatives in rule '{rule}'."
+                    ),
+                ],
+            },
+            Some(sll) if sll == oracle_alt => {
+                let budget_options = match self
+                    .report
+                    .decisions
+                    .get(ours.decision)
+                    .and_then(|decision| decision.result.budget_cutoff)
+                {
+                    Some(BudgetCutoff::States) => "max_dfa_states",
+                    Some(BudgetCutoff::Visits) => "max_dfa_visits",
+                    Some(BudgetCutoff::Both) => "max_dfa_states and max_dfa_visits",
+                    None => "max_dfa_states, max_dfa_visits, or max_k",
+                };
+                Diagnosis {
+                    cause: format!(
+                        "lookahead budget. Unbounded SLL(*) also chooses alt {oracle_alt}, so a longer static lookahead could resolve this input."
+                    ),
+                    remediations: vec![format!(
+                        "Raise {budget_options} on rule '{rule}' or its block, or left-factor the conflicting alternatives in rule '{rule}'"
+                    )],
+                }
+            }
+            Some(sll) if sll == our_alt => Diagnosis {
+                cause: format!(
+                    "context sensitivity. SLL(*) also chooses alt {our_alt}: only full-context LL(*) sees that the tokens after rule '{rule}' select alt {oracle_alt}."
+                ),
+                remediations: vec![
+                    "A larger lookahead budget will not help.".to_owned(),
+                    format!(
+                        "Change the grammar so that the caller decides, for example inline rule '{rule}' at this call site."
+                    ),
+                ],
+            },
+            Some(sll) => Diagnosis {
+                cause: format!("SLL(*) chooses alt {sll} here."),
+                remediations: Vec::new(),
+            },
+            None => Diagnosis {
+                cause: "SLL(*) prediction fails at this decision.".to_owned(),
+                remediations: Vec::new(),
+            },
         })
+    }
+
+    fn static_failure_remediations(&self, ours: &DecisionEvent) -> Vec<String> {
+        let rule = self.rule_name(ours.rule);
+        match &ours.resolution {
+            Resolution::NoStaticTable => vec![format!(
+                "Make decision {} of rule '{rule}' statically decidable (left-factor, remove predicates, or raise its lookahead budget).",
+                ours.decision
+            )],
+            _ if ours
+                .walk()
+                .is_some_and(|walk| walk.kind == TableKind::SyntaxError) =>
+            {
+                vec![format!(
+                    "Move or remove the semantic predicate in rule '{rule}' so static lookahead decides without evaluating it."
+                )]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn active_danger_caller(&self, event: &DecisionEvent, walk: &TableWalk) -> Option<String> {
+        let decision = self.report.decisions.get(event.decision)?;
+        let table = match walk.class {
+            None => decision.result.table.as_ref()?,
+            Some(class) => decision
+                .result
+                .precedence
+                .as_ref()?
+                .tables
+                .get(class)?
+                .as_ref()?,
+        };
+        let state = table.states.get(walk.state)?;
+        let danger = table
+            .guard_groups
+            .get(usize::try_from(state.guard_group).ok()?)?;
+        for frame in event.stack.iter().rev() {
+            if frame.invoking_state < 0 {
+                break;
+            }
+            if danger.contains(&frame.invoking_state) {
+                return self
+                    .report
+                    .invoking_states
+                    .get(&frame.invoking_state)
+                    .map(|caller| caller.called_from_text());
+            }
+            if !table.guard_pass.contains(&frame.invoking_state) {
+                break;
+            }
+        }
+        None
     }
 
     fn resolution_text(&self, event: &DecisionEvent) -> String {
@@ -489,14 +601,16 @@ impl Explanation<'_> {
             }
             let _ = writeln!(out, "  expected: {}", names.join(", "));
         }
-        let _ = writeln!(out, "  rule stack:");
-        for frame in &error.stack {
-            let _ = writeln!(
-                out,
-                "    {} (from token {})",
-                self.rule_name(frame.rule),
-                self.token_text(frame.start)
-            );
+        if self.verbose {
+            let _ = writeln!(out, "  rule stack:");
+            for frame in &error.stack {
+                let _ = writeln!(
+                    out,
+                    "    {} (from token {})",
+                    self.rule_name(frame.rule),
+                    self.token_text(frame.start)
+                );
+            }
         }
     }
 
@@ -668,9 +782,48 @@ impl Explanation<'_> {
     }
 }
 
+struct Diagnosis {
+    cause: String,
+    remediations: Vec<String>,
+}
+
+/// Renders the report of a lexer failure: the parsers do not run.
+pub(super) fn render_lexer_errors(
+    grammar: &str,
+    input_name: &str,
+    input: &str,
+    errors: &[LexError],
+) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "=== explain: {grammar} ===");
+    let _ = writeln!(out, "input: {input_name}");
+    let _ = writeln!(out);
+    let _ = writeln!(out, "[VERDICT: LEXER ERROR]");
+    let _ = writeln!(
+        out,
+        "  The lexer rejects the input, so no parser decision ran. Fix the input or the lexer grammar first."
+    );
+    for error in errors {
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "[LEXER ERROR @ line {}:{}] {}",
+            error.line,
+            error.column + 1,
+            error.message
+        );
+        source_excerpt(&mut out, input, error.line, error.column, 1);
+    }
+    out
+}
+
 /// Whether the parse stack `inner` starts with the frames of `outer`.
 fn is_prefix(outer: &[Frame], inner: &[Frame]) -> bool {
-    outer.len() <= inner.len() && inner[..outer.len()] == *outer
+    outer.len() <= inner.len()
+        && outer
+            .iter()
+            .zip(inner)
+            .all(|(a, b)| a.rule == b.rule && a.start == b.start)
 }
 
 /// Writes the source line `line` of `input` with a caret under `width`
