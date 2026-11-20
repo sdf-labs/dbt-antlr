@@ -21,7 +21,6 @@ use dbt_antlr_runtime::atn::{ATN, INVALID_ALT};
 use dbt_antlr_runtime::atn_simulator::ParserATNSimulatorManager;
 use dbt_antlr_runtime::atn_state::{ATNState, ATNStateType, RuleStartState, StarLoopEntryState};
 use dbt_antlr_runtime::common_token_stream::CommonTokenStream;
-use dbt_antlr_runtime::dfa::static_parser_dfa::StaticParserTables as RuntimeTables;
 use dbt_antlr_runtime::error_strategy::ErrorStrategy;
 use dbt_antlr_runtime::errors::{ANTLRError, ANTLRErrorKind};
 use dbt_antlr_runtime::interpreter_rule_context::{
@@ -136,11 +135,11 @@ impl<'input, 'arena>
 
 /// The static prediction data of the parser under test.
 pub(super) struct StaticOracle<'r> {
-    pub(super) results: &'r [DecisionOutcome],
+    pub(super) results: Vec<DecisionOutcome>,
     pub(super) tables: &'r StaticParserTables,
-    pub(super) runtime: &'static RuntimeTables,
     /// The `LL(1)` lookahead of each disjoint decision, by decision number.
     pub(super) ll1: HashMap<usize, &'r DecisionLookahead>,
+    pub(super) call_sites: HashMap<(usize, i32), &'static [i32]>,
     pub(super) static_only: bool,
 }
 
@@ -361,17 +360,9 @@ pub(super) fn simulate(
     lexer: &LexerSpec,
     input: &str,
     oracle: &Oracle<'_>,
+    atn_manager: &'static ParserATNSimulatorManager,
     start_rule: usize,
 ) -> Trace {
-    let atn_manager: &'static ParserATNSimulatorManager = match oracle {
-        Oracle::Static(static_oracle) => Box::leak(Box::new(
-            ParserATNSimulatorManager::new_with_static_parser_tables(
-                spec.atn,
-                static_oracle.runtime,
-            ),
-        )),
-        Oracle::FullLl { .. } => Box::leak(Box::new(ParserATNSimulatorManager::new(spec.atn))),
-    };
     Arena::with(|arena| {
         let tokens = CommonTokenStream::new(lexer.lexer(arena, input));
         let mut base = BaseParser::new_base_parser(
@@ -395,7 +386,6 @@ pub(super) fn simulate(
             depth: 0,
             events: Vec::new(),
             probe: None,
-            call_sites: HashMap::new(),
         };
         let outcome = match simulation.parse(start_rule) {
             Ok(()) => Outcome::Accepted {
@@ -425,9 +415,6 @@ struct Simulation<'input, 'arena, 'o, 'r> {
     depth: usize,
     events: Vec<DecisionEvent>,
     probe: Option<Option<i32>>,
-    /// The leaked call sites of each shared-descent group, by virtual
-    /// alternative and decision.
-    call_sites: HashMap<(usize, i32), &'static [i32]>,
 }
 
 impl<'input, 'arena> Simulation<'input, 'arena, '_, '_> {
@@ -802,10 +789,11 @@ impl<'input, 'arena> Simulation<'input, 'arena, '_, '_> {
                 },
             ));
         }
-        let call_sites = *self
+        let call_sites = oracle
             .call_sites
-            .entry((decision, group.virtual_alt))
-            .or_insert_with(|| Box::leak(group.call_sites.clone().into_boxed_slice()));
+            .get(&(decision, group.virtual_alt))
+            .copied()
+            .unwrap_or(&[]);
         let step = self.events.len() - 1;
         let neutral = self
             .base

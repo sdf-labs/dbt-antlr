@@ -6,6 +6,7 @@
 //! dependent wrapping and no file system paths, so snapshot tests of it are
 //! the same on every platform.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use dbt_antlr_runtime::token::{TOKEN_DEFAULT_CHANNEL, TOKEN_EOF};
@@ -40,6 +41,198 @@ pub(super) struct Explanation<'a> {
     pub(super) verbose: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum BatchCategory {
+    Agree,
+    StaticDfaDivergence { rule: String, decision: usize },
+    SilentDivergence { rule: String, decision: usize },
+    StaticDfaSyntaxError { target: Option<(String, usize)> },
+    GrammarRejects,
+    LexerError,
+    Inconclusive,
+}
+
+pub(super) struct BatchEntry {
+    pub(super) report: String,
+    pub(super) collapsed: bool,
+    pub(super) category: BatchCategory,
+}
+
+/// Renders the report of a lexer failure: the parsers do not run.
+pub(super) fn render_lexer_errors(
+    grammar: &str,
+    input_name: &str,
+    input: &str,
+    errors: &[LexError],
+) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "=== explain: {grammar} ===");
+    let _ = writeln!(out, "input: {input_name}");
+    let _ = writeln!(out);
+    render_lexer_errors_body(&mut out, input, errors);
+    out
+}
+
+pub(super) fn render_lexer_errors_in_batch(
+    index: usize,
+    total: usize,
+    input_name: &str,
+    input: &str,
+    errors: &[LexError],
+) -> BatchEntry {
+    let mut out = String::new();
+    let _ = writeln!(out, "--- [{index}/{total}] {input_name} ---");
+    let _ = writeln!(out);
+    render_lexer_errors_body(&mut out, input, errors);
+    BatchEntry {
+        report: out,
+        collapsed: false,
+        category: BatchCategory::LexerError,
+    }
+}
+
+fn render_lexer_errors_body(out: &mut String, input: &str, errors: &[LexError]) {
+    let _ = writeln!(out, "[VERDICT: LEXER ERROR]");
+    let _ = writeln!(
+        out,
+        "  The lexer rejects the input, so no parser decision ran. Fix the input or the lexer grammar first."
+    );
+    for error in errors {
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "[LEXER ERROR @ line {}:{}] {}",
+            error.line,
+            error.column + 1,
+            error.message
+        );
+        source_excerpt(out, input, error.line, error.column, 1);
+    }
+}
+
+pub(super) fn render_batch(grammar: &str, mode: &str, entries: &[BatchEntry]) -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "=== explain batch: {grammar} ({} inputs, mode: {mode}) ===",
+        entries.len()
+    );
+    let mut prev_collapsed = false;
+    for (index, entry) in entries.iter().enumerate() {
+        if index == 0 || !entry.collapsed || !prev_collapsed {
+            let _ = writeln!(out);
+        }
+        out.push_str(&entry.report);
+        prev_collapsed = entry.collapsed;
+    }
+    let _ = writeln!(out);
+    render_batch_summary(&mut out, grammar, mode, entries);
+    out
+}
+
+fn render_batch_summary(out: &mut String, grammar: &str, mode: &str, entries: &[BatchEntry]) {
+    let mut agree = 0_usize;
+    let mut static_div: BTreeMap<(usize, String), usize> = BTreeMap::new();
+    let mut static_div_total = 0_usize;
+    let mut silent_div: BTreeMap<(usize, String), usize> = BTreeMap::new();
+    let mut silent_div_total = 0_usize;
+    let mut static_err: BTreeMap<(usize, String), usize> = BTreeMap::new();
+    let mut static_err_total = 0_usize;
+    let mut grammar_rejects = 0_usize;
+    let mut lexer_errors = 0_usize;
+    let mut inconclusive = 0_usize;
+
+    for entry in entries {
+        match &entry.category {
+            BatchCategory::Agree => agree += 1,
+            BatchCategory::StaticDfaDivergence { rule, decision } => {
+                static_div_total += 1;
+                *static_div.entry((*decision, rule.clone())).or_default() += 1;
+            }
+            BatchCategory::SilentDivergence { rule, decision } => {
+                silent_div_total += 1;
+                *silent_div.entry((*decision, rule.clone())).or_default() += 1;
+            }
+            BatchCategory::StaticDfaSyntaxError { target } => {
+                static_err_total += 1;
+                if let Some((rule, decision)) = target {
+                    *static_err.entry((*decision, rule.clone())).or_default() += 1;
+                }
+            }
+            BatchCategory::GrammarRejects => grammar_rejects += 1,
+            BatchCategory::LexerError => lexer_errors += 1,
+            BatchCategory::Inconclusive => inconclusive += 1,
+        }
+    }
+
+    let rows = [
+        ("agree", agree, None),
+        (
+            "static-dfa divergence",
+            static_div_total,
+            format_decision_tally(&static_div),
+        ),
+        (
+            "silent divergence",
+            silent_div_total,
+            format_decision_tally(&silent_div),
+        ),
+        (
+            "static-dfa syntax error",
+            static_err_total,
+            format_decision_tally(&static_err),
+        ),
+        ("grammar rejects", grammar_rejects, None),
+        ("lexer error", lexer_errors, None),
+        ("inconclusive", inconclusive, None),
+    ];
+    let shown: Vec<_> = rows
+        .into_iter()
+        .filter(|(_, count, _)| *count > 0)
+        .collect();
+    let width = shown
+        .iter()
+        .map(|(label, _, _)| label.len() + 1)
+        .max()
+        .unwrap_or(0);
+    let _ = writeln!(
+        out,
+        "=== batch summary: {grammar} ({} inputs, mode: {mode}) ===",
+        entries.len()
+    );
+    for (label, count, detail) in shown {
+        match detail {
+            Some(detail) => {
+                let _ = writeln!(out, "  {:<width$} {count}  ({detail})", format!("{label}:"));
+            }
+            None => {
+                let _ = writeln!(out, "  {:<width$} {count}", format!("{label}:"));
+            }
+        }
+    }
+}
+
+fn format_decision_tally(counts: &BTreeMap<(usize, String), usize>) -> Option<String> {
+    if counts.is_empty() {
+        return None;
+    }
+    let mut items: Vec<_> = counts.iter().collect();
+    items.sort_by(
+        |((left_dec, _), left_count), ((right_dec, _), right_count)| {
+            right_count
+                .cmp(left_count)
+                .then_with(|| left_dec.cmp(right_dec))
+        },
+    );
+    Some(
+        items
+            .into_iter()
+            .map(|((decision, rule), count)| format!("{rule}:{decision} x{count}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
 impl Explanation<'_> {
     pub(super) fn render(&self) -> String {
         let mut out = String::new();
@@ -55,13 +248,76 @@ impl Explanation<'_> {
             self.default_channel_tokens()
         );
         let _ = writeln!(out);
-        self.verdict_section(&mut out);
+        self.render_body(&mut out);
+        out
+    }
+
+    pub(super) fn render_in_batch(&self, index: usize, total: usize) -> BatchEntry {
+        let category = self.batch_category();
+        if !self.verbose && self.verdict == Verdict::Agree {
+            return BatchEntry {
+                report: format!(
+                    "[{index}/{total}] {} (start rule: {}, {} tokens): AGREE\n",
+                    self.input_name,
+                    self.start_rule,
+                    self.default_channel_tokens()
+                ),
+                collapsed: true,
+                category,
+            };
+        }
+        let mut out = String::new();
+        let _ = writeln!(
+            out,
+            "--- [{index}/{total}] {} (start rule: {}, {} tokens) ---",
+            self.input_name,
+            self.start_rule,
+            self.default_channel_tokens()
+        );
+        let _ = writeln!(out);
+        self.render_body(&mut out);
+        BatchEntry {
+            report: out,
+            collapsed: false,
+            category,
+        }
+    }
+
+    fn batch_category(&self) -> BatchCategory {
+        let static_failed = matches!(self.static_trace.outcome, Outcome::Failed(_));
+        let ll_failed = matches!(self.ll_trace.outcome, Outcome::Failed(_));
         match self.verdict {
-            Verdict::Divergence { step } => self.divergence_section(&mut out, step),
-            Verdict::StaticFailure { step: Some(step) } => {
-                self.static_failure_section(&mut out, step);
+            Verdict::Agree => BatchCategory::Agree,
+            Verdict::Divergence { step } => {
+                let event = &self.static_trace.events[step];
+                let rule = self.rule_name(event.rule).to_owned();
+                let decision = event.decision;
+                if !static_failed && !ll_failed {
+                    BatchCategory::SilentDivergence { rule, decision }
+                } else {
+                    BatchCategory::StaticDfaDivergence { rule, decision }
+                }
             }
-            Verdict::Inconclusive { step } => self.inconclusive_section(&mut out, step),
+            Verdict::StaticFailure { step } => {
+                let target = step.map(|step| {
+                    let event = &self.static_trace.events[step];
+                    (self.rule_name(event.rule).to_owned(), event.decision)
+                });
+                BatchCategory::StaticDfaSyntaxError { target }
+            }
+            Verdict::GrammarRejects => BatchCategory::GrammarRejects,
+            Verdict::Inconclusive { .. } => BatchCategory::Inconclusive,
+        }
+    }
+
+    fn render_body(&self, out: &mut String) {
+        self.verdict_section(out);
+        match self.verdict {
+            Verdict::Divergence { step } => self.divergence_section(out, step),
+            Verdict::StaticFailure { step: Some(step) } => {
+                self.static_failure_section(out, step);
+            }
+            Verdict::Inconclusive { step } => self.inconclusive_section(out, step),
             Verdict::Agree | Verdict::GrammarRejects | Verdict::StaticFailure { step: None } => {}
         }
         let show_error = self.verbose
@@ -74,16 +330,15 @@ impl Explanation<'_> {
         if show_error {
             if let Outcome::Failed(error) = &self.static_trace.outcome {
                 let _ = writeln!(out);
-                self.error_section(&mut out, self.mode, error);
+                self.error_section(out, self.mode, error);
             } else if let Outcome::Failed(error) = &self.ll_trace.outcome {
                 let _ = writeln!(out);
-                self.error_section(&mut out, "full LL(*)", error);
+                self.error_section(out, "full LL(*)", error);
             }
         }
         if self.verbose {
-            self.guesses_section(&mut out);
+            self.guesses_section(out);
         }
-        out
     }
 
     fn verdict_section(&self, out: &mut String) {
@@ -785,36 +1040,6 @@ impl Explanation<'_> {
 struct Diagnosis {
     cause: String,
     remediations: Vec<String>,
-}
-
-/// Renders the report of a lexer failure: the parsers do not run.
-pub(super) fn render_lexer_errors(
-    grammar: &str,
-    input_name: &str,
-    input: &str,
-    errors: &[LexError],
-) -> String {
-    let mut out = String::new();
-    let _ = writeln!(out, "=== explain: {grammar} ===");
-    let _ = writeln!(out, "input: {input_name}");
-    let _ = writeln!(out);
-    let _ = writeln!(out, "[VERDICT: LEXER ERROR]");
-    let _ = writeln!(
-        out,
-        "  The lexer rejects the input, so no parser decision ran. Fix the input or the lexer grammar first."
-    );
-    for error in errors {
-        let _ = writeln!(out);
-        let _ = writeln!(
-            out,
-            "[LEXER ERROR @ line {}:{}] {}",
-            error.line,
-            error.column + 1,
-            error.message
-        );
-        source_excerpt(&mut out, input, error.line, error.column, 1);
-    }
-    out
 }
 
 /// Whether the parse stack `inner` starts with the frames of `outer`.

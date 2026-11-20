@@ -24,9 +24,10 @@
 //!   --inline-trivial-rules        inline trivial pure parser rules into their callers
 //!   --optimize-precedence-ladders collapse precedence ladders into left-recursive rules
 //!   --explain <INPUT>             explain how the static DFA parser parses INPUT, compared
-//!                                 with full LL (needs --static-dfa-only or
+//!                                 with full LL (repeatable; needs --static-dfa-only or
 //!                                 --static-parser-dfa; implies report-only)
-//!   --explain-file <PATH>         like --explain, with the input in PATH (- reads stdin)
+//!   --explain-file <PATH>         like --explain, with the input in PATH (- reads stdin;
+//!                                 repeatable)
 //!   --start-rule <NAME>           the parser rule that --explain starts from
 //!                                 (default: the first rule)
 //!   --lexer <Lexer.g4>            the lexer grammar that tokenizes the --explain input
@@ -63,9 +64,10 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   --inline-trivial-rules        inline trivial pure parser rules into their callers
   --optimize-precedence-ladders collapse precedence ladders into left-recursive rules
   --explain <INPUT>             explain how the static DFA parser parses INPUT, compared
-                                with full LL (needs --static-dfa-only or
+                                with full LL (repeatable; needs --static-dfa-only or
                                 --static-parser-dfa; implies report-only)
-  --explain-file <PATH>         like --explain, with the input in PATH (- reads stdin)
+  --explain-file <PATH>         like --explain, with the input in PATH (- reads stdin;
+                                repeatable)
   --start-rule <NAME>           the parser rule that --explain starts from
                                 (default: the first rule)
   --lexer <Lexer.g4>            the lexer grammar that tokenizes the --explain input
@@ -94,7 +96,7 @@ struct CliArgs {
     inline_trivial: bool,
     optimize_ladders: bool,
     report_only: bool,
-    explain: Option<ExplainInput>,
+    explain: Vec<ExplainInput>,
     start_rule: Option<String>,
     lexer: Option<PathBuf>,
     strict: bool,
@@ -102,6 +104,11 @@ struct CliArgs {
     verbose: bool,
 }
 
+impl CliArgs {
+    const fn has_explain(&self) -> bool {
+        !self.explain.is_empty()
+    }
+}
 /// Where the `--explain` input comes from.
 #[derive(Debug, Eq, PartialEq)]
 enum ExplainInput {
@@ -125,7 +132,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let mut inline_trivial = false;
     let mut optimize_ladders = false;
     let mut report_only = false;
-    let mut explain = None;
+    let mut explain = Vec::new();
     let mut start_rule = None;
     let mut lexer = None;
     let mut strict = false;
@@ -176,9 +183,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
                 } else {
                     ExplainInput::File(PathBuf::from(value))
                 };
-                if explain.replace(input).is_some() {
-                    miette::bail!("expected at most one --explain or --explain-file\n{USAGE}");
-                }
+                explain.push(input);
             }
             "--start-rule" => {
                 if start_rule
@@ -218,8 +223,15 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let Some(grammar) = grammar else {
         miette::bail!("missing grammar file\n{USAGE}");
     };
-    if explain.is_none() && (start_rule.is_some() || lexer.is_some()) {
+    if explain.is_empty() && (start_rule.is_some() || lexer.is_some()) {
         miette::bail!("--start-rule and --lexer need --explain or --explain-file\n{USAGE}");
+    }
+    let stdin_count = explain
+        .iter()
+        .filter(|input| matches!(input, ExplainInput::File(path) if path.as_os_str() == "-"))
+        .count();
+    if stdin_count > 1 {
+        miette::bail!("expected at most one --explain-file reading from stdin (-)\n{USAGE}");
     }
     Ok(CliArgs {
         grammar,
@@ -275,7 +287,7 @@ pub fn run(
     stderr: &mut impl Write,
 ) -> miette::Result<()> {
     let cli = parse_args(args, stderr)?;
-    if cli.explain.is_some() {
+    if cli.has_explain() {
         return run_explain(&cli, stdout, stderr);
     }
     let mut config = crate::Config::new(&cli.grammar);
@@ -382,7 +394,7 @@ fn finish(
     cli: &CliArgs,
     diagnostics: &[crate::Diagnostic],
 ) -> miette::Result<()> {
-    if diagnostics.is_empty() && cli.explain.is_none() {
+    if diagnostics.is_empty() && !cli.has_explain() {
         return Ok(());
     }
     writeln!(stderr, "{}", summary(&cli.grammar, diagnostics, cli.quiet)).into_diagnostic()?;
@@ -455,23 +467,51 @@ fn run_explain(
     stdout: &mut impl Write,
     stderr: &mut impl Write,
 ) -> miette::Result<()> {
-    let (input, input_name) = match &cli.explain {
-        Some(ExplainInput::Text(text)) => (text.clone(), "<inline>".to_owned()),
-        Some(ExplainInput::File(path)) if path.as_os_str() == "-" => {
-            let mut text = String::new();
-            std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)
-                .into_diagnostic()
-                .wrap_err("cannot read the --explain-file input from stdin")?;
-            (text, "<stdin>".to_owned())
+    let inline_total = cli
+        .explain
+        .iter()
+        .filter(|input| matches!(input, ExplainInput::Text(_)))
+        .count();
+    let mut inline_index = 0_usize;
+    let mut cases = Vec::with_capacity(cli.explain.len());
+    for source in &cli.explain {
+        match source {
+            ExplainInput::Text(text) => {
+                inline_index += 1;
+                let input_name = if inline_total == 1 {
+                    "<inline>".to_owned()
+                } else {
+                    format!("<inline #{inline_index}>")
+                };
+                cases.push(crate::explain::ExplainCase {
+                    input: text.clone(),
+                    input_name,
+                    start_rule: None,
+                });
+            }
+            ExplainInput::File(path) if path.as_os_str() == "-" => {
+                let mut text = String::new();
+                std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)
+                    .into_diagnostic()
+                    .wrap_err("cannot read the --explain-file input from stdin")?;
+                cases.push(crate::explain::ExplainCase {
+                    input: text,
+                    input_name: "<stdin>".to_owned(),
+                    start_rule: None,
+                });
+            }
+            ExplainInput::File(path) => {
+                let text = std::fs::read_to_string(path)
+                    .into_diagnostic()
+                    .wrap_err_with(|| format!("cannot read --explain-file {}", path.display()))?;
+                cases.push(crate::explain::ExplainCase {
+                    input: text,
+                    input_name: path.display().to_string(),
+                    start_rule: None,
+                });
+            }
         }
-        Some(ExplainInput::File(path)) => (
-            std::fs::read_to_string(path)
-                .into_diagnostic()
-                .wrap_err_with(|| format!("cannot read --explain-file {}", path.display()))?,
-            path.display().to_string(),
-        ),
-        None => unreachable!("run_explain runs only with an --explain input"),
-    };
+    }
     let mut options = crate::OptimizationOptions::new();
     options
         .static_lexer_dfa(cli.static_lexer_dfa)
@@ -489,8 +529,7 @@ fn run_explain(
         options.entry_rule(entry);
     }
     let request = crate::explain::ExplainRequest {
-        input,
-        input_name,
+        cases,
         start_rule: cli.start_rule.clone(),
         lexer: cli.lexer.clone(),
         verbose: cli.verbose,
@@ -703,7 +742,7 @@ mod tests {
         .expect("explain flags parse");
         assert_eq!(
             cli.explain,
-            Some(super::ExplainInput::Text("a b".to_owned()))
+            vec![super::ExplainInput::Text("a b".to_owned())]
         );
         assert_eq!(cli.start_rule.as_deref(), Some("prog"));
         assert_eq!(cli.lexer, Some(std::path::PathBuf::from("L.g4")));
@@ -711,13 +750,32 @@ mod tests {
         let cli = parse(&["--explain-file", "-", "T.g4"]).expect("explain file parses");
         assert_eq!(
             cli.explain,
-            Some(super::ExplainInput::File(std::path::PathBuf::from("-")))
+            vec![super::ExplainInput::File(std::path::PathBuf::from("-"))]
+        );
+
+        let cli = parse(&[
+            "--explain",
+            "a",
+            "--explain-file",
+            "f",
+            "--explain",
+            "b",
+            "T.g4",
+        ])
+        .expect("multiple explain inputs parse in order");
+        assert_eq!(
+            cli.explain,
+            vec![
+                super::ExplainInput::Text("a".to_owned()),
+                super::ExplainInput::File(std::path::PathBuf::from("f")),
+                super::ExplainInput::Text("b".to_owned()),
+            ]
         );
     }
 
     #[test]
     fn explain_flags_are_checked() {
-        assert!(parse(&["--explain", "a", "--explain-file", "f", "T.g4"]).is_err());
+        assert!(parse(&["--explain-file", "-", "--explain-file", "-", "T.g4"]).is_err());
         assert!(
             parse(&[
                 "--explain",

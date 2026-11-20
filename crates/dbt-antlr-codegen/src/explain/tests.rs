@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::diff::Verdict;
 use super::interp::{Outcome, Resolution, TableKind, Trace};
-use super::{ExplainRequest, explain_units, units};
+use super::{ExplainCase, ExplainRequest, explain_units, units};
 use crate::emission::compile_grammar_with;
 use crate::optimization::{OptimizationOptions, OptimizationPlan};
 
@@ -49,8 +49,11 @@ fn run_with_verbose(
     let compilation = compile_grammar_with(&grammar, &[], &plan).expect("the grammar compiles");
     let (parser, lexer) = units(&compilation, None).expect("units found");
     let request = ExplainRequest {
-        input: input.to_owned(),
-        input_name: "<test>".to_owned(),
+        cases: vec![ExplainCase {
+            input: input.to_owned(),
+            input_name: "<test>".to_owned(),
+            start_rule: None,
+        }],
         start_rule: None,
         lexer: None::<PathBuf>,
         verbose,
