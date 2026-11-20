@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-codegen-v0.10.1...dbt-antlr-codegen-v0.10.2) - 2026-11-20
+
+### Added
+
+- *(codegen)* add --explain-batch multi-input file format and --explain-delimiter ([#125](https://github.com/sdf-labs/dbt-antlr/pull/125))
+- *(codegen)* compile once in --explain and support repeatable --explain/--explain-file ([#124](https://github.com/sdf-labs/dbt-antlr/pull/124))
+- *(codegen)* streamline --explain output and add -v/--verbose ([#123](https://github.com/sdf-labs/dbt-antlr/pull/123))
+
+### Fixed
+
+- *(codegen)* deduplicate per-caller stack-hijack warnings per decision ([#122](https://github.com/sdf-labs/dbt-antlr/pull/122))
+
 ## [0.10.1](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-codegen-v0.10.0...dbt-antlr-codegen-v0.10.1) - 2026-11-19
 
 ### Fixed
