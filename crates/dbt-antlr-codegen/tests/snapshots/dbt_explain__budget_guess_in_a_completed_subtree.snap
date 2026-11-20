@@ -16,9 +16,9 @@ input: <inline> (5 tokens)
       via MinViableAlt (lookahead budget cutoff) at s2, lookahead 'a' 'b'
       dropped: alt 2 (ID ID '=' ..., line 5)
     full LL(*) chose alt 2 (ID ID '=' ..., line 5)
-  root cause: lookahead budget. Unbounded SLL(*) also chooses alt 2, so a longer static lookahead decides this input.
+  root cause: lookahead budget. Unbounded SLL(*) also chooses alt 2, so a longer static lookahead could resolve this input.
   impact: causes the syntax error 2 tokens later, at token 2 '=' (line 1:5)
 
 [SUGGESTED REMEDIATION]
-  - Left-factor the conflicting alternatives in rule 'pair', or raise max_dfa_states, max_dfa_visits, or max_k on rule 'pair' or its block.
+  - Raise max_dfa_states, max_dfa_visits, or max_k on rule 'pair' or its block, or left-factor the conflicting alternatives in rule 'pair'
   - Inspect the table with `--dump-dfas 0`.

@@ -20,6 +20,6 @@ input: <inline> (3 tokens)
   impact: causes the syntax error 2 tokens later, at token 3 <EOF> (line 1:6)
 
 [SUGGESTED REMEDIATION]
-  - A larger lookahead budget does not help.
+  - A larger lookahead budget will not help.
   - Change the grammar so that the caller decides, for example inline rule 'e' at this call site.
   - Inspect the table with `--dump-dfas 1`.

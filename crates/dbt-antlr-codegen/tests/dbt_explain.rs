@@ -151,32 +151,29 @@ fn the_lexer_option_names_the_lexer_grammar() {
 }
 
 #[test]
-fn explain_hides_warnings_by_default_and_verbose_shows_them() {
+fn explain_shows_warnings_by_default_and_quiet_hides_them() {
     let args = ["--static-dfa-only", "--explain", "a b = c ;", "Budget.g4"];
     let default = run(&args);
     let quiet = run(&[&["--quiet"], &args[..]].concat());
     let verbose = run(&[&["-v"], &args[..]].concat());
     assert!(default.status.success() && quiet.status.success() && verbose.status.success());
 
-    assert_eq!(
-        String::from_utf8_lossy(&default.stderr),
-        "summary: Budget.g4: 0 errors, 1 warning (1 G4S192); pass -v to show the warning\n"
+    let default_stderr = String::from_utf8_lossy(&default.stderr);
+    assert!(
+        default_stderr.contains("warning[G4S192]"),
+        "default mode shows analysis warnings:\n{default_stderr}"
     );
+    assert!(
+        default_stderr.ends_with("summary: Budget.g4: 0 errors, 1 warning (1 G4S192)\n"),
+        "the summary line ends stderr:\n{default_stderr}"
+    );
+    assert_eq!(verbose.stderr, default.stderr);
+
     assert_eq!(
         String::from_utf8_lossy(&quiet.stderr),
         "summary: Budget.g4: 0 errors, 1 warning (1 G4S192); --quiet hid the warning\n"
     );
     assert_eq!(quiet.stdout, default.stdout);
-
-    let verbose_stderr = String::from_utf8_lossy(&verbose.stderr);
-    assert!(
-        verbose_stderr.contains("warning[G4S192]"),
-        "verbose mode shows analysis warnings:\n{verbose_stderr}"
-    );
-    assert!(
-        verbose_stderr.ends_with("summary: Budget.g4: 0 errors, 1 warning (1 G4S192)\n"),
-        "the summary line ends stderr:\n{verbose_stderr}"
-    );
 
     let default_stdout = String::from_utf8_lossy(&default.stdout);
     let verbose_stdout = String::from_utf8_lossy(&verbose.stdout);
@@ -197,8 +194,8 @@ fn explain_always_prints_the_summary_line_on_stderr() {
 }
 
 #[test]
-fn quiet_and_verbose_conflict() {
-    let stderr = fail(&[
+fn quiet_and_verbose_work_together() {
+    let output = run(&[
         "-q",
         "-v",
         "--static-dfa-only",
@@ -206,10 +203,14 @@ fn quiet_and_verbose_conflict() {
         "a b = c ;",
         "Budget.g4",
     ]);
-    assert!(
-        stderr.contains("cannot combine -q/--quiet with -v/--verbose"),
-        "{stderr}"
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "summary: Budget.g4: 0 errors, 1 warning (1 G4S192); --quiet hid the warning\n"
     );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[SYNTAX ERROR"), "{stdout}");
+    assert!(stdout.contains("[STATIC GUESSES"), "{stdout}");
 }
 
 #[test]
@@ -323,18 +324,18 @@ fn a_stack_hijack_defers_the_guard() {
     assert!(stdout.contains("[SUGGESTED REMEDIATION]"), "{stdout}");
     assert!(stdout.contains("'column' (line 8)"), "{stdout}");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!stderr.contains("warning["), "{stderr}");
-
-    let verbose = run(&[&["-v"], &args[..]].concat());
-    assert!(verbose.status.success());
-    let verbose_stderr = String::from_utf8_lossy(&verbose.stderr);
     assert!(
-        verbose_stderr.contains(
+        stderr.contains(
             "[stack-hijack hazard: when called from 'column' (line 8), defers 'DAY' '+' INT \
              even when followed by '+']"
         ),
-        "{verbose_stderr}"
+        "{stderr}"
     );
+
+    let quiet = run(&[&["-q"], &args[..]].concat());
+    assert!(quiet.status.success());
+    let quiet_stderr = String::from_utf8_lossy(&quiet.stderr);
+    assert!(!quiet_stderr.contains("warning["), "{quiet_stderr}");
 }
 
 #[test]

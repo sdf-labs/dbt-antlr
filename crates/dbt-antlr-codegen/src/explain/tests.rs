@@ -351,7 +351,7 @@ fn a_static_sll_conflict_where_runtime_sll_agrees_with_ll_is_not_a_lookahead_bud
     );
     assert!(
         run.report
-            .contains("Raising max_dfa_states, max_dfa_visits, or max_k does not help."),
+            .contains("Raising max_dfa_states, max_dfa_visits, or max_k will not help here."),
         "{}",
         run.report
     );

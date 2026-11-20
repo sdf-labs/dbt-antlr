@@ -25,7 +25,7 @@
 //!   --optimize-precedence-ladders collapse precedence ladders into left-recursive rules
 //!   --explain <INPUT>             explain how the static DFA parser parses INPUT, compared
 //!                                 with full LL (needs --static-dfa-only or
-//!                                 --static-parser-dfa; implies report-only and quiet warnings)
+//!                                 --static-parser-dfa; implies report-only)
 //!   --explain-file <PATH>         like --explain, with the input in PATH (- reads stdin)
 //!   --start-rule <NAME>           the parser rule that --explain starts from
 //!                                 (default: the first rule)
@@ -34,7 +34,7 @@
 //!                                 (G4S030) as errors
 //!   -q, --quiet                   print only error diagnostics on stderr: no warnings
 //!                                 and no transform notes (the summary line stays)
-//!   -v, --verbose                 show full --explain details and analysis warnings on stderr
+//!   -v, --verbose                 show full --explain details
 //! ```
 
 use std::io::Write;
@@ -64,7 +64,7 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   --optimize-precedence-ladders collapse precedence ladders into left-recursive rules
   --explain <INPUT>             explain how the static DFA parser parses INPUT, compared
                                 with full LL (needs --static-dfa-only or
-                                --static-parser-dfa; implies report-only and quiet warnings)
+                                --static-parser-dfa; implies report-only)
   --explain-file <PATH>         like --explain, with the input in PATH (- reads stdin)
   --start-rule <NAME>           the parser rule that --explain starts from
                                 (default: the first rule)
@@ -73,7 +73,7 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
                                 (G4S030) as errors
   -q, --quiet                   print only error diagnostics on stderr: no warnings
                                 and no transform notes (the summary line stays)
-  -v, --verbose                 show full --explain details and analysis warnings on stderr
+  -v, --verbose                 show full --explain details
 ";
 
 /// Parsed command line.
@@ -100,29 +100,6 @@ struct CliArgs {
     strict: bool,
     quiet: bool,
     verbose: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum HiddenWarnings {
-    None,
-    Quiet,
-    ExplainDefault,
-}
-
-impl CliArgs {
-    const fn hide_warnings(&self) -> bool {
-        self.quiet || (self.explain.is_some() && !self.verbose)
-    }
-
-    const fn hidden_warnings(&self) -> HiddenWarnings {
-        if self.quiet {
-            HiddenWarnings::Quiet
-        } else if self.explain.is_some() && !self.verbose {
-            HiddenWarnings::ExplainDefault
-        } else {
-            HiddenWarnings::None
-        }
-    }
 }
 
 /// Where the `--explain` input comes from.
@@ -233,10 +210,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         }
     }
 
-    if quiet && verbose {
-        miette::bail!("cannot combine -q/--quiet with -v/--verbose\n{USAGE}");
-    }
-    if !quiet && !(explain.is_some() && !verbose) {
+    if !quiet {
         for arg in ignored {
             writeln!(stderr, "warning: ignoring option {arg}").into_diagnostic()?;
         }
@@ -390,7 +364,7 @@ fn failure(
         .iter()
         .any(|diagnostic| diagnostic.severity() == crate::Severity::Error)
     {
-        let finished = write_diagnostics(stderr, diagnostics, &[], cli.hide_warnings())
+        let finished = write_diagnostics(stderr, diagnostics, &[], cli.quiet)
             .and_then(|()| finish(stderr, cli, diagnostics));
         return match finished {
             Err(report) => report.wrap_err(context),
@@ -411,12 +385,7 @@ fn finish(
     if diagnostics.is_empty() && cli.explain.is_none() {
         return Ok(());
     }
-    writeln!(
-        stderr,
-        "{}",
-        summary(&cli.grammar, diagnostics, cli.hidden_warnings())
-    )
-    .into_diagnostic()?;
+    writeln!(stderr, "{}", summary(&cli.grammar, diagnostics, cli.quiet)).into_diagnostic()?;
     let errors = diagnostics
         .iter()
         .filter(|diagnostic| diagnostic.severity() == crate::Severity::Error)
@@ -427,27 +396,31 @@ fn finish(
     Ok(())
 }
 
+const QUIET_HINT_WARNING_THRESHOLD: usize = 12;
+
 /// The summary line of `diagnostics`, for example
 /// `summary: T.g4: 0 errors, 3 warnings (2 G4S192, 1 G4S193)`.
-fn summary(
-    grammar: &std::path::Path,
-    diagnostics: &[crate::Diagnostic],
-    hidden_warnings: HiddenWarnings,
-) -> String {
+fn summary(grammar: &std::path::Path, diagnostics: &[crate::Diagnostic], quiet: bool) -> String {
     let name = grammar.file_name().map_or_else(
         || grammar.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
     );
     let (_, errors) = tally(diagnostics, crate::Severity::Error, "error");
     let (warning_count, warnings) = tally(diagnostics, crate::Severity::Warning, "warning");
-    let hidden = match (warning_count, hidden_warnings) {
-        (0, _) | (_, HiddenWarnings::None) => "",
-        (1, HiddenWarnings::Quiet) => "; --quiet hid the warning",
-        (_, HiddenWarnings::Quiet) => "; --quiet hid the warnings",
-        (1, HiddenWarnings::ExplainDefault) => "; pass -v to show the warning",
-        (_, HiddenWarnings::ExplainDefault) => "; pass -v to show the warnings",
+    let suffix = if warning_count == 0 {
+        ""
+    } else if quiet {
+        if warning_count == 1 {
+            "; --quiet hid the warning"
+        } else {
+            "; --quiet hid the warnings"
+        }
+    } else if warning_count > QUIET_HINT_WARNING_THRESHOLD {
+        "; pass -q to hide warnings"
+    } else {
+        ""
     };
-    format!("summary: {name}: {errors}, {warnings}{hidden}")
+    format!("summary: {name}: {errors}, {warnings}{suffix}")
 }
 
 /// The number of `severity` diagnostics and its text with the count of each
@@ -530,7 +503,7 @@ fn run_explain(
         stderr,
         &output.diagnostics,
         &output.optimization_messages,
-        cli.hide_warnings(),
+        cli.quiet,
     )?;
     for report in &output.reports {
         write!(stdout, "{report}").into_diagnostic()?;
@@ -613,15 +586,17 @@ mod tests {
     }
 
     #[test]
-    fn verbose_flag_and_alias_parse_and_conflict_with_quiet() {
+    fn verbose_flag_and_alias_parse_and_allow_quiet() {
         for flag in ["-v", "--verbose"] {
             let cli = parse(&[flag, "T.g4"]).expect("flag parses");
             assert!(cli.verbose, "{flag} sets verbose");
         }
         let cli = parse(&["T.g4"]).expect("minimal command line parses");
         assert!(!cli.verbose);
-        assert!(parse(&["-q", "-v", "T.g4"]).is_err());
-        assert!(parse(&["--quiet", "--verbose", "T.g4"]).is_err());
+        let cli = parse(&["-q", "-v", "T.g4"]).expect("-q and -v combine");
+        assert!(cli.quiet && cli.verbose);
+        let cli = parse(&["--quiet", "--verbose", "T.g4"]).expect("--quiet and --verbose combine");
+        assert!(cli.quiet && cli.verbose);
     }
 
     #[test]
@@ -651,20 +626,34 @@ mod tests {
             diagnostic("G4S192", crate::Severity::Warning),
         ];
         assert_eq!(
-            super::summary(grammar, &diagnostics, super::HiddenWarnings::None),
+            super::summary(grammar, &diagnostics, false),
             "summary: T.g4: 0 errors, 3 warnings (2 G4S192, 1 G4S193)"
         );
         assert_eq!(
-            super::summary(grammar, &diagnostics, super::HiddenWarnings::Quiet),
+            super::summary(grammar, &diagnostics, true),
             "summary: T.g4: 0 errors, 3 warnings (2 G4S192, 1 G4S193); --quiet hid the warnings"
         );
+        let dozen = (0..12)
+            .map(|_| diagnostic("G4S192", crate::Severity::Warning))
+            .collect::<Vec<_>>();
         assert_eq!(
-            super::summary(grammar, &diagnostics, super::HiddenWarnings::ExplainDefault),
-            "summary: T.g4: 0 errors, 3 warnings (2 G4S192, 1 G4S193); pass -v to show the warnings"
+            super::summary(grammar, &dozen, false),
+            "summary: T.g4: 0 errors, 12 warnings (12 G4S192)"
+        );
+        let bakers_dozen = (0..13)
+            .map(|_| diagnostic("G4S192", crate::Severity::Warning))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            super::summary(grammar, &bakers_dozen, false),
+            "summary: T.g4: 0 errors, 13 warnings (13 G4S192); pass -q to hide warnings"
+        );
+        assert_eq!(
+            super::summary(grammar, &bakers_dozen, true),
+            "summary: T.g4: 0 errors, 13 warnings (13 G4S192); --quiet hid the warnings"
         );
         let diagnostics = [diagnostic("G4S190", crate::Severity::Error)];
         assert_eq!(
-            super::summary(grammar, &diagnostics, super::HiddenWarnings::Quiet),
+            super::summary(grammar, &diagnostics, true),
             "summary: T.g4: 1 error (1 G4S190), 0 warnings"
         );
     }

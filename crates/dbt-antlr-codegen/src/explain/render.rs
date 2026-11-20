@@ -18,14 +18,13 @@ use super::lex::{LexError, Lexed};
 use crate::optimization::StaticParserDfaReport;
 use crate::optimization::parser_dfa::BudgetCutoff;
 
-/// The expected tokens that a syntax error lists at most.
+/// Maximum number of "expected tokens" to show in a syntax error.
 const EXPECTED_TOKENS: usize = 12;
-/// The lookahead tokens of a table walk that the report shows at most.
+/// Maximum number of lookahead tokens of a table walk to show in the report.
 const LOOKAHEAD_TOKENS: usize = 8;
-/// The static guesses that the report lists at most.
+/// Maximum number of static guesses listed in the report.
 const LISTED_GUESSES: usize = 10;
 
-/// Everything the report shows.
 pub(super) struct Explanation<'a> {
     pub(super) start_rule: &'a str,
     pub(super) mode: &'static str,
@@ -39,41 +38,6 @@ pub(super) struct Explanation<'a> {
     /// The SLL prediction at the divergent decision.
     pub(super) probe: Option<Option<i32>>,
     pub(super) verbose: bool,
-}
-
-struct Diagnosis {
-    cause: String,
-    remediations: Vec<String>,
-}
-
-/// Renders the report of a lexer failure: the parsers do not run.
-pub(super) fn render_lexer_errors(
-    grammar: &str,
-    input_name: &str,
-    input: &str,
-    errors: &[LexError],
-) -> String {
-    let mut out = String::new();
-    let _ = writeln!(out, "=== explain: {grammar} ===");
-    let _ = writeln!(out, "input: {input_name}");
-    let _ = writeln!(out);
-    let _ = writeln!(out, "[VERDICT: LEXER ERROR]");
-    let _ = writeln!(
-        out,
-        "  The lexer rejects the input, so no parser decision ran. Fix the input or the lexer grammar first."
-    );
-    for error in errors {
-        let _ = writeln!(out);
-        let _ = writeln!(
-            out,
-            "[LEXER ERROR @ line {}:{}] {}",
-            error.line,
-            error.column + 1,
-            error.message
-        );
-        source_excerpt(&mut out, input, error.line, error.column, 1);
-    }
-    out
 }
 
 impl Explanation<'_> {
@@ -142,11 +106,11 @@ impl Explanation<'_> {
             ),
             Verdict::Divergence { .. } if !static_failed && !ll_failed => (
                 "SILENT DIVERGENCE",
-                "Both parsers accept this input, but the static parser builds another parse tree than full LL(*).".to_owned(),
+                "Both parsers accept this input, but the static parser builds a different parse tree from full LL(*).".to_owned(),
             ),
             Verdict::Divergence { .. } => (
                 "STATIC-DFA DIVERGENCE",
-                "The static parser chooses another alternative than full LL(*). Full LL(*) also rejects the input later, so the input has another error too.".to_owned(),
+                "Both parsers reject this input, but the static parser chooses a different alternative from full LL(*), so they report different errors.".to_owned(),
             ),
             Verdict::StaticFailure { .. } if !ll_failed => (
                 "STATIC-DFA SYNTAX ERROR",
@@ -158,7 +122,7 @@ impl Explanation<'_> {
             Verdict::StaticFailure { .. } => (
                 "STATIC-DFA SYNTAX ERROR",
                 format!(
-                    "The {} parser fails without an earlier divergent choice. Full LL(*) also rejects the input later, so the input has another error too.",
+                    "Both parsers reject this input. The {} parser fails without an earlier divergent choice, but full LL(*) rejects the input later, so they report different errors.",
                     self.mode
                 ),
             ),
@@ -414,7 +378,8 @@ impl Explanation<'_> {
                     "static SLL conflict. Unbounded SLL(*) also chooses alt {oracle_alt}, so this is not a lookahead budget limit: static table construction hit an SLL conflict under static closure approximation."
                 ),
                 remediations: vec![
-                    "Raising max_dfa_states, max_dfa_visits, or max_k does not help.".to_owned(),
+                    "Raising max_dfa_states, max_dfa_visits, or max_k will not help here."
+                        .to_owned(),
                     format!(
                         "Left-factor or restructure the conflicting alternatives in rule '{rule}'."
                     ),
@@ -434,10 +399,10 @@ impl Explanation<'_> {
                 };
                 Diagnosis {
                     cause: format!(
-                        "lookahead budget. Unbounded SLL(*) also chooses alt {oracle_alt}, so a longer static lookahead decides this input."
+                        "lookahead budget. Unbounded SLL(*) also chooses alt {oracle_alt}, so a longer static lookahead could resolve this input."
                     ),
                     remediations: vec![format!(
-                        "Left-factor the conflicting alternatives in rule '{rule}', or raise {budget_options} on rule '{rule}' or its block."
+                        "Raise {budget_options} on rule '{rule}' or its block, or left-factor the conflicting alternatives in rule '{rule}'"
                     )],
                 }
             }
@@ -446,7 +411,7 @@ impl Explanation<'_> {
                     "context sensitivity. SLL(*) also chooses alt {our_alt}: only full-context LL(*) sees that the tokens after rule '{rule}' select alt {oracle_alt}."
                 ),
                 remediations: vec![
-                    "A larger lookahead budget does not help.".to_owned(),
+                    "A larger lookahead budget will not help.".to_owned(),
                     format!(
                         "Change the grammar so that the caller decides, for example inline rule '{rule}' at this call site."
                     ),
@@ -815,6 +780,41 @@ impl Explanation<'_> {
             |decision| decision.alternatives.list(alts),
         )
     }
+}
+
+struct Diagnosis {
+    cause: String,
+    remediations: Vec<String>,
+}
+
+/// Renders the report of a lexer failure: the parsers do not run.
+pub(super) fn render_lexer_errors(
+    grammar: &str,
+    input_name: &str,
+    input: &str,
+    errors: &[LexError],
+) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "=== explain: {grammar} ===");
+    let _ = writeln!(out, "input: {input_name}");
+    let _ = writeln!(out);
+    let _ = writeln!(out, "[VERDICT: LEXER ERROR]");
+    let _ = writeln!(
+        out,
+        "  The lexer rejects the input, so no parser decision ran. Fix the input or the lexer grammar first."
+    );
+    for error in errors {
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "[LEXER ERROR @ line {}:{}] {}",
+            error.line,
+            error.column + 1,
+            error.message
+        );
+        source_excerpt(&mut out, input, error.line, error.column, 1);
+    }
+    out
 }
 
 /// Whether the parse stack `inner` starts with the frames of `outer`.
