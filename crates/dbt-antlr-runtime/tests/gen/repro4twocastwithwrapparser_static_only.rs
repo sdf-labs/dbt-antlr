@@ -215,7 +215,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, StmtContext<TF::Tok>, RULE_stmt, 0, |_parentctx| StmtContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena StmtContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(34);
-		recog.err_handler.sync(&mut recog.base)?;
 		match recog.base.input.la(1) {
 		    Repro4TwoCastWithWrap_T__0  => {
 		        /*------- Outer Most Alt 1 -------*/
@@ -360,14 +359,12 @@ where
 		let tmp = recog.input.lt(-1);
 		recog.base.with_mut_ctx(|ctx| { ctx.set_stop(tmp.map(|t| t as _)); });
 		recog.base.set_state(55);
-		recog.err_handler.sync(&mut recog.base)?;
 		_alt = { let _sdp = recog.base.dfa_predict(2)?; _sdp };
 		while { _alt!=2 && _alt!=INVALID_ALT } {
 			if _alt==1 {
 				recog.trigger_exit_rule_event()?;
 				{
 				recog.base.set_state(53);
-				recog.err_handler.sync(&mut recog.base)?;
 				match { let _sdp = recog.base.dfa_predict(1)?; _sdp } {
 					1 =>{
 						{
@@ -433,7 +430,6 @@ where
 				} 
 			}
 			recog.base.set_state(57);
-			recog.err_handler.sync(&mut recog.base)?;
 			_alt = { let _sdp = recog.base.dfa_predict(2)?; _sdp };
 		}
 		}
@@ -480,7 +476,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, SubContext<TF::Tok>, RULE_sub, 4, |_parentctx| SubContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena SubContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(63);
-		recog.err_handler.sync(&mut recog.base)?;
 		match recog.base.input.la(1) {
 		    Repro4TwoCastWithWrap_T__4  => {
 		        /*------- Outer Most Alt 1 -------*/

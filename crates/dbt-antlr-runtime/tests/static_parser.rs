@@ -859,6 +859,7 @@ fn static_dfa_only_parser_never_calls_adaptive_predict() {
     let src = include_str!("gen/guardexprparser_static_only.rs");
     assert!(src.contains("dfa_predict("), "expected table prediction");
     assert_eq!(src.matches("adaptive_predict(").count(), 0);
+    assert_eq!(src.matches("err_handler.sync(").count(), 0);
 }
 
 /// The value after `=` follows the 16-token witness of the lookahead budget
@@ -945,7 +946,7 @@ fn static_dfa_only_reports_a_syntax_error_after_a_wrong_skip() {
     );
     assert_eq!(
         static_only.1,
-        ["line 1:18 mismatched input '=' expecting {';', 'AND', 'OR'}"]
+        ["line 1:18 mismatched input '=' expecting ';'"]
     );
 }
 
@@ -997,6 +998,7 @@ fn inline_alias_static_dfa_only_parser_never_calls_adaptive_predict() {
     let src = include_str!("gen/inlinealiasparser_static_only.rs");
     assert!(src.contains("dfa_predict("), "expected table prediction");
     assert_eq!(src.matches("adaptive_predict(").count(), 0);
+    assert_eq!(src.matches("err_handler.sync(").count(), 0);
 }
 
 #[test]

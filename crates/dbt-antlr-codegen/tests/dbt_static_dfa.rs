@@ -1486,3 +1486,31 @@ fn static_dfa_only_reports_stack_hijack_hazards() {
     assert!(manifest.contains("\"guardedStates\": 1"), "{manifest}");
     assert!(manifest.contains("\"hijackHazards\": 1"), "{manifest}");
 }
+
+#[test]
+fn static_dfa_only_omits_sync_calls() {
+    for (grammar, parser_file) in [
+        ("CSV.g4", "csvparser.rs"),
+        ("parser/GuardExpr.g4", "guardexprparser.rs"),
+        ("parser/ParenExpr.g4", "parenexprparser.rs"),
+    ] {
+        let path = grammars_dir().join(grammar);
+        let static_only = emit_static_only(&path, false).expect("static-only emission succeeds");
+        let static_only_src = lexer_content(&static_only, parser_file);
+        assert_eq!(
+            static_only_src.matches("err_handler.sync(").count(),
+            0,
+            "{grammar}: --static-dfa-only must omit err_handler.sync calls"
+        );
+
+        let mut static_dfa = OptimizationOptions::new();
+        static_dfa.static_parser_dfa(true);
+        let hybrid = emit_files_with_options(&path, &[grammars_dir()], true, false, &static_dfa)
+            .expect("static-parser-dfa emission succeeds");
+        let hybrid_src = lexer_content(&hybrid, parser_file);
+        assert!(
+            hybrid_src.contains("err_handler.sync("),
+            "{grammar}: --static-parser-dfa keeps err_handler.sync calls"
+        );
+    }
+}
