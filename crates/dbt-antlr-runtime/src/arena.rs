@@ -9,7 +9,8 @@ use crate::{
     tree::{NodeInner, NodeKindType, TreeNode},
 };
 
-const DEFAULT_INITIAL_CAPACITY: usize = 4096;
+const DEFAULT_TOKENS_CAPACITY: usize = 1024;
+const DEFAULT_CONTEXTS_CAPACITY: usize = 4096;
 const TLS_MAX_RETAINED_BYTES: usize = 1024 * 1024;
 
 thread_local! {
@@ -18,7 +19,8 @@ thread_local! {
 
 #[derive(Debug)]
 pub struct Arena {
-    bump: bumpalo::Bump,
+    tokens: bumpalo::Bump,
+    contexts: bumpalo::Bump,
     primary_source_info: Cell<*mut SourceInfo<'static>>,
     source_infos: RefCell<Vec<*mut SourceInfo<'static>>>,
     #[cfg(feature = "arena-allocation-limit")]
@@ -82,7 +84,8 @@ impl Arena {
             let limit = get_default_arena_alloc_limit();
             arena.limit_bytes = limit;
             if limit > 0 && arena.total_allocated_bytes() > limit {
-                arena.bump = bumpalo::Bump::new();
+                arena.tokens = bumpalo::Bump::new();
+                arena.contexts = bumpalo::Bump::new();
             }
             arena
         };
@@ -102,18 +105,22 @@ impl Arena {
         f(&arena)
     }
 
-    /// Create a reusable `Arena` with the default initial chunk capacity.
+    /// Create a reusable `Arena` with the default initial chunk capacities.
     pub fn new() -> Self {
         #[cfg(feature = "arena-allocation-limit")]
         {
             let limit = get_default_arena_alloc_limit();
-            let bump = if limit > 0 {
-                Self::bump_within_cap(limit)
+            let (tokens, contexts) = if limit > 0 {
+                Self::bumps_within_cap(limit)
             } else {
-                bumpalo::Bump::with_capacity(DEFAULT_INITIAL_CAPACITY)
+                (
+                    bumpalo::Bump::with_capacity(DEFAULT_TOKENS_CAPACITY),
+                    bumpalo::Bump::with_capacity(DEFAULT_CONTEXTS_CAPACITY),
+                )
             };
             Self {
-                bump,
+                tokens,
+                contexts,
                 primary_source_info: Cell::new(ptr::null_mut()),
                 source_infos: RefCell::new(Vec::new()),
                 limit_bytes: limit,
@@ -121,19 +128,32 @@ impl Arena {
         }
         #[cfg(not(feature = "arena-allocation-limit"))]
         {
-            Self::with_capacity(DEFAULT_INITIAL_CAPACITY)
+            Self {
+                tokens: bumpalo::Bump::with_capacity(DEFAULT_TOKENS_CAPACITY),
+                contexts: bumpalo::Bump::with_capacity(DEFAULT_CONTEXTS_CAPACITY),
+                primary_source_info: Cell::new(ptr::null_mut()),
+                source_infos: RefCell::new(Vec::new()),
+            }
         }
     }
 
-    /// Create a reusable `Arena` with an initial chunk of at least `capacity_bytes`.
+    /// Create a reusable `Arena` with an initial combined chunk capacity of at least `capacity_bytes`.
     pub fn with_capacity(capacity_bytes: usize) -> Self {
-        let bump = if capacity_bytes == 0 {
-            bumpalo::Bump::new()
+        let (tokens, contexts) = if capacity_bytes == 0 {
+            (bumpalo::Bump::new(), bumpalo::Bump::new())
         } else {
-            bumpalo::Bump::with_capacity(capacity_bytes)
+            let tokens_cap = capacity_bytes / 4;
+            let contexts_cap = capacity_bytes - tokens_cap;
+            let tokens = if tokens_cap == 0 {
+                bumpalo::Bump::new()
+            } else {
+                bumpalo::Bump::with_capacity(tokens_cap)
+            };
+            (tokens, bumpalo::Bump::with_capacity(contexts_cap))
         };
         Self {
-            bump,
+            tokens,
+            contexts,
             primary_source_info: Cell::new(ptr::null_mut()),
             source_infos: RefCell::new(Vec::new()),
             #[cfg(feature = "arena-allocation-limit")]
@@ -141,30 +161,33 @@ impl Arena {
         }
     }
 
-    fn bump_within_cap(max_bytes: usize) -> bumpalo::Bump {
-        if max_bytes >= DEFAULT_INITIAL_CAPACITY {
-            let candidate = bumpalo::Bump::with_capacity(DEFAULT_INITIAL_CAPACITY);
-            if candidate.allocated_bytes() <= max_bytes {
-                return candidate;
+    fn bumps_within_cap(max_bytes: usize) -> (bumpalo::Bump, bumpalo::Bump) {
+        if max_bytes >= DEFAULT_TOKENS_CAPACITY + DEFAULT_CONTEXTS_CAPACITY {
+            let tokens = bumpalo::Bump::with_capacity(DEFAULT_TOKENS_CAPACITY);
+            let contexts = bumpalo::Bump::with_capacity(DEFAULT_CONTEXTS_CAPACITY);
+            if tokens.allocated_bytes() + contexts.allocated_bytes() <= max_bytes {
+                return (tokens, contexts);
             }
         }
-        bumpalo::Bump::new()
+        (bumpalo::Bump::new(), bumpalo::Bump::new())
     }
 
-    /// Clear all allocations in this arena and retain the largest bump chunk for reuse.
+    /// Clear all allocations in this arena and retain the largest bump chunks for reuse.
     pub fn reset(&mut self) {
         self.drop_source_infos();
-        self.bump.reset();
+        self.tokens.reset();
+        self.contexts.reset();
         #[cfg(feature = "arena-allocation-limit")]
-        if self.limit_bytes > 0 && self.bump.allocated_bytes() > self.limit_bytes {
-            self.bump = Self::bump_within_cap(self.limit_bytes);
+        if self.limit_bytes > 0 && self.total_allocated_bytes() > self.limit_bytes {
+            (self.tokens, self.contexts) = Self::bumps_within_cap(self.limit_bytes);
         }
     }
 
-    /// Clear all allocations and replace the retained chunk if it exceeds `max_retained_bytes`.
+    /// Clear all allocations and replace the retained chunks if their combined size exceeds `max_retained_bytes`.
     pub fn reset_with_max_capacity(&mut self, max_retained_bytes: usize) {
         self.drop_source_infos();
-        self.bump.reset();
+        self.tokens.reset();
+        self.contexts.reset();
         #[cfg(feature = "arena-allocation-limit")]
         let effective_max = if self.limit_bytes > 0 {
             max_retained_bytes.min(self.limit_bytes)
@@ -174,8 +197,8 @@ impl Arena {
         #[cfg(not(feature = "arena-allocation-limit"))]
         let effective_max = max_retained_bytes;
 
-        if self.bump.allocated_bytes() > effective_max {
-            self.bump = Self::bump_within_cap(effective_max);
+        if self.total_allocated_bytes() > effective_max {
+            (self.tokens, self.contexts) = Self::bumps_within_cap(effective_max);
         }
     }
 
@@ -220,13 +243,13 @@ impl Arena {
         if !first.is_null() {
             let ptr = *first;
             *first = ptr::null_mut();
-            // SAFETY: `ptr` lives in `self.bump` and is dropped once before `self.bump` resets or drops.
+            // SAFETY: `ptr` lives in `self.tokens` and is dropped once before `self.tokens` resets or drops.
             unsafe {
                 ptr::drop_in_place(ptr);
             }
         }
         for ptr in self.source_infos.get_mut().drain(..) {
-            // SAFETY: `ptr` lives in `self.bump` and is dropped once before `self.bump` resets or drops.
+            // SAFETY: `ptr` lives in `self.tokens` and is dropped once before `self.tokens` resets or drops.
             unsafe {
                 ptr::drop_in_place(ptr);
             }
@@ -236,7 +259,7 @@ impl Arena {
     #[inline]
     pub(crate) fn alloc_uninit_slice<T>(&self, len: usize) -> NonNull<T> {
         let layout = Layout::array::<T>(len).expect("slice layout overflow");
-        self.bump.alloc_layout(layout).cast::<T>()
+        self.contexts.alloc_layout(layout).cast::<T>()
     }
 
     #[inline(always)]
@@ -244,22 +267,22 @@ impl Arena {
     where
         T: Token,
     {
-        self.bump.alloc(value)
+        self.tokens.alloc(value)
     }
 
     pub fn alloc_string(&self, value: String) -> &str {
-        self.bump.alloc_str(value.as_str())
+        self.tokens.alloc_str(value.as_str())
     }
 
     pub(crate) fn alloc_in_tokens<T>(&self, value: T) -> &T {
-        self.bump.alloc(value)
+        self.tokens.alloc(value)
     }
 
     pub(crate) fn alloc_source_info<'a, 'input>(
         &'a self,
         value: SourceInfo<'input>,
     ) -> &'a SourceInfo<'input> {
-        let ptr = self.bump.alloc(value);
+        let ptr = self.tokens.alloc(value);
         let raw = (ptr as *mut SourceInfo<'input>).cast::<SourceInfo<'static>>();
         if self.primary_source_info.get().is_null() {
             self.primary_source_info.set(raw);
@@ -280,7 +303,7 @@ impl Arena {
         Tok: Token + 'input,
     {
         check_allocation_limit!(self);
-        self.bump.alloc(value) as *mut _ as *mut TreeNode<'input, 'a, N, Tok>
+        self.contexts.alloc(value) as *mut _ as *mut TreeNode<'input, 'a, N, Tok>
     }
 
     pub fn alloc_zeroed_node<'input, 'a, N, I, Tok>(
@@ -295,7 +318,7 @@ impl Arena {
     {
         check_allocation_limit!(self);
         let zeroed_header = unsafe { std::mem::zeroed::<TreeNode<'input, 'a, N, Tok>>() };
-        let ptr = self.bump.alloc((zeroed_header, body));
+        let ptr = self.contexts.alloc((zeroed_header, body));
         ptr as *mut _ as *mut TreeNode<'input, 'a, N, Tok>
     }
 
@@ -311,21 +334,21 @@ impl Arena {
         Tok: Token + 'input,
     {
         check_allocation_limit!(self);
-        let ptr = self.bump.alloc((header, body));
+        let ptr = self.contexts.alloc((header, body));
         // SAFETY: `header` is the first field of `(header, body)` and matches `TreeNode`.
         cast_unchecked!(ptr => mut TreeNode<'input, 'a, N, Tok>)
     }
 
     pub fn alloc_exception<'a, T>(&'a self, value: T) -> bumpalo::boxed::Box<'a, T> {
-        bumpalo::boxed::Box::new_in(value, &self.bump)
+        bumpalo::boxed::Box::new_in(value, &self.contexts)
     }
 
     pub fn alloc_payload<T>(&self, value: T) -> &mut T {
-        self.bump.alloc(value)
+        self.contexts.alloc(value)
     }
 
     pub fn total_allocated_bytes(&self) -> usize {
-        self.bump.allocated_bytes()
+        self.tokens.allocated_bytes() + self.contexts.allocated_bytes()
     }
 
     #[cfg(feature = "arena-allocation-limit")]
@@ -384,7 +407,9 @@ mod tests {
     #[test]
     fn arena_reset_reuses_chunk_and_drops_source_infos() {
         let mut arena = Arena::new();
-        assert!(arena.total_allocated_bytes() >= DEFAULT_INITIAL_CAPACITY);
+        assert!(
+            arena.total_allocated_bytes() >= DEFAULT_TOKENS_CAPACITY + DEFAULT_CONTEXTS_CAPACITY
+        );
 
         for _ in 0..5 {
             arena.scope(|a| {
@@ -397,14 +422,16 @@ mod tests {
 
                 let buf = a.alloc_string("x".repeat(8192));
                 assert_eq!(buf.len(), 8192);
+                let _ = a.alloc_uninit_slice::<usize>(1024);
             });
         }
 
         let retained = arena.total_allocated_bytes();
-        assert!(retained >= 8192);
+        assert!(retained >= 8192 + 1024 * size_of::<usize>());
         arena.scope(|a| {
             let buf = a.alloc_string("y".repeat(4096));
             assert_eq!(buf.len(), 4096);
+            let _ = a.alloc_uninit_slice::<usize>(512);
         });
         assert_eq!(arena.total_allocated_bytes(), retained);
     }
