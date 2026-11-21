@@ -11,11 +11,6 @@ use crate::{
 
 const DEFAULT_TOKENS_CAPACITY: usize = 1024;
 const DEFAULT_CONTEXTS_CAPACITY: usize = 4096;
-const TLS_MAX_RETAINED_BYTES: usize = 1024 * 1024;
-
-thread_local! {
-    static TLS_ARENA: Cell<Option<Arena>> = const { Cell::new(None) };
-}
 
 #[derive(Debug)]
 pub struct Arena {
@@ -27,15 +22,21 @@ pub struct Arena {
     limit_bytes: usize,
 }
 
-impl Default for Arena {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Drop for Arena {
     fn drop(&mut self) {
-        self.drop_source_infos();
+        let first = *self.primary_source_info.get_mut();
+        if !first.is_null() {
+            // SAFETY: `first` lives in `self.tokens` and is dropped once before `self.tokens` drops.
+            unsafe {
+                ptr::drop_in_place(first);
+            }
+        }
+        for &mut ptr in self.source_infos.get_mut() {
+            // SAFETY: `ptr` lives in `self.tokens` and is dropped once before `self.tokens` drops.
+            unsafe {
+                ptr::drop_in_place(ptr);
+            }
+        }
     }
 }
 
@@ -51,48 +52,15 @@ macro_rules! check_allocation_limit {
 }
 
 impl Arena {
-    /// Invoke the callback with a reference to a scoped `Arena`.
+    /// Invoke the callback function with a reference to a local `Arena`.
     ///
-    /// All allocations become invalid when the callback returns.
-    /// The runtime clears and reuses the backing chunk on the current thread up to a retention cap.
+    /// The arena drops when the callback returns.
     pub fn with<F, R>(f: F) -> R
     where
         F: for<'a> FnOnce(&'a Arena) -> R,
     {
-        struct TlsArenaGuard(Option<Arena>);
-
-        impl Drop for TlsArenaGuard {
-            fn drop(&mut self) {
-                if let Some(mut arena) = self.0.take() {
-                    arena.reset_with_max_capacity(TLS_MAX_RETAINED_BYTES);
-                    let _ = TLS_ARENA.try_with(|cell| {
-                        cell.set(Some(arena));
-                    });
-                }
-            }
-        }
-
-        let arena = TLS_ARENA
-            .try_with(Cell::take)
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-
-        #[cfg(feature = "arena-allocation-limit")]
-        let arena = {
-            let mut arena = arena;
-            let limit = get_default_arena_alloc_limit();
-            arena.limit_bytes = limit;
-            if limit > 0 && arena.total_allocated_bytes() > limit {
-                arena.tokens = bumpalo::Bump::new();
-                arena.contexts = bumpalo::Bump::new();
-            }
-            arena
-        };
-
-        let guard = TlsArenaGuard(Some(arena));
-        let arena_ref = guard.0.as_ref().expect("guard holds an active Arena");
-        f(arena_ref)
+        let arena = Arena::new();
+        f(&arena)
     }
 
     #[cfg(feature = "arena-allocation-limit")]
@@ -100,31 +68,14 @@ impl Arena {
     where
         F: for<'a> FnOnce(&'a Arena) -> R,
     {
-        let mut arena = Arena::with_capacity(0);
-        arena.limit_bytes = limit_bytes;
+        let arena = Arena::new_with_limit(limit_bytes);
         f(&arena)
     }
 
-    /// Create a reusable `Arena` with the default initial chunk capacities.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         #[cfg(feature = "arena-allocation-limit")]
         {
-            let limit = get_default_arena_alloc_limit();
-            let (tokens, contexts) = if limit > 0 {
-                Self::bumps_within_cap(limit)
-            } else {
-                (
-                    bumpalo::Bump::with_capacity(DEFAULT_TOKENS_CAPACITY),
-                    bumpalo::Bump::with_capacity(DEFAULT_CONTEXTS_CAPACITY),
-                )
-            };
-            Self {
-                tokens,
-                contexts,
-                primary_source_info: Cell::new(ptr::null_mut()),
-                source_infos: RefCell::new(Vec::new()),
-                limit_bytes: limit,
-            }
+            Self::new_with_limit(get_default_arena_alloc_limit())
         }
         #[cfg(not(feature = "arena-allocation-limit"))]
         {
@@ -137,122 +88,22 @@ impl Arena {
         }
     }
 
-    /// Create a reusable `Arena` with an initial combined chunk capacity of at least `capacity_bytes`.
-    pub fn with_capacity(capacity_bytes: usize) -> Self {
-        let (tokens, contexts) = if capacity_bytes == 0 {
+    #[cfg(feature = "arena-allocation-limit")]
+    fn new_with_limit(limit_bytes: usize) -> Self {
+        let (tokens, contexts) = if limit_bytes > 0 {
             (bumpalo::Bump::new(), bumpalo::Bump::new())
         } else {
-            let tokens_cap = capacity_bytes / 4;
-            let contexts_cap = capacity_bytes - tokens_cap;
-            let tokens = if tokens_cap == 0 {
-                bumpalo::Bump::new()
-            } else {
-                bumpalo::Bump::with_capacity(tokens_cap)
-            };
-            (tokens, bumpalo::Bump::with_capacity(contexts_cap))
+            (
+                bumpalo::Bump::with_capacity(DEFAULT_TOKENS_CAPACITY),
+                bumpalo::Bump::with_capacity(DEFAULT_CONTEXTS_CAPACITY),
+            )
         };
         Self {
             tokens,
             contexts,
             primary_source_info: Cell::new(ptr::null_mut()),
             source_infos: RefCell::new(Vec::new()),
-            #[cfg(feature = "arena-allocation-limit")]
-            limit_bytes: get_default_arena_alloc_limit(),
-        }
-    }
-
-    fn bumps_within_cap(max_bytes: usize) -> (bumpalo::Bump, bumpalo::Bump) {
-        if max_bytes >= DEFAULT_TOKENS_CAPACITY + DEFAULT_CONTEXTS_CAPACITY {
-            let tokens = bumpalo::Bump::with_capacity(DEFAULT_TOKENS_CAPACITY);
-            let contexts = bumpalo::Bump::with_capacity(DEFAULT_CONTEXTS_CAPACITY);
-            if tokens.allocated_bytes() + contexts.allocated_bytes() <= max_bytes {
-                return (tokens, contexts);
-            }
-        }
-        (bumpalo::Bump::new(), bumpalo::Bump::new())
-    }
-
-    /// Clear all allocations in this arena and retain the largest bump chunks for reuse.
-    pub fn reset(&mut self) {
-        self.drop_source_infos();
-        self.tokens.reset();
-        self.contexts.reset();
-        #[cfg(feature = "arena-allocation-limit")]
-        if self.limit_bytes > 0 && self.total_allocated_bytes() > self.limit_bytes {
-            (self.tokens, self.contexts) = Self::bumps_within_cap(self.limit_bytes);
-        }
-    }
-
-    /// Clear all allocations and replace the retained chunks if their combined size exceeds `max_retained_bytes`.
-    pub fn reset_with_max_capacity(&mut self, max_retained_bytes: usize) {
-        self.drop_source_infos();
-        self.tokens.reset();
-        self.contexts.reset();
-        #[cfg(feature = "arena-allocation-limit")]
-        let effective_max = if self.limit_bytes > 0 {
-            max_retained_bytes.min(self.limit_bytes)
-        } else {
-            max_retained_bytes
-        };
-        #[cfg(not(feature = "arena-allocation-limit"))]
-        let effective_max = max_retained_bytes;
-
-        if self.total_allocated_bytes() > effective_max {
-            (self.tokens, self.contexts) = Self::bumps_within_cap(effective_max);
-        }
-    }
-
-    /// Run `f` with a shared reference to this arena, then reset the arena on return or unwind.
-    pub fn scope<F, R>(&mut self, f: F) -> R
-    where
-        F: for<'a> FnOnce(&'a Arena) -> R,
-    {
-        struct ResetOnDrop<'a>(&'a mut Arena);
-        impl Drop for ResetOnDrop<'_> {
-            fn drop(&mut self) {
-                self.0.reset();
-            }
-        }
-        let guard = ResetOnDrop(self);
-        f(guard.0)
-    }
-
-    /// Run `f` with a shared reference to this arena, then reset with a retained-chunk cap.
-    pub fn scope_with_max_capacity<F, R>(&mut self, max_retained_bytes: usize, f: F) -> R
-    where
-        F: for<'a> FnOnce(&'a Arena) -> R,
-    {
-        struct ResetCappedOnDrop<'a> {
-            arena: &'a mut Arena,
-            max_retained_bytes: usize,
-        }
-        impl Drop for ResetCappedOnDrop<'_> {
-            fn drop(&mut self) {
-                self.arena.reset_with_max_capacity(self.max_retained_bytes);
-            }
-        }
-        let guard = ResetCappedOnDrop {
-            arena: self,
-            max_retained_bytes,
-        };
-        f(guard.arena)
-    }
-
-    fn drop_source_infos(&mut self) {
-        let first = self.primary_source_info.get_mut();
-        if !first.is_null() {
-            let ptr = *first;
-            *first = ptr::null_mut();
-            // SAFETY: `ptr` lives in `self.tokens` and is dropped once before `self.tokens` resets or drops.
-            unsafe {
-                ptr::drop_in_place(ptr);
-            }
-        }
-        for ptr in self.source_infos.get_mut().drain(..) {
-            // SAFETY: `ptr` lives in `self.tokens` and is dropped once before `self.tokens` resets or drops.
-            unsafe {
-                ptr::drop_in_place(ptr);
-            }
+            limit_bytes,
         }
     }
 
@@ -391,143 +242,32 @@ pub fn get_default_arena_alloc_limit() -> usize {
 #[cfg(feature = "arena-allocation-limit")]
 static ARENA_ALLOC_LIMIT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-#[cfg(test)]
+#[cfg(all(test, feature = "arena-allocation-limit"))]
 mod tests {
-    use std::panic::{catch_unwind, AssertUnwindSafe};
-
     use super::*;
-    use crate::token::SourceInfo;
+    use crate::rule_context::EmptyNodeKind;
+    use crate::token::{CommonToken, SourceInfo};
 
     #[test]
-    fn arena_with_capacity_zero_starts_empty() {
-        let arena = Arena::with_capacity(0);
-        assert_eq!(arena.total_allocated_bytes(), 0);
-    }
-
-    #[test]
-    fn arena_reset_reuses_chunk_and_drops_source_infos() {
-        let mut arena = Arena::new();
-        assert!(
-            arena.total_allocated_bytes() >= DEFAULT_TOKENS_CAPACITY + DEFAULT_CONTEXTS_CAPACITY
-        );
-
-        for _ in 0..5 {
-            arena.scope(|a| {
-                let s1 = a.alloc_source_info(SourceInfo::new_stream("line1\nline2\n"));
-                let s2 = a.alloc_source_info(SourceInfo::new_stream("other1\nother2\n"));
-                let s3 = a.alloc_source_info(SourceInfo::new_stream("third1\nthird2\n"));
-                assert_eq!(s1.line(6), 2);
-                assert_eq!(s2.line(7), 2);
-                assert_eq!(s3.line(7), 2);
-
-                let buf = a.alloc_string("x".repeat(8192));
-                assert_eq!(buf.len(), 8192);
-                let _ = a.alloc_uninit_slice::<usize>(1024);
-            });
-        }
-
-        let retained = arena.total_allocated_bytes();
-        assert!(retained >= 8192 + 1024 * size_of::<usize>());
-        arena.scope(|a| {
-            let buf = a.alloc_string("y".repeat(4096));
-            assert_eq!(buf.len(), 4096);
-            let _ = a.alloc_uninit_slice::<usize>(512);
-        });
-        assert_eq!(arena.total_allocated_bytes(), retained);
-    }
-
-    #[test]
-    fn arena_reset_with_max_capacity_caps_retained_chunk() {
-        let mut arena = Arena::new();
-        arena.scope_with_max_capacity(16 * 1024, |a| {
-            let _ = a.alloc_string("a".repeat(64 * 1024));
-            assert!(a.total_allocated_bytes() >= 64 * 1024);
-        });
-        assert!(arena.total_allocated_bytes() <= 16 * 1024);
-
-        arena.reset_with_max_capacity(0);
-        assert_eq!(arena.total_allocated_bytes(), 0);
-    }
-
-    #[test]
-    fn arena_scope_resets_on_panic() {
-        let mut arena = Arena::new();
-        let res = catch_unwind(AssertUnwindSafe(|| {
-            arena.scope(|a| {
-                let s = a.alloc_source_info(SourceInfo::new_stream("a\nb\n"));
-                assert_eq!(s.line(2), 2);
-                panic!("simulated parse panic");
-            });
-        }));
-        assert!(res.is_err());
-        assert!(arena.primary_source_info.get().is_null());
-        assert!(arena.source_infos.borrow().is_empty());
-
-        arena.scope(|a| {
-            assert_eq!(a.alloc_string("ok".to_owned()), "ok");
-        });
-    }
-
-    #[test]
-    fn arena_with_reuses_tls_handles_reentrancy_and_caps_growth() {
-        Arena::with(|a| {
-            let _ = a.alloc_string("w".repeat(32 * 1024));
-        });
-
-        let retained = Arena::with(|a| a.total_allocated_bytes());
-        assert!(retained >= 32 * 1024);
-
-        let inner_len = Arena::with(|outer| {
-            let s1 = outer.alloc_string("outer".to_owned());
-            let inner = Arena::with(|inner| inner.alloc_string("inner".to_owned()).len());
-            assert_eq!(s1, "outer");
-            inner
-        });
-        assert_eq!(inner_len, 5);
-
-        let _ = catch_unwind(|| {
-            Arena::with(|a| {
-                let _ = a.alloc_source_info(SourceInfo::new_stream("x\ny\n"));
-                panic!("tls panic");
-            });
-        });
-        Arena::with(|a| {
-            assert_eq!(a.alloc_string("recovered".to_owned()), "recovered");
-        });
-
-        Arena::with(|a| {
-            let _ = a.alloc_string("b".repeat(TLS_MAX_RETAINED_BYTES + 64 * 1024));
-        });
-        let after_cap = Arena::with(|a| a.total_allocated_bytes());
-        assert!(after_cap <= TLS_MAX_RETAINED_BYTES);
-    }
-
-    #[test]
-    fn arena_reset_with_max_capacity_never_exceeds_small_cap() {
-        let mut arena = Arena::new();
-        arena.scope_with_max_capacity(5000, |a| {
-            let _ = a.alloc_string("a".repeat(32 * 1024));
-        });
-        assert!(arena.total_allocated_bytes() <= 5000);
-    }
-
-    #[cfg(feature = "arena-allocation-limit")]
-    #[test]
-    fn arena_with_limit_is_not_poisoned_by_tls_chunk() {
-        Arena::with(|a| {
-            let _ = a.alloc_string("z".repeat(16 * 1024));
-        });
-
+    fn arena_with_limit_enforces_small_limit() {
         Arena::with_limit(512, |a| {
             assert_eq!(a.allocation_limit_bytes(), 512);
             assert_eq!(a.total_allocated_bytes(), 0);
+
+            let source = a.alloc_source_info(SourceInfo::new_stream("a"));
+            let tok = a.alloc_token(CommonToken::new_slice(source, 1, 0, 0, 0, 0));
+            let node = TreeNode::<EmptyNodeKind>::create_token_node(a, tok);
+            assert!(!node.is_null());
+
+            let _ = a.alloc_string("x".repeat(4096));
+            let over_limit = TreeNode::<EmptyNodeKind>::create_token_node(a, tok);
+            assert!(over_limit.is_null());
         });
     }
 
-    #[cfg(feature = "arena-allocation-limit")]
     #[test]
     #[serial_test::serial]
-    fn arena_default_limit_shrinks_tls_and_reset_chunks() {
+    fn arena_default_limit_starts_within_limit() {
         struct ResetDefaultLimit;
         impl Drop for ResetDefaultLimit {
             fn drop(&mut self) {
@@ -536,42 +276,11 @@ mod tests {
         }
         let _guard = ResetDefaultLimit;
 
-        Arena::with(|a| {
-            let _ = a.alloc_string("z".repeat(16 * 1024));
-        });
-
         set_default_arena_alloc_limit(1024);
 
         Arena::with(|a| {
             assert_eq!(a.allocation_limit_bytes(), 1024);
-            assert!(a.total_allocated_bytes() <= 1024);
-            let source = a.alloc_source_info(SourceInfo::new_stream("a"));
-            let tok = a.alloc_token(crate::token::CommonToken::new_slice(source, 1, 0, 0, 0, 0));
-            let node = TreeNode::<crate::rule_context::EmptyNodeKind>::create_token_node(a, tok);
-            assert!(!node.is_null());
-
-            let _ = a.alloc_string("x".repeat(4096));
-            let over_limit =
-                TreeNode::<crate::rule_context::EmptyNodeKind>::create_token_node(a, tok);
-            assert!(over_limit.is_null());
+            assert_eq!(a.total_allocated_bytes(), 0);
         });
-
-        let mut reusable = Arena::new();
-        assert_eq!(reusable.allocation_limit_bytes(), 1024);
-        assert!(reusable.total_allocated_bytes() <= 1024);
-        reusable.scope(|a| {
-            let _ = a.alloc_string("y".repeat(4096));
-            assert!(a.total_allocated_bytes() > 1024);
-        });
-        assert!(reusable.total_allocated_bytes() <= 1024);
-
-        reusable.scope_with_max_capacity(64 * 1024, |a| {
-            let source = a.alloc_source_info(SourceInfo::new_stream("b"));
-            let tok = a.alloc_token(crate::token::CommonToken::new_slice(source, 1, 0, 0, 0, 0));
-            let node = TreeNode::<crate::rule_context::EmptyNodeKind>::create_token_node(a, tok);
-            assert!(!node.is_null());
-            let _ = a.alloc_string("y".repeat(8192));
-        });
-        assert!(reusable.total_allocated_bytes() <= 1024);
     }
 }
