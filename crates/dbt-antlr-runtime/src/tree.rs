@@ -137,17 +137,18 @@ where
         *self == Self::error()
     }
 }
-const INLINE_CHILDREN: usize = 3;
+
+const MAX_INLINE_CHILDREN: usize = 3;
 const INITIAL_SPILL_CAPACITY: usize = 8;
 
 #[repr(C)]
-union ChildrenStorage<'input, 'arena, NodeKind, Tok>
+union ChildrenStore<'input, 'arena, NodeKind, Tok>
 where
     'input: 'arena,
     NodeKind: NodeKindType<'arena, Tok>,
     Tok: Token + 'input,
 {
-    inline: [MaybeUninit<&'arena TreeNode<'input, 'arena, NodeKind, Tok>>; INLINE_CHILDREN],
+    inline: [MaybeUninit<&'arena TreeNode<'input, 'arena, NodeKind, Tok>>; MAX_INLINE_CHILDREN],
     spilled: NonNull<&'arena TreeNode<'input, 'arena, NodeKind, Tok>>,
 }
 
@@ -160,7 +161,7 @@ where
 {
     len: u32,
     cap: u32,
-    storage: ChildrenStorage<'input, 'arena, NodeKind, Tok>,
+    storage: ChildrenStore<'input, 'arena, NodeKind, Tok>,
 }
 
 impl<'input, 'arena, NodeKind, Tok> Debug for NodeChildren<'input, 'arena, NodeKind, Tok>
@@ -185,8 +186,8 @@ where
         Self {
             len: 0,
             cap: 0,
-            storage: ChildrenStorage {
-                inline: [MaybeUninit::uninit(); INLINE_CHILDREN],
+            storage: ChildrenStore {
+                inline: [MaybeUninit::uninit(); MAX_INLINE_CHILDREN],
             },
         }
     }
@@ -252,7 +253,7 @@ where
     ) {
         let len = self.len as usize;
         if self.cap == 0 {
-            if len < INLINE_CHILDREN {
+            if len < MAX_INLINE_CHILDREN {
                 // SAFETY: `cap == 0` selects the inline array, and `len` is less than `INLINE_CHILDREN`.
                 unsafe {
                     self.storage.inline.get_unchecked_mut(len).write(child);
@@ -262,7 +263,8 @@ where
             }
             self.spill_and_push(child, arena);
         } else if len < self.cap as usize {
-            // SAFETY: `cap > 0` selects the spilled buffer with capacity `cap`, and `len` is less than `cap`.
+            // SAFETY: `cap > 0` selects the spilled buffer with capacity `cap`,
+            // and `len` is less than `cap`.
             unsafe {
                 self.storage.spilled.as_ptr().add(len).write(child);
             }
@@ -280,11 +282,11 @@ where
         arena: &'arena Arena,
     ) {
         debug_assert_eq!(self.cap, 0);
-        debug_assert_eq!(self.len as usize, INLINE_CHILDREN);
-        let dst = arena.alloc_uninit_slice::<&'arena TreeNode<'input, 'arena, NodeKind, Tok>>(
-            INITIAL_SPILL_CAPACITY,
-        );
-        // SAFETY: `cap == 0` selects the inline array with `INLINE_CHILDREN` initialized elements, and `dst` holds `INITIAL_SPILL_CAPACITY` elements.
+        debug_assert_eq!(self.len as usize, MAX_INLINE_CHILDREN);
+        let dst = arena.alloc_node_children_store(INITIAL_SPILL_CAPACITY);
+        // SAFETY: `cap == 0` selects the inline array with `INLINE_CHILDREN`
+        // initialized elements, and `dst` holds `INITIAL_SPILL_CAPACITY`
+        // elements.
         unsafe {
             ptr::copy_nonoverlapping(
                 self.storage
@@ -292,13 +294,13 @@ where
                     .as_ptr()
                     .cast::<&'arena TreeNode<'input, 'arena, NodeKind, Tok>>(),
                 dst.as_ptr(),
-                INLINE_CHILDREN,
+                MAX_INLINE_CHILDREN,
             );
-            dst.as_ptr().add(INLINE_CHILDREN).write(child);
+            dst.as_ptr().add(MAX_INLINE_CHILDREN).write(child);
         }
         self.storage.spilled = dst;
         self.cap = INITIAL_SPILL_CAPACITY as u32;
-        self.len = (INLINE_CHILDREN + 1) as u32;
+        self.len = (MAX_INLINE_CHILDREN + 1) as u32;
     }
 
     #[cold]
@@ -315,10 +317,9 @@ where
             .cap
             .checked_mul(2)
             .expect("NodeChildren capacity overflow");
-        let dst = arena.alloc_uninit_slice::<&'arena TreeNode<'input, 'arena, NodeKind, Tok>>(
-            new_cap as usize,
-        );
-        // SAFETY: `self.storage.spilled` holds `old_cap` initialized elements, and `dst` holds `new_cap` elements.
+        let dst = arena.alloc_node_children_store(new_cap as usize);
+        // SAFETY: `self.storage.spilled` holds `old_cap` initialized elements,
+        // and `dst` holds `new_cap` elements.
         unsafe {
             ptr::copy_nonoverlapping(self.storage.spilled.as_ptr(), dst.as_ptr(), old_cap);
             dst.as_ptr().add(old_cap).write(child);
@@ -1283,13 +1284,13 @@ mod tests {
 
             let nodes: Vec<_> = (0..35).map(|i| make_terminal(arena, source, i)).collect();
 
-            for (idx, &node) in nodes.iter().take(INLINE_CHILDREN).enumerate() {
+            for (idx, &node) in nodes.iter().take(MAX_INLINE_CHILDREN).enumerate() {
                 children.push(node, arena);
                 assert_eq!(children.cap, 0);
                 assert_eq!(children.len(), idx + 1);
                 assert!(ptr::eq(children.get(idx).unwrap(), node));
             }
-            assert!(children.get(INLINE_CHILDREN).is_none());
+            assert!(children.get(MAX_INLINE_CHILDREN).is_none());
 
             children.truncate(10);
             assert_eq!(children.len(), 3);
