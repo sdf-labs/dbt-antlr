@@ -228,7 +228,12 @@ where
             let on_channel = tok.get_channel() == self.channel;
             let ttype = tok.get_token_type();
             if on_channel || ttype == EOF {
-                return ((self.base.tokens.len() - 1) as isize, tok, ttype, on_channel);
+                return (
+                    (self.base.tokens.len() - 1) as isize,
+                    tok,
+                    ttype,
+                    on_channel,
+                );
             }
         }
         let last = self.base.tokens.len() - 1;
@@ -324,5 +329,307 @@ where
             self.prev_tok = tok;
         }
         tok
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::token::{TOKEN_DEFAULT_CHANNEL, TOKEN_HIDDEN_CHANNEL};
+    use crate::token_factory::OwningTokenFactory;
+    use crate::Arena;
+
+    struct SliceTokenSource<'arena> {
+        specs: Vec<(i32, i32, &'static str)>,
+        pos: usize,
+        factory: OwningTokenFactory<'arena>,
+    }
+
+    impl<'arena> SliceTokenSource<'arena> {
+        fn new(arena: &'arena Arena, specs: Vec<(i32, i32, &'static str)>) -> Self {
+            Self {
+                specs,
+                pos: 0,
+                factory: OwningTokenFactory::new(arena),
+            }
+        }
+    }
+
+    impl<'input, 'arena> TokenSource<'input, 'arena, OwningTokenFactory<'arena>>
+        for SliceTokenSource<'arena>
+    where
+        'input: 'arena,
+    {
+        fn next_token(&mut self) -> &'arena mut crate::token::OwningToken {
+            let (ttype, channel, text) = if self.pos < self.specs.len() {
+                let spec = self.specs[self.pos];
+                self.pos += 1;
+                spec
+            } else {
+                (EOF, TOKEN_DEFAULT_CHANNEL, "<EOF>")
+            };
+            self.factory.create::<crate::InputStream<'input>>(
+                None,
+                ttype,
+                Some(text.to_owned()),
+                channel,
+                -1,
+                -1,
+            )
+        }
+
+        fn get_input_stream(&mut self) -> Option<&mut dyn IntStream> {
+            None
+        }
+
+        fn get_source_name(&self) -> String {
+            "test".to_owned()
+        }
+
+        fn get_token_factory(&self) -> &OwningTokenFactory<'arena> {
+            &self.factory
+        }
+
+        fn get_dfa_string(&self) -> String {
+            String::new()
+        }
+    }
+
+    #[test]
+    fn leading_hidden_tokens_and_lookahead() {
+        Arena::with(|arena| {
+            let src = SliceTokenSource::new(
+                arena,
+                vec![
+                    (10, TOKEN_HIDDEN_CHANNEL, " "),
+                    (11, TOKEN_HIDDEN_CHANNEL, "/*c*/"),
+                    (1, TOKEN_DEFAULT_CHANNEL, "SELECT"),
+                    (10, TOKEN_HIDDEN_CHANNEL, " "),
+                    (2, TOKEN_DEFAULT_CHANNEL, "a"),
+                    (10, TOKEN_HIDDEN_CHANNEL, " "),
+                    (3, TOKEN_DEFAULT_CHANNEL, ";"),
+                ],
+            );
+            let mut stream = CommonTokenStream::new(src);
+
+            assert_eq!(stream.index(), 2);
+            assert_eq!(stream.la(1), 1);
+            assert_eq!(stream.current_token().get_text(), "SELECT");
+            assert_eq!(stream.lt(1).unwrap().get_text(), "SELECT");
+            assert!(stream.lt(0).is_none());
+            assert!(stream.lt(-1).is_none());
+            assert!(stream.lt(-1).is_none());
+            assert!(stream.lt(-2).is_none());
+            assert_eq!(stream.la(2), 2);
+            assert_eq!(stream.la(3), 3);
+            assert_eq!(stream.la(4), EOF);
+            assert_eq!(stream.la(5), EOF);
+
+            stream.consume();
+            assert_eq!(stream.index(), 4);
+            assert_eq!(stream.la(1), 2);
+            assert_eq!(stream.lt(-1).unwrap().get_text(), "SELECT");
+            assert_eq!(stream.lt(-1).unwrap().get_text(), "SELECT");
+            assert!(stream.lt(-2).is_none());
+
+            stream.consume();
+            assert_eq!(stream.index(), 6);
+            assert_eq!(stream.la(1), 3);
+            assert_eq!(stream.lt(-1).unwrap().get_text(), "a");
+            assert_eq!(stream.lt(-2).unwrap().get_text(), "SELECT");
+            assert!(stream.lt(-3).is_none());
+
+            stream.consume();
+            assert_eq!(stream.index(), 7);
+            assert_eq!(stream.la(1), EOF);
+            assert_eq!(stream.lt(-1).unwrap().get_text(), ";");
+            assert_eq!(stream.lt(-2).unwrap().get_text(), "a");
+
+            stream.consume();
+            assert_eq!(stream.index(), 7);
+            assert_eq!(stream.la(1), EOF);
+            assert_eq!(stream.lt(-1).unwrap().get_text(), ";");
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot consume EOF")]
+    fn double_consume_eof_panics() {
+        Arena::with(|arena| {
+            let src = SliceTokenSource::new(arena, vec![]);
+            let mut stream = CommonTokenStream::new(src);
+            assert_eq!(stream.la(1), EOF);
+            stream.consume();
+            stream.consume();
+        });
+    }
+
+    #[test]
+    fn seek_and_off_channel_consume_keep_prev_exact() {
+        Arena::with(|arena| {
+            let src = SliceTokenSource::new(
+                arena,
+                vec![
+                    (1, TOKEN_DEFAULT_CHANNEL, "SELECT"),
+                    (10, TOKEN_HIDDEN_CHANNEL, " "),
+                    (2, TOKEN_DEFAULT_CHANNEL, "a"),
+                    (10, TOKEN_HIDDEN_CHANNEL, " "),
+                    (3, TOKEN_DEFAULT_CHANNEL, "b"),
+                ],
+            );
+            let mut stream = CommonTokenStream::new(src);
+            stream.consume();
+            stream.consume();
+            assert_eq!(stream.index(), 4);
+            assert_eq!(stream.lt(-1).unwrap().get_text(), "a");
+
+            stream.seek(2);
+            assert_eq!(stream.la(1), 2);
+            assert_eq!(stream.current_token().get_text(), "a");
+            assert_eq!(stream.lt(-1).unwrap().get_text(), "SELECT");
+            assert_eq!(stream.lt(-1).unwrap().get_text(), "SELECT");
+
+            stream.seek(2);
+            assert_eq!(stream.lt(-1).unwrap().get_text(), "SELECT");
+
+            stream.seek(1);
+            assert_eq!(stream.la(1), 10);
+            assert_eq!(stream.lt(-1).unwrap().get_text(), "SELECT");
+            stream.consume();
+            assert_eq!(stream.index(), 2);
+            assert_eq!(stream.lt(-1).unwrap().get_text(), "SELECT");
+
+            stream.seek(4);
+            stream.seek(1);
+            stream.consume();
+            assert_eq!(stream.index(), 2);
+            assert_eq!(stream.lt(-1).unwrap().get_text(), "SELECT");
+
+            stream.seek(5);
+            assert_eq!(stream.la(1), EOF);
+            assert_eq!(stream.lt(-1).unwrap().get_text(), "b");
+        });
+    }
+
+    #[test]
+    fn empty_and_all_hidden_and_custom_channel() {
+        Arena::with(|arena| {
+            let empty = CommonTokenStream::new(SliceTokenSource::new(arena, vec![]));
+            assert_eq!(empty.index(), 0);
+            assert_eq!(empty.current_token().get_token_type(), EOF);
+
+            let mut all_hidden = CommonTokenStream::new(SliceTokenSource::new(
+                arena,
+                vec![
+                    (10, TOKEN_HIDDEN_CHANNEL, " "),
+                    (11, TOKEN_HIDDEN_CHANNEL, "\n"),
+                ],
+            ));
+            assert_eq!(all_hidden.index(), 2);
+            assert_eq!(all_hidden.la(1), EOF);
+            assert!(all_hidden.lt(-1).is_none());
+            assert!(all_hidden.lt(-2).is_none());
+
+            let mut hidden = CommonTokenStream::with_channel(
+                SliceTokenSource::new(
+                    arena,
+                    vec![
+                        (1, TOKEN_DEFAULT_CHANNEL, "a"),
+                        (10, TOKEN_HIDDEN_CHANNEL, " "),
+                        (2, TOKEN_DEFAULT_CHANNEL, "b"),
+                        (11, TOKEN_HIDDEN_CHANNEL, "/*c*/"),
+                        (3, TOKEN_DEFAULT_CHANNEL, "c"),
+                    ],
+                ),
+                TOKEN_HIDDEN_CHANNEL,
+            );
+            assert_eq!(hidden.index(), 1);
+            assert_eq!(hidden.la(1), 10);
+            assert!(hidden.lt(-1).is_none());
+            assert_eq!(hidden.la(2), 11);
+            assert_eq!(hidden.la(3), EOF);
+            hidden.consume();
+            assert_eq!(hidden.la(1), 11);
+            assert_eq!(hidden.lt(-1).unwrap().get_token_type(), 10);
+            hidden.consume();
+            assert_eq!(hidden.la(1), EOF);
+            assert_eq!(hidden.lt(-1).unwrap().get_token_type(), 11);
+            assert_eq!(hidden.lt(-2).unwrap().get_token_type(), 10);
+
+            let mut no_hidden = CommonTokenStream::with_channel(
+                SliceTokenSource::new(arena, vec![(1, TOKEN_DEFAULT_CHANNEL, "a")]),
+                TOKEN_HIDDEN_CHANNEL,
+            );
+            assert_eq!(no_hidden.la(1), EOF);
+            assert!(no_hidden.lt(-1).is_none());
+        });
+    }
+
+    #[test]
+    fn reset_after_eof_does_not_duplicate_eof() {
+        Arena::with(|arena| {
+            let src = SliceTokenSource::new(
+                arena,
+                vec![
+                    (1, TOKEN_DEFAULT_CHANNEL, "a"),
+                    (10, TOKEN_HIDDEN_CHANNEL, " "),
+                    (2, TOKEN_DEFAULT_CHANNEL, "b"),
+                ],
+            );
+            let mut stream = CommonTokenStream::new(src);
+            stream.consume();
+            stream.consume();
+            assert_eq!(stream.la(1), EOF);
+            let total_size = stream.size();
+            stream.consume();
+
+            stream.reset();
+            assert_eq!(stream.index(), 0);
+            assert_eq!(stream.la(1), 1);
+            assert!(stream.lt(-1).is_none());
+            stream.consume();
+            assert_eq!(stream.la(1), 2);
+            stream.consume();
+            assert_eq!(stream.la(1), EOF);
+            assert_eq!(stream.size(), total_size);
+            stream.consume();
+            assert_eq!(stream.size(), total_size);
+        });
+    }
+
+    #[test]
+    fn next_lookahead_preserves_position_and_prev_cache() {
+        Arena::with(|arena| {
+            let src = SliceTokenSource::new(
+                arena,
+                vec![
+                    (1, TOKEN_DEFAULT_CHANNEL, "a"),
+                    (10, TOKEN_HIDDEN_CHANNEL, " "),
+                    (2, TOKEN_DEFAULT_CHANNEL, "b"),
+                    (10, TOKEN_HIDDEN_CHANNEL, " "),
+                    (3, TOKEN_DEFAULT_CHANNEL, "c"),
+                ],
+            );
+            let mut stream = CommonTokenStream::new(src);
+            stream.consume();
+            assert_eq!(stream.index(), 2);
+            assert_eq!(stream.lt(-1).unwrap().get_text(), "a");
+
+            let (c1, t1) = stream.next_lookahead(stream.index());
+            assert_eq!((c1, t1), (4, 3));
+            let (c2, t2) = stream.next_lookahead(c1);
+            assert_eq!((c2, t2), (5, EOF));
+            let (c3, t3) = stream.next_lookahead(c2);
+            assert_eq!((c3, t3), (5, EOF));
+
+            assert_eq!(stream.index(), 2);
+            assert_eq!(stream.la(1), 2);
+            assert_eq!(stream.current_token().get_text(), "b");
+            assert_eq!(stream.lt(-1).unwrap().get_text(), "a");
+
+            let (b1, bt1) = stream.next_lookahead(stream.index());
+            assert_eq!((b1, bt1), (4, 3));
+            assert_eq!(stream.index(), 2);
+        });
     }
 }

@@ -411,3 +411,101 @@ where
         self.token_source.get_source_name()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::token::{OwningToken, TOKEN_DEFAULT_CHANNEL};
+    use crate::token_factory::OwningTokenFactory;
+    use crate::Arena;
+
+    struct VecTokenSource<'arena> {
+        types: Vec<i32>,
+        pos: usize,
+        factory: OwningTokenFactory<'arena>,
+    }
+
+    impl<'arena> VecTokenSource<'arena> {
+        fn new(arena: &'arena Arena, types: Vec<i32>) -> Self {
+            Self {
+                types,
+                pos: 0,
+                factory: OwningTokenFactory::new(arena),
+            }
+        }
+    }
+
+    impl<'input, 'arena> TokenSource<'input, 'arena, OwningTokenFactory<'arena>>
+        for VecTokenSource<'arena>
+    where
+        'input: 'arena,
+    {
+        fn next_token(&mut self) -> &'arena mut OwningToken {
+            let ttype = if self.pos < self.types.len() {
+                let t = self.types[self.pos];
+                self.pos += 1;
+                t
+            } else {
+                TOKEN_EOF
+            };
+            self.factory.create::<crate::InputStream<'input>>(
+                None,
+                ttype,
+                Some(ttype.to_string()),
+                TOKEN_DEFAULT_CHANNEL,
+                -1,
+                -1,
+            )
+        }
+
+        fn get_input_stream(&mut self) -> Option<&mut dyn IntStream> {
+            None
+        }
+
+        fn get_source_name(&self) -> String {
+            "test".to_owned()
+        }
+
+        fn get_token_factory(&self) -> &OwningTokenFactory<'arena> {
+            &self.factory
+        }
+
+        fn get_dfa_string(&self) -> String {
+            String::new()
+        }
+    }
+
+    #[test]
+    fn unbuffered_lt_minus_one_at_start_does_not_underflow() {
+        Arena::with(|arena| {
+            let mut stream =
+                UnbufferedTokenStream::new_unbuffered(VecTokenSource::new(arena, vec![1, 2]));
+            assert!(stream.lt(-1).is_none());
+            assert_eq!(stream.la(1), 1);
+            assert!(stream.lt(-1).is_none());
+        });
+    }
+
+    #[test]
+    fn unbuffered_next_lookahead_with_mark_preserves_position() {
+        Arena::with(|arena| {
+            let mut stream =
+                UnbufferedTokenStream::new_unbuffered(VecTokenSource::new(arena, vec![1, 2, 3]));
+            assert_eq!(stream.la(1), 1);
+            stream.consume();
+            assert_eq!(stream.index(), 1);
+            assert_eq!(stream.la(1), 2);
+
+            let mark = stream.mark();
+            let (c1, t1) = stream.next_lookahead(stream.index());
+            assert_eq!((c1, t1), (2, 3));
+            let (c2, t2) = stream.next_lookahead(c1);
+            assert_eq!((c2, t2), (3, TOKEN_EOF));
+            let (c3, t3) = stream.next_lookahead(c2);
+            assert_eq!((c3, t3), (3, TOKEN_EOF));
+            assert_eq!(stream.index(), 1);
+            assert_eq!(stream.la(1), 2);
+            stream.release(mark);
+        });
+    }
+}
