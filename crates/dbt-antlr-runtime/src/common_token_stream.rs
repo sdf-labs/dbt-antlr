@@ -267,15 +267,15 @@ where
 
     /// Restarts this token stream
     pub fn reset(&mut self) {
-        self.base.p = 0;
-        self.base.current_token_index = 0;
         self.base.fetched_eof = false;
-        let tok = self.base.tokens[0];
+        let (p, tok, ttype, on_channel) = self.advance_on_channel(0);
+        self.base.p = p;
+        self.base.current_token_index = p;
         self.cur_tok = tok;
-        self.cur_type = tok.get_token_type();
-        self.cur_on_channel = tok.get_channel() == self.channel;
+        self.cur_type = ttype;
+        self.cur_on_channel = on_channel;
         self.prev_tok = None;
-        self.prev_p = 0;
+        self.prev_p = p;
     }
 
     /// Creates iterator over this token stream
@@ -571,12 +571,14 @@ mod tests {
             let src = SliceTokenSource::new(
                 arena,
                 vec![
+                    (10, TOKEN_HIDDEN_CHANNEL, " "),
                     (1, TOKEN_DEFAULT_CHANNEL, "a"),
                     (10, TOKEN_HIDDEN_CHANNEL, " "),
                     (2, TOKEN_DEFAULT_CHANNEL, "b"),
                 ],
             );
             let mut stream = CommonTokenStream::new(src);
+            assert_eq!(stream.index(), 1);
             stream.consume();
             stream.consume();
             assert_eq!(stream.la(1), EOF);
@@ -584,7 +586,7 @@ mod tests {
             stream.consume();
 
             stream.reset();
-            assert_eq!(stream.index(), 0);
+            assert_eq!(stream.index(), 1);
             assert_eq!(stream.la(1), 1);
             assert!(stream.lt(-1).is_none());
             stream.consume();

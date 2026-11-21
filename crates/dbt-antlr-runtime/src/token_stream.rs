@@ -57,8 +57,6 @@ where
     /// Token source that produced data for tokens for this stream
     fn get_token_source(&self) -> &dyn TokenSource<'input, 'arena, TF>;
 
-    //    fn set_token_source(&self,source: Box<TokenSource>);
-
     /// Get combined text of all tokens in this stream
     fn get_all_text(&self) -> String {
         self.get_text_from_interval(0, self.size() - 1)
@@ -66,8 +64,6 @@ where
 
     /// Get combined text of tokens in start..=stop interval
     fn get_text_from_interval(&self, start: isize, stop: isize) -> String;
-
-    //    fn get_text_from_rule_context(&self,context: RuleContext) -> String;
 
     /// Get combined text of tokens in between `a` and `b`
     fn get_text_from_tokens<T: Token + ?Sized>(&self, a: &T, b: &T) -> String
@@ -139,6 +135,8 @@ where
             .field("current_token_index", &self.current_token_index)
             .field("markers_count", &self.markers_count)
             .field("p(buffer index)", &self.p)
+            .field("fetched_eof", &self.fetched_eof)
+            .field("saw_eof", &self.saw_eof)
             .finish()
     }
 }
