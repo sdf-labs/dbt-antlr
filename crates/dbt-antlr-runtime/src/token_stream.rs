@@ -29,6 +29,31 @@ where
     /// token at the specified index
     fn get(&self, index: isize) -> &'arena TF::Tok;
 
+    /// Returns the token at the current stream position.
+    #[inline]
+    fn current_token(&self) -> &'arena TF::Tok {
+        self.get(self.index())
+    }
+
+    /// Advances a lookahead cursor by one token and returns `(next_cursor, token_type)`.
+    ///
+    /// The stream position does not change.
+    /// `cursor` must be `self.index()` or a value from a previous call while a `mark()` is active.
+    #[inline]
+    fn next_lookahead(&mut self, cursor: isize) -> (isize, i32) {
+        let saved = self.index();
+        if saved != cursor {
+            self.seek(cursor);
+        }
+        if self.la(1) != TOKEN_EOF {
+            self.consume();
+        }
+        let next_cursor = self.index();
+        let next_type = self.la(1);
+        self.seek(saved);
+        (next_cursor, next_type)
+    }
+
     /// Token source that produced data for tokens for this stream
     fn get_token_source(&self) -> &dyn TokenSource<'input, 'arena, TF>;
 
@@ -96,11 +121,11 @@ where
 {
     token_source: TS,
     pub(crate) tokens: Vec<&'arena TF::Tok>,
-    //todo prev token for lt(-1)
     pub(crate) current_token_index: isize,
     markers_count: isize,
     pub(crate) p: isize,
-    fetched_eof: bool,
+    pub(crate) fetched_eof: bool,
+    saw_eof: bool,
 }
 
 impl<'input, 'arena, TS, TF> Debug for UnbufferedTokenStream<'input, 'arena, TS, TF>
@@ -133,9 +158,24 @@ where
         TokenIter(self, false, PhantomData, PhantomData)
     }
 
+    const DEFAULT_BUFFERED_CAPACITY: usize = 64;
+
     /// Creates token stream that keeps all tokens inside
     pub fn new_buffered(source: TS) -> Self {
-        let mut a = UnbufferedTokenStream::new_unbuffered(source);
+        Self::new_buffered_with_capacity(source, Self::DEFAULT_BUFFERED_CAPACITY)
+    }
+
+    /// Creates a buffered token stream with an initial token buffer capacity.
+    pub fn new_buffered_with_capacity(source: TS, capacity: usize) -> Self {
+        let mut a = UnbufferedTokenStream {
+            token_source: source,
+            tokens: Vec::with_capacity(capacity),
+            current_token_index: 0,
+            markers_count: 0,
+            p: 0,
+            fetched_eof: false,
+            saw_eof: false,
+        };
         a.mark();
         a
     }
@@ -144,11 +184,12 @@ where
     pub fn new_unbuffered(source: TS) -> Self {
         UnbufferedTokenStream {
             token_source: source,
-            tokens: vec![],
+            tokens: Vec::new(),
             current_token_index: 0,
             markers_count: 0,
             p: 0,
             fetched_eof: false,
+            saw_eof: false,
         }
     }
 
@@ -169,16 +210,34 @@ where
 
     pub(crate) fn fill(&mut self, need: isize) -> isize {
         for i in 0..need {
-            if !self.tokens.is_empty() && self.tokens.last().unwrap().get_token_type() == TOKEN_EOF
-            {
+            if self.saw_eof {
                 return i;
             }
             let token = self.token_source.next_token();
             token.set_token_index(self.get_buffer_start_index() + self.tokens.len() as isize);
+            if token.get_token_type() == TOKEN_EOF {
+                self.saw_eof = true;
+            }
             self.tokens.push(token);
         }
 
         need
+    }
+
+    #[inline]
+    pub(crate) fn fetch_buffered_one(&mut self) -> Option<&'arena TF::Tok> {
+        if self.saw_eof {
+            return None;
+        }
+        let token = self.token_source.next_token();
+        let idx = self.tokens.len() as isize;
+        token.set_token_index(idx);
+        let tok: &'arena TF::Tok = &*token;
+        if tok.get_token_type() == TOKEN_EOF {
+            self.saw_eof = true;
+        }
+        self.tokens.push(tok);
+        Some(tok)
     }
 }
 
@@ -191,17 +250,51 @@ where
     #[inline]
     fn lt(&mut self, i: isize) -> Option<&'arena TF::Tok> {
         if i == -1 {
-            return self.tokens.get(self.p as usize - 1).copied();
+            let idx = self.p - 1;
+            if idx < 0 {
+                return None;
+            }
+            return self.tokens.get(idx as usize).copied();
         }
 
         self.sync(i);
 
-        self.tokens.get((self.p + i - 1) as usize).copied()
+        let idx = self.p + i - 1;
+        if idx < 0 {
+            return None;
+        }
+        self.tokens.get(idx as usize).copied()
     }
 
     #[inline]
     fn get(&self, index: isize) -> &'arena TF::Tok {
         self.tokens[(index - self.get_buffer_start_index()) as usize]
+    }
+
+    #[inline]
+    fn next_lookahead(&mut self, cursor: isize) -> (isize, i32) {
+        let buf_start = self.get_buffer_start_index();
+        let cur_buf = (cursor - buf_start) as usize;
+        if cur_buf < self.tokens.len() && self.tokens[cur_buf].get_token_type() == TOKEN_EOF {
+            return (cursor, TOKEN_EOF);
+        }
+        let next_cursor = cursor + 1;
+        let next_buf = cur_buf + 1;
+        if next_buf >= self.tokens.len() {
+            let need = (next_buf - self.tokens.len() + 1) as isize;
+            self.fill(need);
+        }
+        match self.tokens.get(next_buf) {
+            Some(tok) => (next_cursor, tok.get_token_type()),
+            None => {
+                let last = self.tokens.len().saturating_sub(1);
+                let last_type = self
+                    .tokens
+                    .get(last)
+                    .map_or(TOKEN_EOF, |t| t.get_token_type());
+                (buf_start + last as isize, last_type)
+            }
+        }
     }
 
     fn get_token_source(&self) -> &dyn TokenSource<'input, 'arena, TF> {
