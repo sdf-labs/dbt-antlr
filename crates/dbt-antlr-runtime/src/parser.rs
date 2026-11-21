@@ -1111,7 +1111,8 @@ where
     fn add_child_to_ctx(&mut self, child: &'arena TreeNode<'input, 'arena, Node, TF::Tok>) {
         if !self.ctx.is_null() {
             unsafe {
-                (*(self.ctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>)).add_child(child);
+                (*(self.ctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>))
+                    .add_child(child, self.arena);
             }
         }
     }
