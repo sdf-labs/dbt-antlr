@@ -350,41 +350,14 @@ where
         self.ctx()
     }
 
+    #[inline]
     fn consume(
         &mut self,
         err_handler: &mut impl ErrorStrategy<'input, 'arena, TF, Self>,
     ) -> Result<(), ANTLRError> {
         let o = self.get_current_token();
-        if o.borrow().get_token_type() != TOKEN_EOF {
-            self.input.consume();
-        }
-        if self.build_parse_trees || !self.parse_listeners.is_empty() {
-            if err_handler.in_error_recovery_mode(self) {
-                // todo report ructc inference issue
-                let node = self.create_error_node(o)?;
-                self.add_child_to_ctx(node);
-                if self.muted == 0 {
-                    for listener in &mut self.parse_listeners {
-                        listener.visit_error_node(
-                            node.as_error_node()
-                                .expect("node was created as error node"),
-                        )?
-                    }
-                }
-            } else {
-                let node = self.create_token_node(o)?;
-                self.add_child_to_ctx(node);
-                if self.muted == 0 {
-                    for listener in &mut self.parse_listeners {
-                        listener.visit_terminal(
-                            node.as_terminal_node()
-                                .expect("node was created as terminal node"),
-                        )?
-                    }
-                }
-            }
-        }
-        Ok(())
+        let is_eof = self.input.la(1) == TOKEN_EOF;
+        self.consume_current(o, is_eof, err_handler)
     }
 
     fn precpred(
@@ -405,9 +378,9 @@ where
         &self.input
     }
 
-    #[inline]
+    #[inline(always)]
     fn get_current_token(&self) -> &'arena TF::Tok {
-        self.input.get(self.input.index())
+        self.input.current_token()
     }
 
     fn get_expected_tokens<'a>(&'a self) -> Cow<'a, IntervalSet> {
@@ -588,11 +561,9 @@ where
     /// [`Self::dfa_predict_virtual`]). A lookahead that has no table edge and no
     /// fallback alternative fails like the adaptive simulation does.
     ///
-    /// The walk consumes tokens while it reads them and rewinds afterwards, so
-    /// every step costs one `la(1)`, plus one `consume` unless the step stops
-    /// the walk. It must not read
-    /// `la(k)`: a channel-filtering token stream resolves `la(k)` by scanning
-    /// from the current token, which would make a k-token lookahead O(k^2).
+    /// The walk advances a lookahead cursor through [`TokenStream::next_lookahead`]
+    /// without a stream position change or rewind.
+    /// This keeps a k-token lookahead O(k) on a channel-filtering token stream.
     ///
     /// [`INVALID_ALT`]: crate::atn::INVALID_ALT
     pub fn dfa_predict(&mut self, decision: i32) -> Result<i32, ANTLRError> {
@@ -652,32 +623,34 @@ where
 
         let start_index = self.input.index();
         let mark = self.input.mark();
+        let mut cursor = start_index;
         let mut state = 0_usize;
         let result = loop {
             if entry == NO_EDGE {
-                break self.dfa_no_edge(table, decision, state, start_index);
+                break self.dfa_no_edge(table, decision, state, start_index, cursor);
             }
             let target = usize::from(entry & STATE_MASK);
             if entry & TERMINAL_BIT != 0 {
                 // SAFETY: the loader checked that edge targets are states.
                 let outcome = unsafe { table.outcome_unchecked(target) };
                 if outcome > 0 {
-                    self.input.seek(start_index);
                     break Ok(outcome);
                 }
                 let outcome = Outcome::decode(outcome);
-                if matches!(outcome, Some(Outcome::Escape(Some(_)))) && token != TOKEN_EOF {
-                    // A frontier continuation resumes after the token that
-                    // led into the escape state.
-                    self.input.consume();
+                if matches!(outcome, Some(Outcome::Escape(Some(_)))) {
+                    self.input.seek(cursor);
+                    if token != TOKEN_EOF {
+                        // A frontier continuation resumes after the token that
+                        // led into the escape state.
+                        self.input.consume();
+                    }
                 }
                 break self.dfa_terminal(table, decision, outcome, start_index);
             }
             if token != TOKEN_EOF {
-                self.input.consume();
+                (cursor, token) = self.input.next_lookahead(cursor);
             }
             state = target;
-            token = self.input.la(1);
             // SAFETY: `state` is an edge target.
             entry = unsafe { table.edge_entry_unchecked(state, token) };
         };
@@ -695,23 +668,23 @@ where
         decision: i32,
         state: usize,
         start_index: isize,
+        cursor: isize,
     ) -> Result<i32, ANTLRError> {
         use crate::dfa::static_parser_dfa::Outcome;
 
         // SAFETY: `state` is 0 or an edge target.
         let outcome = unsafe { table.outcome_unchecked(state) };
         if outcome > 0 {
-            self.input.seek(start_index);
             return Ok(outcome);
         }
         if outcome != 0 {
             return self.dfa_terminal(table, decision, Outcome::decode(outcome), start_index);
         }
         if let Some(fallback) = table.fallback(state as i32) {
-            self.input.seek(start_index);
             return Ok(fallback);
         }
         let start = OwningToken::from(self.input.get(start_index) as &dyn Token);
+        self.input.seek(cursor);
         let error = match self.input.lt(1) {
             Some(offending) => {
                 ANTLRError::no_alt_full(self, start, OwningToken::from(offending as &dyn Token))
@@ -724,7 +697,7 @@ where
 
     /// Resolves a table walk that stopped at an escape, conflict escape, or
     /// guarded state. A frontier continuation resumes from the current
-    /// position; every other outcome rewinds to `start_index`.
+    /// position. Every other outcome expects the stream at `start_index`.
     #[cold]
     fn dfa_terminal(
         &mut self,
@@ -745,17 +718,17 @@ where
                 self,
             ),
             Some(Outcome::Conflict(min_alt)) => {
-                self.input.seek(start_index);
+                debug_assert_eq!(self.input.index(), start_index);
                 self.get_interpreter()
                     .adaptive_predict_conflict(decision, min_alt, self)
             }
             Some(Outcome::Guarded(guard)) => {
+                debug_assert_eq!(self.input.index(), start_index);
                 let defers = self.guard_defers(table, guard.group);
-                self.input.seek(start_index);
                 Ok(if defers { guard.defer_alt } else { guard.alt })
             }
             _ => {
-                self.input.seek(start_index);
+                debug_assert_eq!(self.input.index(), start_index);
                 Ok(crate::atn::INVALID_ALT)
             }
         }
@@ -1153,25 +1126,66 @@ where
     }
 
     #[inline]
+    fn consume_current(
+        &mut self,
+        o: &'arena TF::Tok,
+        is_eof: bool,
+        err_handler: &mut impl ErrorStrategy<'input, 'arena, TF, Self>,
+    ) -> Result<(), ANTLRError> {
+        if !is_eof {
+            self.input.consume();
+        }
+        if self.build_parse_trees || !self.parse_listeners.is_empty() {
+            if err_handler.in_error_recovery_mode(self) {
+                let node = self.create_error_node(o)?;
+                self.add_child_to_ctx(node);
+                if self.muted == 0 {
+                    for listener in &mut self.parse_listeners {
+                        listener.visit_error_node(
+                            node.as_error_node()
+                                .expect("node was created as error node"),
+                        )?
+                    }
+                }
+            } else {
+                let node = self.create_token_node(o)?;
+                self.add_child_to_ctx(node);
+                if self.muted == 0 {
+                    for listener in &mut self.parse_listeners {
+                        listener.visit_terminal(
+                            node.as_terminal_node()
+                                .expect("node was created as terminal node"),
+                        )?
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[inline]
     pub fn match_token(
         &mut self,
         ttype: i32,
         err_handler: &mut impl ErrorStrategy<'input, 'arena, TF, Self>,
     ) -> Result<&'arena TF::Tok, ANTLRError> {
-        let mut token = self.get_current_token();
-        if token.get_token_type() == ttype {
-            if ttype == TOKEN_EOF {
+        let token = if self.input.la(1) == ttype {
+            let token = self.get_current_token();
+            let is_eof = ttype == TOKEN_EOF;
+            if is_eof {
                 self.matched_eof = true;
             }
 
             err_handler.report_match(self);
-            self.consume(err_handler)?;
+            self.consume_current(token, is_eof, err_handler)?;
+            token
         } else {
-            token = err_handler.recover_inline(self)?;
+            let token = err_handler.recover_inline(self)?;
             if self.build_parse_trees && token.get_token_index() == -1 {
                 self.add_child_to_ctx(self.create_error_node(token)?);
             }
-        }
+            token
+        };
         Ok(token)
     }
 
@@ -1180,16 +1194,18 @@ where
         &mut self,
         err_handler: &mut impl ErrorStrategy<'input, 'arena, TF, Self>,
     ) -> Result<&'arena TF::Tok, ANTLRError> {
-        let mut token = self.get_current_token();
-        if token.get_token_type() > 0 {
+        let token = if self.input.la(1) > 0 {
+            let token = self.get_current_token();
             err_handler.report_match(self);
-            self.consume(err_handler)?;
+            self.consume_current(token, false, err_handler)?;
+            token
         } else {
-            token = err_handler.recover_inline(self)?;
+            let token = err_handler.recover_inline(self)?;
             if self.build_parse_trees && token.get_token_index() == -1 {
                 self.add_child_to_ctx(self.create_error_node(token)?);
             }
-        }
+            token
+        };
         Ok(token)
     }
 

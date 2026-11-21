@@ -757,30 +757,37 @@ macro_rules! impl_token_source {
             TF: $crate::token_factory::TokenFactory<'input, 'arena> + 'arena,
             Input: $crate::char_stream::CharStream<'input>,
         {
+            #[inline]
             fn next_token(&mut self) -> &'arena mut TF::Tok {
                 self.base.next_token()
             }
 
+            #[inline]
             fn get_line(&self) -> u32 {
                 self.base.get_line()
             }
 
+            #[inline]
             fn get_char_position_in_line(&self) -> i32 {
                 self.base.get_char_position_in_line()
             }
 
+            #[inline]
             fn get_input_stream(&mut self) -> Option<&mut dyn $crate::int_stream::IntStream> {
                 self.base.get_input_stream()
             }
 
+            #[inline]
             fn get_source_name(&self) -> String {
                 self.base.get_source_name()
             }
 
+            #[inline]
             fn get_token_factory(&self) -> &TF {
                 self.base.get_token_factory()
             }
 
+            #[inline]
             fn get_dfa_string(&self) -> String {
                 self.base.get_dfa_string()
             }
