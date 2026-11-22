@@ -3,6 +3,9 @@ use std::any::Any;
 
 use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
+use std::mem::MaybeUninit;
+use std::ptr::{self, NonNull};
+use std::slice;
 
 use crate::char_stream::InputData;
 use crate::errors::ANTLRError;
@@ -134,6 +137,199 @@ where
         *self == Self::error()
     }
 }
+
+const MAX_INLINE_CHILDREN: usize = 3;
+const INITIAL_SPILL_CAPACITY: usize = 8;
+
+#[repr(C)]
+union ChildrenStore<'input, 'arena, NodeKind, Tok>
+where
+    'input: 'arena,
+    NodeKind: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+{
+    inline: [MaybeUninit<&'arena TreeNode<'input, 'arena, NodeKind, Tok>>; MAX_INLINE_CHILDREN],
+    spilled: NonNull<&'arena TreeNode<'input, 'arena, NodeKind, Tok>>,
+}
+
+#[repr(C)]
+pub(crate) struct NodeChildren<'input, 'arena, NodeKind, Tok = CommonToken<'input>>
+where
+    'input: 'arena,
+    NodeKind: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+{
+    len: u32,
+    cap: u32,
+    storage: ChildrenStore<'input, 'arena, NodeKind, Tok>,
+}
+
+impl<'input, 'arena, NodeKind, Tok> Debug for NodeChildren<'input, 'arena, NodeKind, Tok>
+where
+    'input: 'arena,
+    NodeKind: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.as_slice()).finish()
+    }
+}
+
+impl<'input, 'arena, NodeKind, Tok> NodeChildren<'input, 'arena, NodeKind, Tok>
+where
+    'input: 'arena,
+    NodeKind: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+{
+    #[inline(always)]
+    pub(crate) const fn new() -> Self {
+        Self {
+            len: 0,
+            cap: 0,
+            storage: ChildrenStore {
+                inline: [MaybeUninit::uninit(); MAX_INLINE_CHILDREN],
+            },
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    #[inline(always)]
+    #[allow(dead_code)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    #[inline(always)]
+    pub(crate) fn as_slice(&self) -> &[&'arena TreeNode<'input, 'arena, NodeKind, Tok>] {
+        let ptr = if self.cap == 0 {
+            // SAFETY: `cap == 0` selects the inline array, and `MaybeUninit<T>` has the same layout as `T`.
+            unsafe {
+                self.storage
+                    .inline
+                    .as_ptr()
+                    .cast::<&'arena TreeNode<'input, 'arena, NodeKind, Tok>>()
+            }
+        } else {
+            // SAFETY: `cap > 0` selects the spilled arena buffer.
+            unsafe { self.storage.spilled.as_ptr().cast_const() }
+        };
+        // SAFETY: The first `self.len` elements in the active buffer are valid initialized references.
+        unsafe { slice::from_raw_parts(ptr, self.len as usize) }
+    }
+
+    #[inline]
+    pub(crate) fn get(&self, i: usize) -> Option<&'arena TreeNode<'input, 'arena, NodeKind, Tok>> {
+        self.as_slice().get(i).copied()
+    }
+
+    #[inline]
+    pub(crate) fn iter(&self) -> slice::Iter<'_, &'arena TreeNode<'input, 'arena, NodeKind, Tok>> {
+        self.as_slice().iter()
+    }
+
+    #[inline]
+    pub(crate) fn pop(&mut self) {
+        if self.len > 0 {
+            self.len -= 1;
+        }
+    }
+
+    #[inline]
+    pub(crate) fn truncate(&mut self, len: usize) {
+        if len < self.len as usize {
+            self.len = len as u32;
+        }
+    }
+
+    #[inline]
+    pub(crate) fn push(
+        &mut self,
+        child: &'arena TreeNode<'input, 'arena, NodeKind, Tok>,
+        arena: &'arena Arena,
+    ) {
+        let len = self.len as usize;
+        if self.cap == 0 {
+            if len < MAX_INLINE_CHILDREN {
+                // SAFETY: `cap == 0` selects the inline array, and `len` is less than `INLINE_CHILDREN`.
+                unsafe {
+                    self.storage.inline.get_unchecked_mut(len).write(child);
+                }
+                self.len = (len + 1) as u32;
+                return;
+            }
+            self.spill_and_push(child, arena);
+        } else if len < self.cap as usize {
+            // SAFETY: `cap > 0` selects the spilled buffer with capacity `cap`,
+            // and `len` is less than `cap`.
+            unsafe {
+                self.storage.spilled.as_ptr().add(len).write(child);
+            }
+            self.len = (len + 1) as u32;
+        } else {
+            self.grow_and_push(child, arena);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn spill_and_push(
+        &mut self,
+        child: &'arena TreeNode<'input, 'arena, NodeKind, Tok>,
+        arena: &'arena Arena,
+    ) {
+        debug_assert_eq!(self.cap, 0);
+        debug_assert_eq!(self.len as usize, MAX_INLINE_CHILDREN);
+        let dst = arena.alloc_node_children_store(INITIAL_SPILL_CAPACITY);
+        // SAFETY: `cap == 0` selects the inline array with `INLINE_CHILDREN`
+        // initialized elements, and `dst` holds `INITIAL_SPILL_CAPACITY`
+        // elements.
+        unsafe {
+            ptr::copy_nonoverlapping(
+                self.storage
+                    .inline
+                    .as_ptr()
+                    .cast::<&'arena TreeNode<'input, 'arena, NodeKind, Tok>>(),
+                dst.as_ptr(),
+                MAX_INLINE_CHILDREN,
+            );
+            dst.as_ptr().add(MAX_INLINE_CHILDREN).write(child);
+        }
+        self.storage.spilled = dst;
+        self.cap = INITIAL_SPILL_CAPACITY as u32;
+        self.len = (MAX_INLINE_CHILDREN + 1) as u32;
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow_and_push(
+        &mut self,
+        child: &'arena TreeNode<'input, 'arena, NodeKind, Tok>,
+        arena: &'arena Arena,
+    ) {
+        debug_assert!(self.cap > 0);
+        debug_assert_eq!(self.len, self.cap);
+        let old_cap = self.cap as usize;
+        let new_cap = self
+            .cap
+            .checked_mul(2)
+            .expect("NodeChildren capacity overflow");
+        let dst = arena.alloc_node_children_store(new_cap as usize);
+        // SAFETY: `self.storage.spilled` holds `old_cap` initialized elements,
+        // and `dst` holds `new_cap` elements.
+        unsafe {
+            ptr::copy_nonoverlapping(self.storage.spilled.as_ptr(), dst.as_ptr(), old_cap);
+            dst.as_ptr().add(old_cap).write(child);
+        }
+        self.storage.spilled = dst;
+        self.cap = new_cap;
+        self.len = (old_cap + 1) as u32;
+    }
+}
+
 #[repr(C, align(8))]
 struct ParserRuleContextCommonLayout<'input, 'arena, Node, Tok = CommonToken<'input>>
 where
@@ -141,13 +337,37 @@ where
     Node: NodeKindType<'arena, Tok>,
     Tok: Token + 'input,
 {
-    // --- BaseParserRuleContext fields ---
     start: Option<&'arena Tok>,
     stop: Option<&'arena Tok>,
-    children: bumpalo::collections::Vec<'arena, &'arena TreeNode<'input, 'arena, Node, Tok>>,
-    // --- BaseRuleContext fields ---
+    children: NodeChildren<'input, 'arena, Node, Tok>,
     parent: Option<&'arena TreeNode<'input, 'arena, Node, Tok>>,
 }
+
+const _: () = {
+    use std::mem::{align_of, offset_of, size_of};
+
+    use crate::parser_rule_context::BaseParserRuleContext;
+    use crate::rule_context::{EmptyCustomRuleContext, EmptyNodeKind};
+
+    type Common = ParserRuleContextCommonLayout<'static, 'static, EmptyNodeKind>;
+    type Base = BaseParserRuleContext<
+        'static,
+        'static,
+        EmptyCustomRuleContext<'static, 'static>,
+        EmptyNodeKind,
+    >;
+    type Node = TreeNode<'static, 'static, EmptyNodeKind>;
+
+    assert!(size_of::<NodeChildren<'static, 'static, EmptyNodeKind>>() == 32);
+    assert!(align_of::<NodeChildren<'static, 'static, EmptyNodeKind>>() == 8);
+    assert!(size_of::<Common>() == 56);
+    assert!(size_of::<Base>() == 56);
+    assert!(size_of::<(Node, Base)>() == 64);
+    assert!(offset_of!(Common, start) == offset_of!(Base, start));
+    assert!(offset_of!(Common, stop) == offset_of!(Base, stop));
+    assert!(offset_of!(Common, children) == offset_of!(Base, children));
+    assert!(offset_of!(Common, parent) == offset_of!(Base, base));
+};
 
 #[derive(Debug)]
 #[repr(C, align(8))]
@@ -360,11 +580,20 @@ where
         ctx.children.truncate(len);
     }
 
-    pub fn add_child(&mut self, _child: &'arena Self) {
+    /// Return the direct children of this node as a slice.
+    ///
+    /// Leaf nodes return an empty slice.
+    #[inline]
+    pub fn children_slice(&self) -> &[&'arena Self] {
+        self.as_rule_context_common()
+            .map_or(&[], |ctx| ctx.children.as_slice())
+    }
+
+    pub fn add_child(&mut self, child: &'arena Self, arena: &'arena Arena) {
         let Some(ctx) = self.as_rule_context_common_mut() else {
             return;
         };
-        ctx.children.push(_child);
+        ctx.children.push(child, arena);
     }
 
     pub fn set_parent(&mut self, parent: Option<&'arena Self>) {
@@ -400,7 +629,7 @@ where
 
     fn get_child(&self, i: usize) -> Option<&'arena Self> {
         self.as_rule_context_common()
-            .and_then(|ctx| ctx.children.get(i).copied())
+            .and_then(|ctx| ctx.children.get(i))
     }
 
     #[inline]
@@ -964,5 +1193,193 @@ impl ParseTreeWalker {
     {
         t.exit_rule(listener)?;
         listener.exit_every_rule(t)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::mem::{align_of, offset_of, size_of};
+
+    use super::*;
+    use crate::parser_rule_context::BaseParserRuleContext;
+    use crate::rule_context::{EmptyCustomRuleContext, EmptyNodeKind};
+    use crate::token::CommonToken;
+
+    fn make_token<'arena>(
+        arena: &'arena Arena,
+        source: &'arena crate::token::SourceInfo<'arena>,
+        idx: i32,
+    ) -> &'arena CommonToken<'arena> {
+        arena.alloc_token(CommonToken::new_slice(source, 1, 0, idx, 0, 0))
+    }
+
+    fn make_terminal<'arena>(
+        arena: &'arena Arena,
+        source: &'arena crate::token::SourceInfo<'arena>,
+        idx: i32,
+    ) -> &'arena TreeNode<'arena, 'arena, EmptyNodeKind, CommonToken<'arena>> {
+        let tok = make_token(arena, source, idx);
+        let ptr = TreeNode::<EmptyNodeKind, CommonToken<'arena>>::create_token_node(arena, tok);
+        // SAFETY: `create_token_node` allocates a valid `TreeNode` in `arena`.
+        unsafe { &*ptr }
+    }
+
+    #[test]
+    fn layout_matches_base_parser_rule_context() {
+        type Common<'i, 'a> = ParserRuleContextCommonLayout<'i, 'a, EmptyNodeKind>;
+        type Base<'i, 'a> =
+            BaseParserRuleContext<'i, 'a, EmptyCustomRuleContext<'i, 'a>, EmptyNodeKind>;
+        type Node<'i, 'a> = TreeNode<'i, 'a, EmptyNodeKind>;
+
+        assert_eq!(size_of::<NodeChildren<'_, '_, EmptyNodeKind>>(), 32);
+        assert_eq!(align_of::<NodeChildren<'_, '_, EmptyNodeKind>>(), 8);
+        assert_eq!(size_of::<Common<'_, '_>>(), 56);
+        assert_eq!(size_of::<Base<'_, '_>>(), 56);
+        assert_eq!(size_of::<(Node<'_, '_>, Base<'_, '_>)>(), 64);
+
+        assert_eq!(
+            offset_of!(Common<'_, '_>, start),
+            offset_of!(Base<'_, '_>, start)
+        );
+        assert_eq!(
+            offset_of!(Common<'_, '_>, stop),
+            offset_of!(Base<'_, '_>, stop)
+        );
+        assert_eq!(
+            offset_of!(Common<'_, '_>, children),
+            offset_of!(Base<'_, '_>, children)
+        );
+        assert_eq!(
+            offset_of!(Common<'_, '_>, parent),
+            offset_of!(Base<'_, '_>, base)
+        );
+
+        #[repr(C, u16)]
+        #[allow(dead_code)]
+        enum LabeledAll<'i, 'a> {
+            Alt1(Base<'i, 'a>),
+            Error(Base<'i, 'a>),
+        }
+
+        assert_eq!(size_of::<LabeledAll<'_, '_>>(), 64);
+        assert_eq!(align_of::<LabeledAll<'_, '_>>(), 8);
+        assert_eq!(offset_of!(Node<'_, '_>, body), 8);
+    }
+
+    #[test]
+    fn node_children_inline_spill_grow_pop_and_truncate() {
+        Arena::with(|arena| {
+            let source = arena.alloc_source_info(crate::token::SourceInfo::new_stream("test"));
+            let mut children = NodeChildren::<EmptyNodeKind>::new();
+
+            assert!(children.is_empty());
+            assert_eq!(children.len(), 0);
+            assert_eq!(children.cap, 0);
+            assert!(children.as_slice().is_empty());
+            assert!(children.get(0).is_none());
+
+            children.pop();
+            children.truncate(5);
+            assert_eq!(children.len(), 0);
+
+            let nodes: Vec<_> = (0..35).map(|i| make_terminal(arena, source, i)).collect();
+
+            for (idx, &node) in nodes.iter().take(MAX_INLINE_CHILDREN).enumerate() {
+                children.push(node, arena);
+                assert_eq!(children.cap, 0);
+                assert_eq!(children.len(), idx + 1);
+                assert!(ptr::eq(children.get(idx).unwrap(), node));
+            }
+            assert!(children.get(MAX_INLINE_CHILDREN).is_none());
+
+            children.truncate(10);
+            assert_eq!(children.len(), 3);
+            children.pop();
+            assert_eq!(children.len(), 2);
+            children.truncate(1);
+            assert_eq!(children.len(), 1);
+            assert_eq!(children.cap, 0);
+            assert!(ptr::eq(children.get(0).unwrap(), nodes[0]));
+
+            children.push(nodes[1], arena);
+            children.push(nodes[2], arena);
+            assert_eq!(children.cap, 0);
+            assert_eq!(children.len(), 3);
+
+            children.push(nodes[3], arena);
+            assert_eq!(children.cap as usize, INITIAL_SPILL_CAPACITY);
+            assert_eq!(children.len(), 4);
+
+            for &node in &nodes[4..INITIAL_SPILL_CAPACITY] {
+                children.push(node, arena);
+                assert_eq!(children.cap as usize, INITIAL_SPILL_CAPACITY);
+            }
+            assert_eq!(children.len(), INITIAL_SPILL_CAPACITY);
+
+            children.push(nodes[8], arena);
+            assert_eq!(children.cap, 16);
+            for &node in &nodes[9..] {
+                children.push(node, arena);
+            }
+            assert_eq!(children.len(), 35);
+            assert_eq!(children.cap, 64);
+
+            for (i, &expected) in nodes.iter().enumerate() {
+                assert!(ptr::eq(children.get(i).unwrap(), expected));
+            }
+            assert!(children.get(35).is_none());
+            assert_eq!(children.iter().count(), 35);
+
+            children.truncate(100);
+            assert_eq!(children.len(), 35);
+            children.truncate(5);
+            assert_eq!(children.len(), 5);
+            assert_eq!(children.cap, 64);
+            children.pop();
+            assert_eq!(children.len(), 4);
+            children.push(nodes[4], arena);
+            assert_eq!(children.len(), 5);
+            assert_eq!(children.cap, 64);
+            for (i, &expected) in nodes.iter().take(5).enumerate() {
+                assert!(ptr::eq(children.get(i).unwrap(), expected));
+            }
+        });
+    }
+
+    #[test]
+    fn tree_node_and_context_children_api() {
+        Arena::with(|arena| {
+            let source = arena.alloc_source_info(crate::token::SourceInfo::new_stream("abc"));
+            let root =
+                BaseParserRuleContext::create(arena, None, -1, EmptyCustomRuleContext(PhantomData))
+                    .expect("create root");
+
+            let leaves: Vec<_> = (0..10).map(|i| make_terminal(arena, source, i)).collect();
+            for &leaf in &leaves {
+                root.add_child(leaf, arena);
+            }
+
+            assert_eq!(Tree::get_child_count(root), 10);
+            assert_eq!(root.get_children().count(), 10);
+            for (i, &leaf) in leaves.iter().enumerate() {
+                assert!(ptr::eq(root.get_child(i).unwrap(), leaf));
+            }
+
+            let ctx = root
+                .as_rule_context::<BaseParserRuleContext<EmptyCustomRuleContext, EmptyNodeKind>>()
+                .unwrap();
+            assert_eq!(ctx.get_children().count(), 10);
+            assert_eq!(ctx.iter_children().count(), 10);
+            assert_eq!(root.children_slice().len(), 10);
+            assert_eq!(ctx.children_slice().len(), 10);
+            assert!(leaves[0].children_slice().is_empty());
+
+            root.remove_last_child();
+            assert_eq!(Tree::get_child_count(root), 9);
+            root.truncate_children(2);
+            assert_eq!(Tree::get_child_count(root), 2);
+            assert!(ptr::eq(root.get_child(1).unwrap(), leaves[1]));
+            assert!(root.get_child(2).is_none());
+        });
     }
 }

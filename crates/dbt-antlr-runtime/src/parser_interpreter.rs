@@ -670,7 +670,8 @@ where
                 return Err(ANTLRError::dfa_cache_limit_exceeded(0, 0, 0));
             }
             let node = unsafe { &*node };
-            self.base.with_mut_ctx(|ctx| ctx.add_child(node));
+            let arena = self.base.arena;
+            self.base.with_mut_ctx(|ctx| ctx.add_child(node, arena));
         }
         Ok(())
     }

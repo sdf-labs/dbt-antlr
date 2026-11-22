@@ -9,7 +9,7 @@ use crate::rule_context::{
     BaseRuleContext, CustomRuleContext, EmptyCustomRuleContext, EmptyNodeKind, RuleContext,
 };
 use crate::token::{CommonToken, Token};
-use crate::tree::{CtxPtr, NodeInner, NodeKindType, Tree as _, TreeNode};
+use crate::tree::{CtxPtr, NodeChildren, NodeInner, NodeKindType, Tree as _, TreeNode};
 use crate::{token_factory, Arena};
 
 /// Language-agnostic behaviors of the Antlr AST.
@@ -96,11 +96,9 @@ where
     NodeKind: NodeKindType<'arena, Tok>,
     Ext: CustomRuleContext<'input, 'arena, Tok, NodeKind = NodeKind>,
 {
-    start: Option<&'arena Tok>,
-    stop: Option<&'arena Tok>,
-    /// List of children of current node
-    pub(crate) children:
-        bumpalo::collections::Vec<'arena, &'arena TreeNode<'input, 'arena, NodeKind, Tok>>,
+    pub(crate) start: Option<&'arena Tok>,
+    pub(crate) stop: Option<&'arena Tok>,
+    pub(crate) children: NodeChildren<'input, 'arena, NodeKind, Tok>,
 
     pub(crate) base: BaseRuleContext<'input, 'arena, Ext, NodeKind, Tok>,
 
@@ -235,7 +233,7 @@ where
     fn get_child_ctx(&self, i: usize) -> Option<&'arena dyn ParserRuleContext<'input, 'arena>> {
         self.children
             .get(i)
-            .map(|item| *item as &dyn ParserRuleContext<'input, 'arena>)
+            .map(|item| item as &dyn ParserRuleContext<'input, 'arena>)
     }
 
     fn get_child_count(&self) -> usize {
@@ -252,9 +250,7 @@ where
         Box::new(
             self.children
                 .iter()
-                .map(|item| *item as &dyn ParserRuleContext<'input, 'arena>)
-                .collect::<Vec<_>>()
-                .into_iter(),
+                .map(|item| *item as &dyn ParserRuleContext<'input, 'arena>),
         )
     }
 
@@ -343,7 +339,7 @@ where
         let ctx = Self {
             start: None,
             stop: None,
-            children: bumpalo::vec![in arena.children_arena()],
+            children: NodeChildren::new(),
             base: BaseRuleContext::new(parent, ext),
             exception: (),
         };
@@ -417,31 +413,31 @@ where
         self.children.pop();
     }
 
-    pub fn add_child(&mut self, child: &'arena TreeNode<'input, 'arena, Ext::NodeKind, Tok>) {
-        self.children.push(child);
+    pub fn add_child(
+        &mut self,
+        child: &'arena TreeNode<'input, 'arena, Ext::NodeKind, Tok>,
+        arena: &'arena Arena,
+    ) {
+        self.children.push(child, arena);
     }
 
     pub fn get_child(
         &self,
         i: usize,
     ) -> Option<&'arena TreeNode<'input, 'arena, Ext::NodeKind, Tok>> {
-        self.children.get(i).copied()
+        self.children.get(i)
     }
 
     pub fn get_children<'a>(
         &'a self,
     ) -> Box<dyn Iterator<Item = &'arena TreeNode<'input, 'arena, Ext::NodeKind, Tok>> + 'a> {
-        let mut index = 0;
-        let iter = std::iter::from_fn(move || {
-            if index < self.get_child_count() {
-                index += 1;
-                self.get_child(index - 1)
-            } else {
-                None
-            }
-        });
+        Box::new(self.children.iter().copied())
+    }
 
-        Box::new(iter)
+    /// Return the direct children of this rule context as a slice.
+    #[inline]
+    pub fn children_slice(&self) -> &[&'arena TreeNode<'input, 'arena, Ext::NodeKind, Tok>] {
+        self.children.as_slice()
     }
 
     pub fn child_of_type<'a, T>(&'a self, pos: usize) -> Option<&'arena T>

@@ -134,7 +134,7 @@ where
         };
         let override_info = self
             .arena
-            .alloc_in_tokens(SourceInfo::new_override(text_str, fallback));
+            .alloc_source_info(SourceInfo::new_override(text_str, fallback));
         let override_info: &'input SourceInfo<'input> = unsafe {
             std::mem::transmute::<&'arena SourceInfo<'input>, &'input SourceInfo<'input>>(
                 override_info,
@@ -213,7 +213,7 @@ where
         };
         let override_info = self
             .arena
-            .alloc_in_tokens(SourceInfo::new_override(text_str, fallback));
+            .alloc_source_info(SourceInfo::new_override(text_str, fallback));
         let override_info: &'input SourceInfo<'input> = unsafe {
             std::mem::transmute::<&'arena SourceInfo<'input>, &'input SourceInfo<'input>>(
                 override_info,
