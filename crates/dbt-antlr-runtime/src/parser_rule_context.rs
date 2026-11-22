@@ -295,6 +295,11 @@ where
         Ctx::cast_from(node)
     }
 
+    #[inline(always)]
+    unsafe fn cast_from_unchecked<'a>(node: &'a TreeNode<'input, 'arena, Node, Tok>) -> &'a Self {
+        Ctx::cast_from_unchecked(node)
+    }
+
     fn cast_from_mut<'a>(
         node: &'a mut TreeNode<'input, 'arena, Node, Tok>,
     ) -> Option<&'a mut Self> {
@@ -330,6 +335,7 @@ where
 {
     /// Construct a new parser rule context with the given parent, invoking
     /// state, and extension data.
+    #[inline]
     pub fn create(
         arena: &'arena Arena,
         parent: Option<&'arena TreeNode<'input, 'arena, Ext::NodeKind, Tok>>,
@@ -345,7 +351,19 @@ where
         };
         let node = Ext::make_node(arena, ctx);
         if node.is_null() {
-            return Err(ANTLRError::dfa_cache_limit_exceeded(0, 0, 0));
+            #[cfg(feature = "arena-allocation-limit")]
+            {
+                return Err(ANTLRError::arena_allocation_limit_exceeded(
+                    arena.allocation_limit_bytes(),
+                    arena.total_allocated_bytes(),
+                ));
+            }
+            #[cfg(not(feature = "arena-allocation-limit"))]
+            {
+                std::alloc::handle_alloc_error(std::alloc::Layout::new::<
+                    TreeNode<'input, 'arena, Ext::NodeKind, Tok>,
+                >())
+            }
         }
         // SAFETY: The node is allocated by the arena and lives for 'arena, and the
         // header is properly initialized by make_node.

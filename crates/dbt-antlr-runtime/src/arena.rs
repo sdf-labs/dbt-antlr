@@ -133,6 +133,7 @@ impl Arena {
         ptr
     }
 
+    #[inline]
     pub fn alloc_labeled_node<'input, 'a, N, I, Tok>(
         &self,
         value: I,
@@ -147,6 +148,7 @@ impl Arena {
         self.contexts.alloc(value) as *mut _ as *mut TreeNode<'input, 'a, N, Tok>
     }
 
+    #[inline]
     pub fn alloc_zeroed_node<'input, 'a, N, I, Tok>(
         &'a self,
         body: I,
@@ -163,6 +165,7 @@ impl Arena {
         ptr as *mut _ as *mut TreeNode<'input, 'a, N, Tok>
     }
 
+    #[inline]
     pub fn alloc_node<'input, 'a, N, I, Tok>(
         &'a self,
         header: TreeNode<'input, 'a, N, Tok>,

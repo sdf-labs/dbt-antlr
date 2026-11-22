@@ -145,6 +145,80 @@ where
     mark: isize,
 }
 
+const INLINE_PRECEDENCE_CAP: usize = 16;
+
+struct PrecedenceStack {
+    top: i32,
+    len: usize,
+    inline: [i32; INLINE_PRECEDENCE_CAP],
+    overflow: Vec<i32>,
+}
+
+impl PrecedenceStack {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            top: 0,
+            len: 1,
+            inline: [0; INLINE_PRECEDENCE_CAP],
+            overflow: Vec::new(),
+        }
+    }
+
+    #[inline(always)]
+    fn top(&self) -> i32 {
+        self.top
+    }
+
+    #[inline(always)]
+    fn push(&mut self, prec: i32) {
+        let len = self.len;
+        if len < INLINE_PRECEDENCE_CAP {
+            self.inline[len] = prec;
+        } else {
+            self.push_overflow(prec);
+        }
+        self.len = len + 1;
+        self.top = prec;
+    }
+
+    #[inline(always)]
+    fn pop(&mut self) {
+        let len = self.len;
+        if len == 0 {
+            return;
+        }
+        let new_len = len - 1;
+        self.len = new_len;
+        if new_len < INLINE_PRECEDENCE_CAP {
+            self.top = if new_len == 0 {
+                -1
+            } else {
+                self.inline[new_len - 1]
+            };
+        } else {
+            self.top = self.pop_overflow(new_len);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn push_overflow(&mut self, prec: i32) {
+        self.overflow.push(prec);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn pop_overflow(&mut self, new_len: usize) -> i32 {
+        self.overflow.pop();
+        if new_len == INLINE_PRECEDENCE_CAP {
+            self.inline[INLINE_PRECEDENCE_CAP - 1]
+        } else {
+            *self.overflow.last().unwrap()
+        }
+    }
+}
+
 /// Abstract base parser implementation
 ///
 /// Only meant to be instantiated by generated parsers
@@ -167,38 +241,23 @@ where
     /// Rule context parser is currently processing
     ctx: *mut (),
 
-    /// Track the {@link ParserRuleContext} objects during the parse and hook
-    /// them up using the {@link ParserRuleContext#children} list so that it
-    /// forms a parse tree. The {@link ParserRuleContext} returned from the start
-    /// rule represents the root of the parse tree.
-    ///
-    /// <p>Note that if we are not building parse trees, rule contexts only point
-    /// upwards. When a rule exits, it returns the context bute that gets garbage
-    /// collected if nobody holds a reference. It points upwards but nobody
-    /// points at it. </p>
-    ///
-    /// <p>When we build parse trees, we are adding all of these contexts to
-    /// {@link ParserRuleContext#children} list. Contexts are then not candidates
-    /// for garbage collection.</p>
-    ///
-    /// Returns {@code true} if a complete parse tree will be constructed while
-    /// parsing, otherwise {@code false}
-    pub build_parse_trees: bool,
-
     /// true if parser reached EOF
     pub matched_eof: bool,
 
     state: i32,
     /// Token stream that is currently used by this parser
     pub input: Input,
-    precedence_stack: Vec<i32>,
+    precedence_stack: PrecedenceStack,
     #[cfg(feature = "recursion-limit")]
     pub recursion_limit: u32,
     #[cfg(feature = "recursion-limit")]
     current_recursion_depth: u32,
 
     parse_listeners: Vec<Box<Node::Listener>>,
+    listeners_active: bool,
     _syntax_errors: Cell<i32>,
+    has_default_console_listener: bool,
+    primary_error_listener: Option<ErrorListenerDelegate<'input, 'arena, Self, TF::Tok>>,
     error_listeners: Vec<ErrorListenerDelegate<'input, 'arena, Self, TF::Tok>>,
     /// Mutes the parse listeners while it is above zero. A counter, because
     /// the neutral parses of nested shared-descent groups nest (see
@@ -233,7 +292,6 @@ where
         f.debug_struct("BaseParser")
             .field("state", &self.state)
             .field("matched_eof", &self.matched_eof)
-            .field("build_parse_trees", &self.build_parse_trees)
             .finish_non_exhaustive()
     }
 }
@@ -396,11 +454,17 @@ where
         &mut self,
         listener: Box<dyn ErrorListener<'input, 'arena, Self, TF::Tok> + 'input>,
     ) {
-        self.error_listeners
-            .push(ErrorListenerDelegate::new(listener))
+        let delegate = ErrorListenerDelegate::new(listener);
+        if self.primary_error_listener.is_none() {
+            self.primary_error_listener = Some(delegate);
+        } else {
+            self.error_listeners.push(delegate);
+        }
     }
 
     fn remove_error_listeners(&mut self) {
+        self.has_default_console_listener = false;
+        self.primary_error_listener = None;
         self.error_listeners.clear();
     }
 
@@ -411,6 +475,12 @@ where
         err: Option<&ANTLRError>,
     ) {
         cell_update(&self._syntax_errors, |it| it + 1);
+        if !self.has_default_console_listener
+            && self.primary_error_listener.is_none()
+            && self.error_listeners.is_empty()
+        {
+            return;
+        }
         let offending_token: Option<&_> = match offending_token {
             None => Some(self.get_current_token().borrow()),
             Some(x) => Some(self.input.get(x).borrow()),
@@ -418,6 +488,26 @@ where
         let line = offending_token.map_or(0, |x| x.get_line());
         let column = offending_token.map_or(-1, |x| x.get_char_position_in_line());
 
+        if self.has_default_console_listener {
+            ConsoleErrorListener.syntax_error(
+                self,
+                offending_token.map(|x| x as _),
+                line,
+                column,
+                &msg,
+                err,
+            );
+        }
+        if let Some(ref listener) = self.primary_error_listener {
+            listener.syntax_error(
+                self,
+                offending_token.map(|x| x as _),
+                line,
+                column,
+                &msg,
+                err,
+            );
+        }
         for listener in self.error_listeners.iter() {
             listener.syntax_error(
                 self,
@@ -434,6 +524,8 @@ where
         &'a self,
     ) -> Box<dyn ErrorListener<'input, 'arena, Self, TF::Tok> + 'a> {
         Box::new(ProxyErrorListener {
+            has_default_console_listener: self.has_default_console_listener,
+            primary: self.primary_error_listener.as_ref(),
             delegates: self.error_listeners.borrow(),
         })
     }
@@ -442,8 +534,9 @@ where
         unimplemented!()
     }
 
+    #[inline(always)]
     fn get_precedence(&self) -> i32 {
-        *self.precedence_stack.last().unwrap_or(&-1)
+        self.precedence_stack.top()
     }
 
     #[inline(always)]
@@ -520,21 +613,20 @@ where
             interp: Some(interp),
             global_cache_threshold: 0,
             ctx: std::ptr::null_mut(),
-            build_parse_trees: true,
             matched_eof: false,
             state: -1,
             input,
-            precedence_stack: vec![0],
+            precedence_stack: PrecedenceStack::new(),
             #[cfg(feature = "recursion-limit")]
             recursion_limit: DEFAULT_RECURSION_LIMIT,
             #[cfg(feature = "recursion-limit")]
             current_recursion_depth: 0,
             parse_listeners: vec![],
+            listeners_active: false,
             _syntax_errors: Cell::new(0),
-            error_listeners: vec![ErrorListenerDelegate::new(
-                Box::new(ConsoleErrorListener {})
-                    as Box<dyn ErrorListener<'input, 'arena, Self, TF::Tok> + 'input>,
-            )],
+            has_default_console_listener: true,
+            primary_error_listener: None,
+            error_listeners: Vec::new(),
             muted: 0,
             resume: None,
             neutral_call_sites: Vec::new(),
@@ -783,10 +875,7 @@ where
         false
     }
     /// Whether a shared-descent group can start a neutral parse here.
-    ///
-    /// A group cannot start while the re-descent of another group is pending,
-    /// and not while parse listeners are attached without a parse tree: the
-    /// muted listener events of the shared rule are replayed from its subtree.
+    /// A group cannot start while the re-descent of another group is pending.
     ///
     /// A group also cannot start in the SLL prediction mode. For an ambiguous
     /// input, SLL resolves the conflict of the decision to its minimum
@@ -795,9 +884,7 @@ where
     #[doc(hidden)]
     pub fn descent_ready(&mut self) -> bool {
         self.drop_stale_resume();
-        self.resume.is_none()
-            && (self.build_parse_trees || self.parse_listeners.is_empty())
-            && self.get_interpreter().get_prediction_mode() != PredictionMode::SLL
+        self.resume.is_none() && self.get_interpreter().get_prediction_mode() != PredictionMode::SLL
     }
 
     /// Ends a re-descent that moved past the start of its shared rule without
@@ -847,6 +934,7 @@ where
         };
         self.neutral_call_sites.push((self.ctx, call_sites));
         self.muted += 1;
+        self.update_listeners_active();
         self.state = call_sites.first().copied().unwrap_or(-1);
         neutral
     }
@@ -857,6 +945,7 @@ where
     pub fn abort_neutral_parse(&mut self, neutral: NeutralParse) {
         debug_assert!(self.muted > 0, "no neutral parse is active");
         self.muted -= 1;
+        self.update_listeners_active();
         self.neutral_call_sites.pop();
         self.input.release(neutral.mark);
     }
@@ -877,6 +966,7 @@ where
     ) {
         debug_assert!(self.muted > 0, "no neutral parse is active");
         self.muted -= 1;
+        self.update_listeners_active();
         self.neutral_call_sites.pop();
         // The mark stays until the re-descent seeks forward to the tail.
         self.resume = Some(Resume {
@@ -919,9 +1009,7 @@ where
         let node = resume.node;
         let state = self.state;
         let parent = self.ctx();
-        if self.build_parse_trees {
-            self.add_child_to_ctx(node);
-        }
+        self.add_child_to_ctx(node);
         // The neutral parse created the context under the decision's context
         // at the time; the re-descent's context and call site may differ.
         self.set_current_ctx(Some(node));
@@ -930,7 +1018,7 @@ where
             ctx.set_invoking_state(state);
         });
         self.set_current_ctx(parent);
-        if self.muted == 0 && !self.parse_listeners.is_empty() {
+        if self.listeners_active {
             self.replay_listener_events(node)?;
         }
         self.matched_eof = resume.matched_eof;
@@ -1107,12 +1195,20 @@ where
         }
     }
 
-    #[inline]
+    #[inline(always)]
+    fn update_listeners_active(&mut self) {
+        self.listeners_active = self.muted == 0 && !self.parse_listeners.is_empty();
+    }
+
+    #[inline(always)]
     fn add_child_to_ctx(&mut self, child: &'arena TreeNode<'input, 'arena, Node, TF::Tok>) {
         if !self.ctx.is_null() {
+            // SAFETY: `self.ctx` is always a rule context node in `self.arena`.
             unsafe {
                 (*(self.ctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>))
-                    .add_child(child, self.arena);
+                    .as_rule_context_common_mut_unchecked()
+                    .children
+                    .push(child, self.arena);
             }
         }
     }
@@ -1126,6 +1222,37 @@ where
         unsafe { f(&mut *(self.ctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>)) }
     }
 
+    #[cold]
+    #[inline(never)]
+    fn visit_terminal_listeners(
+        &mut self,
+        node: &'arena TreeNode<'input, 'arena, Node, TF::Tok>,
+    ) -> Result<(), ANTLRError> {
+        let terminal = node
+            .as_terminal_node()
+            .expect("node was created as terminal node");
+        for listener in &mut self.parse_listeners {
+            listener.visit_terminal(terminal)?;
+        }
+        Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn consume_error_node(&mut self, o: &'arena TF::Tok) -> Result<(), ANTLRError> {
+        let node = self.create_error_node(o)?;
+        self.add_child_to_ctx(node);
+        if self.listeners_active {
+            let error = node
+                .as_error_node()
+                .expect("node was created as error node");
+            for listener in &mut self.parse_listeners {
+                listener.visit_error_node(error)?;
+            }
+        }
+        Ok(())
+    }
+
     #[inline]
     fn consume_current(
         &mut self,
@@ -1136,32 +1263,29 @@ where
         if !is_eof {
             self.input.consume();
         }
-        if self.build_parse_trees || !self.parse_listeners.is_empty() {
-            if err_handler.in_error_recovery_mode(self) {
-                let node = self.create_error_node(o)?;
-                self.add_child_to_ctx(node);
-                if self.muted == 0 {
-                    for listener in &mut self.parse_listeners {
-                        listener.visit_error_node(
-                            node.as_error_node()
-                                .expect("node was created as error node"),
-                        )?
-                    }
-                }
-            } else {
-                let node = self.create_token_node(o)?;
-                self.add_child_to_ctx(node);
-                if self.muted == 0 {
-                    for listener in &mut self.parse_listeners {
-                        listener.visit_terminal(
-                            node.as_terminal_node()
-                                .expect("node was created as terminal node"),
-                        )?
-                    }
-                }
-            }
+        if err_handler.in_error_recovery_mode(self) {
+            return self.consume_error_node(o);
+        }
+        let node = self.create_token_node(o)?;
+        self.add_child_to_ctx(node);
+        if self.listeners_active {
+            self.visit_terminal_listeners(node)?;
         }
         Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn match_recover_inline(
+        &mut self,
+        err_handler: &mut impl ErrorStrategy<'input, 'arena, TF, Self>,
+    ) -> Result<&'arena TF::Tok, ANTLRError> {
+        let token = err_handler.recover_inline(self)?;
+        if token.get_token_index() == -1 {
+            let err_node = self.create_error_node(token)?;
+            self.add_child_to_ctx(err_node);
+        }
+        Ok(token)
     }
 
     #[inline]
@@ -1170,7 +1294,7 @@ where
         ttype: i32,
         err_handler: &mut impl ErrorStrategy<'input, 'arena, TF, Self>,
     ) -> Result<&'arena TF::Tok, ANTLRError> {
-        let token = if self.input.la(1) == ttype {
+        if self.input.la(1) == ttype {
             let token = self.get_current_token();
             let is_eof = ttype == TOKEN_EOF;
             if is_eof {
@@ -1179,15 +1303,10 @@ where
 
             err_handler.report_match(self);
             self.consume_current(token, is_eof, err_handler)?;
-            token
+            Ok(token)
         } else {
-            let token = err_handler.recover_inline(self)?;
-            if self.build_parse_trees && token.get_token_index() == -1 {
-                self.add_child_to_ctx(self.create_error_node(token)?);
-            }
-            token
-        };
-        Ok(token)
+            self.match_recover_inline(err_handler)
+        }
     }
 
     #[inline]
@@ -1195,19 +1314,14 @@ where
         &mut self,
         err_handler: &mut impl ErrorStrategy<'input, 'arena, TF, Self>,
     ) -> Result<&'arena TF::Tok, ANTLRError> {
-        let token = if self.input.la(1) > 0 {
+        if self.input.la(1) > 0 {
             let token = self.get_current_token();
             err_handler.report_match(self);
             self.consume_current(token, false, err_handler)?;
-            token
+            Ok(token)
         } else {
-            let token = err_handler.recover_inline(self)?;
-            if self.build_parse_trees && token.get_token_index() == -1 {
-                self.add_child_to_ctx(self.create_error_node(token)?);
-            }
-            token
-        };
-        Ok(token)
+            self.match_recover_inline(err_handler)
+        }
     }
 
     /// Adds parse listener for this parser
@@ -1217,6 +1331,7 @@ where
     /// todo
     pub fn add_dyn_parse_listener(&mut self, listener: Box<Node::Listener>) {
         self.parse_listeners.push(listener);
+        self.update_listeners_active();
     }
 
     /// Removes parse listener with corresponding `listener_id`, casts it back to user type and returns it to the caller.
@@ -1230,18 +1345,28 @@ where
             .iter()
             .position(|it| ListenerId::new(it).actual_id == listener_id.actual_id)
             .expect("listener not found");
-        unsafe { listener_id.into_listener(self.parse_listeners.remove(index)) }
+        let removed = self.parse_listeners.remove(index);
+        self.update_listeners_active();
+        unsafe { listener_id.into_listener(removed) }
     }
 
     /// Removes all added parse listeners without returning them
     pub fn remove_parse_listeners(&mut self) {
-        self.parse_listeners.clear()
+        self.parse_listeners.clear();
+        self.update_listeners_active();
     }
 
+    #[inline]
     pub fn trigger_enter_rule_event(&mut self) -> Result<(), ANTLRError> {
-        if self.muted > 0 {
+        if !self.listeners_active {
             return Ok(());
         }
+        self.trigger_enter_rule_event_cold()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn trigger_enter_rule_event_cold(&mut self) -> Result<(), ANTLRError> {
         let ctx = self.ctx().unwrap();
         for listener in self.parse_listeners.iter_mut() {
             listener.enter_every_rule(ctx)?;
@@ -1250,10 +1375,17 @@ where
         Ok(())
     }
 
+    #[inline]
     pub fn trigger_exit_rule_event(&mut self) -> Result<(), ANTLRError> {
-        if self.muted > 0 {
+        if !self.listeners_active {
             return Ok(());
         }
+        self.trigger_exit_rule_event_cold()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn trigger_exit_rule_event_cold(&mut self) -> Result<(), ANTLRError> {
         let ctx = self.ctx().unwrap();
         for listener in self.parse_listeners.iter_mut().rev() {
             ctx.exit_rule(listener)?;
@@ -1262,10 +1394,6 @@ where
         Ok(())
     }
 
-    //    fn get_atn_with_bypass_alts(&self) { unimplemented!() }
-    //
-    //    fn compile_parse_tree_pattern(&self, pattern, patternRuleIndex: Lexer, lexer: Lexer) { unimplemented!() }
-
     #[inline]
     pub fn enter_rule(
         &mut self,
@@ -1273,21 +1401,35 @@ where
         state: i32,
         _rule_index: usize,
     ) -> Result<(), ANTLRError> {
-        let child = localctx;
-        if self.build_parse_trees {
-            self.set_current_ctx(child.get_parent());
-            self.add_child_to_ctx(child);
+        let start = self.input.lt(1);
+        let child_ptr = localctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>;
+        // SAFETY: `localctx` is a rule context node allocated in `self.arena`.
+        let parent = unsafe {
+            let child_common = (*child_ptr).as_rule_context_common_mut_unchecked();
+            child_common.start = start;
+            child_common.parent
+        };
+        if let Some(parent) = parent {
+            let parent_ptr = if std::ptr::eq(self.ctx, parent as *const _ as *const ()) {
+                self.ctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>
+            } else {
+                parent as *const TreeNode<'input, 'arena, Node, TF::Tok>
+                    as *mut TreeNode<'input, 'arena, Node, TF::Tok>
+            };
+            // SAFETY: `parent` is a rule context node in `self.arena` distinct from `child_ptr`.
+            unsafe {
+                (*parent_ptr)
+                    .as_rule_context_common_mut_unchecked()
+                    .children
+                    .push(&*child_ptr, self.arena);
+            }
         }
 
-        self.set_state(state);
-        self.set_current_ctx(Some(child));
-        let start = self.input.lt(1);
-        self.with_mut_ctx(|ctx| {
-            ctx.set_start(start);
-        });
+        self.state = state;
+        self.ctx = child_ptr as *mut ();
 
-        if !self.parse_listeners.is_empty() {
-            self.trigger_enter_rule_event()?;
+        if self.listeners_active {
+            self.trigger_enter_rule_event_cold()?;
         }
 
         #[cfg(feature = "recursion-limit")]
@@ -1304,36 +1446,43 @@ where
     pub fn exit_rule(
         &mut self,
     ) -> Result<&'arena TreeNode<'input, 'arena, Node, TF::Tok>, ANTLRError> {
-        assert!(self.ctx().is_some());
+        assert!(!self.ctx.is_null());
 
         #[cfg(feature = "recursion-limit")]
         {
             self.current_recursion_depth -= 1;
         }
-        if self.matched_eof {
+        let stop = if self.matched_eof {
             // if we have matched EOF, it cannot consume past EOF so we use LT(1) here
-            let stop = self.input.lt(1);
-            self.with_mut_ctx(|ctx| {
-                ctx.set_stop(stop);
-            });
+            self.input.lt(1)
         } else {
             // stop node is what we just matched
-            let stop = self.input.lt(-1);
-            self.with_mut_ctx(|ctx| {
-                ctx.set_stop(stop);
-            });
+            self.input.lt(-1)
+        };
+        let child_ptr = self.ctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>;
+        // SAFETY: `self.ctx` is a non-null rule context node in `self.arena`.
+        unsafe {
+            (*child_ptr).as_rule_context_common_mut_unchecked().stop = stop;
         }
-        if !self.parse_listeners.is_empty() {
-            self.trigger_exit_rule_event()?;
+        if self.listeners_active {
+            self.trigger_exit_rule_event_cold()?;
         }
 
-        self.set_state(self.ctx().unwrap().get_invoking_state());
-        let child = self.ctx().unwrap();
-        self.set_current_ctx(child.get_parent());
+        // SAFETY: `child_ptr` is a valid rule context node in `self.arena`.
+        let (invoking_state, parent) = unsafe {
+            let child = &*child_ptr;
+            (
+                child.get_invoking_state(),
+                child.as_rule_context_common_unchecked().parent,
+            )
+        };
+        self.state = invoking_state;
+        self.set_current_ctx(parent);
 
-        Ok(child)
+        Ok(unsafe { &*child_ptr })
     }
 
+    #[inline]
     pub fn enter_recursion_rule(
         &mut self,
         localctx: &'arena mut TreeNode<'input, 'arena, Node, TF::Tok>,
@@ -1341,17 +1490,18 @@ where
         _rule_index: usize,
         precedence: i32,
     ) -> Result<(), ANTLRError> {
-        self.set_state(state);
-        self.precedence_stack.push(precedence);
-        self.set_current_ctx(Some(localctx));
         let start = self.input.lt(1);
-        self.with_mut_ctx(|ctx| {
-            ctx.set_start(start);
-        });
-        if !self.parse_listeners.is_empty() {
-            self.trigger_enter_rule_event()?;
+        let child_ptr = localctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>;
+        // SAFETY: `localctx` is a rule context node allocated in `self.arena`.
+        unsafe {
+            (*child_ptr).as_rule_context_common_mut_unchecked().start = start;
         }
-        //println!("{}",self.input.lt(1).map(Token::to_owned).unwrap());
+        self.state = state;
+        self.precedence_stack.push(precedence);
+        self.ctx = child_ptr as *mut ();
+        if self.listeners_active {
+            self.trigger_enter_rule_event_cold()?;
+        }
 
         #[cfg(feature = "recursion-limit")]
         {
@@ -1363,39 +1513,58 @@ where
         Ok(())
     }
 
+    #[inline]
     pub fn push_new_recursion_context(
         &mut self,
         localctx: &'arena mut TreeNode<'input, 'arena, Node, TF::Tok>,
         state: i32,
         _rule_index: usize,
     ) -> Result<&'arena TreeNode<'input, 'arena, Node, TF::Tok>, ANTLRError> {
+        assert!(!self.ctx.is_null());
         let stop = self.input.lt(-1);
-        self.with_mut_ctx(|ctx| {
-            ctx.set_parent(Some(localctx));
-            ctx.set_invoking_state(state);
-            ctx.set_stop(stop);
-        });
-
-        let prev = self.take_ctx().unwrap();
-        self.set_current_ctx(Some(localctx));
-        let start = prev.get_start_token();
-        self.with_mut_ctx(|ctx| {
-            ctx.set_start(start);
-        });
-        if self.build_parse_trees {
-            self.add_child_to_ctx(prev);
+        let localctx_ptr = localctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>;
+        let prev_ptr = self.ctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>;
+        // SAFETY: `prev_ptr` and `localctx_ptr` are distinct rule context nodes in `self.arena`.
+        let start = unsafe {
+            let prev = &mut *prev_ptr;
+            prev.set_invoking_state(state);
+            let prev_common = prev.as_rule_context_common_mut_unchecked();
+            prev_common.parent = Some(&*localctx_ptr);
+            prev_common.stop = stop;
+            prev_common.start
+        };
+        // SAFETY: `localctx_ptr` is a valid rule context node in `self.arena`.
+        unsafe {
+            let next_common = (*localctx_ptr).as_rule_context_common_mut_unchecked();
+            next_common.start = start;
+            next_common.children.push(&*prev_ptr, self.arena);
         }
-        if !self.parse_listeners.is_empty() {
-            self.trigger_enter_rule_event()?;
+        self.ctx = localctx_ptr as *mut ();
+        if self.listeners_active {
+            self.trigger_enter_rule_event_cold()?;
         }
-        Ok(prev)
+        Ok(unsafe { &*prev_ptr })
     }
 
+    #[cold]
+    #[inline(never)]
+    fn unroll_recursion_exit_events_cold(
+        &mut self,
+        parent_ctx: Option<&'arena TreeNode<'input, 'arena, Node, TF::Tok>>,
+    ) -> Result<(), ANTLRError> {
+        while !self.ctx_is(parent_ctx) {
+            self.trigger_exit_rule_event_cold()?;
+            self.set_current_ctx(self.parent_ctx());
+        }
+        Ok(())
+    }
+
+    #[inline]
     pub fn unroll_recursion_context(
         &mut self,
         parent_ctx: Option<&'arena TreeNode<'input, 'arena, Node, TF::Tok>>,
     ) -> Result<&'arena TreeNode<'input, 'arena, Node, TF::Tok>, ANTLRError> {
-        assert!(self.ctx().is_some());
+        assert!(!self.ctx.is_null());
 
         #[cfg(feature = "recursion-limit")]
         {
@@ -1403,35 +1572,40 @@ where
         }
         self.precedence_stack.pop();
         let stop = self.input.lt(-1);
-        self.with_mut_ctx(|ctx| {
-            ctx.set_stop(stop);
-        });
-        let retctx = self.ctx;
+        let retctx = self.ctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>;
+        // SAFETY: `retctx` is a non-null rule context node in `self.arena`.
+        unsafe {
+            (*retctx).as_rule_context_common_mut_unchecked().stop = stop;
+        }
 
         // unroll so _ctx is as it was before call to recursive method
-        if !self.parse_listeners.is_empty() {
-            while !self.ctx_is(parent_ctx) {
-                self.trigger_exit_rule_event()?;
-                self.set_current_ctx(self.parent_ctx());
-            }
+        if self.listeners_active {
+            self.unroll_recursion_exit_events_cold(parent_ctx)?;
         } else {
             self.set_current_ctx(parent_ctx);
         }
 
         // hook into tree
+        // SAFETY: `retctx` is a valid rule context node in `self.arena`.
         unsafe {
-            (*(retctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>)).set_parent(parent_ctx);
+            (*retctx).as_rule_context_common_mut_unchecked().parent = parent_ctx;
         }
 
-        //        println!("{:?}",self.ctx.as_ref().map(|it|it.to_string_tree(self)));
-        if self.build_parse_trees && parent_ctx.is_some() {
-            self.add_child_to_ctx(unsafe {
-                &*(retctx as *const TreeNode<'input, 'arena, Node, TF::Tok>)
-            });
+        if let Some(parent) = parent_ctx {
+            let parent_ptr = parent as *const TreeNode<'input, 'arena, Node, TF::Tok>
+                as *mut TreeNode<'input, 'arena, Node, TF::Tok>;
+            // SAFETY: `parent` is a rule context node in `self.arena` distinct from `retctx`.
+            unsafe {
+                (*parent_ptr)
+                    .as_rule_context_common_mut_unchecked()
+                    .children
+                    .push(&*retctx, self.arena);
+            }
         }
-        Ok(unsafe { &*(retctx as *const TreeNode<'input, 'arena, Node, TF::Tok>) })
+        Ok(unsafe { &*retctx })
     }
 
+    #[inline]
     #[allow(clippy::mut_from_ref)] // &mut is from the arena allocation
     fn create_token_node(
         &self,
@@ -1464,7 +1638,19 @@ where
     ) -> Result<&'arena mut TreeNode<'input, 'arena, Node, TF::Tok>, ANTLRError> {
         let ptr = TreeNode::create_error_node(self.arena, token);
         if ptr.is_null() {
-            Err(ANTLRError::dfa_cache_limit_exceeded(0, 0, 0))
+            #[cfg(feature = "arena-allocation-limit")]
+            {
+                Err(ANTLRError::arena_allocation_limit_exceeded(
+                    self.arena.allocation_limit_bytes(),
+                    self.arena.total_allocated_bytes(),
+                ))
+            }
+            #[cfg(not(feature = "arena-allocation-limit"))]
+            {
+                std::alloc::handle_alloc_error(std::alloc::Layout::new::<
+                    TreeNode<'input, 'arena, Node, TF::Tok>,
+                >())
+            }
         } else {
             Ok(unsafe { &mut *ptr })
         }
@@ -1535,5 +1721,51 @@ impl<T: ?Sized> ListenerId<T> {
 impl<T> ListenerId<T> {
     unsafe fn into_listener<U: ?Sized>(self, boxed: Box<U>) -> Box<T> {
         Box::from_raw(Box::into_raw(boxed) as *mut T)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PrecedenceStack, INLINE_PRECEDENCE_CAP};
+
+    #[test]
+    fn precedence_stack_inline_and_overflow_roundtrip() {
+        let mut stack = PrecedenceStack::new();
+        assert_eq!(stack.top(), 0);
+        assert!(stack.overflow.is_empty());
+
+        for depth in 1..INLINE_PRECEDENCE_CAP {
+            stack.push(depth as i32 * 10);
+            assert_eq!(stack.top(), depth as i32 * 10);
+            assert!(stack.overflow.is_empty());
+        }
+
+        // Cross into overflow storage and grow several entries beyond inline capacity.
+        let total = INLINE_PRECEDENCE_CAP + 5;
+        for depth in INLINE_PRECEDENCE_CAP..total {
+            stack.push(depth as i32 * 10);
+            assert_eq!(stack.top(), depth as i32 * 10);
+        }
+        assert_eq!(stack.overflow.len(), 5);
+
+        // Pop back across the overflow/inline boundary down to the initial 0 sentinel.
+        for depth in (1..total).rev() {
+            assert_eq!(stack.top(), depth as i32 * 10);
+            stack.pop();
+        }
+        assert_eq!(stack.top(), 0);
+        assert!(stack.overflow.is_empty());
+
+        // Popping the sentinel yields -1; extra pops stay at -1.
+        stack.pop();
+        assert_eq!(stack.top(), -1);
+        stack.pop();
+        assert_eq!(stack.top(), -1);
+
+        // Pushing after empty works cleanly.
+        stack.push(42);
+        assert_eq!(stack.top(), 42);
+        stack.pop();
+        assert_eq!(stack.top(), -1);
     }
 }

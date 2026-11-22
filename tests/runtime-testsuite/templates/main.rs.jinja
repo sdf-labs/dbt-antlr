@@ -7,11 +7,10 @@
 
   - Parser tests import `<G>Lexer`, `<G>Parser`, the listener, and the visitor.
   - Prediction mode is `LL` unless a descriptor flag overrides it.
-  - Parse trees are on unless `notBuildParseTree` is set.
 
   Context: `grammar_name`, `lexer_name`, `lexer_mod`, `grammar_mod`,
   `parser_name` and `parser_mod` (parser tests only), `start_rule`,
-  `prediction_mode`, `show_diagnostic_errors`, `build_parse_tree`, `show_dfa`.
+  `prediction_mode`, `show_diagnostic_errors`, `show_dfa`.
 -#}
 #![allow(unused_imports)]
 use std::env;
@@ -55,9 +54,6 @@ fn main() {
         parser.add_error_listener(Box::new(DiagnosticErrorListener::new(true)));
 {% endif %}
         parser.get_interpreter().set_prediction_mode(PredictionMode::{{ prediction_mode }});
-{% if not build_parse_tree %}
-        parser.build_parse_trees = false;
-{% endif %}
         let tree = parser.{{ start_rule }}();
         //ParseTreeWalker::walk(Box::new(TreeShapeListener::new()), &tree);
 {% else %}

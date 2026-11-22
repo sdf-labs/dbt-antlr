@@ -8,9 +8,6 @@ Parser
 grammar T;
 
 s
-@init {
-recog.build_parse_trees = true;
-}
 @after {
 println!("{}", $r.ctx.to_string_tree(recog.base.get_rule_names()) );
 }

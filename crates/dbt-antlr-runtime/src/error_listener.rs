@@ -112,6 +112,8 @@ where
     R: Recognizer<'input, 'arena, Tok>,
     Tok: Token + 'input,
 {
+    pub has_default_console_listener: bool,
+    pub primary: Option<&'a ErrorListenerDelegate<'input, 'arena, R, Tok>>,
     pub delegates: &'a [ErrorListenerDelegate<'input, 'arena, R, Tok>],
 }
 
@@ -124,15 +126,21 @@ where
 {
     fn syntax_error(
         &self,
-        _recognizer: &R,
+        recognizer: &R,
         offending_symbol: Option<&dyn Token>,
         line: u32,
         column: i32,
         msg: &str,
         e: Option<&ANTLRError>,
     ) {
+        if self.has_default_console_listener {
+            ConsoleErrorListener.syntax_error(recognizer, offending_symbol, line, column, msg, e);
+        }
+        if let Some(listener) = self.primary {
+            listener.syntax_error(recognizer, offending_symbol, line, column, msg, e);
+        }
         for listener in self.delegates {
-            listener.syntax_error(_recognizer, offending_symbol, line, column, msg, e)
+            listener.syntax_error(recognizer, offending_symbol, line, column, msg, e);
         }
     }
 
@@ -146,6 +154,17 @@ where
         ambig_alts: &BitSet<u32>,
         configs: &MutableATNConfigSet,
     ) {
+        if let Some(listener) = self.primary {
+            listener.report_ambiguity(
+                recognizer,
+                dfa,
+                start_index,
+                stop_index,
+                exact,
+                ambig_alts,
+                configs,
+            );
+        }
         for listener in self.delegates {
             listener.report_ambiguity(
                 recognizer,
@@ -155,7 +174,7 @@ where
                 exact,
                 ambig_alts,
                 configs,
-            )
+            );
         }
     }
 
@@ -168,6 +187,16 @@ where
         conflicting_alts: &BitSet<u32>,
         configs: &ATNConfigSet,
     ) {
+        if let Some(listener) = self.primary {
+            listener.report_attempting_full_context(
+                recognizer,
+                dfa,
+                start_index,
+                stop_index,
+                conflicting_alts,
+                configs,
+            );
+        }
         for listener in self.delegates {
             listener.report_attempting_full_context(
                 recognizer,
@@ -176,7 +205,7 @@ where
                 stop_index,
                 conflicting_alts,
                 configs,
-            )
+            );
         }
     }
 
@@ -189,6 +218,16 @@ where
         prediction: i32,
         configs: &MutableATNConfigSet,
     ) {
+        if let Some(listener) = self.primary {
+            listener.report_context_sensitivity(
+                recognizer,
+                dfa,
+                start_index,
+                stop_index,
+                prediction,
+                configs,
+            );
+        }
         for listener in self.delegates {
             listener.report_context_sensitivity(
                 recognizer,
@@ -197,7 +236,7 @@ where
                 stop_index,
                 prediction,
                 configs,
-            )
+            );
         }
     }
 }

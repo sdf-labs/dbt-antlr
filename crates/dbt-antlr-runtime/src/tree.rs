@@ -66,6 +66,19 @@ where
     where
         Self: Sized;
 
+    /// Extract a reference to self from a reference to [TreeNode] without
+    /// runtime tag checks.
+    ///
+    /// # Safety
+    /// Caller must ensure `node` holds an instance of `Self`.
+    #[inline(always)]
+    unsafe fn cast_from_unchecked<'a>(node: &'a TreeNode<'input, 'arena, Node, Tok>) -> &'a Self
+    where
+        Self: Sized,
+    {
+        Self::cast_from(node).unwrap_unchecked()
+    }
+
     /// Extract a mutable reference to self from a mutable reference to
     /// [TreeNode].
     ///
@@ -331,16 +344,16 @@ where
 }
 
 #[repr(C, align(8))]
-struct ParserRuleContextCommonLayout<'input, 'arena, Node, Tok = CommonToken<'input>>
+pub(crate) struct ParserRuleContextCommonLayout<'input, 'arena, Node, Tok = CommonToken<'input>>
 where
     'input: 'arena,
     Node: NodeKindType<'arena, Tok>,
     Tok: Token + 'input,
 {
-    start: Option<&'arena Tok>,
-    stop: Option<&'arena Tok>,
-    children: NodeChildren<'input, 'arena, Node, Tok>,
-    parent: Option<&'arena TreeNode<'input, 'arena, Node, Tok>>,
+    pub(crate) start: Option<&'arena Tok>,
+    pub(crate) stop: Option<&'arena Tok>,
+    pub(crate) children: NodeChildren<'input, 'arena, Node, Tok>,
+    pub(crate) parent: Option<&'arena TreeNode<'input, 'arena, Node, Tok>>,
 }
 
 const _: () = {
@@ -391,6 +404,7 @@ where
     NodeKind: NodeKindType<'arena, Tok>,
     Tok: Token + 'input,
 {
+    #[inline]
     pub fn create_token_node(arena: &'arena Arena, symbol: &'arena Tok) -> *mut Self {
         let header = TreeNode {
             node_tag: NodeKind::terminal(),
@@ -403,6 +417,7 @@ where
         arena.alloc_node(header, leaf)
     }
 
+    #[inline]
     pub fn create_error_node(arena: &'arena Arena, symbol: &'arena Tok) -> *mut Self {
         let header = TreeNode {
             node_tag: NodeKind::error(),
@@ -434,10 +449,6 @@ where
     #[inline]
     pub fn ctx_ptr(&self) -> CtxPtr<'input, 'arena> {
         &self.body as *const _ as *mut (&'input (), *mut &'arena ())
-    }
-
-    pub(crate) fn get_start_token(&self) -> Option<&'arena Tok> {
-        self.as_rule_context_common().and_then(|ctx| ctx.start)
     }
 
     #[allow(dead_code)]
@@ -493,6 +504,35 @@ where
         } else {
             None
         }
+    }
+
+    #[inline(always)]
+    pub(crate) unsafe fn as_rule_context_common_unchecked(
+        &self,
+    ) -> &ParserRuleContextCommonLayout<'input, 'arena, NodeKind, Tok> {
+        debug_assert!(self.node_tag.is_context());
+        cast_unchecked!(self.ctx_ptr() => ParserRuleContextCommonLayout<'input, 'arena, NodeKind, Tok>)
+    }
+
+    #[inline(always)]
+    pub(crate) unsafe fn as_rule_context_common_mut_unchecked(
+        &mut self,
+    ) -> &mut ParserRuleContextCommonLayout<'input, 'arena, NodeKind, Tok> {
+        debug_assert!(self.node_tag.is_context());
+        cast_unchecked!(self.ctx_ptr() => mut ParserRuleContextCommonLayout<'input, 'arena, NodeKind, Tok>)
+    }
+
+    /// Downcast this node to a specific [ParserRuleContext] type without
+    /// checking its node tag.
+    ///
+    /// # Safety
+    /// Caller must ensure this node holds an instance of `T`.
+    #[inline(always)]
+    pub unsafe fn as_rule_context_unchecked<T>(&self) -> &T
+    where
+        T: ParserRuleContext<'input, 'arena> + NodeInner<'input, 'arena, NodeKind, Tok>,
+    {
+        T::cast_from_unchecked(self)
     }
 
     /// Attempt to downcast this node to specific [ParserRuleContext] type

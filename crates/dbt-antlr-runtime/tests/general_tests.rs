@@ -575,3 +575,184 @@ fn test_parser_allocation_limit() {
         });
     }
 }
+
+#[test]
+fn test_error_listeners_ordering_and_dispatch() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    struct RecordingErrorListener {
+        tag: &'static str,
+        events: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl<'input, 'arena, R, Tok> ErrorListener<'input, 'arena, R, Tok> for RecordingErrorListener
+    where
+        'input: 'arena,
+        R: Recognizer<'input, 'arena, Tok>,
+        Tok: Token + 'input,
+    {
+        fn syntax_error(
+            &self,
+            _recognizer: &R,
+            _offending_symbol: Option<&dyn Token>,
+            _line: u32,
+            _column: i32,
+            msg: &str,
+            _error: Option<&ANTLRError>,
+        ) {
+            self.events.borrow_mut().push(format!("{}:{msg}", self.tag));
+        }
+    }
+
+    let events = Rc::new(RefCell::new(Vec::new()));
+    Arena::with(|arena| {
+        let input = InputStream::new("((+))");
+        let lexer = LabelsLexer::<_>::new(arena, input);
+        let token_source = CommonTokenStream::new(lexer);
+        let mut parser = LabelsParser::new(arena, token_source);
+        parser.remove_error_listeners();
+        parser.add_error_listener(Box::new(RecordingErrorListener {
+            tag: "primary",
+            events: Rc::clone(&events),
+        }));
+        parser.add_error_listener(Box::new(RecordingErrorListener {
+            tag: "second",
+            events: Rc::clone(&events),
+        }));
+        parser.add_error_listener(Box::new(RecordingErrorListener {
+            tag: "third",
+            events: Rc::clone(&events),
+        }));
+
+        let _ = parser.s();
+        assert!(
+            events.borrow().len() >= 3,
+            "expected error notifications from all listeners"
+        );
+        // Each syntax error notifies listeners in registration order: primary, second, third.
+        assert!(events.borrow()[0].starts_with("primary:"));
+        assert!(events.borrow()[1].starts_with("second:"));
+        assert!(events.borrow()[2].starts_with("third:"));
+
+        events.borrow_mut().clear();
+        parser
+            .get_error_lister_dispatch()
+            .syntax_error(&*parser, None, 1, 0, "direct", None);
+        assert_eq!(
+            *events.borrow(),
+            vec![
+                "primary:direct".to_owned(),
+                "second:direct".to_owned(),
+                "third:direct".to_owned()
+            ]
+        );
+
+        events.borrow_mut().clear();
+        parser.remove_error_listeners();
+        parser.notify_error_listeners("silenced".to_owned(), None, None);
+        assert!(events.borrow().is_empty());
+    });
+}
+
+#[test]
+fn test_error_strategy_delegate_default_and_custom() {
+    use dbt_antlr_runtime::error_strategy::{
+        BailErrorStrategy, ErrorStrategy, ErrorStrategyDelegate,
+    };
+
+    Arena::with(|arena| {
+        // Inline default delegate: parses valid input and recovers from syntax error.
+        let input = InputStream::new("a + 4");
+        let lexer = LabelsLexer::<_>::new(arena, input);
+        let token_source = CommonTokenStream::new(lexer);
+        let mut parser = LabelsParser::new(arena, token_source);
+        let mut default_delegate = ErrorStrategyDelegate::new_default();
+        assert!(format!("{default_delegate:?}").contains("default"));
+        assert!(!default_delegate.in_error_recovery_mode(&mut *parser));
+        default_delegate.report_match(&mut *parser);
+        assert!(!default_delegate.in_error_recovery_mode(&mut *parser));
+
+        // Custom boxed delegate (BailErrorStrategy) bails immediately on syntax error.
+        let bad_input = InputStream::new("((+))");
+        let mut bad_lexer = LabelsLexer::<_>::new(arena, bad_input);
+        bad_lexer.remove_error_listeners();
+        let bad_tokens = CommonTokenStream::new(bad_lexer);
+        let mut bad_parser =
+            LabelsParser::with_strategy(arena, bad_tokens, Box::new(BailErrorStrategy::new()));
+        bad_parser.remove_error_listeners();
+        assert!(bad_parser.s().is_err());
+    });
+}
+
+#[test]
+fn test_parse_listener_add_remove_toggles_events() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    struct CountListener {
+        enters: Rc<Cell<usize>>,
+        exits: Rc<Cell<usize>>,
+        terminals: Rc<Cell<usize>>,
+    }
+
+    impl<'arena, Tok: Token + 'arena> ParseTreeListener<'arena, SimpleLRParserNodeKind, Tok>
+        for CountListener
+    {
+        fn visit_terminal(
+            &mut self,
+            _node: &TerminalNode<'_, 'arena, Tok>,
+        ) -> Result<(), ANTLRError> {
+            self.terminals.set(self.terminals.get() + 1);
+            Ok(())
+        }
+
+        fn enter_every_rule<'input>(
+            &mut self,
+            _ctx: &SimpleLRParserNode<'input, 'arena, Tok>,
+        ) -> Result<(), ANTLRError> {
+            self.enters.set(self.enters.get() + 1);
+            Ok(())
+        }
+
+        fn exit_every_rule<'input>(
+            &mut self,
+            _ctx: &SimpleLRParserNode<'input, 'arena, Tok>,
+        ) -> Result<(), ANTLRError> {
+            self.exits.set(self.exits.get() + 1);
+            Ok(())
+        }
+    }
+
+    impl<'arena, Tok: Token + 'arena> SimpleLRListener<'arena, Tok> for CountListener {}
+
+    let enters = Rc::new(Cell::new(0));
+    let exits = Rc::new(Cell::new(0));
+    let terminals = Rc::new(Cell::new(0));
+
+    Arena::with(|arena| {
+        let input = InputStream::new("x y z");
+        let lexer = SimpleLRLexer::<_>::new(arena, input);
+        let token_source = CommonTokenStream::new(lexer);
+        let mut parser = SimpleLRParser::new(arena, token_source);
+        let id = parser.add_parse_listener(Box::new(CountListener {
+            enters: Rc::clone(&enters),
+            exits: Rc::clone(&exits),
+            terminals: Rc::clone(&terminals),
+        }));
+        let _ = parser.s().expect("parse succeeds");
+        assert!(enters.get() > 0);
+        assert_eq!(enters.get(), exits.get());
+        assert_eq!(terminals.get(), 3);
+
+        // Removing the listener deactivates listener dispatch.
+        let _removed = parser.remove_parse_listener(id);
+        let before = enters.get();
+        let input2 = InputStream::new("a b");
+        let lexer2 = SimpleLRLexer::<_>::new(arena, input2);
+        let token_source2 = CommonTokenStream::new(lexer2);
+        parser.set_input_stream(token_source2);
+        let _ = parser.s().expect("second parse succeeds");
+        assert_eq!(enters.get(), before);
+    });
+}

@@ -677,12 +677,6 @@ impl Descriptor {
         self.flag_lines().any(|flag| flag == "traceATN")
     }
 
-    /// Upstream defaults to building parse trees unless the descriptor opts
-    /// out with the `notBuildParseTree` flag.
-    fn build_parse_tree(&self) -> bool {
-        !self.flag_lines().any(|flag| flag == "notBuildParseTree")
-    }
-
     /// Upstream defaults to `LL` unless a `predictionMode=...` flag says
     /// otherwise (`RuntimeTestDescriptorParser`).
     fn prediction_mode(&self) -> String {
@@ -1092,7 +1086,6 @@ fn render_main_rs(descriptor: &Descriptor) -> Result<String, Failure> {
             start_rule => descriptor.start_rule.as_str(),
             prediction_mode => descriptor.prediction_mode(),
             show_diagnostic_errors => descriptor.show_diagnostic_errors(),
-            build_parse_tree => descriptor.build_parse_tree(),
             show_dfa => descriptor.show_dfa(),
         })
         .map_err(|error| {
@@ -1456,9 +1449,8 @@ mod tests {
     #[test]
     fn parser_main_rs_mirrors_stg_attributes() {
         let descriptor = parse(
-            "[type]\nParser\n\n[grammar]\ngrammar T;\ns : 'a';\n\n[start]\ns\n\n[input]\na\n\n[output]\nx\n\n[flags]\nshowDiagnosticErrors\npredictionMode=SLL\nnotBuildParseTree\n",
+            "[type]\nParser\n\n[grammar]\ngrammar T;\ns : 'a';\n\n[start]\ns\n\n[input]\na\n\n[output]\nx\n\n[flags]\nshowDiagnosticErrors\npredictionMode=SLL\n",
         );
-        assert!(!descriptor.build_parse_tree());
         assert!(descriptor.show_diagnostic_errors());
         assert_eq!(descriptor.prediction_mode(), "SLL");
         let main_rs = render_main_rs(&descriptor).expect("main.rs render");
@@ -1475,21 +1467,18 @@ mod tests {
             )
         );
         assert!(main_rs.contains("set_prediction_mode(PredictionMode::SLL);"));
-        assert!(main_rs.contains("parser.build_parse_trees = false;"));
         assert!(main_rs.contains("let tree = parser.s();"));
         assert!(main_rs.contains("struct TreeShapeListener {"));
     }
 
     #[test]
-    fn parser_main_rs_defaults_to_ll_and_parse_trees() {
+    fn parser_main_rs_defaults_to_ll() {
         let descriptor = parse(
             "[type]\nParser\n\n[grammar]\ngrammar T;\ns : 'a';\n\n[start]\ns\n\n[input]\na\n\n[output]\nx\n",
         );
-        assert!(descriptor.build_parse_tree());
         assert_eq!(descriptor.prediction_mode(), "LL");
         let main_rs = render_main_rs(&descriptor).expect("main.rs render");
         assert!(main_rs.contains("set_prediction_mode(PredictionMode::LL);"));
-        assert!(!main_rs.contains("build_parse_trees = false"));
         assert!(!main_rs.contains("DiagnosticErrorListener::new"));
     }
 

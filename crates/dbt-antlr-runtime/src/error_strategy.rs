@@ -138,7 +138,16 @@ where
         self.error_recovery_mode = true;
     }
 
+    #[inline(always)]
     fn end_error_condition(&mut self, _recognizer: &P) {
+        if self.error_recovery_mode {
+            self.end_error_condition_cold();
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn end_error_condition_cold(&mut self) {
         self.error_recovery_mode = false;
         self.last_error_index = -1;
         self.last_error_states = None;
@@ -425,6 +434,7 @@ where
         Ok(())
     }
 
+    #[inline(always)]
     fn in_error_recovery_mode(&mut self, _recognizer: &mut P) -> bool {
         self.error_recovery_mode
     }
@@ -445,6 +455,7 @@ where
         recognizer.notify_error_listeners(msg, offending_token_index, Some(e))
     }
 
+    #[inline(always)]
     fn report_match(&mut self, recognizer: &mut P) {
         self.end_error_condition(recognizer);
         //println!("matched token succesfully {}", recognizer.get_input_stream().la(1))
@@ -566,20 +577,28 @@ where
     fn report_match(&mut self, _recognizer: &mut P) {}
 }
 
-/// Essentially a type-erased `Box<dyn ErrorStrategy<'input, 'arena, TF, P> +
-/// 'input>` that is covariant over 'input.
+enum ErrorStrategyRepr<'input, 'arena, TF, P>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    P: Parser<'input, 'arena, TF>,
+{
+    Default(DefaultErrorStrategy<'input, 'arena, TF, P>),
+    Custom { data: *mut (), vtable: *const () },
+}
+
+/// Internal error-strategy wrapper that stores `DefaultErrorStrategy` inline
+/// and type-erases custom boxed strategies covariantly over `'input`.
 ///
-/// NOTE: this is an *internal* type, declared public only because it needs to
-/// be used in generated code. There is no safe way to construct this type from
-/// user code.
+/// NOTE: this is an *internal* type, declared public only because generated
+/// parsers hold it as a field.
 pub struct ErrorStrategyDelegate<'input, 'arena, TF, P>
 where
     'input: 'arena,
     TF: TokenFactory<'input, 'arena> + 'arena,
     P: Parser<'input, 'arena, TF>,
 {
-    data: *mut (),
-    vtable: *const (),
+    repr: ErrorStrategyRepr<'input, 'arena, TF, P>,
 
     // Invariant over 'arena, covariant over 'input, TF, P
     _marker: PhantomData<(&'input (), *mut &'arena (), TF, P)>,
@@ -592,9 +611,17 @@ where
     P: Parser<'input, 'arena, TF>,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ErrorStrategyDelegate")
-            .field("data", &self.data)
-            .finish_non_exhaustive()
+        match &self.repr {
+            ErrorStrategyRepr::Default(s) => f
+                .debug_struct("ErrorStrategyDelegate")
+                .field("kind", &"default")
+                .field("error_recovery_mode", &s.error_recovery_mode)
+                .finish_non_exhaustive(),
+            ErrorStrategyRepr::Custom { data, .. } => f
+                .debug_struct("ErrorStrategyDelegate")
+                .field("data", data)
+                .finish_non_exhaustive(),
+        }
     }
 }
 
@@ -604,6 +631,15 @@ where
     TF: TokenFactory<'input, 'arena> + 'arena,
     P: Parser<'input, 'arena, TF>,
 {
+    /// Creates an inline `DefaultErrorStrategy` delegate with no heap allocation.
+    #[inline]
+    pub fn new_default() -> Self {
+        Self {
+            repr: ErrorStrategyRepr::Default(DefaultErrorStrategy::new()),
+            _marker: PhantomData,
+        }
+    }
+
     /// # Safety
     /// This is an internal type that is only meant to be constructed by
     /// generated code, NOT for public consumption.
@@ -612,18 +648,19 @@ where
         // SAFETY: *mut dyn Trait is a fat pointer (data_ptr, vtable_ptr).
         let (data, vtable): (*mut (), *const ()) = unsafe { std::mem::transmute(raw) };
         Self {
-            data,
-            vtable,
+            repr: ErrorStrategyRepr::Custom { data, vtable },
             _marker: PhantomData,
         }
     }
 
     #[inline(always)]
-    fn as_mut_dyn(&mut self) -> &mut (dyn ErrorStrategy<'input, 'arena, TF, P> + 'arena) {
-        // SAFETY: the [ErrorStrategy] trait is actually covariant over 'input
-        // and 'arena, so transmuting to a reference with the same lifetime is
-        // sound.
-        unsafe { std::mem::transmute((self.data, self.vtable)) }
+    unsafe fn custom_as_mut_dyn<'a>(
+        data: *mut (),
+        vtable: *const (),
+    ) -> &'a mut (dyn ErrorStrategy<'input, 'arena, TF, P> + 'arena) {
+        // SAFETY: the [ErrorStrategy] trait is covariant over 'input and
+        // 'arena, and the caller holds `&mut self` for the lifetime of the call.
+        std::mem::transmute((data, vtable))
     }
 }
 
@@ -634,10 +671,12 @@ where
     P: Parser<'input, 'arena, TF>,
 {
     fn drop(&mut self) {
-        unsafe {
-            let ptr: *mut (dyn ErrorStrategy<'input, 'arena, TF, P> + 'arena) =
-                std::mem::transmute((self.data, self.vtable));
-            drop(Box::from_raw(ptr));
+        if let ErrorStrategyRepr::Custom { data, vtable } = self.repr {
+            unsafe {
+                let ptr: *mut (dyn ErrorStrategy<'input, 'arena, TF, P> + 'arena) =
+                    std::mem::transmute((data, vtable));
+                drop(Box::from_raw(ptr));
+            }
         }
     }
 }
@@ -651,36 +690,72 @@ where
 {
     #[inline(always)]
     fn reset(&mut self, recognizer: &mut P) {
-        self.as_mut_dyn().reset(recognizer)
+        match &mut self.repr {
+            ErrorStrategyRepr::Default(s) => s.reset(recognizer),
+            ErrorStrategyRepr::Custom { data, vtable } => {
+                unsafe { Self::custom_as_mut_dyn(*data, *vtable) }.reset(recognizer)
+            }
+        }
     }
 
     #[inline(always)]
     fn recover_inline(&mut self, recognizer: &mut P) -> Result<&'arena TF::Tok, ANTLRError> {
-        self.as_mut_dyn().recover_inline(recognizer)
+        match &mut self.repr {
+            ErrorStrategyRepr::Default(s) => s.recover_inline(recognizer),
+            ErrorStrategyRepr::Custom { data, vtable } => {
+                unsafe { Self::custom_as_mut_dyn(*data, *vtable) }.recover_inline(recognizer)
+            }
+        }
     }
 
     #[inline(always)]
     fn recover(&mut self, recognizer: &mut P, e: &ANTLRError) -> Result<(), ANTLRError> {
-        self.as_mut_dyn().recover(recognizer, e)
+        match &mut self.repr {
+            ErrorStrategyRepr::Default(s) => s.recover(recognizer, e),
+            ErrorStrategyRepr::Custom { data, vtable } => {
+                unsafe { Self::custom_as_mut_dyn(*data, *vtable) }.recover(recognizer, e)
+            }
+        }
     }
 
     #[inline(always)]
     fn sync(&mut self, recognizer: &mut P) -> Result<(), ANTLRError> {
-        self.as_mut_dyn().sync(recognizer)
+        match &mut self.repr {
+            ErrorStrategyRepr::Default(s) => s.sync(recognizer),
+            ErrorStrategyRepr::Custom { data, vtable } => {
+                unsafe { Self::custom_as_mut_dyn(*data, *vtable) }.sync(recognizer)
+            }
+        }
     }
 
     #[inline(always)]
     fn in_error_recovery_mode(&mut self, recognizer: &mut P) -> bool {
-        self.as_mut_dyn().in_error_recovery_mode(recognizer)
+        match &mut self.repr {
+            ErrorStrategyRepr::Default(s) => s.in_error_recovery_mode(recognizer),
+            ErrorStrategyRepr::Custom { data, vtable } => {
+                unsafe { Self::custom_as_mut_dyn(*data, *vtable) }
+                    .in_error_recovery_mode(recognizer)
+            }
+        }
     }
 
     #[inline(always)]
     fn report_error(&mut self, recognizer: &mut P, e: &ANTLRError) {
-        self.as_mut_dyn().report_error(recognizer, e)
+        match &mut self.repr {
+            ErrorStrategyRepr::Default(s) => s.report_error(recognizer, e),
+            ErrorStrategyRepr::Custom { data, vtable } => {
+                unsafe { Self::custom_as_mut_dyn(*data, *vtable) }.report_error(recognizer, e)
+            }
+        }
     }
 
     #[inline(always)]
     fn report_match(&mut self, recognizer: &mut P) {
-        self.as_mut_dyn().report_match(recognizer)
+        match &mut self.repr {
+            ErrorStrategyRepr::Default(s) => s.report_match(recognizer),
+            ErrorStrategyRepr::Custom { data, vtable } => {
+                unsafe { Self::custom_as_mut_dyn(*data, *vtable) }.report_match(recognizer)
+            }
+        }
     }
 }

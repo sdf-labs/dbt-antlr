@@ -82,6 +82,15 @@ where
         node: &'a TreeNode<'input, 'arena, Self::NodeKind, Tok>,
     ) -> Option<&'a BaseParserRuleContext<'input, 'arena, Self, Self::NodeKind, Tok>>;
 
+    /// # Safety
+    /// Caller must ensure `node` holds a context of type `Self`.
+    #[inline(always)]
+    unsafe fn cast_from_unchecked<'a>(
+        node: &'a TreeNode<'input, 'arena, Self::NodeKind, Tok>,
+    ) -> &'a BaseParserRuleContext<'input, 'arena, Self, Self::NodeKind, Tok> {
+        Self::cast_from(node).unwrap_unchecked()
+    }
+
     fn cast_from_mut<'a>(
         node: &'a mut TreeNode<'input, 'arena, Self::NodeKind, Tok>,
     ) -> Option<&'a mut BaseParserRuleContext<'input, 'arena, Self, Self::NodeKind, Tok>>;
