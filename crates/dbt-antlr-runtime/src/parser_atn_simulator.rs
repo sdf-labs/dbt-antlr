@@ -198,7 +198,7 @@ impl<'sim> ParserATNSimulator<'sim> {
         let mut merge_cache = MergeCache::new(&scratch);
 
         let mut local = Local {
-            outer_context: parser.get_current_context_opt(),
+            outer_context: parser.get_current_context(),
             dfa_ref: self
                 .decision_to_dfa(decision as usize)
                 .expect("decision is valid"),
@@ -313,7 +313,7 @@ impl<'sim> ParserATNSimulator<'sim> {
         let scratch = bumpalo::Bump::new();
         let mut merge_cache = MergeCache::new(&scratch);
         let mut local = Local {
-            outer_context: parser.get_current_context_opt(),
+            outer_context: parser.get_current_context(),
             dfa_ref,
             merge_cache: &mut merge_cache,
             precedence: parser.get_precedence(),
@@ -372,7 +372,7 @@ impl<'sim> ParserATNSimulator<'sim> {
         let scratch = bumpalo::Bump::new();
         let mut merge_cache = MergeCache::new(&scratch);
         let mut local = Local {
-            outer_context: parser.get_current_context_opt(),
+            outer_context: parser.get_current_context(),
             dfa_ref: self
                 .decision_to_dfa(decision as usize)
                 .expect("decision is valid"),

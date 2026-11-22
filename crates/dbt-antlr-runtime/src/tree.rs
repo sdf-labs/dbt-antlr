@@ -344,7 +344,7 @@ where
 }
 
 #[repr(C, align(8))]
-pub(crate) struct ParserRuleContextCommonLayout<'input, 'arena, Node, Tok = CommonToken<'input>>
+pub(crate) struct ParserRuleContextCommon<'input, 'arena, Node, Tok = CommonToken<'input>>
 where
     'input: 'arena,
     Node: NodeKindType<'arena, Tok>,
@@ -356,13 +356,58 @@ where
     pub(crate) parent: Option<&'arena TreeNode<'input, 'arena, Node, Tok>>,
 }
 
+impl<'input, 'arena, Node, Tok> NodeInner<'input, 'arena, Node, Tok>
+    for ParserRuleContextCommon<'input, 'arena, Node, Tok>
+where
+    'input: 'arena,
+    Node: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+{
+    #[inline]
+    fn cast_from<'a>(node: &'a TreeNode<'input, 'arena, Node, Tok>) -> Option<&'a Self> {
+        node.as_rule_context_common()
+    }
+
+    #[inline(always)]
+    unsafe fn cast_from_unchecked<'a>(node: &'a TreeNode<'input, 'arena, Node, Tok>) -> &'a Self {
+        node.as_rule_context_common_unchecked()
+    }
+
+    #[inline]
+    fn cast_from_mut<'a>(
+        node: &'a mut TreeNode<'input, 'arena, Node, Tok>,
+    ) -> Option<&'a mut Self> {
+        node.as_rule_context_common_mut()
+    }
+
+    #[inline(always)]
+    fn as_node(&self) -> &TreeNode<'input, 'arena, Node, Tok> {
+        // SAFETY: All `ParserRuleContextCommon` instances sit at `TreeNode::body`
+        // inside a `TreeNode` allocated by `Arena`.
+        unsafe { TreeNode::from_ctx_ptr(self as *const Self as CtxPtr<'input, 'arena>) }
+    }
+
+    #[inline(always)]
+    fn as_node_mut(&mut self) -> &mut TreeNode<'input, 'arena, Node, Tok> {
+        // SAFETY: All `ParserRuleContextCommon` instances sit at `TreeNode::body`
+        // inside a `TreeNode` allocated by `Arena`.
+        unsafe { TreeNode::from_ctx_ptr_mut(self as *mut Self as CtxPtr<'input, 'arena>) }
+    }
+
+    fn iter_child_nodes<'a>(
+        &'a self,
+    ) -> Box<dyn Iterator<Item = &'arena TreeNode<'input, 'arena, Node, Tok>> + 'a> {
+        Box::new(self.children.iter().copied())
+    }
+}
+
 const _: () = {
     use std::mem::{align_of, offset_of, size_of};
 
     use crate::parser_rule_context::BaseParserRuleContext;
     use crate::rule_context::{EmptyCustomRuleContext, EmptyNodeKind};
 
-    type Common = ParserRuleContextCommonLayout<'static, 'static, EmptyNodeKind>;
+    type Common = ParserRuleContextCommon<'static, 'static, EmptyNodeKind>;
     type Base = BaseParserRuleContext<
         'static,
         'static,
@@ -483,10 +528,10 @@ where
     #[inline]
     fn as_rule_context_common(
         &self,
-    ) -> Option<&ParserRuleContextCommonLayout<'input, 'arena, NodeKind, Tok>> {
+    ) -> Option<&ParserRuleContextCommon<'input, 'arena, NodeKind, Tok>> {
         if self.node_tag.is_context() {
             Some(
-                cast_unchecked!(self.ctx_ptr() => ParserRuleContextCommonLayout<'input, 'arena, NodeKind, Tok>),
+                cast_unchecked!(self.ctx_ptr() => ParserRuleContextCommon<'input, 'arena, NodeKind, Tok>),
             )
         } else {
             None
@@ -496,10 +541,10 @@ where
     #[inline]
     fn as_rule_context_common_mut(
         &mut self,
-    ) -> Option<&mut ParserRuleContextCommonLayout<'input, 'arena, NodeKind, Tok>> {
+    ) -> Option<&mut ParserRuleContextCommon<'input, 'arena, NodeKind, Tok>> {
         if self.node_tag.is_context() {
             Some(
-                cast_unchecked!(self.ctx_ptr() => mut ParserRuleContextCommonLayout<'input, 'arena, NodeKind, Tok>),
+                cast_unchecked!(self.ctx_ptr() => mut ParserRuleContextCommon<'input, 'arena, NodeKind, Tok>),
             )
         } else {
             None
@@ -509,17 +554,17 @@ where
     #[inline(always)]
     pub(crate) unsafe fn as_rule_context_common_unchecked(
         &self,
-    ) -> &ParserRuleContextCommonLayout<'input, 'arena, NodeKind, Tok> {
+    ) -> &ParserRuleContextCommon<'input, 'arena, NodeKind, Tok> {
         debug_assert!(self.node_tag.is_context());
-        cast_unchecked!(self.ctx_ptr() => ParserRuleContextCommonLayout<'input, 'arena, NodeKind, Tok>)
+        cast_unchecked!(self.ctx_ptr() => ParserRuleContextCommon<'input, 'arena, NodeKind, Tok>)
     }
 
     #[inline(always)]
     pub(crate) unsafe fn as_rule_context_common_mut_unchecked(
         &mut self,
-    ) -> &mut ParserRuleContextCommonLayout<'input, 'arena, NodeKind, Tok> {
+    ) -> &mut ParserRuleContextCommon<'input, 'arena, NodeKind, Tok> {
         debug_assert!(self.node_tag.is_context());
-        cast_unchecked!(self.ctx_ptr() => mut ParserRuleContextCommonLayout<'input, 'arena, NodeKind, Tok>)
+        cast_unchecked!(self.ctx_ptr() => mut ParserRuleContextCommon<'input, 'arena, NodeKind, Tok>)
     }
 
     /// Downcast this node to a specific [ParserRuleContext] type without
@@ -1266,7 +1311,7 @@ mod tests {
 
     #[test]
     fn layout_matches_base_parser_rule_context() {
-        type Common<'i, 'a> = ParserRuleContextCommonLayout<'i, 'a, EmptyNodeKind>;
+        type Common<'i, 'a> = ParserRuleContextCommon<'i, 'a, EmptyNodeKind>;
         type Base<'i, 'a> =
             BaseParserRuleContext<'i, 'a, EmptyCustomRuleContext<'i, 'a>, EmptyNodeKind>;
         type Node<'i, 'a> = TreeNode<'i, 'a, EmptyNodeKind>;

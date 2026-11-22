@@ -179,7 +179,7 @@ where
     fn report_failed_predicate(&self, recognizer: &P, e: &FailedPredicateError) -> String {
         format!(
             "rule {} {}",
-            recognizer.get_rule_names()[recognizer.get_current_context().get_rule_index()],
+            recognizer.get_rule_names()[recognizer.get_current_context().unwrap().get_rule_index()],
             e.base.message
         )
     }
@@ -228,7 +228,7 @@ where
             .first()
             .unwrap()
             .get_target();
-        let expect_at_ll2 = atn.next_tokens_in_ctx(next, Some(recognizer.get_current_context()));
+        let expect_at_ll2 = atn.next_tokens_in_ctx(next, recognizer.get_current_context());
         if expect_at_ll2.contains(current_token) {
             self.report_missing_token(recognizer);
             return true;
@@ -298,7 +298,7 @@ where
 
     fn get_error_recovery_set(&self, recognizer: &P) -> IntervalSetBuf {
         let atn = recognizer.get_interpreter().atn();
-        let mut ctx = Some(recognizer.get_current_context());
+        let mut ctx = recognizer.get_current_context();
         let mut recover_set = IntervalSetBuf::new();
         while let Some(c) = ctx {
             if c.get_invoking_state() < 0 {
@@ -408,7 +408,7 @@ where
         if next_tokens.contains(TOKEN_EPSILON) {
             if self.next_tokens_ctx.is_none() {
                 self.next_tokens_state = recognizer.get_state();
-                self.next_tokens_ctx = Some(recognizer.get_current_context());
+                self.next_tokens_ctx = recognizer.get_current_context();
             }
             return Ok(());
         }
@@ -509,8 +509,8 @@ where
     fn process_error(&self, recognizer: &mut P, e: &ANTLRError) -> ANTLRError {
         let mut ctx = recognizer.get_current_context();
         let _: Option<()> = (|| loop {
-            ctx.set_exception(e.clone(), recognizer.get_arena());
-            ctx = ctx.get_parent()?
+            ctx?.set_exception(e.clone(), recognizer.get_arena());
+            ctx = ctx.unwrap().get_parent()
         })();
         ANTLRError::fall_through(Arc::new(ParseCancelledError(e.clone())))
     }
@@ -641,6 +641,7 @@ where
     }
 
     /// # Safety
+    ///
     /// This is an internal type that is only meant to be constructed by
     /// generated code, NOT for public consumption.
     pub unsafe fn new(s: Box<dyn ErrorStrategy<'input, 'arena, TF, P> + 'arena>) -> Self {
@@ -673,9 +674,7 @@ where
     fn drop(&mut self) {
         if let ErrorStrategyRepr::Custom { data, vtable } = self.repr {
             unsafe {
-                let ptr: *mut (dyn ErrorStrategy<'input, 'arena, TF, P> + 'arena) =
-                    std::mem::transmute((data, vtable));
-                drop(Box::from_raw(ptr));
+                drop(Box::from_raw(Self::custom_as_mut_dyn(data, vtable)));
             }
         }
     }

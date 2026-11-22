@@ -21,7 +21,9 @@ use crate::rule_context::{states_stack, RuleContext as _};
 use crate::token::{OwningToken, Token, TOKEN_EOF};
 use crate::token_factory::TokenFactory;
 use crate::token_stream::TokenStream;
-use crate::tree::{NodeKindType, ParseTreeListener, Tree as _, TreeNode};
+use crate::tree::{
+    NodeInner as _, NodeKindType, ParseTreeListener, ParserRuleContextCommon, Tree as _, TreeNode,
+};
 use crate::utils::cell_update;
 use crate::vocabulary::Vocabulary;
 
@@ -41,8 +43,6 @@ where
 
     fn get_token_factory(&self) -> &TF;
 
-    fn get_current_context(&self) -> &'arena TreeNode<'input, 'arena, Self::Node, TF::Tok>;
-
     /// Current rule context, or `None` when the parser is not inside a rule.
     ///
     /// Java has no equivalent accessor: `ParserATNSimulator.adaptivePredict`
@@ -50,11 +50,7 @@ where
     /// interpreter tests pass `ParserRuleContext.EMPTY`. This accessor lets
     /// [crate::parser_atn_simulator::ParserATNSimulator::adaptive_predict]
     /// treat a missing context as Java's `ParserRuleContext.EMPTY`.
-    fn get_current_context_opt(
-        &self,
-    ) -> Option<&'arena TreeNode<'input, 'arena, Self::Node, TF::Tok>> {
-        Some(self.get_current_context())
-    }
+    fn get_current_context(&self) -> Option<&'arena TreeNode<'input, 'arena, Self::Node, TF::Tok>>;
 
     fn consume(
         &mut self,
@@ -238,7 +234,14 @@ where
     atn_manager: &'static ParserATNSimulatorManager,
     global_cache_threshold: usize,
 
-    /// Rule context parser is currently processing
+    /// Points to the current rule context node, or is null outside a rule.
+    ///
+    /// A non-null `ctx` always points to a rule context [`TreeNode`] in
+    /// `arena`. Code mutates `ctx` only through `with_mut_ctx`,
+    /// `with_mut_ctx_common`, or `add_child_to_ctx`. Code updates the `ctx`
+    /// pointer only through `set_current_ctx`. Callers never dereference `ctx`
+    /// directly. As a result, `ctx` and a `&mut TreeNode` parameter (for
+    /// example, `localctx`) are never both `&mut` in the same stack frame.
     ctx: *mut (),
 
     /// true if parser reached EOF
@@ -399,12 +402,7 @@ where
     }
 
     #[inline(always)]
-    fn get_current_context(&self) -> &'arena TreeNode<'input, 'arena, Node, TF::Tok> {
-        self.ctx().unwrap()
-    }
-
-    #[inline(always)]
-    fn get_current_context_opt(&self) -> Option<&'arena TreeNode<'input, 'arena, Node, TF::Tok>> {
+    fn get_current_context(&self) -> Option<&'arena TreeNode<'input, 'arena, Node, TF::Tok>> {
         self.ctx()
     }
 
@@ -423,8 +421,6 @@ where
         _localctx: Option<&TreeNode<'input, 'arena, Node, TF::Tok>>,
         precedence: i32,
     ) -> bool {
-        //        localctx.map(|it|println!("check at{}",it.to_string_tree(self)));
-        //        println!("{}",self.get_precedence());
         precedence >= self.get_precedence()
     }
 
@@ -557,7 +553,7 @@ where
     fn get_rule_invocation_stack(&self) -> Vec<String> {
         let mut vec = Vec::new();
         let rule_names = self.get_rule_names();
-        let mut ctx = self.get_current_context();
+        let mut ctx = self.get_current_context().unwrap();
         loop {
             let rule_index = ctx.get_rule_index();
             vec.push(rule_names.get(rule_index).unwrap_or(&"n/a").to_string());
@@ -579,10 +575,6 @@ where
     fn set_recursion_limit(&mut self, v: u32) {
         self.recursion_limit = v;
     }
-
-    //    fn get_rule_invocation_stack(&self, c: _) -> Vec<String> {
-    //        unimplemented!()
-    //    }
 }
 
 #[allow(missing_docs)] // todo docs
@@ -1170,29 +1162,28 @@ where
         }
     }
 
+    #[inline(always)]
+    fn ctx_common(&self) -> Option<&'arena ParserRuleContextCommon<'input, 'arena, Node, TF::Tok>> {
+        self.ctx().map(|node| {
+            // SAFETY: `self.ctx` always points to a rule context node in `self.arena`.
+            unsafe { ParserRuleContextCommon::cast_from_unchecked(node) }
+        })
+    }
+
     #[inline]
     fn parent_ctx(&self) -> Option<&'arena TreeNode<'input, 'arena, Node, TF::Tok>> {
-        self.ctx().and_then(|it| it.get_parent())
+        self.ctx_common().and_then(|ctx| ctx.parent)
     }
 
-    #[inline]
+    #[inline(always)]
     fn set_current_ctx(&mut self, ctx: Option<&'arena TreeNode<'input, 'arena, Node, TF::Tok>>) {
-        if let Some(ctx) = ctx {
-            self.ctx = ctx as *const TreeNode<'input, 'arena, Node, TF::Tok>
-                as *mut TreeNode<'input, 'arena, Node, TF::Tok> as *mut ();
-        } else {
-            self.ctx = std::ptr::null_mut();
-        }
-    }
-
-    pub fn take_ctx(&mut self) -> Option<&'arena TreeNode<'input, 'arena, Node, TF::Tok>> {
-        if self.ctx.is_null() {
-            None
-        } else {
-            let ret = unsafe { &*(self.ctx as *const TreeNode<'input, 'arena, Node, TF::Tok>) };
-            self.ctx = std::ptr::null_mut();
-            Some(ret)
-        }
+        self.ctx = match ctx {
+            Some(ctx) => {
+                debug_assert!(ctx.node_tag().is_context());
+                ctx as *const TreeNode<'input, 'arena, Node, TF::Tok> as *mut ()
+            }
+            None => std::ptr::null_mut(),
+        };
     }
 
     #[inline(always)]
@@ -1203,23 +1194,29 @@ where
     #[inline(always)]
     fn add_child_to_ctx(&mut self, child: &'arena TreeNode<'input, 'arena, Node, TF::Tok>) {
         if !self.ctx.is_null() {
-            // SAFETY: `self.ctx` is always a rule context node in `self.arena`.
-            unsafe {
-                (*(self.ctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>))
-                    .as_rule_context_common_mut_unchecked()
-                    .children
-                    .push(child, self.arena);
-            }
+            let arena = self.arena;
+            self.with_mut_ctx_common(|common| common.children.push(child, arena));
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn with_mut_ctx<F, R>(&mut self, f: F) -> R
     where
         F: FnOnce(&mut TreeNode<'input, 'arena, Node, TF::Tok>) -> R,
     {
-        assert!(!self.ctx.is_null());
+        debug_assert!(!self.ctx.is_null());
         unsafe { f(&mut *(self.ctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>)) }
+    }
+
+    #[inline(always)]
+    fn with_mut_ctx_common<F, R>(&mut self, f: F) -> R
+    where
+        F: FnOnce(&mut ParserRuleContextCommon<'input, 'arena, Node, TF::Tok>) -> R,
+    {
+        self.with_mut_ctx(|ctx| {
+            // SAFETY: `self.ctx` always points to a rule context node in `self.arena`.
+            f(unsafe { ctx.as_rule_context_common_mut_unchecked() })
+        })
     }
 
     #[cold]
@@ -1401,32 +1398,21 @@ where
         state: i32,
         _rule_index: usize,
     ) -> Result<(), ANTLRError> {
-        let start = self.input.lt(1);
-        let child_ptr = localctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>;
-        // SAFETY: `localctx` is a rule context node allocated in `self.arena`.
-        let parent = unsafe {
-            let child_common = (*child_ptr).as_rule_context_common_mut_unchecked();
-            child_common.start = start;
-            child_common.parent
-        };
-        if let Some(parent) = parent {
-            let parent_ptr = if std::ptr::eq(self.ctx, parent as *const _ as *const ()) {
-                self.ctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>
-            } else {
-                parent as *const TreeNode<'input, 'arena, Node, TF::Tok>
-                    as *mut TreeNode<'input, 'arena, Node, TF::Tok>
-            };
-            // SAFETY: `parent` is a rule context node in `self.arena` distinct from `child_ptr`.
-            unsafe {
-                (*parent_ptr)
-                    .as_rule_context_common_mut_unchecked()
-                    .children
-                    .push(&*child_ptr, self.arena);
-            }
-        }
+        debug_assert!(localctx.node_tag().is_context());
 
-        self.state = state;
-        self.ctx = child_ptr as *mut ();
+        let start = self.input.lt(1);
+        let parent = {
+            // SAFETY: `localctx` is a rule context node allocated in `self.arena`.
+            let common = unsafe { localctx.as_rule_context_common_mut_unchecked() };
+            common.start = start;
+            common.parent
+        };
+        let child: &'arena TreeNode<'input, 'arena, Node, TF::Tok> = localctx;
+
+        self.set_current_ctx(parent);
+        self.add_child_to_ctx(child);
+        self.set_state(state);
+        self.set_current_ctx(Some(child));
 
         if self.listeners_active {
             self.trigger_enter_rule_event_cold()?;
@@ -1446,8 +1432,6 @@ where
     pub fn exit_rule(
         &mut self,
     ) -> Result<&'arena TreeNode<'input, 'arena, Node, TF::Tok>, ANTLRError> {
-        assert!(!self.ctx.is_null());
-
         #[cfg(feature = "recursion-limit")]
         {
             self.current_recursion_depth -= 1;
@@ -1459,27 +1443,17 @@ where
             // stop node is what we just matched
             self.input.lt(-1)
         };
-        let child_ptr = self.ctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>;
-        // SAFETY: `self.ctx` is a non-null rule context node in `self.arena`.
-        unsafe {
-            (*child_ptr).as_rule_context_common_mut_unchecked().stop = stop;
-        }
+        self.with_mut_ctx_common(|common| common.stop = stop);
         if self.listeners_active {
             self.trigger_exit_rule_event_cold()?;
         }
 
-        // SAFETY: `child_ptr` is a valid rule context node in `self.arena`.
-        let (invoking_state, parent) = unsafe {
-            let child = &*child_ptr;
-            (
-                child.get_invoking_state(),
-                child.as_rule_context_common_unchecked().parent,
-            )
-        };
-        self.state = invoking_state;
-        self.set_current_ctx(parent);
+        let ctx = unsafe { self.ctx_common().unwrap_unchecked() };
+        let child = ctx.as_node();
+        self.set_state(child.get_invoking_state());
+        self.set_current_ctx(ctx.parent);
 
-        Ok(unsafe { &*child_ptr })
+        Ok(child)
     }
 
     #[inline]
@@ -1490,15 +1464,13 @@ where
         _rule_index: usize,
         precedence: i32,
     ) -> Result<(), ANTLRError> {
-        let start = self.input.lt(1);
-        let child_ptr = localctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>;
-        // SAFETY: `localctx` is a rule context node allocated in `self.arena`.
-        unsafe {
-            (*child_ptr).as_rule_context_common_mut_unchecked().start = start;
-        }
-        self.state = state;
+        debug_assert!(localctx.node_tag().is_context());
+
+        self.set_state(state);
         self.precedence_stack.push(precedence);
-        self.ctx = child_ptr as *mut ();
+        self.set_current_ctx(Some(localctx));
+        let start = self.input.lt(1);
+        self.with_mut_ctx_common(|ctx| ctx.start = start);
         if self.listeners_active {
             self.trigger_enter_rule_event_cold()?;
         }
@@ -1520,30 +1492,27 @@ where
         state: i32,
         _rule_index: usize,
     ) -> Result<&'arena TreeNode<'input, 'arena, Node, TF::Tok>, ANTLRError> {
-        assert!(!self.ctx.is_null());
+        debug_assert!(localctx.node_tag().is_context());
+
         let stop = self.input.lt(-1);
-        let localctx_ptr = localctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>;
-        let prev_ptr = self.ctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>;
-        // SAFETY: `prev_ptr` and `localctx_ptr` are distinct rule context nodes in `self.arena`.
-        let start = unsafe {
-            let prev = &mut *prev_ptr;
-            prev.set_invoking_state(state);
-            let prev_common = prev.as_rule_context_common_mut_unchecked();
-            prev_common.parent = Some(&*localctx_ptr);
-            prev_common.stop = stop;
-            prev_common.start
-        };
-        // SAFETY: `localctx_ptr` is a valid rule context node in `self.arena`.
-        unsafe {
-            let next_common = (*localctx_ptr).as_rule_context_common_mut_unchecked();
-            next_common.start = start;
-            next_common.children.push(&*prev_ptr, self.arena);
-        }
-        self.ctx = localctx_ptr as *mut ();
+        let next: &'arena TreeNode<'input, 'arena, Node, TF::Tok> = localctx;
+        let start = self.with_mut_ctx_common(|prev| {
+            prev.as_node_mut().set_invoking_state(state);
+            prev.parent = Some(next);
+            prev.stop = stop;
+            prev.start
+        });
+        let prev = self.ctx().unwrap();
+        self.set_current_ctx(Some(next));
+        let arena = self.arena;
+        self.with_mut_ctx_common(|next_ctx| {
+            next_ctx.start = start;
+            next_ctx.children.push(prev, arena);
+        });
         if self.listeners_active {
             self.trigger_enter_rule_event_cold()?;
         }
-        Ok(unsafe { &*prev_ptr })
+        Ok(prev)
     }
 
     #[cold]
@@ -1564,45 +1533,31 @@ where
         &mut self,
         parent_ctx: Option<&'arena TreeNode<'input, 'arena, Node, TF::Tok>>,
     ) -> Result<&'arena TreeNode<'input, 'arena, Node, TF::Tok>, ANTLRError> {
-        assert!(!self.ctx.is_null());
-
         #[cfg(feature = "recursion-limit")]
         {
             self.current_recursion_depth -= 1;
         }
         self.precedence_stack.pop();
         let stop = self.input.lt(-1);
-        let retctx = self.ctx as *mut TreeNode<'input, 'arena, Node, TF::Tok>;
-        // SAFETY: `retctx` is a non-null rule context node in `self.arena`.
-        unsafe {
-            (*retctx).as_rule_context_common_mut_unchecked().stop = stop;
-        }
-
-        // unroll so _ctx is as it was before call to recursive method
         if self.listeners_active {
+            self.with_mut_ctx_common(|common| common.stop = stop);
+            let retctx = self.ctx().unwrap();
             self.unroll_recursion_exit_events_cold(parent_ctx)?;
-        } else {
+            self.set_current_ctx(Some(retctx));
+            self.with_mut_ctx_common(|common| common.parent = parent_ctx);
             self.set_current_ctx(parent_ctx);
+            self.add_child_to_ctx(retctx);
+            Ok(retctx)
+        } else {
+            self.with_mut_ctx_common(|common| {
+                common.stop = stop;
+                common.parent = parent_ctx;
+            });
+            let retctx = self.ctx().unwrap();
+            self.set_current_ctx(parent_ctx);
+            self.add_child_to_ctx(retctx);
+            Ok(retctx)
         }
-
-        // hook into tree
-        // SAFETY: `retctx` is a valid rule context node in `self.arena`.
-        unsafe {
-            (*retctx).as_rule_context_common_mut_unchecked().parent = parent_ctx;
-        }
-
-        if let Some(parent) = parent_ctx {
-            let parent_ptr = parent as *const TreeNode<'input, 'arena, Node, TF::Tok>
-                as *mut TreeNode<'input, 'arena, Node, TF::Tok>;
-            // SAFETY: `parent` is a rule context node in `self.arena` distinct from `retctx`.
-            unsafe {
-                (*parent_ptr)
-                    .as_rule_context_common_mut_unchecked()
-                    .children
-                    .push(&*retctx, self.arena);
-            }
-        }
-        Ok(unsafe { &*retctx })
     }
 
     #[inline]
