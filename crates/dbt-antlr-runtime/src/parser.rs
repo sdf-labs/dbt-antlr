@@ -1432,6 +1432,8 @@ where
     pub fn exit_rule(
         &mut self,
     ) -> Result<&'arena TreeNode<'input, 'arena, Node, TF::Tok>, ANTLRError> {
+        debug_assert!(self.ctx().is_some());
+
         #[cfg(feature = "recursion-limit")]
         {
             self.current_recursion_depth -= 1;
@@ -1492,6 +1494,7 @@ where
         state: i32,
         _rule_index: usize,
     ) -> Result<&'arena TreeNode<'input, 'arena, Node, TF::Tok>, ANTLRError> {
+        debug_assert!(self.ctx().is_some());
         debug_assert!(localctx.node_tag().is_context());
 
         let stop = self.input.lt(-1);
@@ -1502,7 +1505,7 @@ where
             prev.stop = stop;
             prev.start
         });
-        let prev = self.ctx().unwrap();
+        let prev = unsafe { self.ctx().unwrap_unchecked() };
         self.set_current_ctx(Some(next));
         let arena = self.arena;
         self.with_mut_ctx_common(|next_ctx| {
@@ -1521,6 +1524,8 @@ where
         &mut self,
         parent_ctx: Option<&'arena TreeNode<'input, 'arena, Node, TF::Tok>>,
     ) -> Result<(), ANTLRError> {
+        debug_assert!(self.ctx().is_some());
+
         while !self.ctx_is(parent_ctx) {
             self.trigger_exit_rule_event_cold()?;
             self.set_current_ctx(self.parent_ctx());
@@ -1533,6 +1538,8 @@ where
         &mut self,
         parent_ctx: Option<&'arena TreeNode<'input, 'arena, Node, TF::Tok>>,
     ) -> Result<&'arena TreeNode<'input, 'arena, Node, TF::Tok>, ANTLRError> {
+        debug_assert!(self.ctx().is_some());
+
         #[cfg(feature = "recursion-limit")]
         {
             self.current_recursion_depth -= 1;
@@ -1541,7 +1548,7 @@ where
         let stop = self.input.lt(-1);
         if self.listeners_active {
             self.with_mut_ctx_common(|common| common.stop = stop);
-            let retctx = self.ctx().unwrap();
+            let retctx = unsafe { self.ctx().unwrap_unchecked() };
             self.unroll_recursion_exit_events_cold(parent_ctx)?;
             self.set_current_ctx(Some(retctx));
             self.with_mut_ctx_common(|common| common.parent = parent_ctx);
@@ -1553,7 +1560,7 @@ where
                 common.stop = stop;
                 common.parent = parent_ctx;
             });
-            let retctx = self.ctx().unwrap();
+            let retctx = unsafe { self.ctx().unwrap_unchecked() };
             self.set_current_ctx(parent_ctx);
             self.add_child_to_ctx(retctx);
             Ok(retctx)
