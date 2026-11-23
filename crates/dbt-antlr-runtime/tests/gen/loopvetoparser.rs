@@ -41,7 +41,7 @@ where
     TF: TokenFactory<'input, 'arena> + 'arena,
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
-    pub fn with_strategy(arena: &'arena Arena, input: Input, strategy: Box<dyn ErrorStrategy<'input, 'arena, TF, BaseParserType<'input, 'arena, Input, TF>> + 'arena>) -> Self {
+    fn with_delegate(arena: &'arena Arena, input: Input, err_handler: ErrorStrategyDelegate<'input, 'arena, TF, BaseParserType<'input, 'arena, Input, TF>>) -> Self {
 		Self {
 			base: BaseParser::new_base_parser(
 				arena, input,
@@ -49,12 +49,16 @@ where
 					_pd: Default::default(),
 				}
 			),
-            err_handler: unsafe { ErrorStrategyDelegate::new(strategy) },
+            err_handler,
         }
     }
 
-    pub fn new(arena: &'arena Arena, input: Input) -> Self{
-    	Self::with_strategy(arena, input, Box::new(DefaultErrorStrategy::new()))
+    pub fn with_strategy(arena: &'arena Arena, input: Input, strategy: Box<dyn ErrorStrategy<'input, 'arena, TF, BaseParserType<'input, 'arena, Input, TF>> + 'arena>) -> Self {
+        Self::with_delegate(arena, input, unsafe { ErrorStrategyDelegate::new(strategy) })
+    }
+
+    pub fn new(arena: &'arena Arena, input: Input) -> Self {
+        Self::with_delegate(arena, input, ErrorStrategyDelegate::new_default())
     }
 
     pub fn set_error_strategy(&mut self, strategy: Box<dyn ErrorStrategy<'input, 'arena, TF, BaseParserType<'input, 'arena, Input, TF>> + 'arena>) {

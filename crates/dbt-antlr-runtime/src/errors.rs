@@ -124,7 +124,7 @@ where
     P: Parser<'input, 'arena, TF>,
 {
     recog
-        .get_current_context_opt()
+        .get_current_context()
         .into_iter()
         .flat_map(states_stack)
         .collect()

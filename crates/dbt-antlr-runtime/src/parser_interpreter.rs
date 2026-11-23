@@ -21,7 +21,7 @@ use crate::atn_simulator::ParserATNSimulatorManager;
 use crate::atn_state::{
     ATNState, ATNStateType, RuleStartState, StarLoopEntryState, ATNSTATE_INVALID_STATE_NUMBER,
 };
-use crate::error_strategy::{DefaultErrorStrategy, ErrorStrategy, ErrorStrategyDelegate};
+use crate::error_strategy::{ErrorStrategy, ErrorStrategyDelegate};
 use crate::errors::{ANTLRError, ANTLRErrorKind};
 use crate::interpreter_rule_context::{
     InterpreterNode, InterpreterNodeKind, InterpreterRuleContextExt,
@@ -218,25 +218,19 @@ where
     TF: TokenFactory<'input, 'arena> + 'arena,
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
-    /// Creates a new parser interpreter with the given error strategy.
-    ///
-    /// `atn` is a ready (already deserialized) parser ATN. The runtime's ATN
-    /// simulator machinery requires a `&'static ATN`, because DFAs hold
-    /// `ATNStateRef` pointers into it; leak a dynamically built ATN once with
-    /// [`ATN::into_static`]. Metadata (`grammar_file_name`, `rule_names`) is
-    /// `&'static` to match the recognizer table interface that generated
-    /// parsers compile into statics; leak dynamically built strings with
-    /// [Box::leak] if needed.
-    pub fn with_strategy(
+    #[allow(clippy::too_many_arguments)]
+    fn with_delegate(
         arena: &'arena Arena,
         grammar_file_name: &'static str,
         vocabulary: Box<dyn Vocabulary>,
         rule_names: &'static [&'static str],
         atn: &'static ATN,
         input: Input,
-        strategy: Box<
-            dyn ErrorStrategy<'input, 'arena, TF, ParserInterpreterBase<'input, 'arena, Input, TF>>
-                + 'arena,
+        err_handler: ErrorStrategyDelegate<
+            'input,
+            'arena,
+            TF,
+            ParserInterpreterBase<'input, 'arena, Input, TF>,
         >,
     ) -> Self {
         let atn_manager: &'static ParserATNSimulatorManager =
@@ -253,7 +247,7 @@ where
                     atn_manager,
                 },
             ),
-            err_handler: unsafe { ErrorStrategyDelegate::new(strategy) },
+            err_handler,
             parent_context_stack: Vec::new(),
             override_decision: -1,
             override_decision_input_index: -1,
@@ -266,7 +260,40 @@ where
         }
     }
 
-    /// Creates a new parser interpreter with [DefaultErrorStrategy].
+    /// Creates a new parser interpreter with the given error strategy.
+    ///
+    /// `atn` is a ready (already deserialized) parser ATN. The runtime's ATN
+    /// simulator machinery requires a `&'static ATN`, because DFAs hold
+    /// `ATNStateRef` pointers into it; leak a dynamically built ATN once with
+    /// [`ATN::into_static`]. Metadata (`grammar_file_name`, `rule_names`) is
+    /// `&'static` to match the recognizer table interface that generated
+    /// parsers compile into statics; leak dynamically built strings with
+    /// [Box::leak] if needed.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_strategy(
+        arena: &'arena Arena,
+        grammar_file_name: &'static str,
+        vocabulary: Box<dyn Vocabulary>,
+        rule_names: &'static [&'static str],
+        atn: &'static ATN,
+        input: Input,
+        strategy: Box<
+            dyn ErrorStrategy<'input, 'arena, TF, ParserInterpreterBase<'input, 'arena, Input, TF>>
+                + 'arena,
+        >,
+    ) -> Self {
+        Self::with_delegate(
+            arena,
+            grammar_file_name,
+            vocabulary,
+            rule_names,
+            atn,
+            input,
+            unsafe { ErrorStrategyDelegate::new(strategy) },
+        )
+    }
+
+    /// Creates a new parser interpreter with [crate::error_strategy::DefaultErrorStrategy].
     ///
     /// See [ParserInterpreter::with_strategy] for the parameter documentation.
     pub fn new(
@@ -277,14 +304,14 @@ where
         atn: &'static ATN,
         input: Input,
     ) -> Self {
-        Self::with_strategy(
+        Self::with_delegate(
             arena,
             grammar_file_name,
             vocabulary,
             rule_names,
             atn,
             input,
-            Box::new(DefaultErrorStrategy::new()),
+            ErrorStrategyDelegate::new_default(),
         )
     }
 
@@ -667,7 +694,19 @@ where
             );
             let node = TreeNode::create_error_node(self.base.arena, err_token);
             if node.is_null() {
-                return Err(ANTLRError::dfa_cache_limit_exceeded(0, 0, 0));
+                #[cfg(feature = "arena-allocation-limit")]
+                {
+                    return Err(ANTLRError::arena_allocation_limit_exceeded(
+                        self.base.arena.allocation_limit_bytes(),
+                        self.base.arena.total_allocated_bytes(),
+                    ));
+                }
+                #[cfg(not(feature = "arena-allocation-limit"))]
+                {
+                    std::alloc::handle_alloc_error(std::alloc::Layout::new::<
+                        TreeNode<'input, 'arena, InterpreterNodeKind, TF::Tok>,
+                    >())
+                }
             }
             let node = unsafe { &*node };
             let arena = self.base.arena;

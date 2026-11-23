@@ -32,3 +32,6 @@ A B
 
 [flags]
 notBuildParseTree
+
+[skip]
+Rust

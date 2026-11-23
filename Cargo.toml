@@ -49,3 +49,6 @@ unused_async = "warn"
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+[profile.release.package.runtime-testsuite]
+debug-assertions = true

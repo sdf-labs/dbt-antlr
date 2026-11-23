@@ -721,6 +721,14 @@ macro_rules! impl_node_inner {
                 }
             }
 
+            #[inline(always)]
+            unsafe fn cast_from_unchecked<'a>(
+                node: &'a TreeNode<'input, 'arena, $node_kind, Tok>,
+            ) -> &'a Self {
+                debug_assert_eq!(node.node_tag(), $node_kind::$node_variant);
+                $crate::cast_unchecked!(node => Self)
+            }
+
             fn cast_from_mut<'a>(node: &'a mut TreeNode<'input, 'arena, $node_kind, Tok>) -> Option<&'a mut Self>
             where
                 Self: Sized,
@@ -939,6 +947,7 @@ macro_rules! impl_ctx {
                 $rule
             }
 
+            #[inline]
             fn make_node(
                 arena: &'arena $crate::Arena,
                 ctx: $crate::parser_rule_context::BaseParserRuleContext<
@@ -970,6 +979,23 @@ macro_rules! impl_ctx {
                 } else {
                     ::std::option::Option::None
                 }
+            }
+
+            #[inline(always)]
+            unsafe fn cast_from_unchecked<'a>(
+                node: &'a $crate::tree::TreeNode<'input, 'arena, Self::NodeKind, Tok>,
+            ) -> &'a $crate::parser_rule_context::BaseParserRuleContext<
+                'input,
+                'arena,
+                Self,
+                Self::NodeKind,
+                Tok,
+            > {
+                debug_assert_eq!(
+                    node.node_tag(),
+                    <Self as $crate::rule_context::CustomRuleContext<'input, 'arena, Tok>>::node_tag()
+                );
+                $crate::cast_unchecked!(node.ctx_ptr() => $crate::parser_rule_context::BaseParserRuleContext<'input, 'arena, Self, Self::NodeKind, Tok>)
             }
 
             fn cast_from_mut<'a>(
@@ -1010,6 +1036,7 @@ macro_rules! impl_ctx {
                 $rule
             }
 
+            #[inline]
             fn make_node(
                 arena: &'arena $crate::Arena,
                 ctx: $crate::parser_rule_context::BaseParserRuleContext<
@@ -1041,6 +1068,23 @@ macro_rules! impl_ctx {
                 } else {
                     ::std::option::Option::None
                 }
+            }
+
+            #[inline(always)]
+            unsafe fn cast_from_unchecked<'a>(
+                node: &'a $crate::tree::TreeNode<'input, 'arena, Self::NodeKind, Tok>,
+            ) -> &'a $crate::parser_rule_context::BaseParserRuleContext<
+                'input,
+                'arena,
+                Self,
+                Self::NodeKind,
+                Tok,
+            > {
+                debug_assert_eq!(
+                    node.node_tag(),
+                    <Self as $crate::rule_context::CustomRuleContext<'input, 'arena, Tok>>::node_tag()
+                );
+                $crate::cast_unchecked!(node.ctx_ptr() => $crate::parser_rule_context::BaseParserRuleContext<'input, 'arena, Self, Self::NodeKind, Tok>)
             }
 
             fn cast_from_mut<'a>(
@@ -1081,6 +1125,7 @@ macro_rules! impl_ctx {
                 $rule
             }
 
+            #[inline]
             fn make_node(
                 arena: &'arena $crate::Arena,
                 ctx: $crate::parser_rule_context::BaseParserRuleContext<
@@ -1117,6 +1162,29 @@ macro_rules! impl_ctx {
                 }
             }
 
+            #[inline(always)]
+            unsafe fn cast_from_unchecked<'a>(
+                node: &'a $crate::tree::TreeNode<'input, 'arena, Self::NodeKind, Tok>,
+            ) -> &'a $crate::parser_rule_context::BaseParserRuleContext<
+                'input,
+                'arena,
+                Self,
+                Self::NodeKind,
+                Tok,
+            > {
+                debug_assert_eq!(
+                    node.node_tag(),
+                    <Self as $crate::rule_context::CustomRuleContext<'input, 'arena, Tok>>::node_tag()
+                );
+                match $crate::cast_unchecked!(node => $ctxall<'input, 'arena, Tok>) {
+                    $ctxall::$variant(ctx) => ctx,
+                    _ => {
+                        debug_assert!(false, "mismatched labeled alternative variant");
+                        ::std::hint::unreachable_unchecked()
+                    }
+                }
+            }
+
             fn cast_from_mut<'a>(
                 node: &'a mut $crate::tree::TreeNode<'input, 'arena, Self::NodeKind, Tok>,
             ) -> ::std::option::Option<
@@ -1148,7 +1216,7 @@ macro_rules! parse_rule {
     (catch rec $recog:ident = $self:expr, $parentctx:ident, $parentstate:ident, $ctx:ty, $rule:expr, $state:expr, $create:expr; $prec:ident; $body:block; [$($exceptions:tt)*]; [$($finally:tt)*]) => {
         $crate::maybe_grow_stack!({
             let $recog = $self;
-            let $parentctx = $recog.base.take_ctx();
+            let $parentctx = $recog.base.ctx();
             let $parentstate = $recog.base.get_state();
             $recog
                 .base
@@ -1172,14 +1240,14 @@ macro_rules! parse_rule {
             $recog
                 .base
                 .unroll_recursion_context($parentctx)
-                .map(|ctx| ctx.as_rule_context().unwrap())
+                .map(|ctx| unsafe { ctx.as_rule_context_unchecked() })
         })
     };
 
     (catch $recog:ident = $self:expr, $parentctx:ident, $ctx:ty, $rule:expr, $state:expr, $create:expr; $body:block; [$($exceptions:tt)*]; [$($finally:tt)*]) => {
         $crate::maybe_grow_stack!({
             let $recog = $self;
-            let $parentctx = $recog.base.take_ctx();
+            let $parentctx = $recog.base.ctx();
             $recog.base.enter_rule(($create)($parentctx)?, $state, $rule)?;
             let result: ::std::result::Result<(), $crate::errors::ANTLRError> = (|| {
                 $body
@@ -1200,14 +1268,14 @@ macro_rules! parse_rule {
             $recog
                 .base
                 .exit_rule()
-                .map(|ctx: &'arena _| ctx.as_rule_context().unwrap())
+                .map(|ctx: &'arena _| unsafe { ctx.as_rule_context_unchecked() })
         })
     };
 
     (rec $recog:ident = $self:expr, $parentctx:ident, $parentstate:ident, $ctx:ty, $rule:expr, $state:expr, $create:expr; $prec:ident; $body:block) => {
         $crate::maybe_grow_stack!({
             let $recog = $self;
-            let $parentctx = $recog.base.take_ctx();
+            let $parentctx = $recog.base.ctx();
             let $parentstate = $recog.base.get_state();
             $recog
                 .base
@@ -1229,14 +1297,14 @@ macro_rules! parse_rule {
             $recog
                 .base
                 .unroll_recursion_context($parentctx)
-                .map(|ctx| ctx.as_rule_context().unwrap())
+                .map(|ctx| unsafe { ctx.as_rule_context_unchecked() })
         })
     };
 
     ($recog:ident = $self:expr, $parentctx:ident, $ctx:ty, $rule:expr, $state:expr, $create:expr; $body:block) => {
         $crate::maybe_grow_stack!({
             let $recog = $self;
-            let $parentctx = $recog.base.take_ctx();
+            let $parentctx = $recog.base.ctx();
             $recog.base.enter_rule(($create)($parentctx)?, $state, $rule)?;
             let result: ::std::result::Result<(), $crate::errors::ANTLRError> = (|| {
                 $body
@@ -1255,7 +1323,7 @@ macro_rules! parse_rule {
             $recog
                 .base
                 .exit_rule()
-                .map(|ctx: &'arena _| ctx.as_rule_context().unwrap())
+                .map(|ctx: &'arena _| unsafe { ctx.as_rule_context_unchecked() })
         })
     };
 }
