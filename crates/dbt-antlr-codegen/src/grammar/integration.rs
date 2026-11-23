@@ -866,11 +866,7 @@ fn split_combined(
                 .filter(|option| {
                     matches!(
                         option.name.value.as_str(),
-                        "contextSuperClass"
-                            | "language"
-                            | "accessLevel"
-                            | "exportMacro"
-                            | "caseInsensitive"
+                        "language" | "accessLevel" | "exportMacro" | "caseInsensitive"
                     )
                 })
                 .cloned()

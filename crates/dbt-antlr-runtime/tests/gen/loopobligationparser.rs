@@ -198,7 +198,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, SContext<TF::Tok>, RULE_s, 0, |_parentctx| SContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena SContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(4);
 		recog.p_rec(0)?;
@@ -259,7 +258,6 @@ where
 		let _startState = 2;
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(26);
 		recog.err_handler.sync(&mut recog.base)?;

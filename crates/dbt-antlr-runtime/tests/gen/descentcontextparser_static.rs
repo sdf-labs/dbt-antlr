@@ -218,7 +218,6 @@ where
 		match recog.base.input.la(1) {
 		    DescentContext_T__0  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(14);
 		        recog.base.match_token(DescentContext_T__0,&mut recog.err_handler)?;
@@ -246,7 +245,6 @@ where
 		        }}
 		    DescentContext_T__2  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(24);
 		        recog.base.match_token(DescentContext_T__2,&mut recog.err_handler)?;
@@ -274,7 +272,6 @@ where
 		        }}
 		    DescentContext_T__3  => {
 		        /*------- Outer Most Alt 3 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 		        {
 		        recog.base.set_state(34);
 		        recog.base.match_token(DescentContext_T__3,&mut recog.err_handler)?;
@@ -369,7 +366,6 @@ where
 		match { let _sdp = recog.base.dfa_predict(4)?; if _sdp == INVALID_ALT { recog.get_interpreter().adaptive_predict(4,&mut recog.base)? } else { _sdp } } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(49);
 				recog.r()?;
@@ -386,7 +382,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(55);
 				recog.r()?;
@@ -454,7 +449,6 @@ where
 		match { let _sdp = recog.base.dfa_predict(5)?; if _sdp == INVALID_ALT { recog.get_interpreter().adaptive_predict(5,&mut recog.base)? } else { _sdp } } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(62);
 				recog.base.match_token(DescentContext_T__7,&mut recog.err_handler)?;
@@ -467,7 +461,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(66);
 				recog.base.match_token(DescentContext_ID,&mut recog.err_handler)?;
@@ -480,7 +473,6 @@ where
 		,
 			3 =>{
 				/*------- Outer Most Alt 3 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 				{
 				recog.base.set_state(69);
 				recog.base.match_token(DescentContext_ID,&mut recog.err_handler)?;
@@ -550,7 +542,6 @@ where
 		match { let _sdp = recog.base.dfa_predict(6)?; if _sdp == INVALID_ALT { recog.get_interpreter().adaptive_predict(6,&mut recog.base)? } else { _sdp } } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(72);
 				recog.h()?;
@@ -567,7 +558,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(78);
 				recog.h()?;
@@ -637,7 +627,6 @@ where
 		match { let _sdp = recog.base.dfa_predict(7)?; if _sdp == INVALID_ALT { recog.get_interpreter().adaptive_predict(7,&mut recog.base)? } else { _sdp } } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(85);
 				recog.h()?;
@@ -654,7 +643,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(91);
 				recog.h()?;
@@ -718,7 +706,6 @@ where
 		match { let _sdp = recog.base.dfa_predict(8)?; if _sdp == INVALID_ALT { recog.get_interpreter().adaptive_predict(8,&mut recog.base)? } else { _sdp } } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(97);
 				recog.base.match_token(DescentContext_T__7,&mut recog.err_handler)?;
@@ -731,7 +718,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(101);
 				recog.e()?;
@@ -744,7 +730,6 @@ where
 		,
 			3 =>{
 				/*------- Outer Most Alt 3 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 				{
 				recog.base.set_state(105);
 				recog.e()?;
@@ -799,7 +784,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena EContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(108);
 		recog.base.match_token(DescentContext_ID,&mut recog.err_handler)?;

@@ -269,13 +269,8 @@ macro_rules! impl_node_kind_common {
             }
         }
 
-        fn set_alt_number<'input: 'arena>(node: &mut TreeNode<'input, 'arena, Self, Tok>, alt_number: i32) {
-            match node.node_tag() {
-                $( $node_kind::$labeled_variant => $crate::cast_unchecked!(node => mut $inner<'input, 'arena, Tok>).set_alt_number(alt_number), )*
-                $( $node_kind::$variant => $crate::cast_unchecked!(node.ctx_ptr() => mut $variant<'input, 'arena, Tok>).set_alt_number(alt_number), )*
-                _ => {}
-            }
-        }
+        #[inline(always)]
+        fn set_alt_number<'input: 'arena>(_node: &mut TreeNode<'input, 'arena, Self, Tok>, _alt_number: i32) {}
 
         fn get_rule_index<'input: 'arena>(node: &TreeNode<'input, 'arena, Self, Tok>) -> usize {
             match node.node_tag() {
@@ -285,12 +280,9 @@ macro_rules! impl_node_kind_common {
             }
         }
 
-        fn get_alt_number<'input: 'arena>(node: &TreeNode<'input, 'arena, Self, Tok>) -> i32 {
-            match node.node_tag() {
-                $( $node_kind::$labeled_variant => $crate::cast_unchecked!(node => $inner<'input, 'arena, Tok>).get_alt_number(), )*
-                $( $node_kind::$variant => $crate::cast_unchecked!(node.ctx_ptr() => $variant<'input, 'arena, Tok>).get_alt_number(), )*
-                _ => INVALID_ALT,
-            }
+        #[inline(always)]
+        fn get_alt_number<'input: 'arena>(_node: &TreeNode<'input, 'arena, Self, Tok>) -> i32 {
+            $crate::atn::INVALID_ALT
         }
 
         #[inline]
@@ -503,11 +495,9 @@ macro_rules! impl_rule_context {
                 }
             }
 
+            #[inline(always)]
             fn get_alt_number(&self) -> i32 {
-                match self {
-                    $( $enum_name::$ref_variant(inner) => RuleContext::get_alt_number(&**inner), )*
-                    $($( $enum_name::$inline_variant(inner) => RuleContext::get_alt_number(inner), )+)?
-                }
+                $crate::atn::INVALID_ALT
             }
 
             fn get_invoking_state(&self) -> i32 {
@@ -618,91 +608,7 @@ macro_rules! impl_parser_rule_context {
 
 #[macro_export]
 macro_rules! impl_tree_trait_delegates {
-    ($node_kind:ident::$enum_name:ident { $($variant:ident),+ $(,)? }) => {
-        impl<'input, 'arena, Tok> $enum_name<'input, 'arena, Tok>
-        where
-            'input: 'arena,
-            Tok: Token + 'input,
-        {
-            // fn get_parent(&self) -> Option<&'arena TreeNode<'input, 'arena, $node_kind>> {
-            //     match self {
-            //         $( $enum_name::$variant(inner) => inner.get_parent(), )+
-            //     }
-            // }
-
-            // fn has_parent(&self) -> bool {
-            //     match self {
-            //         $( $enum_name::$variant(inner) => inner.has_parent(), )+
-            //     }
-            // }
-
-            // fn get_child(&self, i: usize) -> Option<&'arena TreeNode<'input, 'arena, $node_kind>> {
-            //     match self {
-            //         $( $enum_name::$variant(inner) => inner.get_child(i), )+
-            //     }
-            // }
-
-            // fn get_child_count(&self) -> usize {
-            //     match self {
-            //         $( $enum_name::$variant(inner) => inner.get_child_count(), )+
-            //     }
-            // }
-
-            // fn get_children<'a>(&'a self) -> Box<dyn Iterator<Item = &'arena TreeNode<'input, 'arena, $node_kind>> + 'a> {
-            //     match self {
-            //         $( $enum_name::$variant(inner) => inner.get_children(), )+
-            //     }
-            // }
-
-            // fn set_start(&mut self, t: Option<&'arena dyn $crate::token::Token>) {
-            //     match self {
-            //         $( $enum_name::$variant(inner) => inner.set_start(t), )+
-            //     }
-            // }
-
-            // fn set_stop(&mut self, t: Option<&'arena dyn $crate::token::Token>) {
-            //     match self {
-            //         $( $enum_name::$variant(inner) => inner.set_stop(t), )+
-            //     }
-            // }
-
-            // fn set_parent(&mut self, parent: Option<&'arena TreeNode<'input, 'arena, $node_kind>>) {
-            //     match self {
-            //         $( $enum_name::$variant(inner) => inner.set_parent(parent), )+
-            //     }
-            // }
-
-            // fn set_invoking_state(&mut self, t: i32) {
-            //     match self {
-            //         $( $enum_name::$variant(inner) => inner.set_invoking_state(t), )+
-            //     }
-            // }
-
-            fn set_alt_number(&mut self, alt_number: i32) {
-                match self {
-                    $( $enum_name::$variant(inner) => inner.set_alt_number(alt_number), )+
-                }
-            }
-
-            // fn set_exception(&self, e: $crate::errors::ANTLRError, arena: &'arena $crate::Arena) {
-            //     match self {
-            //         $( $enum_name::$variant(inner) => inner.set_exception(e, arena), )+
-            //     }
-            // }
-
-            // fn remove_last_child(&mut self) {
-            //     match self {
-            //         $( $enum_name::$variant(inner) => inner.remove_last_child(), )+
-            //     }
-            // }
-
-            // fn add_child(&mut self, child: &'arena TreeNode<'input, 'arena, $node_kind>) {
-            //     match self {
-            //         $( $enum_name::$variant(inner) => inner.add_child(child), )+
-            //     }
-            // }
-        }
-    };
+    ($node_kind:ident::$enum_name:ident { $($variant:ident),+ $(,)? }) => {};
 }
 
 #[macro_export]
@@ -1213,6 +1119,7 @@ macro_rules! impl_ctx {
 
 #[macro_export]
 macro_rules! parse_rule {
+
     (catch rec $recog:ident = $self:expr, $parentctx:ident, $parentstate:ident, $ctx:ty, $rule:expr, $state:expr, $create:expr; $prec:ident; $body:block; [$($exceptions:tt)*]; [$($finally:tt)*]) => {
         $crate::maybe_grow_stack!({
             let $recog = $self;
@@ -1229,11 +1136,7 @@ macro_rules! parse_rule {
                 ::std::result::Result::Ok(_) => {}
                 $($exceptions)*
                 ::std::result::Result::Err(e) => {
-                    if !e.is_recoverable() {
-                        return ::std::result::Result::Err(e);
-                    }
-                    $recog.err_handler.report_error(&mut $recog.base, &e);
-                    $recog.err_handler.recover(&mut $recog.base, &e)?;
+                    $recog.err_handler.handle_rule_error(&mut $recog.base, e)?;
                 }
             }
             $($finally)*
@@ -1257,18 +1160,14 @@ macro_rules! parse_rule {
                 ::std::result::Result::Ok(_) => {}
                 $($exceptions)*
                 ::std::result::Result::Err(e) => {
-                    if !e.is_recoverable() {
-                        return ::std::result::Result::Err(e);
-                    }
-                    $recog.err_handler.report_error(&mut $recog.base, &e);
-                    $recog.err_handler.recover(&mut $recog.base, &e)?;
+                    $recog.err_handler.handle_rule_error(&mut $recog.base, e)?;
                 }
             }
             $($finally)*
             $recog
                 .base
                 .exit_rule()
-                .map(|ctx: &'arena _| unsafe { ctx.as_rule_context_unchecked() })
+                .map(|ctx| unsafe { ctx.as_rule_context_unchecked() })
         })
     };
 
@@ -1284,15 +1183,8 @@ macro_rules! parse_rule {
                 $body
                 ::std::result::Result::Ok(())
             })();
-            match result {
-                ::std::result::Result::Ok(_) => {}
-                ::std::result::Result::Err(e) => {
-                    if !e.is_recoverable() {
-                        return ::std::result::Result::Err(e);
-                    }
-                    $recog.err_handler.report_error(&mut $recog.base, &e);
-                    $recog.err_handler.recover(&mut $recog.base, &e)?;
-                }
+            if let ::std::result::Result::Err(e) = result {
+                $recog.err_handler.handle_rule_error(&mut $recog.base, e)?;
             }
             $recog
                 .base
@@ -1310,20 +1202,13 @@ macro_rules! parse_rule {
                 $body
                 ::std::result::Result::Ok(())
             })();
-            match result {
-                ::std::result::Result::Ok(_) => {}
-                ::std::result::Result::Err(e) => {
-                    if !e.is_recoverable() {
-                        return ::std::result::Result::Err(e);
-                    }
-                    $recog.err_handler.report_error(&mut $recog.base, &e);
-                    $recog.err_handler.recover(&mut $recog.base, &e)?;
-                }
+            if let ::std::result::Result::Err(e) = result {
+                $recog.err_handler.handle_rule_error(&mut $recog.base, e)?;
             }
             $recog
                 .base
                 .exit_rule()
-                .map(|ctx: &'arena _| unsafe { ctx.as_rule_context_unchecked() })
+                .map(|ctx| unsafe { ctx.as_rule_context_unchecked() })
         })
     };
 }

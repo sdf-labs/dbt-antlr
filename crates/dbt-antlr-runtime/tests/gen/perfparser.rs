@@ -196,7 +196,6 @@ where
 		match recog.get_interpreter().adaptive_predict(0,&mut recog.base)? {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(4);
 				recog.expr_rec(0)?;
@@ -207,7 +206,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(7);
 				recog.expr_rec(0)?;
@@ -272,7 +270,6 @@ where
 		let _startState = 2;
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(25);
 		recog.err_handler.sync(&mut recog.base)?;

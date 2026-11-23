@@ -232,7 +232,6 @@ pub struct ParserFileContext {
     pub file: ParserFileModel,
     pub parser: ParserModel,
     pub named_actions: NamedActionsModel,
-    pub context_super_class: Option<String>,
 }
 
 /// Mirrors `ParserFile` (plus the `OutputFile` base fields the templates

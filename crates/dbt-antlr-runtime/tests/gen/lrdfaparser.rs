@@ -209,7 +209,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, SContext<TF::Tok>, RULE_s, 0, |_parentctx| SContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena SContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(4);
 		recog.e_rec(0)?;
@@ -241,7 +240,6 @@ where
 
 dbt_antlr_runtime::impl_rule_context! { EContextAll { } { AddContext, NegContext, MulContext, TernaryContext, PowContext, IndexContext, IdContext, FactContext, IntContext, Error, } }
 dbt_antlr_runtime::impl_parser_rule_context! { EContextAll { } { AddContext, NegContext, MulContext, TernaryContext, PowContext, IndexContext, IdContext, FactContext, IntContext, Error, } }
-dbt_antlr_runtime::impl_tree_trait_delegates! { LrDfaParserNodeKind::EContextAll { AddContext, NegContext, MulContext, TernaryContext, PowContext, IndexContext, IdContext, FactContext, IntContext, Error, } }
 dbt_antlr_runtime::impl_node_inner! { LrDfaParserNodeKind::EContext::EContextAll { AddContext, NegContext, MulContext, TernaryContext, PowContext, IndexContext, IdContext, FactContext, IntContext, Error, } }
 
 impl<'input, 'arena, Tok> Deref for EContextAll<'input, 'arena, Tok>
@@ -837,7 +835,6 @@ where
 		let mut _la: i32 = -1;
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(12);
 		recog.err_handler.sync(&mut recog.base)?;

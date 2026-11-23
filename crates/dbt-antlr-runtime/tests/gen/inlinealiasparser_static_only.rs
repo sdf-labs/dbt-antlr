@@ -234,7 +234,6 @@ where
 		match recog.base.input.la(1) {
 		    InlineAlias_T__6  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(10);
 		        recog.query()?;
@@ -243,7 +242,6 @@ where
 		        }}
 		    InlineAlias_T__0  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(13);
 		        recog.base.match_token(InlineAlias_T__0,&mut recog.err_handler)?;
@@ -328,7 +326,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena QueryContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(32);
 		recog.base.match_token(InlineAlias_T__6,&mut recog.err_handler)?;
@@ -400,7 +397,6 @@ where
 
 dbt_antlr_runtime::impl_rule_context! { ExprContextAll { } { CastContext, ColContext, ParenContext, AliasedContext, AndContext, NumContext, EqContext, Error, } }
 dbt_antlr_runtime::impl_parser_rule_context! { ExprContextAll { } { CastContext, ColContext, ParenContext, AliasedContext, AndContext, NumContext, EqContext, Error, } }
-dbt_antlr_runtime::impl_tree_trait_delegates! { InlineAliasParserNodeKind::ExprContextAll { CastContext, ColContext, ParenContext, AliasedContext, AndContext, NumContext, EqContext, Error, } }
 dbt_antlr_runtime::impl_node_inner! { InlineAliasParserNodeKind::ExprContext::ExprContextAll { CastContext, ColContext, ParenContext, AliasedContext, AndContext, NumContext, EqContext, Error, } }
 
 impl<'input, 'arena, Tok> Deref for ExprContextAll<'input, 'arena, Tok>
@@ -879,7 +875,6 @@ where
 		let _startState = 4;
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(67);
 		match recog.base.input.la(1) {
@@ -1043,7 +1038,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena AliasContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(83);
 		_la = recog.base.input.la(1);
@@ -1096,7 +1090,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena TypeContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(85);
 		_la = recog.base.input.la(1);

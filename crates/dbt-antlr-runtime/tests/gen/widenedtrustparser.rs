@@ -242,7 +242,6 @@ where
 		match recog.get_interpreter().adaptive_predict(0,&mut recog.base)? {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(26);
 				recog.a()?;
@@ -253,7 +252,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(29);
 				recog.a()?;
@@ -410,7 +408,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena AContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(67);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -660,7 +657,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedTrust_P  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(71);
 		        recog.base.match_token(WidenedTrust_P,&mut recog.err_handler)?;
@@ -671,7 +667,6 @@ where
 		        }}
 		    WidenedTrust_Q  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(75);
 		        recog.base.match_token(WidenedTrust_Q,&mut recog.err_handler)?;
@@ -753,7 +748,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedTrust_P  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(81);
 		        recog.base.match_token(WidenedTrust_P,&mut recog.err_handler)?;
@@ -764,7 +758,6 @@ where
 		        }}
 		    WidenedTrust_Q  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(85);
 		        recog.base.match_token(WidenedTrust_Q,&mut recog.err_handler)?;
@@ -846,7 +839,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedTrust_P  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(91);
 		        recog.base.match_token(WidenedTrust_P,&mut recog.err_handler)?;
@@ -857,7 +849,6 @@ where
 		        }}
 		    WidenedTrust_Q  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(95);
 		        recog.base.match_token(WidenedTrust_Q,&mut recog.err_handler)?;
@@ -939,7 +930,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedTrust_P  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(101);
 		        recog.base.match_token(WidenedTrust_P,&mut recog.err_handler)?;
@@ -950,7 +940,6 @@ where
 		        }}
 		    WidenedTrust_Q  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(105);
 		        recog.base.match_token(WidenedTrust_Q,&mut recog.err_handler)?;
@@ -1032,7 +1021,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedTrust_P  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(111);
 		        recog.base.match_token(WidenedTrust_P,&mut recog.err_handler)?;
@@ -1043,7 +1031,6 @@ where
 		        }}
 		    WidenedTrust_Q  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(115);
 		        recog.base.match_token(WidenedTrust_Q,&mut recog.err_handler)?;
@@ -1125,7 +1112,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedTrust_P  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(121);
 		        recog.base.match_token(WidenedTrust_P,&mut recog.err_handler)?;
@@ -1136,7 +1122,6 @@ where
 		        }}
 		    WidenedTrust_Q  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(125);
 		        recog.base.match_token(WidenedTrust_Q,&mut recog.err_handler)?;
@@ -1218,7 +1203,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedTrust_P  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(131);
 		        recog.base.match_token(WidenedTrust_P,&mut recog.err_handler)?;
@@ -1229,7 +1213,6 @@ where
 		        }}
 		    WidenedTrust_Q  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(135);
 		        recog.base.match_token(WidenedTrust_Q,&mut recog.err_handler)?;
@@ -1311,7 +1294,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedTrust_P  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(141);
 		        recog.base.match_token(WidenedTrust_P,&mut recog.err_handler)?;
@@ -1322,7 +1304,6 @@ where
 		        }}
 		    WidenedTrust_Q  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(145);
 		        recog.base.match_token(WidenedTrust_Q,&mut recog.err_handler)?;
@@ -1404,7 +1385,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedTrust_P  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(151);
 		        recog.base.match_token(WidenedTrust_P,&mut recog.err_handler)?;
@@ -1415,7 +1395,6 @@ where
 		        }}
 		    WidenedTrust_Q  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(155);
 		        recog.base.match_token(WidenedTrust_Q,&mut recog.err_handler)?;
@@ -1497,7 +1476,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedTrust_P  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(161);
 		        recog.base.match_token(WidenedTrust_P,&mut recog.err_handler)?;
@@ -1508,7 +1486,6 @@ where
 		        }}
 		    WidenedTrust_Q  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(165);
 		        recog.base.match_token(WidenedTrust_Q,&mut recog.err_handler)?;
@@ -1558,7 +1535,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, R10Context<TF::Tok>, RULE_r10, 24, |_parentctx| R10ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena R10Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(171);
 		recog.base.match_token(WidenedTrust_W,&mut recog.err_handler)?;

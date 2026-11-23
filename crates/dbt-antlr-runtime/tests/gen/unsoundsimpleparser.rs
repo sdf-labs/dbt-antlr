@@ -188,7 +188,6 @@ where
 		match recog.get_interpreter().adaptive_predict(0,&mut recog.base)? {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(4);
 				recog.a()?;
@@ -199,7 +198,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(7);
 				recog.a()?;
@@ -310,7 +308,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena AContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(30);
 		recog.err_handler.sync(&mut recog.base)?;
