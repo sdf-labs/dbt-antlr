@@ -467,7 +467,7 @@ where
 	{{ "" }}{% if currentRule.modifiers %}{% for f in currentRule.modifiers %}{{ f }} {% endfor %}{% else %}pub {% endif %}fn {{ currentRule.escapedName }}(&mut self,{% for a in args %}{{ Decl(a, parser) }}{{ "," if not loop.last }}{% endfor %}) -> Result<&'arena {{ currentRule.ctxType }}All<'input, 'arena, TF::Tok>, ANTLRError> {
 {% if currentRule.resumeTarget %}{{ resumeTakeHook(currentRule) | st_indent("\t\t") }}
 {% endif %}
-        dbt_antlr_runtime::parse_rule!({% if exceptions or finallyAction %}catch {% endif %}recog = self, _parentctx, {{ currentRule.ctxType }}<TF::Tok>, RULE_{{ currentRule.name }}, {{ currentRule.startState }}, |_parentctx| {{ currentRule.ctxType }}Ext::create(recog.get_arena(), _parentctx, recog.get_state(){% for a in currentRule.args %}, {{ a.escapedName }}{% endfor %}); {
+        dbt_antlr_runtime::parse_rule!({% if exceptions or finallyAction %}catch {% endif %}{% if not (ruleCtx.provideCopyFrom or ruleCtx.ctorAttrs or ruleCtx.attrs or ruleCtx.attributeDecls) %}plain recog = self, {{ parser.name }}NodeKind::{{ ruleCtx.escapedName }}, {{ currentRule.startState }}; {% else %}recog = self, _parentctx, {{ currentRule.ctxType }}<TF::Tok>, RULE_{{ currentRule.name }}, {{ currentRule.startState }}, |_parentctx| {{ currentRule.ctxType }}Ext::create(recog.get_arena(), _parentctx, recog.get_state(){% for a in currentRule.args %}, {{ a.escapedName }}{% endfor %}); {% endif %}{
         let _local_ctx_fn = |recog: &Self| -> &'arena {{ currentRule.ctxType }}<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 {% if namedActions.init %}{{ Chunks(namedActions.init) | st_indent("\t\t") }}
 {% endif %}{% if locals %}{{ Decls(locals, parser) | st_indent("\t\t") }}
@@ -505,7 +505,7 @@ where
 	fn {{ currentRule.escapedName }}_rec(&mut self, _p: i32{% for a in args %}, {{ Decl(a, parser) }}{% endfor %}) -> Result<&'arena {{ currentRule.ctxType }}All<'input, 'arena, TF::Tok>, ANTLRError> {
 {% if currentRule.resumeTarget %}{{ resumeTakeHook(currentRule) | st_indent("\t\t") }}
 {% endif %}
-        dbt_antlr_runtime::parse_rule!({% if exceptions or finallyAction %}catch {% endif %}rec recog = self, _parentctx, _parentState, {{ currentRule.ctxType }}<TF::Tok>, RULE_{{ currentRule.name }}, {{ currentRule.startState }}, |_parentctx| {{ currentRule.ctxType }}Ext::create(recog.get_arena(), _parentctx, recog.get_state(){% for a in currentRule.args %}, {{ a.escapedName }}{% endfor %}); _p; {
+        dbt_antlr_runtime::parse_rule!({% if exceptions or finallyAction %}catch {% endif %}{% if not (ruleCtx.provideCopyFrom or ruleCtx.ctorAttrs or ruleCtx.attrs or ruleCtx.attributeDecls) %}plain rec recog = self, _parentctx, _parentState, {{ parser.name }}NodeKind::{{ ruleCtx.escapedName }}, {{ currentRule.startState }}; _p; {% else %}rec recog = self, _parentctx, _parentState, {{ currentRule.ctxType }}<TF::Tok>, RULE_{{ currentRule.name }}, {{ currentRule.startState }}, |_parentctx| {{ currentRule.ctxType }}Ext::create(recog.get_arena(), _parentctx, recog.get_state(){% for a in currentRule.args %}, {{ a.escapedName }}{% endfor %}); _p; {% endif %}{
         let _local_ctx_fn = |recog: &Self| -> &'arena {{ currentRule.ctxType }}<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let _startState = {{ currentRule.startState }};
 {% if namedActions.init %}{{ Chunks(namedActions.init) | st_indent("\t\t") }}
@@ -1078,20 +1078,20 @@ let _old = std::mem::replace(dbt_antlr_runtime::cast_unchecked!(src => mut {{ cu
 /// Retrieves first TerminalNode corresponding to token {{ t.name }}
 /// Returns `None` if there is no child corresponding to token {{ t.name }}
 fn {{ t.name }}(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>{% if t.signature %};{% else %} {
-    self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == {{ parser.grammarName }}_{{ t.name }})
+    self.token_of_type({{ parser.grammarName }}_{{ t.name }}, 0)
 }{{ "" }}{% endif %}
 {%- endmacro -%}
 {%- macro ContextTokenListGetterDecl(t, parser) -%}
 /// Retrieves all `TerminalNode`s corresponding to token {{ t.name }} in current rule
 fn {{ t.name }}_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>{% if t.signature %};{% else %} {
-	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == {{ parser.grammarName }}_{{ t.name }}).collect()
+	self.tokens_of_type({{ parser.grammarName }}_{{ t.name }})
 }{{ "" }}{% endif %}
 {%- endmacro -%}
 {%- macro ContextTokenListIndexedGetterDecl(t, parser) -%}
 /// Retrieves 'i'th TerminalNode corresponding to token {{ t.name }}, starting from 0.
 /// Returns `None` if number of children corresponding to token {{ t.name }} is less than or equal to `i`.
 fn {{ t.name }}(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>{% if t.signature %};{% else %} {
-	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == {{ parser.grammarName }}_{{ t.name }}).nth(i)
+	self.token_of_type({{ parser.grammarName }}_{{ t.name }}, i)
 }{{ "" }}{% endif %}
 {%- endmacro -%}
 {%- macro ContextRuleGetterDecl(r, parser) -%}

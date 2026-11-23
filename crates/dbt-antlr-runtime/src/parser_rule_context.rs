@@ -9,7 +9,10 @@ use crate::rule_context::{
     BaseRuleContext, CustomRuleContext, EmptyCustomRuleContext, EmptyNodeKind, RuleContext,
 };
 use crate::token::{CommonToken, Token};
-use crate::tree::{CtxPtr, NodeChildren, NodeInner, NodeKindType, Tree as _, TreeNode};
+use crate::tree::{
+    node_alloc_failure, CtxPtr, NodeChildren, NodeInner, NodeKindType, TerminalNode, Tree as _,
+    TreeNode,
+};
 use crate::{token_factory, Arena};
 
 /// Language-agnostic behaviors of the Antlr AST.
@@ -351,19 +354,7 @@ where
         };
         let node = Ext::make_node(arena, ctx);
         if node.is_null() {
-            #[cfg(feature = "arena-allocation-limit")]
-            {
-                return Err(ANTLRError::arena_allocation_limit_exceeded(
-                    arena.allocation_limit_bytes(),
-                    arena.total_allocated_bytes(),
-                ));
-            }
-            #[cfg(not(feature = "arena-allocation-limit"))]
-            {
-                std::alloc::handle_alloc_error(std::alloc::Layout::new::<
-                    TreeNode<'input, 'arena, Ext::NodeKind, Tok>,
-                >())
-            }
+            return Err(node_alloc_failure(arena));
         }
         // SAFETY: The node is allocated by the arena and lives for 'arena, and the
         // header is properly initialized by make_node.
@@ -480,6 +471,30 @@ where
         self.children
             .iter()
             .filter_map(|it| it.as_rule_context::<T>())
+            .collect()
+    }
+
+    /// Returns the `pos`-th direct terminal child that has token type `ttype`.
+    #[inline]
+    pub fn token_of_type(
+        &self,
+        ttype: i32,
+        pos: usize,
+    ) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.children
+            .iter()
+            .filter_map(|&it| it.as_terminal_node())
+            .filter(|it| it.symbol.get_token_type() == ttype)
+            .nth(pos)
+    }
+
+    /// Returns all direct terminal children that have token type `ttype`.
+    #[inline]
+    pub fn tokens_of_type(&self, ttype: i32) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.children
+            .iter()
+            .filter_map(|&it| it.as_terminal_node())
+            .filter(|it| it.symbol.get_token_type() == ttype)
             .collect()
     }
 

@@ -196,16 +196,16 @@ where
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
     fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == Repro4TwoCastWithWrap_EOF)
+        self.token_of_type(Repro4TwoCastWithWrap_EOF, 0)
     }
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
     fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == Repro4TwoCastWithWrap_ID).collect()
+    	self.tokens_of_type(Repro4TwoCastWithWrap_ID)
     }
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
     fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == Repro4TwoCastWithWrap_ID).nth(i)
+    	self.token_of_type(Repro4TwoCastWithWrap_ID, i)
     }
 }
 
@@ -216,7 +216,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn stmt(&mut self,) -> Result<&'arena StmtContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, StmtContext<TF::Tok>, RULE_stmt, 0, |_parentctx| StmtContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, Repro4TwoCastWithWrapParserNodeKind::StmtContext, 0; {
         let _local_ctx_fn = |recog: &Self| -> &'arena StmtContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(34);
 		match recog.base.input.la(1) {
@@ -315,12 +315,12 @@ where
 {
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
     fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == Repro4TwoCastWithWrap_ID).collect()
+    	self.tokens_of_type(Repro4TwoCastWithWrap_ID)
     }
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
     fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == Repro4TwoCastWithWrap_ID).nth(i)
+    	self.token_of_type(Repro4TwoCastWithWrap_ID, i)
     }
     fn e_all(&self) -> Vec<&'arena EContextAll<'input, 'arena, Tok>> {
         self.children_of_type()
@@ -345,7 +345,7 @@ where
 	}
 
 	fn e_rec(&mut self, _p: i32) -> Result<&'arena EContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(rec recog = self, _parentctx, _parentState, EContext<TF::Tok>, RULE_e, 2, |_parentctx| EContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); _p; {
+        dbt_antlr_runtime::parse_rule!(plain rec recog = self, _parentctx, _parentState, Repro4TwoCastWithWrapParserNodeKind::EContext, 2; _p; {
         let _local_ctx_fn = |recog: &Self| -> &'arena EContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let _startState = 2;
         let mut _alt: i32;
@@ -461,7 +461,7 @@ where
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
     fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == Repro4TwoCastWithWrap_ID)
+        self.token_of_type(Repro4TwoCastWithWrap_ID, 0)
     }
 }
 
@@ -472,7 +472,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn sub(&mut self,) -> Result<&'arena SubContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, SubContext<TF::Tok>, RULE_sub, 4, |_parentctx| SubContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, Repro4TwoCastWithWrapParserNodeKind::SubContext, 4; {
         let _local_ctx_fn = |recog: &Self| -> &'arena SubContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(63);
 		match recog.base.input.la(1) {

@@ -1428,6 +1428,33 @@ where
         Ok(())
     }
 
+    /// Allocates and enters a plain rule context with no extension fields.
+    pub fn enter_plain_rule(&mut self, node_tag: Node, state: i32) -> Result<(), ANTLRError> {
+        let parent = self.ctx();
+        let start = self.input.lt(1);
+        let child: &'arena TreeNode<'input, 'arena, Node, TF::Tok> =
+            TreeNode::create_plain_context_node_with_start(
+                self.arena, node_tag, parent, self.state, start,
+            )?;
+
+        self.add_child_to_ctx(child);
+        self.set_state(state);
+        self.set_current_ctx(Some(child));
+
+        if self.listeners_active {
+            self.trigger_enter_rule_event_cold()?;
+        }
+
+        #[cfg(feature = "recursion-limit")]
+        {
+            self.current_recursion_depth += 1;
+            if self.current_recursion_depth > self.recursion_limit {
+                return Err(ANTLRError::recursion_limit_exceeded(self.recursion_limit));
+            }
+        }
+        Ok(())
+    }
+
     #[inline]
     pub fn exit_rule(
         &mut self,
@@ -1473,6 +1500,38 @@ where
         self.set_current_ctx(Some(localctx));
         let start = self.input.lt(1);
         self.with_mut_ctx_common(|ctx| ctx.start = start);
+        if self.listeners_active {
+            self.trigger_enter_rule_event_cold()?;
+        }
+
+        #[cfg(feature = "recursion-limit")]
+        {
+            self.current_recursion_depth += 1;
+            if self.current_recursion_depth > self.recursion_limit {
+                return Err(ANTLRError::recursion_limit_exceeded(self.recursion_limit));
+            }
+        }
+        Ok(())
+    }
+
+    /// Allocates and enters a plain left-recursive rule context with no extension fields.
+    pub fn enter_plain_recursion_rule(
+        &mut self,
+        node_tag: Node,
+        state: i32,
+        precedence: i32,
+    ) -> Result<(), ANTLRError> {
+        let parent = self.ctx();
+        let start = self.input.lt(1);
+        let child: &'arena TreeNode<'input, 'arena, Node, TF::Tok> =
+            TreeNode::create_plain_context_node_with_start(
+                self.arena, node_tag, parent, self.state, start,
+            )?;
+
+        self.set_state(state);
+        self.precedence_stack.push(precedence);
+        self.set_current_ctx(Some(child));
+
         if self.listeners_active {
             self.trigger_enter_rule_event_cold()?;
         }
@@ -1575,19 +1634,7 @@ where
     ) -> Result<&'arena mut TreeNode<'input, 'arena, Node, TF::Tok>, ANTLRError> {
         let ptr = TreeNode::create_token_node(self.arena, token);
         if ptr.is_null() {
-            #[cfg(feature = "arena-allocation-limit")]
-            {
-                Err(ANTLRError::arena_allocation_limit_exceeded(
-                    self.arena.allocation_limit_bytes(),
-                    self.arena.total_allocated_bytes(),
-                ))
-            }
-            #[cfg(not(feature = "arena-allocation-limit"))]
-            {
-                std::alloc::handle_alloc_error(std::alloc::Layout::new::<
-                    TreeNode<'input, 'arena, Node, TF::Tok>,
-                >())
-            }
+            Err(crate::tree::node_alloc_failure(self.arena))
         } else {
             Ok(unsafe { &mut *ptr })
         }
@@ -1600,19 +1647,7 @@ where
     ) -> Result<&'arena mut TreeNode<'input, 'arena, Node, TF::Tok>, ANTLRError> {
         let ptr = TreeNode::create_error_node(self.arena, token);
         if ptr.is_null() {
-            #[cfg(feature = "arena-allocation-limit")]
-            {
-                Err(ANTLRError::arena_allocation_limit_exceeded(
-                    self.arena.allocation_limit_bytes(),
-                    self.arena.total_allocated_bytes(),
-                ))
-            }
-            #[cfg(not(feature = "arena-allocation-limit"))]
-            {
-                std::alloc::handle_alloc_error(std::alloc::Layout::new::<
-                    TreeNode<'input, 'arena, Node, TF::Tok>,
-                >())
-            }
+            Err(crate::tree::node_alloc_failure(self.arena))
         } else {
             Ok(unsafe { &mut *ptr })
         }

@@ -165,12 +165,12 @@ where
     /// Retrieves first TerminalNode corresponding to token X
     /// Returns `None` if there is no child corresponding to token X
     fn X(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_X)
+        self.token_of_type(UnsoundSimple_X, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Y
     /// Returns `None` if there is no child corresponding to token Y
     fn Y(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_Y)
+        self.token_of_type(UnsoundSimple_Y, 0)
     }
 }
 
@@ -181,7 +181,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn top(&mut self,) -> Result<&'arena TopContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, TopContext<TF::Tok>, RULE_top, 0, |_parentctx| TopContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, UnsoundSimpleParserNodeKind::TopContext, 0; {
         let _local_ctx_fn = |recog: &Self| -> &'arena TopContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(10);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -270,27 +270,27 @@ where
     /// Retrieves first TerminalNode corresponding to token D
     /// Returns `None` if there is no child corresponding to token D
     fn D(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_D)
+        self.token_of_type(UnsoundSimple_D, 0)
     }
     /// Retrieves first TerminalNode corresponding to token A
     /// Returns `None` if there is no child corresponding to token A
     fn A(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_A)
+        self.token_of_type(UnsoundSimple_A, 0)
     }
     /// Retrieves first TerminalNode corresponding to token C
     /// Returns `None` if there is no child corresponding to token C
     fn C(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_C)
+        self.token_of_type(UnsoundSimple_C, 0)
     }
     /// Retrieves first TerminalNode corresponding to token B
     /// Returns `None` if there is no child corresponding to token B
     fn B(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_B)
+        self.token_of_type(UnsoundSimple_B, 0)
     }
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
     fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_P)
+        self.token_of_type(UnsoundSimple_P, 0)
     }
     fn a(&self) -> Option<&'arena AContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -298,17 +298,17 @@ where
     /// Retrieves first TerminalNode corresponding to token E
     /// Returns `None` if there is no child corresponding to token E
     fn E(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_E)
+        self.token_of_type(UnsoundSimple_E, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
     fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_Q)
+        self.token_of_type(UnsoundSimple_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token M
     /// Returns `None` if there is no child corresponding to token M
     fn M(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_M)
+        self.token_of_type(UnsoundSimple_M, 0)
     }
 }
 
@@ -322,7 +322,7 @@ where
 		if let Some(_node) = self.base.resume_take(RULE_a)? {
 		    return Ok(_node.as_rule_context().unwrap());
 		}
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, AContext<TF::Tok>, RULE_a, 2, |_parentctx| AContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, UnsoundSimpleParserNodeKind::AContext, 2; {
         let _local_ctx_fn = |recog: &Self| -> &'arena AContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/

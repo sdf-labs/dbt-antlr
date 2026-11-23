@@ -223,7 +223,7 @@ where
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
     fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_EOF)
+        self.token_of_type(LoopSubst_EOF, 0)
     }
 }
 
@@ -234,7 +234,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn start(&mut self,) -> Result<&'arena StartContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, StartContext<TF::Tok>, RULE_start, 0, |_parentctx| StartContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, LoopSubstParserNodeKind::StartContext, 0; {
         let _local_ctx_fn = |recog: &Self| -> &'arena StartContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
 		{
@@ -288,7 +288,7 @@ where
 	}
 
 	fn expr_rec(&mut self, _p: i32) -> Result<&'arena ExprContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(rec recog = self, _parentctx, _parentState, ExprContext<TF::Tok>, RULE_expr, 2, |_parentctx| ExprContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); _p; {
+        dbt_antlr_runtime::parse_rule!(plain rec recog = self, _parentctx, _parentState, LoopSubstParserNodeKind::ExprContext, 2; _p; {
         let _local_ctx_fn = |recog: &Self| -> &'arena ExprContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let _startState = 2;
 		let mut _la: i32 = -1;
@@ -510,16 +510,16 @@ where
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
     fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_INT)
+        self.token_of_type(LoopSubst_INT, 0)
     }
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
     fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == LoopSubst_ID).collect()
+    	self.tokens_of_type(LoopSubst_ID)
     }
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
     fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == LoopSubst_ID).nth(i)
+    	self.token_of_type(LoopSubst_ID, i)
     }
     fn expr_all(&self) -> Vec<&'arena ExprContextAll<'input, 'arena, Tok>> {
         self.children_of_type()
@@ -530,12 +530,12 @@ where
     /// Retrieves first TerminalNode corresponding to token CAST
     /// Returns `None` if there is no child corresponding to token CAST
     fn CAST(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_CAST)
+        self.token_of_type(LoopSubst_CAST, 0)
     }
     /// Retrieves first TerminalNode corresponding to token AS
     /// Returns `None` if there is no child corresponding to token AS
     fn AS(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_AS)
+        self.token_of_type(LoopSubst_AS, 0)
     }
     fn type_(&self) -> Option<&'arena Type_ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -543,17 +543,17 @@ where
     /// Retrieves first TerminalNode corresponding to token TRY_CAST
     /// Returns `None` if there is no child corresponding to token TRY_CAST
     fn TRY_CAST(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_TRY_CAST)
+        self.token_of_type(LoopSubst_TRY_CAST, 0)
     }
     /// Retrieves first TerminalNode corresponding to token CASE
     /// Returns `None` if there is no child corresponding to token CASE
     fn CASE(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_CASE)
+        self.token_of_type(LoopSubst_CASE, 0)
     }
     /// Retrieves first TerminalNode corresponding to token END
     /// Returns `None` if there is no child corresponding to token END
     fn END(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_END)
+        self.token_of_type(LoopSubst_END, 0)
     }
     fn whenClause_all(&self) -> Vec<&'arena WhenClauseContextAll<'input, 'arena, Tok>> {
         self.children_of_type()
@@ -564,57 +564,57 @@ where
     /// Retrieves first TerminalNode corresponding to token ELSE
     /// Returns `None` if there is no child corresponding to token ELSE
     fn ELSE(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_ELSE)
+        self.token_of_type(LoopSubst_ELSE, 0)
     }
     /// Retrieves first TerminalNode corresponding to token EXTRACT
     /// Returns `None` if there is no child corresponding to token EXTRACT
     fn EXTRACT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_EXTRACT)
+        self.token_of_type(LoopSubst_EXTRACT, 0)
     }
     /// Retrieves first TerminalNode corresponding to token FROM
     /// Returns `None` if there is no child corresponding to token FROM
     fn FROM(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_FROM)
+        self.token_of_type(LoopSubst_FROM, 0)
     }
     /// Retrieves first TerminalNode corresponding to token SUBSTRING
     /// Returns `None` if there is no child corresponding to token SUBSTRING
     fn SUBSTRING(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_SUBSTRING)
+        self.token_of_type(LoopSubst_SUBSTRING, 0)
     }
     /// Retrieves first TerminalNode corresponding to token FOR
     /// Returns `None` if there is no child corresponding to token FOR
     fn FOR(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_FOR)
+        self.token_of_type(LoopSubst_FOR, 0)
     }
     /// Retrieves first TerminalNode corresponding to token POSITION
     /// Returns `None` if there is no child corresponding to token POSITION
     fn POSITION(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_POSITION)
+        self.token_of_type(LoopSubst_POSITION, 0)
     }
     /// Retrieves first TerminalNode corresponding to token IN
     /// Returns `None` if there is no child corresponding to token IN
     fn IN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_IN)
+        self.token_of_type(LoopSubst_IN, 0)
     }
     /// Retrieves first TerminalNode corresponding to token ROW
     /// Returns `None` if there is no child corresponding to token ROW
     fn ROW(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_ROW)
+        self.token_of_type(LoopSubst_ROW, 0)
     }
     /// Retrieves first TerminalNode corresponding to token TIMESTAMP
     /// Returns `None` if there is no child corresponding to token TIMESTAMP
     fn TIMESTAMP(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_TIMESTAMP)
+        self.token_of_type(LoopSubst_TIMESTAMP, 0)
     }
     /// Retrieves first TerminalNode corresponding to token STRING
     /// Returns `None` if there is no child corresponding to token STRING
     fn STRING(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_STRING)
+        self.token_of_type(LoopSubst_STRING, 0)
     }
     /// Retrieves first TerminalNode corresponding to token INTERVAL
     /// Returns `None` if there is no child corresponding to token INTERVAL
     fn INTERVAL(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_INTERVAL)
+        self.token_of_type(LoopSubst_INTERVAL, 0)
     }
 }
 
@@ -625,7 +625,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn operand(&mut self,) -> Result<&'arena OperandContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, OperandContext<TF::Tok>, RULE_operand, 4, |_parentctx| OperandContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, LoopSubstParserNodeKind::OperandContext, 4; {
         let _local_ctx_fn = |recog: &Self| -> &'arena OperandContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		recog.base.set_state(129);
@@ -945,17 +945,17 @@ where
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
     fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_ID)
+        self.token_of_type(LoopSubst_ID, 0)
     }
     /// Retrieves first TerminalNode corresponding to token VARYING
     /// Returns `None` if there is no child corresponding to token VARYING
     fn VARYING(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_VARYING)
+        self.token_of_type(LoopSubst_VARYING, 0)
     }
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
     fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_INT)
+        self.token_of_type(LoopSubst_INT, 0)
     }
 }
 
@@ -966,7 +966,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn type_(&mut self,) -> Result<&'arena Type_ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, Type_Context<TF::Tok>, RULE_type_, 6, |_parentctx| Type_ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, LoopSubstParserNodeKind::Type_Context, 6; {
         let _local_ctx_fn = |recog: &Self| -> &'arena Type_Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(135);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -1029,7 +1029,7 @@ where
     /// Retrieves first TerminalNode corresponding to token WHEN
     /// Returns `None` if there is no child corresponding to token WHEN
     fn WHEN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_WHEN)
+        self.token_of_type(LoopSubst_WHEN, 0)
     }
     fn expr_all(&self) -> Vec<&'arena ExprContextAll<'input, 'arena, Tok>> {
         self.children_of_type()
@@ -1040,7 +1040,7 @@ where
     /// Retrieves first TerminalNode corresponding to token THEN
     /// Returns `None` if there is no child corresponding to token THEN
     fn THEN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSubst_THEN)
+        self.token_of_type(LoopSubst_THEN, 0)
     }
 }
 
@@ -1051,7 +1051,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn whenClause(&mut self,) -> Result<&'arena WhenClauseContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, WhenClauseContext<TF::Tok>, RULE_whenClause, 8, |_parentctx| WhenClauseContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, LoopSubstParserNodeKind::WhenClauseContext, 8; {
         let _local_ctx_fn = |recog: &Self| -> &'arena WhenClauseContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
 		{

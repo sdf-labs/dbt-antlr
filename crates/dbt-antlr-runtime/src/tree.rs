@@ -421,12 +421,33 @@ const _: () = {
     assert!(size_of::<Common>() == 56);
     assert!(size_of::<Base>() == 56);
     assert!(size_of::<(Node, Base)>() == 64);
+    assert!(size_of::<(Node, Common)>() == 64);
+    assert!(align_of::<Common>() == align_of::<Base>());
+    assert!(offset_of!((Node, Common), 1) == offset_of!((Node, Base), 1));
     assert!(offset_of!(Common, start) == offset_of!(Base, start));
     assert!(offset_of!(Common, stop) == offset_of!(Base, stop));
     assert!(offset_of!(Common, children) == offset_of!(Base, children));
     assert!(offset_of!(Common, parent) == offset_of!(Base, base));
 };
 
+#[cold]
+#[inline(never)]
+pub(crate) fn node_alloc_failure(arena: &Arena) -> ANTLRError {
+    #[cfg(feature = "arena-allocation-limit")]
+    {
+        ANTLRError::arena_allocation_limit_exceeded(
+            arena.allocation_limit_bytes(),
+            arena.total_allocated_bytes(),
+        )
+    }
+    #[cfg(not(feature = "arena-allocation-limit"))]
+    {
+        let _ = arena;
+        std::alloc::handle_alloc_error(std::alloc::Layout::new::<
+            TreeNode<'static, 'static, crate::rule_context::EmptyNodeKind>,
+        >())
+    }
+}
 #[derive(Debug)]
 #[repr(C, align(8))]
 pub struct TreeNode<'input, 'arena, NodeKind, Tok = CommonToken<'input>>
@@ -460,6 +481,49 @@ where
         };
         let leaf = TerminalNode::new(symbol);
         arena.alloc_node(header, leaf)
+    }
+
+    #[allow(clippy::mut_from_ref)]
+    #[inline]
+    pub(crate) fn create_plain_context_node_with_start(
+        arena: &'arena Arena,
+        node_tag: NodeKind,
+        parent: Option<&'arena Self>,
+        invoking_state: i32,
+        start: Option<&'arena Tok>,
+    ) -> Result<&'arena mut Self, ANTLRError> {
+        debug_assert!(node_tag.is_context());
+        let header = TreeNode {
+            node_tag,
+            label_tag: 0,
+            invoking_state,
+            body: (),
+            _mark: PhantomData,
+        };
+        let body = ParserRuleContextCommon {
+            start,
+            stop: None,
+            children: NodeChildren::new(),
+            parent,
+        };
+        let ptr = arena.alloc_node(header, body);
+        if ptr.is_null() {
+            return Err(node_alloc_failure(arena));
+        }
+        // SAFETY: `ptr` comes from `arena` for `'arena` with an initialized `TreeNode` header
+        // and `ParserRuleContextCommon` body matching any plain ZST-extension `BaseParserRuleContext`.
+        Ok(unsafe { &mut *ptr })
+    }
+
+    #[allow(clippy::mut_from_ref)]
+    #[doc(hidden)]
+    pub fn create_plain_context_node(
+        arena: &'arena Arena,
+        node_tag: NodeKind,
+        parent: Option<&'arena Self>,
+        invoking_state: i32,
+    ) -> Result<&'arena mut Self, ANTLRError> {
+        Self::create_plain_context_node_with_start(arena, node_tag, parent, invoking_state, None)
     }
 
     #[inline]
@@ -502,24 +566,26 @@ where
     }
 
     /// # Safety
-    /// Caller must ensure that the provided pointer is a valid pointer to a
-    /// properly instantiated [NodeInner] object:
-    /// - For leaf nodes, it must be created via [TreeNode::create_token_node]
-    ///   or [TreeNode::create_error_node];
-    /// - For rule context nodes, it must be created via
-    ///   [BaseParserRuleContext::create].
+    /// The caller must make sure that `ctx_ptr` points to a valid [`NodeInner`]
+    /// object in an arena:
+    /// - Create leaf nodes with [`TreeNode::create_token_node`] or
+    ///   [`TreeNode::create_error_node`].
+    /// - Create rule context nodes with [`BaseParserRuleContext::create`],
+    ///   [`TreeNode::create_plain_context_node`], or
+    ///   [`TreeNode::create_plain_context_node_with_start`].
     #[inline]
     pub(crate) unsafe fn from_ctx_ptr(ctx_ptr: CtxPtr<'input, 'arena>) -> &'arena Self {
         &*((ctx_ptr as *const u8).sub(std::mem::offset_of!(Self, body)) as *const Self)
     }
 
     /// # Safety
-    /// Caller must ensure that the provided pointer is a valid pointer to a
-    /// properly instantiated [NodeInner] object:
-    /// - For leaf nodes, it must be created via [TreeNode::create_token_node]
-    ///   or [TreeNode::create_error_node];
-    /// - For rule context nodes, it must be created via
-    ///   [BaseParserRuleContext::create].
+    /// The caller must make sure that `ctx_ptr` points to a valid [`NodeInner`]
+    /// object in an arena:
+    /// - Create leaf nodes with [`TreeNode::create_token_node`] or
+    ///   [`TreeNode::create_error_node`].
+    /// - Create rule context nodes with [`BaseParserRuleContext::create`],
+    ///   [`TreeNode::create_plain_context_node`], or
+    ///   [`TreeNode::create_plain_context_node_with_start`].
     #[inline]
     pub(crate) unsafe fn from_ctx_ptr_mut(ctx_ptr: CtxPtr<'input, 'arena>) -> &'arena mut Self {
         &mut *((ctx_ptr as *const u8).sub(std::mem::offset_of!(Self, body)) as *mut Self)

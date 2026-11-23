@@ -170,7 +170,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn s(&mut self,) -> Result<&'arena SContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, SContext<TF::Tok>, RULE_s, 0, |_parentctx| SContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, SimpleLRParserNodeKind::SContext, 0; {
         let _local_ctx_fn = |recog: &Self| -> &'arena SContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
 		{
@@ -205,7 +205,7 @@ where
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
     fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == SimpleLR_ID)
+        self.token_of_type(SimpleLR_ID, 0)
     }
     fn a(&self) -> Option<&'arena AContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -224,7 +224,7 @@ where
 	}
 
 	fn a_rec(&mut self, _p: i32) -> Result<&'arena AContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(rec recog = self, _parentctx, _parentState, AContext<TF::Tok>, RULE_a, 2, |_parentctx| AContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); _p; {
+        dbt_antlr_runtime::parse_rule!(plain rec recog = self, _parentctx, _parentState, SimpleLRParserNodeKind::AContext, 2; _p; {
         let _local_ctx_fn = |recog: &Self| -> &'arena AContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let _startState = 2;
         let mut _alt: i32;

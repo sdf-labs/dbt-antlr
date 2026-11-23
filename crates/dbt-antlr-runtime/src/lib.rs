@@ -813,6 +813,8 @@ macro_rules! impl_ctx {
         }
 
         impl<'input: 'arena, 'arena, Tok: $crate::token::Token + 'input> $ext<'input, 'arena, Tok> {
+            #[allow(dead_code)]
+            #[inline]
             fn create(
                 arena: &'arena $crate::Arena,
                 parent: ::std::option::Option<
@@ -823,13 +825,11 @@ macro_rules! impl_ctx {
                 &'arena mut $crate::tree::TreeNode<'input, 'arena, $nodekind, Tok>,
                 $crate::errors::ANTLRError,
             > {
-                $crate::parser_rule_context::BaseParserRuleContext::create(
+                $crate::tree::TreeNode::create_plain_context_node(
                     arena,
+                    $nodekind::$ctx,
                     parent,
                     invoking_state,
-                    $ext {
-                        ph: ::std::marker::PhantomData,
-                    },
                 )
             }
         }
@@ -1119,6 +1119,95 @@ macro_rules! impl_ctx {
 
 #[macro_export]
 macro_rules! parse_rule {
+    (catch plain rec $recog:ident = $self:expr, $parentctx:ident, $parentstate:ident, $node_tag:expr, $state:expr; $prec:ident; $body:block; [$($exceptions:tt)*]; [$($finally:tt)*]) => {
+        $crate::maybe_grow_stack!({
+            let $recog = $self;
+            let $parentctx = $recog.base.ctx();
+            let $parentstate = $recog.base.get_state();
+            $recog
+                .base
+                .enter_plain_recursion_rule($node_tag, $state, $prec)?;
+            let result: ::std::result::Result<(), $crate::errors::ANTLRError> = (|| {
+                $body
+                ::std::result::Result::Ok(())
+            })();
+            match result {
+                ::std::result::Result::Ok(_) => {}
+                $($exceptions)*
+                ::std::result::Result::Err(e) => {
+                    $recog.err_handler.handle_rule_error(&mut $recog.base, e)?;
+                }
+            }
+            $($finally)*
+            $recog
+                .base
+                .unroll_recursion_context($parentctx)
+                .map(|ctx| unsafe { ctx.as_rule_context_unchecked() })
+        })
+    };
+
+    (catch plain $recog:ident = $self:expr, $node_tag:expr, $state:expr; $body:block; [$($exceptions:tt)*]; [$($finally:tt)*]) => {
+        $crate::maybe_grow_stack!({
+            let $recog = $self;
+            $recog.base.enter_plain_rule($node_tag, $state)?;
+            let result: ::std::result::Result<(), $crate::errors::ANTLRError> = (|| {
+                $body
+                ::std::result::Result::Ok(())
+            })();
+            match result {
+                ::std::result::Result::Ok(_) => {}
+                $($exceptions)*
+                ::std::result::Result::Err(e) => {
+                    $recog.err_handler.handle_rule_error(&mut $recog.base, e)?;
+                }
+            }
+            $($finally)*
+            $recog
+                .base
+                .exit_rule()
+                .map(|ctx| unsafe { ctx.as_rule_context_unchecked() })
+        })
+    };
+
+    (plain rec $recog:ident = $self:expr, $parentctx:ident, $parentstate:ident, $node_tag:expr, $state:expr; $prec:ident; $body:block) => {
+        $crate::maybe_grow_stack!({
+            let $recog = $self;
+            let $parentctx = $recog.base.ctx();
+            let $parentstate = $recog.base.get_state();
+            $recog
+                .base
+                .enter_plain_recursion_rule($node_tag, $state, $prec)?;
+            let result: ::std::result::Result<(), $crate::errors::ANTLRError> = (|| {
+                $body
+                ::std::result::Result::Ok(())
+            })();
+            if let ::std::result::Result::Err(e) = result {
+                $recog.err_handler.handle_rule_error(&mut $recog.base, e)?;
+            }
+            $recog
+                .base
+                .unroll_recursion_context($parentctx)
+                .map(|ctx| unsafe { ctx.as_rule_context_unchecked() })
+        })
+    };
+
+    (plain $recog:ident = $self:expr, $node_tag:expr, $state:expr; $body:block) => {
+        $crate::maybe_grow_stack!({
+            let $recog = $self;
+            $recog.base.enter_plain_rule($node_tag, $state)?;
+            let result: ::std::result::Result<(), $crate::errors::ANTLRError> = (|| {
+                $body
+                ::std::result::Result::Ok(())
+            })();
+            if let ::std::result::Result::Err(e) = result {
+                $recog.err_handler.handle_rule_error(&mut $recog.base, e)?;
+            }
+            $recog
+                .base
+                .exit_rule()
+                .map(|ctx| unsafe { ctx.as_rule_context_unchecked() })
+        })
+    };
 
     (catch rec $recog:ident = $self:expr, $parentctx:ident, $parentstate:ident, $ctx:ty, $rule:expr, $state:expr, $create:expr; $prec:ident; $body:block; [$($exceptions:tt)*]; [$($finally:tt)*]) => {
         $crate::maybe_grow_stack!({

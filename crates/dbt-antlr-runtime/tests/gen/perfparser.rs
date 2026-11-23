@@ -189,7 +189,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn stat(&mut self,) -> Result<&'arena StatContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, StatContext<TF::Tok>, RULE_stat, 0, |_parentctx| StatContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, PerfParserNodeKind::StatContext, 0; {
         let _local_ctx_fn = |recog: &Self| -> &'arena StatContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(10);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -243,7 +243,7 @@ where
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
     fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == Perf_ID)
+        self.token_of_type(Perf_ID, 0)
     }
     fn expr_all(&self) -> Vec<&'arena ExprContextAll<'input, 'arena, Tok>> {
         self.children_of_type()
@@ -265,7 +265,7 @@ where
 	}
 
 	fn expr_rec(&mut self, _p: i32) -> Result<&'arena ExprContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(rec recog = self, _parentctx, _parentState, ExprContext<TF::Tok>, RULE_expr, 2, |_parentctx| ExprContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); _p; {
+        dbt_antlr_runtime::parse_rule!(plain rec recog = self, _parentctx, _parentState, PerfParserNodeKind::ExprContext, 2; _p; {
         let _local_ctx_fn = |recog: &Self| -> &'arena ExprContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let _startState = 2;
         let mut _alt: i32;

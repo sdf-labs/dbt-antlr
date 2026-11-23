@@ -208,7 +208,7 @@ where
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
     fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == BetweenExpr_EOF)
+        self.token_of_type(BetweenExpr_EOF, 0)
     }
 }
 
@@ -219,7 +219,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn s(&mut self,) -> Result<&'arena SContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, SContext<TF::Tok>, RULE_s, 0, |_parentctx| SContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, BetweenExprParserNodeKind::SContext, 0; {
         let _local_ctx_fn = |recog: &Self| -> &'arena SContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
 		{
@@ -925,7 +925,7 @@ where
 	}
 
 	fn v_rec(&mut self, _p: i32) -> Result<&'arena VContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(rec recog = self, _parentctx, _parentState, VContext<TF::Tok>, RULE_v, 6, |_parentctx| VContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); _p; {
+        dbt_antlr_runtime::parse_rule!(plain rec recog = self, _parentctx, _parentState, BetweenExprParserNodeKind::VContext, 6; _p; {
         let _local_ctx_fn = |recog: &Self| -> &'arena VContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let _startState = 6;
 		let mut _la: i32 = -1;
@@ -1036,12 +1036,12 @@ where
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
     fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == BetweenExpr_ID)
+        self.token_of_type(BetweenExpr_ID, 0)
     }
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
     fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == BetweenExpr_INT)
+        self.token_of_type(BetweenExpr_INT, 0)
     }
     fn b(&self) -> Option<&'arena BContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -1055,7 +1055,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn atom(&mut self,) -> Result<&'arena AtomContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, AtomContext<TF::Tok>, RULE_atom, 8, |_parentctx| AtomContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, BetweenExprParserNodeKind::AtomContext, 8; {
         let _local_ctx_fn = |recog: &Self| -> &'arena AtomContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(68);
 		recog.err_handler.sync(&mut recog.base)?;

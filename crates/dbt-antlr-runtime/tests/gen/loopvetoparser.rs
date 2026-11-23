@@ -169,7 +169,7 @@ where
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
     fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopVeto_EOF)
+        self.token_of_type(LoopVeto_EOF, 0)
     }
 }
 
@@ -180,7 +180,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn start(&mut self,) -> Result<&'arena StartContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, StartContext<TF::Tok>, RULE_start, 0, |_parentctx| StartContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, LoopVetoParserNodeKind::StartContext, 0; {
         let _local_ctx_fn = |recog: &Self| -> &'arena StartContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
 		{
@@ -216,7 +216,7 @@ where
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
     fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopVeto_INT)
+        self.token_of_type(LoopVeto_INT, 0)
     }
     fn send_all(&self) -> Vec<&'arena SendContextAll<'input, 'arena, Tok>> {
         self.children_of_type()
@@ -238,7 +238,7 @@ where
 	}
 
 	fn send_rec(&mut self, _p: i32) -> Result<&'arena SendContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(rec recog = self, _parentctx, _parentState, SendContext<TF::Tok>, RULE_send, 2, |_parentctx| SendContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); _p; {
+        dbt_antlr_runtime::parse_rule!(plain rec recog = self, _parentctx, _parentState, LoopVetoParserNodeKind::SendContext, 2; _p; {
         let _local_ctx_fn = |recog: &Self| -> &'arena SendContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let _startState = 2;
 		let mut _la: i32 = -1;

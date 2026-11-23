@@ -185,7 +185,7 @@ where
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
     fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == VisitorCalc_EOF)
+        self.token_of_type(VisitorCalc_EOF, 0)
     }
 }
 
@@ -196,7 +196,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn s(&mut self,) -> Result<&'arena SContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, SContext<TF::Tok>, RULE_s, 0, |_parentctx| SContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, VisitorCalcParserNodeKind::SContext, 0; {
         let _local_ctx_fn = |recog: &Self| -> &'arena SContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
 		{
@@ -302,12 +302,12 @@ impl<'input: 'arena, 'arena, Tok: Token + 'input> AddContextAttrs<'input, 'arena
     /// Retrieves first TerminalNode corresponding to token ADD
     /// Returns `None` if there is no child corresponding to token ADD
     fn ADD(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == VisitorCalc_ADD)
+        self.token_of_type(VisitorCalc_ADD, 0)
     }
     /// Retrieves first TerminalNode corresponding to token SUB
     /// Returns `None` if there is no child corresponding to token SUB
     fn SUB(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == VisitorCalc_SUB)
+        self.token_of_type(VisitorCalc_SUB, 0)
     }
 }
 #[derive(Debug)]
@@ -366,7 +366,7 @@ impl<'input: 'arena, 'arena, Tok: Token + 'input> NumberContextAttrs<'input, 'ar
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
     fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == VisitorCalc_INT)
+        self.token_of_type(VisitorCalc_INT, 0)
     }
 }
 #[derive(Debug)]
@@ -436,12 +436,12 @@ impl<'input: 'arena, 'arena, Tok: Token + 'input> MultiplyContextAttrs<'input, '
     /// Retrieves first TerminalNode corresponding to token MUL
     /// Returns `None` if there is no child corresponding to token MUL
     fn MUL(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == VisitorCalc_MUL)
+        self.token_of_type(VisitorCalc_MUL, 0)
     }
     /// Retrieves first TerminalNode corresponding to token DIV
     /// Returns `None` if there is no child corresponding to token DIV
     fn DIV(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == VisitorCalc_DIV)
+        self.token_of_type(VisitorCalc_DIV, 0)
     }
 }
 #[derive(Debug)]

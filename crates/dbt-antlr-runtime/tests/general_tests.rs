@@ -758,7 +758,45 @@ fn test_parse_listener_add_remove_toggles_events() {
 }
 
 #[test]
-fn test_alt_number_and_rule_error_handling() {
+fn test_token_of_type_and_tokens_of_type() {
+    use gen::csvlexer::CSVLexer;
+    use gen::csvparser::{
+        CSVParser, CsvFileContextAttrs, FieldContextAttrs, HdrContextAttrs, RowContextAttrs,
+        CSV_STRING, CSV_TEXT, CSV_T__0,
+    };
+
+    Arena::with(|arena| {
+        let input = InputStream::new("a,\"b\",c\n");
+        let lexer = CSVLexer::<_>::new(arena, input);
+        let token_source = CommonTokenStream::new(lexer);
+        let mut parser = CSVParser::new(arena, token_source);
+        let file = parser.csvFile().expect("csv parse succeeds");
+        let row = file.hdr().expect("hdr").row().expect("row");
+
+        assert!(row.token_of_type(CSV_TEXT, 0).is_none());
+        assert!(row.tokens_of_type(CSV_TEXT).is_empty());
+
+        assert_eq!(row.tokens_of_type(CSV_T__0).len(), 2);
+        assert_eq!(row.token_of_type(CSV_T__0, 0).unwrap().get_text(), ",");
+        assert_eq!(row.token_of_type(CSV_T__0, 1).unwrap().get_text(), ",");
+        assert!(row.token_of_type(CSV_T__0, 2).is_none());
+        let fields = row.field_all();
+        assert_eq!(fields.len(), 3);
+        assert_eq!(fields[0].TEXT().unwrap().get_text(), "a");
+        assert_eq!(
+            fields[0].token_of_type(CSV_TEXT, 0).unwrap().get_text(),
+            "a"
+        );
+        assert!(fields[0].token_of_type(CSV_TEXT, 1).is_none());
+        assert!(fields[0].STRING().is_none());
+        assert_eq!(fields[0].tokens_of_type(CSV_TEXT).len(), 1);
+        assert_eq!(fields[1].STRING().unwrap().get_text(), "\"b\"");
+        assert_eq!(fields[1].tokens_of_type(CSV_STRING).len(), 1);
+    });
+}
+
+#[test]
+fn test_plain_rule_entry_alt_number_and_error_handling() {
     use dbt_antlr_runtime::atn::INVALID_ALT;
     use dbt_antlr_runtime::error_strategy::BailErrorStrategy;
     use gen::simplelrparser::{AContextAttrs, SContextAttrs};
@@ -768,13 +806,15 @@ fn test_alt_number_and_rule_error_handling() {
         let lexer = SimpleLRLexer::<_>::new(arena, input);
         let token_source = CommonTokenStream::new(lexer);
         let mut parser = SimpleLRParser::new(arena, token_source);
-        let root = parser.s().expect("parse succeeds");
+        let root = parser.s().expect("plain + plain-rec parse succeeds");
         assert_eq!(root.get_alt_number(), INVALID_ALT);
+        assert_eq!(root.start().get_text(), "x");
+        assert_eq!(root.stop().get_text(), "z");
         let inner = root.a().expect("a child");
         assert_eq!(inner.get_alt_number(), INVALID_ALT);
         assert_eq!(inner.ID().unwrap().get_text(), "z");
 
-        // Recoverable error through handle_rule_error.
+        // Recoverable error through handle_rule_error on a plain rule.
         let bad_input = InputStream::new("");
         let bad_lexer = SimpleLRLexer::<_>::new(arena, bad_input);
         let bad_tokens = CommonTokenStream::new(bad_lexer);
@@ -790,5 +830,154 @@ fn test_alt_number_and_rule_error_handling() {
             SimpleLRParser::with_strategy(arena, bail_tokens, Box::new(BailErrorStrategy::new()));
         bail_parser.remove_error_listeners();
         assert!(bail_parser.s().is_err());
+    });
+}
+
+#[test]
+fn test_parse_rule_catch_plain_and_catch_plain_rec() {
+    use dbt_antlr_runtime::atn_simulator::ParserATNSimulatorManager;
+    use dbt_antlr_runtime::error_strategy::ErrorStrategyDelegate;
+    use dbt_antlr_runtime::errors::ANTLRErrorKind;
+    use dbt_antlr_runtime::parser::{BaseParser, ParserRecog};
+    use dbt_antlr_runtime::recognizer::Actions;
+    use dbt_antlr_runtime::token_factory::TokenFactory;
+    use dbt_antlr_runtime::token_stream::TokenStream;
+    use dbt_antlr_runtime::vocabulary::{Vocabulary, VocabularyImpl};
+    use gen::simplelrparser::{
+        parser_simulator_manager, AContext, SContext, SimpleLRParserNodeKind, _LITERAL_NAMES,
+        _SYMBOLIC_NAMES,
+    };
+    use std::sync::LazyLock;
+
+    static TEST_VOCAB: LazyLock<VocabularyImpl> =
+        LazyLock::new(|| VocabularyImpl::new(_LITERAL_NAMES.iter(), _SYMBOLIC_NAMES.iter(), None));
+
+    struct TestRecog;
+
+    impl<'input, 'arena, Input, TF>
+        Actions<
+            'input,
+            'arena,
+            BaseParser<'input, 'arena, Self, SimpleLRParserNodeKind, Input, TF>,
+            TF::Tok,
+        > for TestRecog
+    where
+        'input: 'arena,
+        TF: TokenFactory<'input, 'arena> + 'arena,
+        Input: TokenStream<'input, 'arena, TF> + 'arena,
+    {
+        fn get_vocabulary(&self) -> &dyn Vocabulary {
+            &*TEST_VOCAB
+        }
+    }
+
+    impl<'input, 'arena, Input, TF>
+        ParserRecog<
+            'input,
+            'arena,
+            BaseParser<'input, 'arena, Self, SimpleLRParserNodeKind, Input, TF>,
+            TF::Tok,
+        > for TestRecog
+    where
+        'input: 'arena,
+        TF: TokenFactory<'input, 'arena> + 'arena,
+        Input: TokenStream<'input, 'arena, TF> + 'arena,
+    {
+        fn get_atn_simulator_man(&self) -> &'static ParserATNSimulatorManager {
+            parser_simulator_manager()
+        }
+    }
+
+    type TestBase<'input, 'arena, Input, TF> =
+        BaseParser<'input, 'arena, TestRecog, SimpleLRParserNodeKind, Input, TF>;
+
+    struct CatchPlainHarness<'input, 'arena, Input, TF>
+    where
+        'input: 'arena,
+        TF: TokenFactory<'input, 'arena> + 'arena,
+        Input: TokenStream<'input, 'arena, TF> + 'arena,
+    {
+        base: TestBase<'input, 'arena, Input, TF>,
+        err_handler: ErrorStrategyDelegate<'input, 'arena, TF, TestBase<'input, 'arena, Input, TF>>,
+    }
+
+    impl<'input, 'arena, Input, TF> CatchPlainHarness<'input, 'arena, Input, TF>
+    where
+        'input: 'arena,
+        TF: TokenFactory<'input, 'arena> + 'arena,
+        Input: TokenStream<'input, 'arena, TF> + 'arena,
+    {
+        fn new(arena: &'arena Arena, input: Input) -> Self {
+            let mut base = BaseParser::new_base_parser(arena, input, TestRecog);
+            base.remove_error_listeners();
+            Self {
+                base,
+                err_handler: ErrorStrategyDelegate::new_default(),
+            }
+        }
+
+        fn run_catch_plain(
+            &mut self,
+            mode: u8,
+            caught: &mut bool,
+            finally_ran: &mut bool,
+        ) -> Result<&'arena SContext<'input, 'arena, TF::Tok>, ANTLRError> {
+            dbt_antlr_runtime::parse_rule!(
+                catch plain recog = self, SimpleLRParserNodeKind::SContext, 0;
+                {
+                    match mode {
+                        1 => return Err(ANTLRError::no_alt(&mut recog.base)),
+                        2 => return Err(ANTLRError::input_mismatch(&mut recog.base)),
+                        _ => {}
+                    }
+                };
+                [Err(ref e) if matches!(&**e, ANTLRErrorKind::NoAltError(_)) => { *caught = true; }];
+                [*finally_ran = true;]
+            )
+        }
+
+        fn run_catch_plain_rec(
+            &mut self,
+            _p: i32,
+            mode: u8,
+            caught: &mut bool,
+            finally_ran: &mut bool,
+        ) -> Result<&'arena AContext<'input, 'arena, TF::Tok>, ANTLRError> {
+            dbt_antlr_runtime::parse_rule!(
+                catch plain rec recog = self, _parentctx, _parent_state, SimpleLRParserNodeKind::AContext, 2; _p;
+                {
+                    let _ = _parent_state;
+                    match mode {
+                        1 => return Err(ANTLRError::no_alt(&mut recog.base)),
+                        2 => return Err(ANTLRError::input_mismatch(&mut recog.base)),
+                        _ => {}
+                    }
+                };
+                [Err(ref e) if matches!(&**e, ANTLRErrorKind::NoAltError(_)) => { *caught = true; }];
+                [*finally_ran = true;]
+            )
+        }
+    }
+
+    Arena::with(|arena| {
+        for (mode, expect_caught) in [(0, false), (1, true), (2, false)] {
+            let lexer = SimpleLRLexer::<_>::new(arena, InputStream::new("x"));
+            let mut harness = CatchPlainHarness::new(arena, CommonTokenStream::new(lexer));
+            let (mut caught, mut finally_ran) = (false, false);
+            assert!(harness
+                .run_catch_plain(mode, &mut caught, &mut finally_ran)
+                .is_ok());
+            assert_eq!(caught, expect_caught);
+            assert!(finally_ran);
+
+            let lexer_rec = SimpleLRLexer::<_>::new(arena, InputStream::new("x"));
+            let mut harness_rec = CatchPlainHarness::new(arena, CommonTokenStream::new(lexer_rec));
+            let (mut caught, mut finally_ran) = (false, false);
+            assert!(harness_rec
+                .run_catch_plain_rec(0, mode, &mut caught, &mut finally_ran)
+                .is_ok());
+            assert_eq!(caught, expect_caught);
+            assert!(finally_ran);
+        }
     });
 }

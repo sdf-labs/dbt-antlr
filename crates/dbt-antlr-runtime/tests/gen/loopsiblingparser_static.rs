@@ -257,7 +257,7 @@ where
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
     fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSibling_EOF)
+        self.token_of_type(LoopSibling_EOF, 0)
     }
     fn term(&self) -> Option<&'arena TermContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -280,7 +280,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn start(&mut self,) -> Result<&'arena StartContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, StartContext<TF::Tok>, RULE_start, 0, |_parentctx| StartContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, LoopSiblingParserNodeKind::StartContext, 0; {
         let _local_ctx_fn = |recog: &Self| -> &'arena StartContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(39);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -398,7 +398,7 @@ where
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
     fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSibling_ID)
+        self.token_of_type(LoopSibling_ID, 0)
     }
 }
 
@@ -414,7 +414,7 @@ where
 	}
 
 	fn expr_rec(&mut self, _p: i32) -> Result<&'arena ExprContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(rec recog = self, _parentctx, _parentState, ExprContext<TF::Tok>, RULE_expr, 2, |_parentctx| ExprContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); _p; {
+        dbt_antlr_runtime::parse_rule!(plain rec recog = self, _parentctx, _parentState, LoopSiblingParserNodeKind::ExprContext, 2; _p; {
         let _local_ctx_fn = |recog: &Self| -> &'arena ExprContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let _startState = 2;
         let mut _alt: i32;
@@ -523,7 +523,7 @@ where
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
     fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSibling_ID)
+        self.token_of_type(LoopSibling_ID, 0)
     }
 }
 
@@ -539,7 +539,7 @@ where
 	}
 
 	fn term_rec(&mut self, _p: i32) -> Result<&'arena TermContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(rec recog = self, _parentctx, _parentState, TermContext<TF::Tok>, RULE_term, 4, |_parentctx| TermContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); _p; {
+        dbt_antlr_runtime::parse_rule!(plain rec recog = self, _parentctx, _parentState, LoopSiblingParserNodeKind::TermContext, 4; _p; {
         let _local_ctx_fn = |recog: &Self| -> &'arena TermContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let _startState = 4;
         let mut _alt: i32;
@@ -634,7 +634,7 @@ where
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
     fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSibling_ID)
+        self.token_of_type(LoopSibling_ID, 0)
     }
 }
 
@@ -650,7 +650,7 @@ where
 	}
 
 	fn cond_rec(&mut self, _p: i32) -> Result<&'arena CondContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(rec recog = self, _parentctx, _parentState, CondContext<TF::Tok>, RULE_cond, 6, |_parentctx| CondContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); _p; {
+        dbt_antlr_runtime::parse_rule!(plain rec recog = self, _parentctx, _parentState, LoopSiblingParserNodeKind::CondContext, 6; _p; {
         let _local_ctx_fn = |recog: &Self| -> &'arena CondContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let _startState = 6;
         let mut _alt: i32;
@@ -766,12 +766,12 @@ where
     }
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
     fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == LoopSibling_ID).collect()
+    	self.tokens_of_type(LoopSibling_ID)
     }
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
     fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == LoopSibling_ID).nth(i)
+    	self.token_of_type(LoopSibling_ID, i)
     }
 }
 
@@ -787,7 +787,7 @@ where
 	}
 
 	fn tail_rec(&mut self, _p: i32) -> Result<&'arena TailContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(rec recog = self, _parentctx, _parentState, TailContext<TF::Tok>, RULE_tail, 8, |_parentctx| TailContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); _p; {
+        dbt_antlr_runtime::parse_rule!(plain rec recog = self, _parentctx, _parentState, LoopSiblingParserNodeKind::TailContext, 8; _p; {
         let _local_ctx_fn = |recog: &Self| -> &'arena TailContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let _startState = 8;
         let mut _alt: i32;
@@ -912,7 +912,7 @@ where
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
     fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopSibling_ID)
+        self.token_of_type(LoopSibling_ID, 0)
     }
     fn prec_all(&self) -> Vec<&'arena PrecContextAll<'input, 'arena, Tok>> {
         self.children_of_type()
@@ -934,7 +934,7 @@ where
 	}
 
 	fn prec_rec(&mut self, _p: i32) -> Result<&'arena PrecContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(rec recog = self, _parentctx, _parentState, PrecContext<TF::Tok>, RULE_prec, 10, |_parentctx| PrecContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); _p; {
+        dbt_antlr_runtime::parse_rule!(plain rec recog = self, _parentctx, _parentState, LoopSiblingParserNodeKind::PrecContext, 10; _p; {
         let _local_ctx_fn = |recog: &Self| -> &'arena PrecContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let _startState = 10;
         let mut _alt: i32;

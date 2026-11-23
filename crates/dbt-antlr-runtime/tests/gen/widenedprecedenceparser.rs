@@ -243,7 +243,7 @@ where
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
     fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedPrecedence_EOF)
+        self.token_of_type(WidenedPrecedence_EOF, 0)
     }
 }
 
@@ -254,7 +254,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn s(&mut self,) -> Result<&'arena SContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, SContext<TF::Tok>, RULE_s, 0, |_parentctx| SContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedPrecedenceParserNodeKind::SContext, 0; {
         let _local_ctx_fn = |recog: &Self| -> &'arena SContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
 		{
@@ -312,7 +312,7 @@ where
 	}
 
 	fn e_rec(&mut self, _p: i32) -> Result<&'arena EContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(rec recog = self, _parentctx, _parentState, EContext<TF::Tok>, RULE_e, 2, |_parentctx| EContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); _p; {
+        dbt_antlr_runtime::parse_rule!(plain rec recog = self, _parentctx, _parentState, WidenedPrecedenceParserNodeKind::EContext, 2; _p; {
         let _local_ctx_fn = |recog: &Self| -> &'arena EContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let _startState = 2;
         let mut _alt: i32;
@@ -452,7 +452,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn op(&mut self,) -> Result<&'arena OpContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, OpContext<TF::Tok>, RULE_op, 4, |_parentctx| OpContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedPrecedenceParserNodeKind::OpContext, 4; {
         let _local_ctx_fn = |recog: &Self| -> &'arena OpContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
 		{
@@ -495,7 +495,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn c0(&mut self,) -> Result<&'arena C0ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, C0Context<TF::Tok>, RULE_c0, 6, |_parentctx| C0ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedPrecedenceParserNodeKind::C0Context, 6; {
         let _local_ctx_fn = |recog: &Self| -> &'arena C0Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(66);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -554,7 +554,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn c1(&mut self,) -> Result<&'arena C1ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, C1Context<TF::Tok>, RULE_c1, 8, |_parentctx| C1ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedPrecedenceParserNodeKind::C1Context, 8; {
         let _local_ctx_fn = |recog: &Self| -> &'arena C1Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(76);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -613,7 +613,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn c2(&mut self,) -> Result<&'arena C2ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, C2Context<TF::Tok>, RULE_c2, 10, |_parentctx| C2ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedPrecedenceParserNodeKind::C2Context, 10; {
         let _local_ctx_fn = |recog: &Self| -> &'arena C2Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(86);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -672,7 +672,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn c3(&mut self,) -> Result<&'arena C3ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, C3Context<TF::Tok>, RULE_c3, 12, |_parentctx| C3ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedPrecedenceParserNodeKind::C3Context, 12; {
         let _local_ctx_fn = |recog: &Self| -> &'arena C3Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(96);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -731,7 +731,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn c4(&mut self,) -> Result<&'arena C4ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, C4Context<TF::Tok>, RULE_c4, 14, |_parentctx| C4ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedPrecedenceParserNodeKind::C4Context, 14; {
         let _local_ctx_fn = |recog: &Self| -> &'arena C4Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(106);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -790,7 +790,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn c5(&mut self,) -> Result<&'arena C5ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, C5Context<TF::Tok>, RULE_c5, 16, |_parentctx| C5ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedPrecedenceParserNodeKind::C5Context, 16; {
         let _local_ctx_fn = |recog: &Self| -> &'arena C5Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(116);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -849,7 +849,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn c6(&mut self,) -> Result<&'arena C6ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, C6Context<TF::Tok>, RULE_c6, 18, |_parentctx| C6ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedPrecedenceParserNodeKind::C6Context, 18; {
         let _local_ctx_fn = |recog: &Self| -> &'arena C6Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(126);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -908,7 +908,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn c7(&mut self,) -> Result<&'arena C7ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, C7Context<TF::Tok>, RULE_c7, 20, |_parentctx| C7ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedPrecedenceParserNodeKind::C7Context, 20; {
         let _local_ctx_fn = |recog: &Self| -> &'arena C7Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(136);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -967,7 +967,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn c8(&mut self,) -> Result<&'arena C8ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, C8Context<TF::Tok>, RULE_c8, 22, |_parentctx| C8ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedPrecedenceParserNodeKind::C8Context, 22; {
         let _local_ctx_fn = |recog: &Self| -> &'arena C8Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(146);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -1026,7 +1026,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn c9(&mut self,) -> Result<&'arena C9ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, C9Context<TF::Tok>, RULE_c9, 24, |_parentctx| C9ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedPrecedenceParserNodeKind::C9Context, 24; {
         let _local_ctx_fn = |recog: &Self| -> &'arena C9Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(156);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -1081,7 +1081,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn c10(&mut self,) -> Result<&'arena C10ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, C10Context<TF::Tok>, RULE_c10, 26, |_parentctx| C10ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedPrecedenceParserNodeKind::C10Context, 26; {
         let _local_ctx_fn = |recog: &Self| -> &'arena C10Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(164);
 		recog.err_handler.sync(&mut recog.base)?;

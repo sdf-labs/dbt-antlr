@@ -231,7 +231,7 @@ impl<'input: 'arena, 'arena, Tok: Token + 'input> CreateTableContextAttrs<'input
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
     fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == StaticDFA_ID)
+        self.token_of_type(StaticDFA_ID, 0)
     }
 }
 #[derive(Debug)]
@@ -290,7 +290,7 @@ impl<'input: 'arena, 'arena, Tok: Token + 'input> CreateViewContextAttrs<'input,
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
     fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == StaticDFA_ID)
+        self.token_of_type(StaticDFA_ID, 0)
     }
 }
 #[derive(Debug)]
@@ -349,7 +349,7 @@ impl<'input: 'arena, 'arena, Tok: Token + 'input> DropTableContextAttrs<'input, 
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
     fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == StaticDFA_ID)
+        self.token_of_type(StaticDFA_ID, 0)
     }
 }
 #[derive(Debug)]
@@ -696,12 +696,12 @@ where
 {
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
     fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == StaticDFA_ID).collect()
+    	self.tokens_of_type(StaticDFA_ID)
     }
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
     fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == StaticDFA_ID).nth(i)
+    	self.token_of_type(StaticDFA_ID, i)
     }
 }
 
@@ -712,7 +712,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn name(&mut self,) -> Result<&'arena NameContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, NameContext<TF::Tok>, RULE_name, 4, |_parentctx| NameContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, StaticDFAParserNodeKind::NameContext, 4; {
         let _local_ctx_fn = |recog: &Self| -> &'arena NameContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
@@ -764,7 +764,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn starLoop(&mut self,) -> Result<&'arena StarLoopContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, StarLoopContext<TF::Tok>, RULE_starLoop, 6, |_parentctx| StarLoopContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, StaticDFAParserNodeKind::StarLoopContext, 6; {
         let _local_ctx_fn = |recog: &Self| -> &'arena StarLoopContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
@@ -820,7 +820,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn plusLoop(&mut self,) -> Result<&'arena PlusLoopContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, PlusLoopContext<TF::Tok>, RULE_plusLoop, 8, |_parentctx| PlusLoopContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, StaticDFAParserNodeKind::PlusLoopContext, 8; {
         let _local_ctx_fn = |recog: &Self| -> &'arena PlusLoopContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
@@ -880,7 +880,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn opt(&mut self,) -> Result<&'arena OptContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, OptContext<TF::Tok>, RULE_opt, 10, |_parentctx| OptContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, StaticDFAParserNodeKind::OptContext, 10; {
         let _local_ctx_fn = |recog: &Self| -> &'arena OptContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
 		{

@@ -180,7 +180,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn csvFile(&mut self,) -> Result<&'arena CsvFileContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, CsvFileContext<TF::Tok>, RULE_csvFile, 0, |_parentctx| CsvFileContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, CSVParserNodeKind::CsvFileContext, 0; {
         let _local_ctx_fn = |recog: &Self| -> &'arena CsvFileContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
@@ -236,7 +236,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn hdr(&mut self,) -> Result<&'arena HdrContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, HdrContext<TF::Tok>, RULE_hdr, 2, |_parentctx| HdrContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, CSVParserNodeKind::HdrContext, 2; {
         let _local_ctx_fn = |recog: &Self| -> &'arena HdrContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
 		{
@@ -280,7 +280,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn row(&mut self,) -> Result<&'arena RowContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, RowContext<TF::Tok>, RULE_row, 4, |_parentctx| RowContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, CSVParserNodeKind::RowContext, 4; {
         let _local_ctx_fn = |recog: &Self| -> &'arena RowContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
@@ -345,12 +345,12 @@ where
     /// Retrieves first TerminalNode corresponding to token TEXT
     /// Returns `None` if there is no child corresponding to token TEXT
     fn TEXT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == CSV_TEXT)
+        self.token_of_type(CSV_TEXT, 0)
     }
     /// Retrieves first TerminalNode corresponding to token STRING
     /// Returns `None` if there is no child corresponding to token STRING
     fn STRING(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == CSV_STRING)
+        self.token_of_type(CSV_STRING, 0)
     }
 }
 
@@ -361,7 +361,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn field(&mut self,) -> Result<&'arena FieldContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, FieldContext<TF::Tok>, RULE_field, 6, |_parentctx| FieldContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, CSVParserNodeKind::FieldContext, 6; {
         let _local_ctx_fn = |recog: &Self| -> &'arena FieldContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(32);
 		recog.err_handler.sync(&mut recog.base)?;

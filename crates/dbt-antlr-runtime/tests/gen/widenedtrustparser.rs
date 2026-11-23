@@ -219,12 +219,12 @@ where
     /// Retrieves first TerminalNode corresponding to token X
     /// Returns `None` if there is no child corresponding to token X
     fn X(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_X)
+        self.token_of_type(WidenedTrust_X, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Y
     /// Returns `None` if there is no child corresponding to token Y
     fn Y(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Y)
+        self.token_of_type(WidenedTrust_Y, 0)
     }
 }
 
@@ -235,7 +235,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn top(&mut self,) -> Result<&'arena TopContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, TopContext<TF::Tok>, RULE_top, 0, |_parentctx| TopContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedTrustParserNodeKind::TopContext, 0; {
         let _local_ctx_fn = |recog: &Self| -> &'arena TopContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(32);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -325,26 +325,26 @@ where
     /// Retrieves first TerminalNode corresponding to token D
     /// Returns `None` if there is no child corresponding to token D
     fn D(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_D)
+        self.token_of_type(WidenedTrust_D, 0)
     }
     /// Retrieves first TerminalNode corresponding to token A
     /// Returns `None` if there is no child corresponding to token A
     fn A(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_A)
+        self.token_of_type(WidenedTrust_A, 0)
     }
     /// Retrieves first TerminalNode corresponding to token C
     /// Returns `None` if there is no child corresponding to token C
     fn C(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_C)
+        self.token_of_type(WidenedTrust_C, 0)
     }
     /// Retrieves all `TerminalNode`s corresponding to token B in current rule
     fn B_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == WidenedTrust_B).collect()
+    	self.tokens_of_type(WidenedTrust_B)
     }
     /// Retrieves 'i'th TerminalNode corresponding to token B, starting from 0.
     /// Returns `None` if number of children corresponding to token B is less than or equal to `i`.
     fn B(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == WidenedTrust_B).nth(i)
+    	self.token_of_type(WidenedTrust_B, i)
     }
     fn a(&self) -> Option<&'arena AContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -352,12 +352,12 @@ where
     /// Retrieves first TerminalNode corresponding to token E
     /// Returns `None` if there is no child corresponding to token E
     fn E(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_E)
+        self.token_of_type(WidenedTrust_E, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Z
     /// Returns `None` if there is no child corresponding to token Z
     fn Z(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Z)
+        self.token_of_type(WidenedTrust_Z, 0)
     }
     fn r0(&self) -> Option<&'arena R0ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -365,35 +365,35 @@ where
     /// Retrieves first TerminalNode corresponding to token M
     /// Returns `None` if there is no child corresponding to token M
     fn M(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_M)
+        self.token_of_type(WidenedTrust_M, 0)
     }
     /// Retrieves first TerminalNode corresponding to token W
     /// Returns `None` if there is no child corresponding to token W
     fn W(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_W)
+        self.token_of_type(WidenedTrust_W, 0)
     }
     /// Retrieves first TerminalNode corresponding to token N
     /// Returns `None` if there is no child corresponding to token N
     fn N(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_N)
+        self.token_of_type(WidenedTrust_N, 0)
     }
     /// Retrieves all `TerminalNode`s corresponding to token P in current rule
     fn P_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == WidenedTrust_P).collect()
+    	self.tokens_of_type(WidenedTrust_P)
     }
     /// Retrieves 'i'th TerminalNode corresponding to token P, starting from 0.
     /// Returns `None` if number of children corresponding to token P is less than or equal to `i`.
     fn P(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == WidenedTrust_P).nth(i)
+    	self.token_of_type(WidenedTrust_P, i)
     }
     /// Retrieves all `TerminalNode`s corresponding to token Q in current rule
     fn Q_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == WidenedTrust_Q).collect()
+    	self.tokens_of_type(WidenedTrust_Q)
     }
     /// Retrieves 'i'th TerminalNode corresponding to token Q, starting from 0.
     /// Returns `None` if number of children corresponding to token Q is less than or equal to `i`.
     fn Q(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == WidenedTrust_Q).nth(i)
+    	self.token_of_type(WidenedTrust_Q, i)
     }
 }
 
@@ -404,7 +404,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn a(&mut self,) -> Result<&'arena AContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, AContext<TF::Tok>, RULE_a, 2, |_parentctx| AContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedTrustParserNodeKind::AContext, 2; {
         let _local_ctx_fn = |recog: &Self| -> &'arena AContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
@@ -621,7 +621,7 @@ where
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
     fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r1(&self) -> Option<&'arena R1ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -629,17 +629,17 @@ where
     /// Retrieves first TerminalNode corresponding to token U0
     /// Returns `None` if there is no child corresponding to token U0
     fn U0(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U0)
+        self.token_of_type(WidenedTrust_U0, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
     fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V0
     /// Returns `None` if there is no child corresponding to token V0
     fn V0(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V0)
+        self.token_of_type(WidenedTrust_V0, 0)
     }
 }
 
@@ -650,7 +650,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn r0(&mut self,) -> Result<&'arena R0ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, R0Context<TF::Tok>, RULE_r0, 4, |_parentctx| R0ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedTrustParserNodeKind::R0Context, 4; {
         let _local_ctx_fn = |recog: &Self| -> &'arena R0Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(79);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -712,7 +712,7 @@ where
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
     fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r2(&self) -> Option<&'arena R2ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -720,17 +720,17 @@ where
     /// Retrieves first TerminalNode corresponding to token U1
     /// Returns `None` if there is no child corresponding to token U1
     fn U1(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U1)
+        self.token_of_type(WidenedTrust_U1, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
     fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V1
     /// Returns `None` if there is no child corresponding to token V1
     fn V1(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V1)
+        self.token_of_type(WidenedTrust_V1, 0)
     }
 }
 
@@ -741,7 +741,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn r1(&mut self,) -> Result<&'arena R1ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, R1Context<TF::Tok>, RULE_r1, 6, |_parentctx| R1ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedTrustParserNodeKind::R1Context, 6; {
         let _local_ctx_fn = |recog: &Self| -> &'arena R1Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(89);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -803,7 +803,7 @@ where
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
     fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r3(&self) -> Option<&'arena R3ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -811,17 +811,17 @@ where
     /// Retrieves first TerminalNode corresponding to token U2
     /// Returns `None` if there is no child corresponding to token U2
     fn U2(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U2)
+        self.token_of_type(WidenedTrust_U2, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
     fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V2
     /// Returns `None` if there is no child corresponding to token V2
     fn V2(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V2)
+        self.token_of_type(WidenedTrust_V2, 0)
     }
 }
 
@@ -832,7 +832,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn r2(&mut self,) -> Result<&'arena R2ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, R2Context<TF::Tok>, RULE_r2, 8, |_parentctx| R2ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedTrustParserNodeKind::R2Context, 8; {
         let _local_ctx_fn = |recog: &Self| -> &'arena R2Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(99);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -894,7 +894,7 @@ where
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
     fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r4(&self) -> Option<&'arena R4ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -902,17 +902,17 @@ where
     /// Retrieves first TerminalNode corresponding to token U3
     /// Returns `None` if there is no child corresponding to token U3
     fn U3(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U3)
+        self.token_of_type(WidenedTrust_U3, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
     fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V3
     /// Returns `None` if there is no child corresponding to token V3
     fn V3(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V3)
+        self.token_of_type(WidenedTrust_V3, 0)
     }
 }
 
@@ -923,7 +923,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn r3(&mut self,) -> Result<&'arena R3ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, R3Context<TF::Tok>, RULE_r3, 10, |_parentctx| R3ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedTrustParserNodeKind::R3Context, 10; {
         let _local_ctx_fn = |recog: &Self| -> &'arena R3Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(109);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -985,7 +985,7 @@ where
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
     fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r5(&self) -> Option<&'arena R5ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -993,17 +993,17 @@ where
     /// Retrieves first TerminalNode corresponding to token U4
     /// Returns `None` if there is no child corresponding to token U4
     fn U4(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U4)
+        self.token_of_type(WidenedTrust_U4, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
     fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V4
     /// Returns `None` if there is no child corresponding to token V4
     fn V4(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V4)
+        self.token_of_type(WidenedTrust_V4, 0)
     }
 }
 
@@ -1014,7 +1014,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn r4(&mut self,) -> Result<&'arena R4ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, R4Context<TF::Tok>, RULE_r4, 12, |_parentctx| R4ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedTrustParserNodeKind::R4Context, 12; {
         let _local_ctx_fn = |recog: &Self| -> &'arena R4Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(119);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -1076,7 +1076,7 @@ where
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
     fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r6(&self) -> Option<&'arena R6ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -1084,17 +1084,17 @@ where
     /// Retrieves first TerminalNode corresponding to token U5
     /// Returns `None` if there is no child corresponding to token U5
     fn U5(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U5)
+        self.token_of_type(WidenedTrust_U5, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
     fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V5
     /// Returns `None` if there is no child corresponding to token V5
     fn V5(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V5)
+        self.token_of_type(WidenedTrust_V5, 0)
     }
 }
 
@@ -1105,7 +1105,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn r5(&mut self,) -> Result<&'arena R5ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, R5Context<TF::Tok>, RULE_r5, 14, |_parentctx| R5ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedTrustParserNodeKind::R5Context, 14; {
         let _local_ctx_fn = |recog: &Self| -> &'arena R5Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(129);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -1167,7 +1167,7 @@ where
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
     fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r7(&self) -> Option<&'arena R7ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -1175,17 +1175,17 @@ where
     /// Retrieves first TerminalNode corresponding to token U6
     /// Returns `None` if there is no child corresponding to token U6
     fn U6(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U6)
+        self.token_of_type(WidenedTrust_U6, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
     fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V6
     /// Returns `None` if there is no child corresponding to token V6
     fn V6(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V6)
+        self.token_of_type(WidenedTrust_V6, 0)
     }
 }
 
@@ -1196,7 +1196,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn r6(&mut self,) -> Result<&'arena R6ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, R6Context<TF::Tok>, RULE_r6, 16, |_parentctx| R6ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedTrustParserNodeKind::R6Context, 16; {
         let _local_ctx_fn = |recog: &Self| -> &'arena R6Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(139);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -1258,7 +1258,7 @@ where
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
     fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r8(&self) -> Option<&'arena R8ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -1266,17 +1266,17 @@ where
     /// Retrieves first TerminalNode corresponding to token U7
     /// Returns `None` if there is no child corresponding to token U7
     fn U7(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U7)
+        self.token_of_type(WidenedTrust_U7, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
     fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V7
     /// Returns `None` if there is no child corresponding to token V7
     fn V7(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V7)
+        self.token_of_type(WidenedTrust_V7, 0)
     }
 }
 
@@ -1287,7 +1287,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn r7(&mut self,) -> Result<&'arena R7ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, R7Context<TF::Tok>, RULE_r7, 18, |_parentctx| R7ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedTrustParserNodeKind::R7Context, 18; {
         let _local_ctx_fn = |recog: &Self| -> &'arena R7Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(149);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -1349,7 +1349,7 @@ where
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
     fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r9(&self) -> Option<&'arena R9ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -1357,17 +1357,17 @@ where
     /// Retrieves first TerminalNode corresponding to token U8
     /// Returns `None` if there is no child corresponding to token U8
     fn U8(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U8)
+        self.token_of_type(WidenedTrust_U8, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
     fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V8
     /// Returns `None` if there is no child corresponding to token V8
     fn V8(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V8)
+        self.token_of_type(WidenedTrust_V8, 0)
     }
 }
 
@@ -1378,7 +1378,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn r8(&mut self,) -> Result<&'arena R8ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, R8Context<TF::Tok>, RULE_r8, 20, |_parentctx| R8ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedTrustParserNodeKind::R8Context, 20; {
         let _local_ctx_fn = |recog: &Self| -> &'arena R8Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(159);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -1440,7 +1440,7 @@ where
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
     fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r10(&self) -> Option<&'arena R10ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -1448,17 +1448,17 @@ where
     /// Retrieves first TerminalNode corresponding to token U9
     /// Returns `None` if there is no child corresponding to token U9
     fn U9(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U9)
+        self.token_of_type(WidenedTrust_U9, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
     fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V9
     /// Returns `None` if there is no child corresponding to token V9
     fn V9(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V9)
+        self.token_of_type(WidenedTrust_V9, 0)
     }
 }
 
@@ -1469,7 +1469,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn r9(&mut self,) -> Result<&'arena R9ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, R9Context<TF::Tok>, RULE_r9, 22, |_parentctx| R9ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedTrustParserNodeKind::R9Context, 22; {
         let _local_ctx_fn = |recog: &Self| -> &'arena R9Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(169);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -1521,7 +1521,7 @@ where
     /// Retrieves first TerminalNode corresponding to token W
     /// Returns `None` if there is no child corresponding to token W
     fn W(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_W)
+        self.token_of_type(WidenedTrust_W, 0)
     }
 }
 
@@ -1532,7 +1532,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn r10(&mut self,) -> Result<&'arena R10ContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, R10Context<TF::Tok>, RULE_r10, 24, |_parentctx| R10ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, WidenedTrustParserNodeKind::R10Context, 24; {
         let _local_ctx_fn = |recog: &Self| -> &'arena R10Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
 		{

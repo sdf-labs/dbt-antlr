@@ -181,7 +181,7 @@ where
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
     fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == DescentContext_EOF)
+        self.token_of_type(DescentContext_EOF, 0)
     }
     fn d(&self) -> Option<&'arena DContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -189,7 +189,7 @@ where
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
     fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == DescentContext_INT)
+        self.token_of_type(DescentContext_INT, 0)
     }
     fn g(&self) -> Option<&'arena GContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -200,7 +200,7 @@ where
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
     fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == DescentContext_ID)
+        self.token_of_type(DescentContext_ID, 0)
     }
 }
 
@@ -211,7 +211,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn s(&mut self,) -> Result<&'arena SContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, SContext<TF::Tok>, RULE_s, 0, |_parentctx| SContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, DescentContextParserNodeKind::SContext, 0; {
         let _local_ctx_fn = |recog: &Self| -> &'arena SContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(47);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -338,17 +338,17 @@ where
     }
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
     fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == DescentContext_ID).collect()
+    	self.tokens_of_type(DescentContext_ID)
     }
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
     fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == DescentContext_ID).nth(i)
+    	self.token_of_type(DescentContext_ID, i)
     }
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
     fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == DescentContext_INT)
+        self.token_of_type(DescentContext_INT, 0)
     }
 }
 
@@ -359,7 +359,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn d(&mut self,) -> Result<&'arena DContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, DContext<TF::Tok>, RULE_d, 2, |_parentctx| DContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, DescentContextParserNodeKind::DContext, 2; {
         let _local_ctx_fn = |recog: &Self| -> &'arena DContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(60);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -426,12 +426,12 @@ where
     }
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
     fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == DescentContext_ID).collect()
+    	self.tokens_of_type(DescentContext_ID)
     }
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
     fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == DescentContext_ID).nth(i)
+    	self.token_of_type(DescentContext_ID, i)
     }
 }
 
@@ -442,7 +442,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn r(&mut self,) -> Result<&'arena RContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, RContext<TF::Tok>, RULE_r, 4, |_parentctx| RContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, DescentContextParserNodeKind::RContext, 4; {
         let _local_ctx_fn = |recog: &Self| -> &'arena RContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(70);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -514,17 +514,17 @@ where
     }
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
     fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == DescentContext_ID).collect()
+    	self.tokens_of_type(DescentContext_ID)
     }
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
     fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == DescentContext_ID).nth(i)
+    	self.token_of_type(DescentContext_ID, i)
     }
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
     fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == DescentContext_INT)
+        self.token_of_type(DescentContext_INT, 0)
     }
 }
 
@@ -535,7 +535,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn g(&mut self,) -> Result<&'arena GContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, GContext<TF::Tok>, RULE_g, 6, |_parentctx| GContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, DescentContextParserNodeKind::GContext, 6; {
         let _local_ctx_fn = |recog: &Self| -> &'arena GContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(83);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -604,12 +604,12 @@ where
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
     fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == DescentContext_ID)
+        self.token_of_type(DescentContext_ID, 0)
     }
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
     fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == DescentContext_INT)
+        self.token_of_type(DescentContext_INT, 0)
     }
 }
 
@@ -620,7 +620,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn k(&mut self,) -> Result<&'arena KContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, KContext<TF::Tok>, RULE_k, 8, |_parentctx| KContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, DescentContextParserNodeKind::KContext, 8; {
         let _local_ctx_fn = |recog: &Self| -> &'arena KContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(95);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -688,7 +688,7 @@ where
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
     fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == DescentContext_ID)
+        self.token_of_type(DescentContext_ID, 0)
     }
 }
 
@@ -699,7 +699,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn h(&mut self,) -> Result<&'arena HContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, HContext<TF::Tok>, RULE_h, 10, |_parentctx| HContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, DescentContextParserNodeKind::HContext, 10; {
         let _local_ctx_fn = |recog: &Self| -> &'arena HContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(106);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -764,12 +764,12 @@ where
 {
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
     fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == DescentContext_ID).collect()
+    	self.tokens_of_type(DescentContext_ID)
     }
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
     fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == DescentContext_ID).nth(i)
+    	self.token_of_type(DescentContext_ID, i)
     }
 }
 
@@ -780,7 +780,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn e(&mut self,) -> Result<&'arena EContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, EContext<TF::Tok>, RULE_e, 12, |_parentctx| EContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, DescentContextParserNodeKind::EContext, 12; {
         let _local_ctx_fn = |recog: &Self| -> &'arena EContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/

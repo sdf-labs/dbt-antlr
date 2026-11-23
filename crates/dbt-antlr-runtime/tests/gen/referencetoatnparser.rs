@@ -152,21 +152,21 @@ where
 {
     /// Retrieves all `TerminalNode`s corresponding to token ATN in current rule
     fn ATN_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ReferenceToATN_ATN).collect()
+    	self.tokens_of_type(ReferenceToATN_ATN)
     }
     /// Retrieves 'i'th TerminalNode corresponding to token ATN, starting from 0.
     /// Returns `None` if number of children corresponding to token ATN is less than or equal to `i`.
     fn ATN(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ReferenceToATN_ATN).nth(i)
+    	self.token_of_type(ReferenceToATN_ATN, i)
     }
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
     fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ReferenceToATN_ID).collect()
+    	self.tokens_of_type(ReferenceToATN_ID)
     }
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
     fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ReferenceToATN_ID).nth(i)
+    	self.token_of_type(ReferenceToATN_ID, i)
     }
 }
 
@@ -177,7 +177,7 @@ where
     Input: TokenStream<'input, 'arena, TF> + 'arena,
 {
 	pub fn a(&mut self,) -> Result<&'arena AContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
-        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, AContext<TF::Tok>, RULE_a, 0, |_parentctx| AContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        dbt_antlr_runtime::parse_rule!(plain recog = self, ReferenceToATNParserNodeKind::AContext, 0; {
         let _local_ctx_fn = |recog: &Self| -> &'arena AContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
         let mut _alt: i32;
