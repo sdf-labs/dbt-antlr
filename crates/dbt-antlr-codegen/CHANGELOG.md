@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-codegen-v0.10.2...dbt-antlr-codegen-v0.11.0) - 2026-11-23
+
+### Other
+
+- *(runtime)* slim rule-frame hot paths, devirtualize ErrorStrategyDelegate, and remove build_parse_trees ([#135](https://github.com/sdf-labs/dbt-antlr/pull/135))
+- *(codegen)* omit err_handler.sync calls under --static-dfa-only ([#129](https://github.com/sdf-labs/dbt-antlr/pull/129))
+
 ## [0.10.2](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-codegen-v0.10.1...dbt-antlr-codegen-v0.10.2) - 2026-11-20
 
 ### Added
