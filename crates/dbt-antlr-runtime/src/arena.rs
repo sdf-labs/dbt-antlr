@@ -4,7 +4,6 @@ use std::cell::{Cell, RefCell};
 use std::ptr::{self, NonNull};
 
 use crate::{
-    cast_unchecked,
     token::{SourceInfo, Token},
     tree::{NodeInner, NodeKindType, TreeNode},
 };
@@ -179,8 +178,7 @@ impl Arena {
     {
         check_allocation_limit!(self);
         let ptr = self.contexts.alloc((header, body));
-        // SAFETY: `header` is the first field of `(header, body)` and matches `TreeNode`.
-        cast_unchecked!(ptr => mut TreeNode<'input, 'a, N, Tok>)
+        ptr as *mut _ as *mut TreeNode<'input, 'a, N, Tok>
     }
 
     #[inline]
