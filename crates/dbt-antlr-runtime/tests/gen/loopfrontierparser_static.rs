@@ -257,7 +257,6 @@ where
 		    LoopFrontier_POSITION |LoopFrontier_ROW |LoopFrontier_TIMESTAMP |LoopFrontier_INTERVAL |
 		    LoopFrontier_ID |LoopFrontier_INT  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(11); 
 		        recog.err_handler.sync(&mut recog.base)?;
@@ -279,7 +278,6 @@ where
 		        }}
 		    LoopFrontier_T__0  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(17);
 		        recog.base.match_token(LoopFrontier_T__0,&mut recog.err_handler)?;
@@ -345,7 +343,6 @@ where
 		let mut _la: i32 = -1;
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(29);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -686,7 +683,6 @@ where
 		match { let _sdp = recog.base.dfa_predict(12)?; if _sdp == INVALID_ALT { recog.get_interpreter().adaptive_predict(12,&mut recog.base)? } else { _sdp } } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(48);
 				recog.base.match_token(LoopFrontier_INT,&mut recog.err_handler)?;
@@ -695,7 +691,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(49);
 				recog.base.match_token(LoopFrontier_ID,&mut recog.err_handler)?;
@@ -704,7 +699,6 @@ where
 		,
 			3 =>{
 				/*------- Outer Most Alt 3 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 				{
 				recog.base.set_state(50);
 				recog.base.match_token(LoopFrontier_T__7,&mut recog.err_handler)?;
@@ -717,7 +711,6 @@ where
 		,
 			4 =>{
 				/*------- Outer Most Alt 4 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(4); }
 				{
 				recog.base.set_state(54);
 				recog.base.match_token(LoopFrontier_CAST,&mut recog.err_handler)?;
@@ -736,7 +729,6 @@ where
 		,
 			5 =>{
 				/*------- Outer Most Alt 5 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(5); }
 				{
 				recog.base.set_state(61);
 				recog.base.match_token(LoopFrontier_TRY_CAST,&mut recog.err_handler)?;
@@ -755,7 +747,6 @@ where
 		,
 			6 =>{
 				/*------- Outer Most Alt 6 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(6); }
 				{
 				recog.base.set_state(68);
 				recog.base.match_token(LoopFrontier_CASE,&mut recog.err_handler)?;
@@ -793,7 +784,6 @@ where
 		,
 			7 =>{
 				/*------- Outer Most Alt 7 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(7); }
 				{
 				recog.base.set_state(80);
 				recog.base.match_token(LoopFrontier_ID,&mut recog.err_handler)?;
@@ -832,7 +822,6 @@ where
 		,
 			8 =>{
 				/*------- Outer Most Alt 8 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(8); }
 				{
 				recog.base.set_state(93);
 				recog.base.match_token(LoopFrontier_ID,&mut recog.err_handler)?;
@@ -845,7 +834,6 @@ where
 		,
 			9 =>{
 				/*------- Outer Most Alt 9 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(9); }
 				{
 				recog.base.set_state(96);
 				recog.base.match_token(LoopFrontier_EXTRACT,&mut recog.err_handler)?;
@@ -864,7 +852,6 @@ where
 		,
 			10 =>{
 				/*------- Outer Most Alt 10 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(10); }
 				{
 				recog.base.set_state(103);
 				recog.base.match_token(LoopFrontier_SUBSTRING,&mut recog.err_handler)?;
@@ -903,7 +890,6 @@ where
 		,
 			11 =>{
 				/*------- Outer Most Alt 11 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(11); }
 				{
 				recog.base.set_state(116);
 				recog.base.match_token(LoopFrontier_POSITION,&mut recog.err_handler)?;
@@ -922,7 +908,6 @@ where
 		,
 			12 =>{
 				/*------- Outer Most Alt 12 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(12); }
 				{
 				recog.base.set_state(123);
 				recog.base.match_token(LoopFrontier_ROW,&mut recog.err_handler)?;
@@ -953,7 +938,6 @@ where
 		,
 			13 =>{
 				/*------- Outer Most Alt 13 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(13); }
 				{
 				recog.base.set_state(135);
 				recog.base.match_token(LoopFrontier_TIMESTAMP,&mut recog.err_handler)?;
@@ -964,7 +948,6 @@ where
 		,
 			14 =>{
 				/*------- Outer Most Alt 14 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(14); }
 				{
 				recog.base.set_state(137);
 				recog.base.match_token(LoopFrontier_INTERVAL,&mut recog.err_handler)?;
@@ -1036,7 +1019,6 @@ where
 		match { let _sdp = recog.base.dfa_predict(13)?; _sdp } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(142);
 				recog.base.match_token(LoopFrontier_ID,&mut recog.err_handler)?;
@@ -1045,7 +1027,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(143);
 				recog.base.match_token(LoopFrontier_ID,&mut recog.err_handler)?;
@@ -1056,7 +1037,6 @@ where
 		,
 			3 =>{
 				/*------- Outer Most Alt 3 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 				{
 				recog.base.set_state(145);
 				recog.base.match_token(LoopFrontier_INT,&mut recog.err_handler)?;
@@ -1120,7 +1100,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, WhenClauseContext<TF::Tok>, RULE_whenClause, 8, |_parentctx| WhenClauseContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena WhenClauseContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(148);
 		recog.base.match_token(LoopFrontier_WHEN,&mut recog.err_handler)?;

@@ -77,7 +77,7 @@ Parser-specific notes:
 -#}
 {#- RustTypeMap ::= [ ... ] -> the rust_type() function registered on the
     environment; rustTypeInitMap ::= [ ... ] -> rust_type_init(). -#}
-{%- macro ParserFile(file, parser, namedActions, contextSuperClass) -%}
+{%- macro ParserFile(file, parser, namedActions) -%}
 {{ fileHeader(file.grammarFileName, file.ANTLRVersion) }}
 {% if namedActions.header %}{{ namedActions.header }}
 {% endif %}use dbt_antlr_runtime::prelude::*;
@@ -87,7 +87,7 @@ use super::{{ file.grammarName | lower }}listener::*;
 {% endif %}{% if file.genVisitor %}
 use super::{{ file.grammarName | lower }}visitor::*;
 
-{% endif %}{{ Parser(parser, parser.funcs, parser.atn, parser.sempredFuncs, none, file, namedActions, contextSuperClass) }}
+{% endif %}{{ Parser(parser, parser.funcs, parser.atn, parser.sempredFuncs, none, file, namedActions) }}
 {%- endmacro -%}
 {#- ListenerFile: `file.listenerLabelRuleNames[lname]` is the STG
     `<file.listenerLabelRuleNames.(lname)>` map lookup (undefined when the
@@ -232,7 +232,7 @@ where
 {%- macro fileHeader(grammarFileName, ANTLRVersion) -%}
 // Generated from {{ grammarFileName }} by ANTLR {{ ANTLRVersion }}
 {%- endmacro -%}
-{%- macro Parser(parser, funcs, atn, sempredFuncs, superClass, file, namedActions, contextSuperClass) -%}
+{%- macro Parser(parser, funcs, atn, sempredFuncs, superClass, file, namedActions) -%}
 dbt_antlr_runtime::check_version!("{{ RUNTIME_VERSION_MAJOR }}","{{ RUNTIME_VERSION_MINOR }}");
 {% if parser.tokens %}{% for t in parser.tokens %}pub const {{ parser.grammarName }}_{{ t.key }}:i32={{ t.value }};{{ " \n" if not loop.last }}{% endfor %}{{ "\n" }}{% endif %}pub const {{ parser.grammarName }}_EOF:i32=EOF;
 {% for r in parser.rules %}pub const RULE_{{ r.name }}:usize = {{ r.index }};{{ " \n" if not loop.last }}{% endfor %}{{ "\n" }}pub const ruleNames: [&'static str; {{ parser.ruleNames | length }}] = [
@@ -365,7 +365,7 @@ where
 {
 {% for f in sempredFuncs %}{{ RuleSempredFunction(f, f.actions) | st_indent("\t") }}{% if not loop.last %}{{ "\n\n" }}{% endif %}{% endfor +%}
 }
-{% endif %}{% for f in funcs %}{% if f.leftRecursive %}{{ LeftRecursiveRuleFunction(f, f.args, f.code, f.locals, f.ruleCtx, f.altLabelCtxs, f.namedActions, f.finallyAction, f.postamble, f.exceptions, parser, file, contextSuperClass) }}{% else %}{{ RuleFunction(f, f.args, f.code, f.locals, f.ruleCtx, f.altLabelCtxs, f.namedActions, f.finallyAction, f.postamble, f.exceptions, parser, file, contextSuperClass) }}{% endif %}{{ "\n" if not loop.last }}{% endfor %}{{ "\n" }}
+{% endif %}{% for f in funcs %}{% if f.leftRecursive %}{{ LeftRecursiveRuleFunction(f, f.args, f.code, f.locals, f.ruleCtx, f.altLabelCtxs, f.namedActions, f.finallyAction, f.postamble, f.exceptions, parser, file) }}{% else %}{{ RuleFunction(f, f.args, f.code, f.locals, f.ruleCtx, f.altLabelCtxs, f.namedActions, f.finallyAction, f.postamble, f.exceptions, parser, file) }}{% endif %}{{ "\n" if not loop.last }}{% endfor %}{{ "\n" }}
 {{ PackedSerializedATN(atn) }}
 {%- endmacro -%}
 {%- macro parser_ctor(p) -%}
@@ -429,7 +429,6 @@ where
 
 dbt_antlr_runtime::impl_rule_context! { {{ currentRule.ctxType }}All { } { {% for l in altLabelCtxs %}{{ l.escapedName }}, {% endfor %}Error, } }
 dbt_antlr_runtime::impl_parser_rule_context! { {{ currentRule.ctxType }}All { } { {% for l in altLabelCtxs %}{{ l.escapedName }}, {% endfor %}Error, } }
-dbt_antlr_runtime::impl_tree_trait_delegates! { {{ parser.name }}NodeKind::{{ currentRule.ctxType }}All { {% for l in altLabelCtxs %}{{ l.escapedName }}, {% endfor %}Error, } }
 dbt_antlr_runtime::impl_node_inner! { {{ parser.name }}NodeKind::{{ currentRule.ctxType }}::{{ currentRule.ctxType }}All { {% for l in altLabelCtxs %}{{ l.escapedName }}, {% endfor %}Error, } }
 {% if file.genListener %}dbt_antlr_runtime::impl_listener_dispatch! { {{ parser.grammarName }}Listener::{{ parser.name }}NodeKind::{{ currentRule.ctxType }}All { {% for l in altLabelCtxs %}{{ l.escapedName }}(enter_{{ l.derivedFromName }}, exit_{{ l.derivedFromName }}), {% endfor %}} }
 {% endif %}{% if file.genVisitor %}dbt_antlr_runtime::impl_visitable! { {{ parser.grammarName }}Visitor::{{ currentRule.ctxType }}All { {% for l in altLabelCtxs %}{{ l.escapedName }}(visit_{{ l.derivedFromName }}), {% endfor %}} }
@@ -450,13 +449,13 @@ where
 	}
 }{% else %}pub type {{ currentRule.ctxType }}All<'input, 'arena, Tok = CommonToken<'input>> = {{ ruleCtx.escapedName }}<'input, 'arena, Tok>;{% endif %}
 {%- endmacro -%}
-{%- macro RuleFunction(currentRule, args, code, locals, ruleCtx, altLabelCtxs, namedActions, finallyAction, postamble, exceptions, parser, file, contextSuperClass) -%}
+{%- macro RuleFunction(currentRule, args, code, locals, ruleCtx, altLabelCtxs, namedActions, finallyAction, postamble, exceptions, parser, file) -%}
 //------------------- {{ currentRule.name }} ----------------
 {{ RuleTypeForAlt(currentRule, ruleCtx, altLabelCtxs, parser, file) }}
 
-{{ StructDecl(ruleCtx, parser, file, contextSuperClass) }}
+{{ StructDecl(ruleCtx, parser, file) }}
 {% for l in altLabelCtxs %}
-{{ AltLabelStructDecl(l, parser, file, currentRule, contextSuperClass) }}
+{{ AltLabelStructDecl(l, parser, file, currentRule) }}
 {% endfor %}
 
 impl<'input, 'arena, Input, TF> {{ parser.name }}<'input, 'arena, Input, TF>
@@ -479,17 +478,17 @@ where
 	}
 }
 {%- endmacro -%}
-{#- LeftRecursiveRuleFunction: `parser`/`file`/`contextSuperClass` replace
+{#- LeftRecursiveRuleFunction: `parser`/`file` replace
     ST4 dynamic scoping. The `<code>`/`<postamble>`/`<namedActions.after>`
     lines sit at 3 tabs here (unlike `RuleFunction`, where postamble and
     after share one 12-space line). -#}
-{%- macro LeftRecursiveRuleFunction(currentRule, args, code, locals, ruleCtx, altLabelCtxs, namedActions, finallyAction, postamble, exceptions, parser, file, contextSuperClass) -%}
+{%- macro LeftRecursiveRuleFunction(currentRule, args, code, locals, ruleCtx, altLabelCtxs, namedActions, finallyAction, postamble, exceptions, parser, file) -%}
 //------------------- {{ currentRule.name }} ----------------
 {{ RuleTypeForAlt(currentRule, ruleCtx, altLabelCtxs, parser, file) }}
 
-{{ StructDecl(ruleCtx, parser, file, contextSuperClass) }}
+{{ StructDecl(ruleCtx, parser, file) }}
 {% for l in altLabelCtxs %}
-{{ AltLabelStructDecl(l, parser, file, currentRule, contextSuperClass) }}
+{{ AltLabelStructDecl(l, parser, file, currentRule) }}
 {% endfor %}
 
 impl<'input, 'arena, Input, TF> {{ parser.name }}<'input, 'arena, Input, TF>
@@ -523,10 +522,8 @@ where
 /*------- Outer Most Alt {{ currentOuterMostAltCodeBlock.altNum }} -------*/
 {% if currentOuterMostAltCodeBlock.altLabel %}{{ self() }}.base.with_mut_ctx(|ctx| {
     {{ currentOuterMostAltCodeBlock.altLabel | cap }}ContextExt::copy_from(ctx);
-    ctx.set_alt_number({{ currentOuterMostAltCodeBlock.altNum }});
 });
 let _local_ctx_fn = |recog: &Self| -> &'arena {{ currentOuterMostAltCodeBlock.altLabel | cap }}Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
-{% else %}unsafe { {{ self() }}.ctx_mut().unwrap().set_alt_number({{ currentOuterMostAltCodeBlock.altNum }}); }
 {% endif %}{{ CodeBlockForAlt(currentOuterMostAltCodeBlock, locals, preamble, ops, parser, file) }}
 {%- endmacro -%}
 {%- macro CodeBlockForAlt(currentAltCodeBlock, locals, preamble, ops, parser, file) -%}
@@ -955,13 +952,13 @@ unsafe { {{ self() }}.ctx_mut().unwrap().as_rule_context_mut::<{{ actionChunk.ct
 {%- macro Ops(ops, parser, file) -%}
 {% set seen = namespace(value=false) %}{% for op in ops %}{% set rendered = Op(op, parser, file) %}{% if seen.value %}{{ "\n" }}{% endif %}{{ rendered }}{% if rendered != "" %}{% set seen.value = true %}{% endif %}{% endfor %}
 {%- endmacro -%}
-{#- StructDecl: `parser`/`file`/`contextSuperClass` replace ST4 dynamic
+{#- StructDecl: `parser`/`file` replace ST4 dynamic
     scoping; the STG formal args ctorAttrs/attrs/getters/dispatchMethods/
     interfaces/extensionMembers/signatures are read from the `struct` model
     (`dispatchMethods`/`interfaces` are unused by Rust.stg). -#}
-{%- macro StructDecl(struct, parser, file, contextSuperClass) -%}
-{% if contextSuperClass or struct.provideCopyFrom or struct.ctorAttrs or struct.attrs or struct.attributeDecls %}
-pub type {{ struct.escapedName }}<'input, 'arena, Tok = CommonToken<'input>> = {% if contextSuperClass %}{{ contextSuperClass }}{% else %}BaseParserRuleContext{% endif %}<'input, 'arena, {{ struct.escapedName }}Ext<'input, 'arena, Tok>, {{ parser.name }}NodeKind, Tok>;
+{%- macro StructDecl(struct, parser, file) -%}
+{% if struct.provideCopyFrom or struct.ctorAttrs or struct.attrs or struct.attributeDecls %}
+pub type {{ struct.escapedName }}<'input, 'arena, Tok = CommonToken<'input>> = BaseParserRuleContext<'input, 'arena, {{ struct.escapedName }}Ext<'input, 'arena, Tok>, {{ parser.name }}NodeKind, Tok>;
 {% if file.genVisitor and not struct.provideCopyFrom %}dbt_antlr_runtime::impl_visitable! { {{ parser.grammarName }}Visitor::{{ struct.escapedName }}(visit_{{ struct.derivedFromName }}) }
 {% endif %}#[derive(Debug)]
 pub struct {{ struct.escapedName }}Ext<'input: 'arena, 'arena, Tok: Token + 'input = CommonToken<'input>> {
@@ -980,7 +977,7 @@ impl<'input: 'arena, 'arena, Tok: Token + 'input> {{ struct.escapedName }}Ext<'i
     {
 {% for a in struct.attributeDecls %}		let mut _init_{{ a.escapedName }} = {{ rust_type_init(a.type) }};
 {% endfor %}{% if struct.attributeDecls %}{{ "\n" }}{% endif %}{% for a in struct.ctorAttrs %}		 _init_{{ a.escapedName }} = {{ a.escapedName }};
-{% endfor %}{% if struct.ctorAttrs %}{{ "\n" }}{% endif %}        {% if contextSuperClass %}{{ contextSuperClass }}{% else %}BaseParserRuleContext{% endif %}::create(arena, parent, invoking_state, {{ struct.escapedName }}Ext {
+{% endfor %}{% if struct.ctorAttrs %}{{ "\n" }}{% endif %}        BaseParserRuleContext::create(arena, parent, invoking_state, {{ struct.escapedName }}Ext {
 {% if struct.tokenDecls %}				{% for a in struct.tokenDecls %}{{ a.escapedName }}: None, {% endfor %}{{ "\n" }}{% endif %}
 {% if struct.tokenTypeDecls %}				{% for a in struct.tokenTypeDecls %}{{ a.escapedName }}: -1, {% endfor %}{{ "\n" }}{% endif %}
 {% if struct.tokenListDecls %}				{% for a in struct.tokenListDecls %}{{ a.escapedName }}: Vec::new(), {% endfor %}{{ "\n" }}{% endif %}
@@ -1014,11 +1011,11 @@ where
 {% endif %}{% if struct.extensionMembers %}{{ struct.extensionMembers | st_indent("    ") }}
 {% endif %}}
 {%- endmacro -%}
-{#- AltLabelStructDecl: like StructDecl, `parser`/`file`/`currentRule`/
-    `contextSuperClass` replace ST4 dynamic scoping. -#}
-{%- macro AltLabelStructDecl(struct, parser, file, currentRule, contextSuperClass) -%}
+{#- AltLabelStructDecl: like StructDecl, `parser`/`file`/`currentRule`
+    replace ST4 dynamic scoping. -#}
+{%- macro AltLabelStructDecl(struct, parser, file, currentRule) -%}
 {{ "" }}
-pub type {{ struct.escapedName }}<'input, 'arena, Tok = CommonToken<'input>> = {% if contextSuperClass %}{{ contextSuperClass }}{% else %}BaseParserRuleContext{% endif %}<'input, 'arena, {{ struct.escapedName }}Ext<'input, 'arena, Tok>, {{ parser.name }}NodeKind, Tok>;
+pub type {{ struct.escapedName }}<'input, 'arena, Tok = CommonToken<'input>> = BaseParserRuleContext<'input, 'arena, {{ struct.escapedName }}Ext<'input, 'arena, Tok>, {{ parser.name }}NodeKind, Tok>;
 
 pub trait {{ struct.escapedName }}Attrs<'input, 'arena, Tok>: ParserRuleContext<'input, 'arena>
 where
@@ -1404,4 +1401,4 @@ static _STATIC_PARSER_TABLE_WORDS: [u32; {{ model.staticTables.words | length }}
 {%- macro codeFileExtension() -%}
 .rs
 {%- endmacro -%}
-{% if parser is defined %}{{ ParserFile(file, parser, namedActions, contextSuperClass) }}{% elif lexerFile is defined %}{{ LexerFile(lexerFile, lexer, namedActions) }}{% elif kind == "ListenerFile" %}{{ ListenerFile(file, header, namedActions) }}{% elif kind == "BaseListenerFile" %}{{ BaseListenerFile(file, header, namedActions) }}{% elif kind == "VisitorFile" %}{{ VisitorFile(file, header, namedActions) }}{% elif kind == "BaseVisitorFile" %}{{ BaseVisitorFile(file, header, namedActions) }}{% endif %}
+{% if parser is defined %}{{ ParserFile(file, parser, namedActions) }}{% elif lexerFile is defined %}{{ LexerFile(lexerFile, lexer, namedActions) }}{% elif kind == "ListenerFile" %}{{ ListenerFile(file, header, namedActions) }}{% elif kind == "BaseListenerFile" %}{{ BaseListenerFile(file, header, namedActions) }}{% elif kind == "VisitorFile" %}{{ VisitorFile(file, header, namedActions) }}{% elif kind == "BaseVisitorFile" %}{{ BaseVisitorFile(file, header, namedActions) }}{% endif %}

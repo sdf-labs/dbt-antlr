@@ -182,7 +182,6 @@ where
 		let mut _la: i32 = -1;
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(5);
 		recog.err_handler.sync(&mut recog.base)?;

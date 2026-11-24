@@ -128,7 +128,6 @@ pub(crate) fn build_parser_file_context(
         },
         parser,
         named_actions: collect_named_actions(unit, "parser"),
-        context_super_class: None,
     })
 }
 

@@ -221,7 +221,6 @@ where
 		match recog.base.input.la(1) {
 		    Labels_T__4 |Labels_ID |Labels_INT  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(6);
 		        let tmp = recog.e_rec(0)?;
@@ -229,7 +228,6 @@ where
 		        }}
 		    Labels_T__0  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(7);
 		        recog.base.match_token(Labels_T__0,&mut recog.err_handler)?;
@@ -263,7 +261,6 @@ where
 
 dbt_antlr_runtime::impl_rule_context! { EContextAll { } { AddContext, ParensContext, MultContext, DecContext, AnIDContext, AnIntContext, IncContext, Error, } }
 dbt_antlr_runtime::impl_parser_rule_context! { EContextAll { } { AddContext, ParensContext, MultContext, DecContext, AnIDContext, AnIntContext, IncContext, Error, } }
-dbt_antlr_runtime::impl_tree_trait_delegates! { LabelsParserNodeKind::EContextAll { AddContext, ParensContext, MultContext, DecContext, AnIDContext, AnIntContext, IncContext, Error, } }
 dbt_antlr_runtime::impl_node_inner! { LabelsParserNodeKind::EContext::EContextAll { AddContext, ParensContext, MultContext, DecContext, AnIDContext, AnIntContext, IncContext, Error, } }
 dbt_antlr_runtime::impl_listener_dispatch! { LabelsListener::LabelsParserNodeKind::EContextAll { AddContext(enter_add, exit_add), ParensContext(enter_parens, exit_parens), MultContext(enter_mult, exit_mult), DecContext(enter_dec, exit_dec), AnIDContext(enter_anID, exit_anID), AnIntContext(enter_anInt, exit_anInt), IncContext(enter_inc, exit_inc), } }
 
@@ -775,7 +772,6 @@ where
 		let _startState = 2;
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(23);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -968,7 +964,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, BlkContext<TF::Tok>, RULE_blk, 4, |_parentctx| BlkContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena BlkContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(46);
 		recog.s()?;

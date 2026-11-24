@@ -184,7 +184,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena CsvFileContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(8);
 		recog.hdr()?;
@@ -240,7 +239,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, HdrContext<TF::Tok>, RULE_hdr, 2, |_parentctx| HdrContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena HdrContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(14);
 		recog.row()?;
@@ -286,7 +284,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena RowContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(16);
 		recog.field()?;
@@ -371,21 +368,18 @@ where
 		match recog.base.input.la(1) {
 		    CSV_TEXT  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(29);
 		        recog.base.match_token(CSV_TEXT,&mut recog.err_handler)?;
 		        }}
 		    CSV_STRING  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(30);
 		        recog.base.match_token(CSV_STRING,&mut recog.err_handler)?;
 		        }}
 		    CSV_T__0 |CSV_T__1 |CSV_T__2  => {
 		        /*------- Outer Most Alt 3 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 		        {
 		        }}
 			_ => Err(ANTLRError::no_alt(&mut recog.base))?

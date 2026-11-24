@@ -287,7 +287,6 @@ where
 		match recog.get_interpreter().adaptive_predict(0,&mut recog.base)? {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(12);
 				recog.expr_rec(0)?;
@@ -302,7 +301,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(17);
 				recog.expr_rec(0)?;
@@ -319,7 +317,6 @@ where
 		,
 			3 =>{
 				/*------- Outer Most Alt 3 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 				{
 				recog.base.set_state(23);
 				recog.base.match_token(LoopSibling_T__2,&mut recog.err_handler)?;
@@ -332,7 +329,6 @@ where
 		,
 			4 =>{
 				/*------- Outer Most Alt 4 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(4); }
 				{
 				recog.base.set_state(27);
 				recog.base.match_token(LoopSibling_T__3,&mut recog.err_handler)?;
@@ -345,7 +341,6 @@ where
 		,
 			5 =>{
 				/*------- Outer Most Alt 5 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(5); }
 				{
 				recog.base.set_state(31);
 				recog.base.match_token(LoopSibling_T__4,&mut recog.err_handler)?;
@@ -358,7 +353,6 @@ where
 		,
 			6 =>{
 				/*------- Outer Most Alt 6 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(6); }
 				{
 				recog.base.set_state(35);
 				recog.base.match_token(LoopSibling_T__5,&mut recog.err_handler)?;
@@ -425,7 +419,6 @@ where
 		let _startState = 2;
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(45);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -551,7 +544,6 @@ where
 		let _startState = 4;
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(65);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -663,7 +655,6 @@ where
 		let _startState = 6;
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(79);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -801,7 +792,6 @@ where
 		let _startState = 8;
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(99);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -949,7 +939,6 @@ where
 		let _startState = 10;
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		{
 		recog.base.set_state(120);

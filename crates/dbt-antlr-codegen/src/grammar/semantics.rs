@@ -45,7 +45,6 @@ const COMMON_CONSTANTS: &[&str] = &[
 ];
 const GRAMMAR_OPTIONS: &[&str] = &[
     "superClass",
-    "contextSuperClass",
     "TokenLabelType",
     "tokenVocab",
     "language",
@@ -2138,6 +2137,25 @@ F : 'f' -> skip, Channel(COMMENTS);
         assert!(!grammar.recognizer.vocabulary.by_name.contains_key("A"));
         assert!(!grammar.recognizer.vocabulary.by_name.contains_key("B"));
         assert!(grammar.recognizer.vocabulary.by_literal.is_empty());
+    }
+
+    #[test]
+    fn context_super_class_option_is_unsupported() {
+        let fixture = Fixture::new("context-super-class-unsupported");
+        fixture.write(
+            "Legacy.g4",
+            "grammar Legacy; options { contextSuperClass = MyRuleNode; } s : ID; ID : [a-z]+;",
+        );
+        let semantic = compile(&fixture, "Legacy.g4").expect("warning does not block analysis");
+        assert!(
+            semantic.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "G4S014"
+                    && diagnostic.severity == Severity::Warning
+                    && diagnostic.message == "unsupported option contextSuperClass"
+            }),
+            "expected G4S014 warning for contextSuperClass, got {:?}",
+            semantic.diagnostics
+        );
     }
 
     fn compile(fixture: &Fixture, root: &str) -> Result<SemanticGrammarSet, CompilationError> {

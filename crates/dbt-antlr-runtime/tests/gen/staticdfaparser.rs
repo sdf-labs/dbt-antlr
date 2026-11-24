@@ -166,7 +166,6 @@ where
 
 dbt_antlr_runtime::impl_rule_context! { StatContextAll { } { CreateTableContext, CreateViewContext, DropTableContext, Error, } }
 dbt_antlr_runtime::impl_parser_rule_context! { StatContextAll { } { CreateTableContext, CreateViewContext, DropTableContext, Error, } }
-dbt_antlr_runtime::impl_tree_trait_delegates! { StaticDFAParserNodeKind::StatContextAll { CreateTableContext, CreateViewContext, DropTableContext, Error, } }
 dbt_antlr_runtime::impl_node_inner! { StaticDFAParserNodeKind::StatContext::StatContextAll { CreateTableContext, CreateViewContext, DropTableContext, Error, } }
 
 impl<'input, 'arena, Tok> Deref for StatContextAll<'input, 'arena, Tok>
@@ -408,7 +407,6 @@ where
 				/*------- Outer Most Alt 1 -------*/
 				recog.base.with_mut_ctx(|ctx| {
 				    CreateTableContextExt::copy_from(ctx);
-				    ctx.set_alt_number(1);
 				});
 				let _local_ctx_fn = |recog: &Self| -> &'arena CreateTableContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 				{
@@ -425,7 +423,6 @@ where
 				/*------- Outer Most Alt 2 -------*/
 				recog.base.with_mut_ctx(|ctx| {
 				    CreateViewContextExt::copy_from(ctx);
-				    ctx.set_alt_number(2);
 				});
 				let _local_ctx_fn = |recog: &Self| -> &'arena CreateViewContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 				{
@@ -442,7 +439,6 @@ where
 				/*------- Outer Most Alt 3 -------*/
 				recog.base.with_mut_ctx(|ctx| {
 				    DropTableContextExt::copy_from(ctx);
-				    ctx.set_alt_number(3);
 				});
 				let _local_ctx_fn = |recog: &Self| -> &'arena DropTableContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 				{
@@ -475,7 +471,6 @@ where
 
 dbt_antlr_runtime::impl_rule_context! { ExprContextAll { } { CallContext, RefContext, Error, } }
 dbt_antlr_runtime::impl_parser_rule_context! { ExprContextAll { } { CallContext, RefContext, Error, } }
-dbt_antlr_runtime::impl_tree_trait_delegates! { StaticDFAParserNodeKind::ExprContextAll { CallContext, RefContext, Error, } }
 dbt_antlr_runtime::impl_node_inner! { StaticDFAParserNodeKind::ExprContext::ExprContextAll { CallContext, RefContext, Error, } }
 
 impl<'input, 'arena, Tok> Deref for ExprContextAll<'input, 'arena, Tok>
@@ -649,7 +644,6 @@ where
 				/*------- Outer Most Alt 1 -------*/
 				recog.base.with_mut_ctx(|ctx| {
 				    CallContextExt::copy_from(ctx);
-				    ctx.set_alt_number(1);
 				});
 				let _local_ctx_fn = |recog: &Self| -> &'arena CallContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 				{
@@ -666,7 +660,6 @@ where
 				/*------- Outer Most Alt 2 -------*/
 				recog.base.with_mut_ctx(|ctx| {
 				    RefContextExt::copy_from(ctx);
-				    ctx.set_alt_number(2);
 				});
 				let _local_ctx_fn = |recog: &Self| -> &'arena RefContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 				{
@@ -723,7 +716,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena NameContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(32);
 		recog.base.match_token(StaticDFA_ID,&mut recog.err_handler)?;
@@ -776,7 +768,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena StarLoopContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(44);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -833,7 +824,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena PlusLoopContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(52); 
 		recog.err_handler.sync(&mut recog.base)?;
@@ -893,7 +883,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, OptContext<TF::Tok>, RULE_opt, 10, |_parentctx| OptContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena OptContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(61);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -932,7 +921,6 @@ where
 
 dbt_antlr_runtime::impl_rule_context! { DupContextAll { } { DupFirstContext, DupSecondContext, Error, } }
 dbt_antlr_runtime::impl_parser_rule_context! { DupContextAll { } { DupFirstContext, DupSecondContext, Error, } }
-dbt_antlr_runtime::impl_tree_trait_delegates! { StaticDFAParserNodeKind::DupContextAll { DupFirstContext, DupSecondContext, Error, } }
 dbt_antlr_runtime::impl_node_inner! { StaticDFAParserNodeKind::DupContext::DupContextAll { DupFirstContext, DupSecondContext, Error, } }
 
 impl<'input, 'arena, Tok> Deref for DupContextAll<'input, 'arena, Tok>
@@ -1098,7 +1086,6 @@ where
 				/*------- Outer Most Alt 1 -------*/
 				recog.base.with_mut_ctx(|ctx| {
 				    DupFirstContextExt::copy_from(ctx);
-				    ctx.set_alt_number(1);
 				});
 				let _local_ctx_fn = |recog: &Self| -> &'arena DupFirstContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 				{
@@ -1113,7 +1100,6 @@ where
 				/*------- Outer Most Alt 2 -------*/
 				recog.base.with_mut_ctx(|ctx| {
 				    DupSecondContextExt::copy_from(ctx);
-				    ctx.set_alt_number(2);
 				});
 				let _local_ctx_fn = |recog: &Self| -> &'arena DupSecondContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 				{

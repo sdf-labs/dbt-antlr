@@ -199,7 +199,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, SContext<TF::Tok>, RULE_s, 0, |_parentctx| SContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena SContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(4);
 		recog.expr_rec(0)?;
@@ -225,7 +224,6 @@ where
 
 dbt_antlr_runtime::impl_rule_context! { ExprContextAll { } { AddContext, NumberContext, MultiplyContext, Error, } }
 dbt_antlr_runtime::impl_parser_rule_context! { ExprContextAll { } { AddContext, NumberContext, MultiplyContext, Error, } }
-dbt_antlr_runtime::impl_tree_trait_delegates! { VisitorCalcParserNodeKind::ExprContextAll { AddContext, NumberContext, MultiplyContext, Error, } }
 dbt_antlr_runtime::impl_node_inner! { VisitorCalcParserNodeKind::ExprContext::ExprContextAll { AddContext, NumberContext, MultiplyContext, Error, } }
 dbt_antlr_runtime::impl_listener_dispatch! { VisitorCalcListener::VisitorCalcParserNodeKind::ExprContextAll { AddContext(enter_add, exit_add), NumberContext(enter_number, exit_number), MultiplyContext(enter_multiply, exit_multiply), } }
 dbt_antlr_runtime::impl_visitable! { VisitorCalcVisitor::ExprContextAll { AddContext(visit_add), NumberContext(visit_number), MultiplyContext(visit_multiply), } }
@@ -503,7 +501,6 @@ where
 		let mut _la: i32 = -1;
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		{
 		recog.base.with_mut_ctx(|ctx| { NumberContextExt::copy_from(ctx); });

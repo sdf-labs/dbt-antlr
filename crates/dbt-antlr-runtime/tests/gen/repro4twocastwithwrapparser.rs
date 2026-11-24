@@ -223,7 +223,6 @@ where
 		match recog.base.input.la(1) {
 		    Repro4TwoCastWithWrap_T__0  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(6);
 		        recog.base.match_token(Repro4TwoCastWithWrap_T__0,&mut recog.err_handler)?;
@@ -240,7 +239,6 @@ where
 		        }}
 		    Repro4TwoCastWithWrap_T__3  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(13);
 		        recog.base.match_token(Repro4TwoCastWithWrap_T__3,&mut recog.err_handler)?;
@@ -261,7 +259,6 @@ where
 		        }}
 		    Repro4TwoCastWithWrap_T__7  => {
 		        /*------- Outer Most Alt 3 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 		        {
 		        recog.base.set_state(22);
 		        recog.base.match_token(Repro4TwoCastWithWrap_T__7,&mut recog.err_handler)?;
@@ -282,7 +279,6 @@ where
 		        }}
 		    Repro4TwoCastWithWrap_ID  => {
 		        /*------- Outer Most Alt 4 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(4); }
 		        {
 		        recog.base.set_state(31);
 		        recog.e_rec(0)?;
@@ -355,7 +351,6 @@ where
 		let _startState = 2;
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		{
 		recog.base.set_state(37);
@@ -488,7 +483,6 @@ where
 		match recog.base.input.la(1) {
 		    Repro4TwoCastWithWrap_T__4  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(58);
 		        recog.base.match_token(Repro4TwoCastWithWrap_T__4,&mut recog.err_handler)?;
@@ -499,7 +493,6 @@ where
 		        }}
 		    Repro4TwoCastWithWrap_ID  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(62);
 		        recog.base.match_token(Repro4TwoCastWithWrap_ID,&mut recog.err_handler)?;

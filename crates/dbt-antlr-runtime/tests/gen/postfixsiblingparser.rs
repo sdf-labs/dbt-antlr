@@ -216,7 +216,6 @@ where
 		match recog.base.input.la(1) {
 		    PostfixSibling_T__6 |PostfixSibling_T__7  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(18);
 		        recog.r()?;
@@ -229,7 +228,6 @@ where
 		        }}
 		    PostfixSibling_T__1  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(23);
 		        recog.base.match_token(PostfixSibling_T__1,&mut recog.err_handler)?;
@@ -254,7 +252,6 @@ where
 		        }}
 		    PostfixSibling_T__3  => {
 		        /*------- Outer Most Alt 3 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 		        {
 		        recog.base.set_state(32);
 		        recog.base.match_token(PostfixSibling_T__3,&mut recog.err_handler)?;
@@ -265,7 +262,6 @@ where
 		        }}
 		    PostfixSibling_T__4  => {
 		        /*------- Outer Most Alt 4 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(4); }
 		        {
 		        recog.base.set_state(36);
 		        recog.base.match_token(PostfixSibling_T__4,&mut recog.err_handler)?;
@@ -276,7 +272,6 @@ where
 		        }}
 		    PostfixSibling_T__5  => {
 		        /*------- Outer Most Alt 5 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(5); }
 		        {
 		        recog.base.set_state(40);
 		        recog.base.match_token(PostfixSibling_T__5,&mut recog.err_handler)?;
@@ -326,7 +321,6 @@ where
 		match recog.base.input.la(1) {
 		    PostfixSibling_T__6  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(46);
 		        recog.base.match_token(PostfixSibling_T__6,&mut recog.err_handler)?;
@@ -345,7 +339,6 @@ where
 		        }}
 		    PostfixSibling_T__7  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(50);
 		        recog.base.match_token(PostfixSibling_T__7,&mut recog.err_handler)?;
@@ -385,7 +378,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, YContext<TF::Tok>, RULE_y, 4, |_parentctx| YContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena YContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(54);
 		recog.base.match_token(PostfixSibling_T__7,&mut recog.err_handler)?;
@@ -439,7 +431,6 @@ where
 		match recog.base.input.la(1) {
 		    PostfixSibling_T__9  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(57);
 		        recog.base.match_token(PostfixSibling_T__9,&mut recog.err_handler)?;
@@ -454,7 +445,6 @@ where
 		        }}
 		    PostfixSibling_T__6  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(63);
 		        recog.base.match_token(PostfixSibling_T__6,&mut recog.err_handler)?;
@@ -473,7 +463,6 @@ where
 		        }}
 		    PostfixSibling_T__7  => {
 		        /*------- Outer Most Alt 3 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 		        {
 		        recog.base.set_state(67);
 		        recog.base.match_token(PostfixSibling_T__7,&mut recog.err_handler)?;
@@ -513,7 +502,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, ZContext<TF::Tok>, RULE_z, 8, |_parentctx| ZContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena ZContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(71);
 		recog.base.match_token(PostfixSibling_T__7,&mut recog.err_handler)?;
@@ -564,7 +552,6 @@ where
 		match recog.base.input.la(1) {
 		    PostfixSibling_T__6  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(74);
 		        recog.base.match_token(PostfixSibling_T__6,&mut recog.err_handler)?;
@@ -597,7 +584,6 @@ where
 		        }}
 		    PostfixSibling_T__7  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(84);
 		        recog.base.match_token(PostfixSibling_T__7,&mut recog.err_handler)?;
@@ -637,7 +623,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, WContext<TF::Tok>, RULE_w, 12, |_parentctx| WContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena WContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(88);
 		recog.base.match_token(PostfixSibling_T__7,&mut recog.err_handler)?;
@@ -688,7 +673,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena MContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(91);
 		recog.base.match_token(PostfixSibling_T__6,&mut recog.err_handler)?;
@@ -762,7 +746,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, VContext<TF::Tok>, RULE_v, 16, |_parentctx| VContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena VContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(105);
 		recog.base.match_token(PostfixSibling_T__7,&mut recog.err_handler)?;

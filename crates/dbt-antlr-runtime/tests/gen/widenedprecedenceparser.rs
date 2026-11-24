@@ -257,7 +257,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, SContext<TF::Tok>, RULE_s, 0, |_parentctx| SContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena SContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(28);
 		recog.e_rec(0)?;
@@ -318,7 +317,6 @@ where
 		let _startState = 2;
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		{
 		recog.base.set_state(32);
@@ -457,7 +455,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, OpContext<TF::Tok>, RULE_op, 4, |_parentctx| OpContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena OpContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(54);
 		recog.base.match_token(WidenedPrecedence_T__4,&mut recog.err_handler)?;
@@ -505,7 +502,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedPrecedence_T__7  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(58);
 		        recog.base.match_token(WidenedPrecedence_T__7,&mut recog.err_handler)?;
@@ -516,7 +512,6 @@ where
 		        }}
 		    WidenedPrecedence_T__9  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(62);
 		        recog.base.match_token(WidenedPrecedence_T__9,&mut recog.err_handler)?;
@@ -566,7 +561,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedPrecedence_T__7  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(68);
 		        recog.base.match_token(WidenedPrecedence_T__7,&mut recog.err_handler)?;
@@ -577,7 +571,6 @@ where
 		        }}
 		    WidenedPrecedence_T__9  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(72);
 		        recog.base.match_token(WidenedPrecedence_T__9,&mut recog.err_handler)?;
@@ -627,7 +620,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedPrecedence_T__7  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(78);
 		        recog.base.match_token(WidenedPrecedence_T__7,&mut recog.err_handler)?;
@@ -638,7 +630,6 @@ where
 		        }}
 		    WidenedPrecedence_T__9  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(82);
 		        recog.base.match_token(WidenedPrecedence_T__9,&mut recog.err_handler)?;
@@ -688,7 +679,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedPrecedence_T__7  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(88);
 		        recog.base.match_token(WidenedPrecedence_T__7,&mut recog.err_handler)?;
@@ -699,7 +689,6 @@ where
 		        }}
 		    WidenedPrecedence_T__9  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(92);
 		        recog.base.match_token(WidenedPrecedence_T__9,&mut recog.err_handler)?;
@@ -749,7 +738,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedPrecedence_T__7  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(98);
 		        recog.base.match_token(WidenedPrecedence_T__7,&mut recog.err_handler)?;
@@ -760,7 +748,6 @@ where
 		        }}
 		    WidenedPrecedence_T__9  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(102);
 		        recog.base.match_token(WidenedPrecedence_T__9,&mut recog.err_handler)?;
@@ -810,7 +797,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedPrecedence_T__7  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(108);
 		        recog.base.match_token(WidenedPrecedence_T__7,&mut recog.err_handler)?;
@@ -821,7 +807,6 @@ where
 		        }}
 		    WidenedPrecedence_T__9  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(112);
 		        recog.base.match_token(WidenedPrecedence_T__9,&mut recog.err_handler)?;
@@ -871,7 +856,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedPrecedence_T__7  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(118);
 		        recog.base.match_token(WidenedPrecedence_T__7,&mut recog.err_handler)?;
@@ -882,7 +866,6 @@ where
 		        }}
 		    WidenedPrecedence_T__9  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(122);
 		        recog.base.match_token(WidenedPrecedence_T__9,&mut recog.err_handler)?;
@@ -932,7 +915,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedPrecedence_T__7  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(128);
 		        recog.base.match_token(WidenedPrecedence_T__7,&mut recog.err_handler)?;
@@ -943,7 +925,6 @@ where
 		        }}
 		    WidenedPrecedence_T__9  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(132);
 		        recog.base.match_token(WidenedPrecedence_T__9,&mut recog.err_handler)?;
@@ -993,7 +974,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedPrecedence_T__7  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(138);
 		        recog.base.match_token(WidenedPrecedence_T__7,&mut recog.err_handler)?;
@@ -1004,7 +984,6 @@ where
 		        }}
 		    WidenedPrecedence_T__9  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(142);
 		        recog.base.match_token(WidenedPrecedence_T__9,&mut recog.err_handler)?;
@@ -1054,7 +1033,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedPrecedence_T__7  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(148);
 		        recog.base.match_token(WidenedPrecedence_T__7,&mut recog.err_handler)?;
@@ -1065,7 +1043,6 @@ where
 		        }}
 		    WidenedPrecedence_T__9  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(152);
 		        recog.base.match_token(WidenedPrecedence_T__9,&mut recog.err_handler)?;
@@ -1111,7 +1088,6 @@ where
 		match recog.base.input.la(1) {
 		    WidenedPrecedence_T__7  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(158);
 		        recog.base.match_token(WidenedPrecedence_T__7,&mut recog.err_handler)?;
@@ -1122,7 +1098,6 @@ where
 		        }}
 		    WidenedPrecedence_T__9  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(161);
 		        recog.base.match_token(WidenedPrecedence_T__9,&mut recog.err_handler)?;

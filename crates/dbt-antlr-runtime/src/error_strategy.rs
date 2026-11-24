@@ -663,6 +663,21 @@ where
         // 'arena, and the caller holds `&mut self` for the lifetime of the call.
         std::mem::transmute((data, vtable))
     }
+
+    /// Reports and recovers from a rule error, or returns unrecoverable errors.
+    #[cold]
+    #[inline(never)]
+    pub fn handle_rule_error(
+        &mut self,
+        recognizer: &mut P,
+        e: ANTLRError,
+    ) -> Result<(), ANTLRError> {
+        if !e.is_recoverable() {
+            return Err(e);
+        }
+        self.report_error(recognizer, &e);
+        self.recover(recognizer, &e)
+    }
 }
 
 impl<'input, 'arena, TF, P> Drop for ErrorStrategyDelegate<'input, 'arena, TF, P>

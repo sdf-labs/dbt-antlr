@@ -756,3 +756,39 @@ fn test_parse_listener_add_remove_toggles_events() {
         assert_eq!(enters.get(), before);
     });
 }
+
+#[test]
+fn test_alt_number_and_rule_error_handling() {
+    use dbt_antlr_runtime::atn::INVALID_ALT;
+    use dbt_antlr_runtime::error_strategy::BailErrorStrategy;
+    use gen::simplelrparser::{AContextAttrs, SContextAttrs};
+
+    Arena::with(|arena| {
+        let input = InputStream::new("x y z");
+        let lexer = SimpleLRLexer::<_>::new(arena, input);
+        let token_source = CommonTokenStream::new(lexer);
+        let mut parser = SimpleLRParser::new(arena, token_source);
+        let root = parser.s().expect("parse succeeds");
+        assert_eq!(root.get_alt_number(), INVALID_ALT);
+        let inner = root.a().expect("a child");
+        assert_eq!(inner.get_alt_number(), INVALID_ALT);
+        assert_eq!(inner.ID().unwrap().get_text(), "z");
+
+        // Recoverable error through handle_rule_error.
+        let bad_input = InputStream::new("");
+        let bad_lexer = SimpleLRLexer::<_>::new(arena, bad_input);
+        let bad_tokens = CommonTokenStream::new(bad_lexer);
+        let mut rec_parser = SimpleLRParser::new(arena, bad_tokens);
+        rec_parser.remove_error_listeners();
+        assert!(rec_parser.s().is_ok());
+
+        // Unrecoverable error through handle_rule_error (BailErrorStrategy).
+        let bail_input = InputStream::new("");
+        let bail_lexer = SimpleLRLexer::<_>::new(arena, bail_input);
+        let bail_tokens = CommonTokenStream::new(bail_lexer);
+        let mut bail_parser =
+            SimpleLRParser::with_strategy(arena, bail_tokens, Box::new(BailErrorStrategy::new()));
+        bail_parser.remove_error_listeners();
+        assert!(bail_parser.s().is_err());
+    });
+}

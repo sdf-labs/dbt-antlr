@@ -222,7 +222,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, SContext<TF::Tok>, RULE_s, 0, |_parentctx| SContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena SContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(10);
 		recog.b_rec(0)?;
@@ -249,7 +248,6 @@ where
 
 dbt_antlr_runtime::impl_rule_context! { BContextAll { } { NotContext, PredicatedContext, OrContext, AndContext, Error, } }
 dbt_antlr_runtime::impl_parser_rule_context! { BContextAll { } { NotContext, PredicatedContext, OrContext, AndContext, Error, } }
-dbt_antlr_runtime::impl_tree_trait_delegates! { BetweenExprParserNodeKind::BContextAll { NotContext, PredicatedContext, OrContext, AndContext, Error, } }
 dbt_antlr_runtime::impl_node_inner! { BetweenExprParserNodeKind::BContext::BContextAll { NotContext, PredicatedContext, OrContext, AndContext, Error, } }
 
 impl<'input, 'arena, Tok> Deref for BContextAll<'input, 'arena, Tok>
@@ -548,7 +546,6 @@ where
 		let _startState = 2;
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(20);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -661,7 +658,6 @@ where
 
 dbt_antlr_runtime::impl_rule_context! { PredContextAll { } { BetweenContext, CmpContext, Error, } }
 dbt_antlr_runtime::impl_parser_rule_context! { PredContextAll { } { BetweenContext, CmpContext, Error, } }
-dbt_antlr_runtime::impl_tree_trait_delegates! { BetweenExprParserNodeKind::PredContextAll { BetweenContext, CmpContext, Error, } }
 dbt_antlr_runtime::impl_node_inner! { BetweenExprParserNodeKind::PredContext::PredContextAll { BetweenContext, CmpContext, Error, } }
 
 impl<'input, 'arena, Tok> Deref for PredContextAll<'input, 'arena, Tok>
@@ -840,7 +836,6 @@ where
 		        /*------- Outer Most Alt 1 -------*/
 		        recog.base.with_mut_ctx(|ctx| {
 		            BetweenContextExt::copy_from(ctx);
-		            ctx.set_alt_number(1);
 		        });
 		        let _local_ctx_fn = |recog: &Self| -> &'arena BetweenContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		        {
@@ -867,7 +862,6 @@ where
 		        /*------- Outer Most Alt 2 -------*/
 		        recog.base.with_mut_ctx(|ctx| {
 		            CmpContextExt::copy_from(ctx);
-		            ctx.set_alt_number(2);
 		        });
 		        let _local_ctx_fn = |recog: &Self| -> &'arena CmpContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		        {
@@ -937,7 +931,6 @@ where
 		let mut _la: i32 = -1;
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		{
 		recog.base.set_state(46);
@@ -1069,7 +1062,6 @@ where
 		match recog.get_interpreter().adaptive_predict(8,&mut recog.base)? {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(59);
 				recog.base.match_token(BetweenExpr_ID,&mut recog.err_handler)?;
@@ -1078,7 +1070,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(60);
 				recog.base.match_token(BetweenExpr_INT,&mut recog.err_handler)?;
@@ -1087,7 +1078,6 @@ where
 		,
 			3 =>{
 				/*------- Outer Most Alt 3 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 				{
 				recog.base.set_state(61);
 				recog.base.match_token(BetweenExpr_T__11,&mut recog.err_handler)?;
@@ -1100,7 +1090,6 @@ where
 		,
 			4 =>{
 				/*------- Outer Most Alt 4 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(4); }
 				{
 				recog.base.set_state(65);
 				recog.base.match_token(BetweenExpr_ID,&mut recog.err_handler)?;

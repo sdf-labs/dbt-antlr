@@ -13,10 +13,7 @@ use crate::token::{CommonToken, Token};
 use crate::tree::{
     ErrorNode, NodeInner, NodeKindType, ParseTreeListener, TerminalNode, Tree, TreeNode,
 };
-use crate::{
-    impl_node_inner, impl_node_kind, impl_parser_rule_context, impl_rule_context,
-    impl_tree_trait_delegates,
-};
+use crate::{impl_node_inner, impl_node_kind, impl_parser_rule_context, impl_rule_context};
 use std::any::type_name;
 
 /// Language-agnostic, dyn-compatible, read-only interface to the AST.
@@ -98,23 +95,20 @@ where
     /// Rule index that corresponds to this context type
     fn get_rule_index(&self) -> usize;
 
-    /// For rule associated with this parse tree internal node, return the outer
-    /// alternative number used to match the input. Default implementation does
-    /// not compute nor store this alt num. Create a subclass of
-    /// ParserRuleContext with backing field and set option contextSuperClass.
-    /// to set it.
+    /// Returns the outer alternative number that matched this rule node.
     ///
-    /// @since 4.5.3
+    /// Generated parser contexts always return [`INVALID_ALT`].
+    /// [`crate::interpreter_rule_context::InterpreterRuleContext`] stores the
+    /// alternative number when tracking is active.
     fn get_alt_number(&self) -> i32 {
         INVALID_ALT
     }
 
-    /// Set the outer alternative number for this context node. Default
-    /// implementation does nothing to avoid backing field overhead for trees
-    /// that don't need it.  Create a subclass of ParserRuleContext with backing
-    /// field and set option contextSuperClass.
+    /// Sets the outer alternative number for this rule node.
     ///
-    /// @since 4.5.3
+    /// Generated parser contexts ignore this call.
+    /// [`crate::interpreter_rule_context::InterpreterRuleContext`] stores the
+    /// value when tracking is active.
     fn set_alt_number(&mut self, _alt_number: i32) {}
 
     /// Returns text representation of current node type,
@@ -154,10 +148,6 @@ pub enum EmptyContextAll<'input, 'arena, Tok: Token = CommonToken<'input>> {
 }
 
 impl_node_inner!(EmptyNodeKind::EmptyContext::EmptyContextAll {
-    EmptyContext,
-    Error,
-});
-impl_tree_trait_delegates!(EmptyNodeKind::EmptyContextAll {
     EmptyContext,
     Error,
 });

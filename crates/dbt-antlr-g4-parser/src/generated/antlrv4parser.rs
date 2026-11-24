@@ -404,7 +404,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena GrammarSpecContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(134);
 		recog.grammarDecl()?;
@@ -488,7 +487,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, GrammarDeclContext<TF::Tok>, RULE_grammarDecl, 2, |_parentctx| GrammarDeclContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena GrammarDeclContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(150);
 		recog.grammarType()?;
@@ -556,7 +554,6 @@ where
 		match recog.base.input.la(1) {
 		    ANTLRv4Parser_LEXER  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(154);
 		        recog.base.match_token(ANTLRv4Parser_LEXER,&mut recog.err_handler)?;
@@ -565,7 +562,6 @@ where
 		        }}
 		    ANTLRv4Parser_PARSER  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(156);
 		        recog.base.match_token(ANTLRv4Parser_PARSER,&mut recog.err_handler)?;
@@ -574,7 +570,6 @@ where
 		        }}
 		    ANTLRv4Parser_GRAMMAR  => {
 		        /*------- Outer Most Alt 3 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 		        {
 		        recog.base.set_state(158);
 		        recog.base.match_token(ANTLRv4Parser_GRAMMAR,&mut recog.err_handler)?;
@@ -636,35 +631,30 @@ where
 		match recog.base.input.la(1) {
 		    ANTLRv4Parser_OPTIONS  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(161);
 		        recog.optionsSpec()?;
 		        }}
 		    ANTLRv4Parser_IMPORT  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(162);
 		        recog.delegateGrammars()?;
 		        }}
 		    ANTLRv4Parser_TOKENS  => {
 		        /*------- Outer Most Alt 3 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 		        {
 		        recog.base.set_state(163);
 		        recog.tokensSpec()?;
 		        }}
 		    ANTLRv4Parser_CHANNELS  => {
 		        /*------- Outer Most Alt 4 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(4); }
 		        {
 		        recog.base.set_state(164);
 		        recog.channelsSpec()?;
 		        }}
 		    ANTLRv4Parser_AT  => {
 		        /*------- Outer Most Alt 5 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(5); }
 		        {
 		        recog.base.set_state(165);
 		        recog.action_()?;
@@ -741,7 +731,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena OptionsSpecContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(168);
 		recog.base.match_token(ANTLRv4Parser_OPTIONS,&mut recog.err_handler)?;
@@ -811,7 +800,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, OptionContext<TF::Tok>, RULE_option, 10, |_parentctx| OptionContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena OptionContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(179);
 		recog.identifier()?;
@@ -898,7 +886,6 @@ where
 		match recog.base.input.la(1) {
 		    ANTLRv4Parser_TOKEN_REF |ANTLRv4Parser_RULE_REF  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(183);
 		        recog.identifier()?;
@@ -921,21 +908,18 @@ where
 		        }}
 		    ANTLRv4Parser_STRING_LITERAL  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(191);
 		        recog.base.match_token(ANTLRv4Parser_STRING_LITERAL,&mut recog.err_handler)?;
 		        }}
 		    ANTLRv4Parser_ACTION  => {
 		        /*------- Outer Most Alt 3 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 		        {
 		        recog.base.set_state(192);
 		        recog.actionBlock()?;
 		        }}
 		    ANTLRv4Parser_INT  => {
 		        /*------- Outer Most Alt 4 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(4); }
 		        {
 		        recog.base.set_state(193);
 		        recog.base.match_token(ANTLRv4Parser_INT,&mut recog.err_handler)?;
@@ -1012,7 +996,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena DelegateGrammarsContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(196);
 		recog.base.match_token(ANTLRv4Parser_IMPORT,&mut recog.err_handler)?;
@@ -1088,7 +1071,6 @@ where
 		match { let _sdp = recog.base.dfa_predict(8)?; _sdp } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(207);
 				recog.identifier()?;
@@ -1101,7 +1083,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(211);
 				recog.identifier()?;
@@ -1162,7 +1143,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena TokensSpecContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(214);
 		recog.base.match_token(ANTLRv4Parser_TOKENS,&mut recog.err_handler)?;
@@ -1231,7 +1211,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena ChannelsSpecContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(220);
 		recog.base.match_token(ANTLRv4Parser_CHANNELS,&mut recog.err_handler)?;
@@ -1303,7 +1282,6 @@ where
 		let mut _la: i32 = -1;
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(226);
 		recog.identifier()?;
@@ -1395,7 +1373,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, Action_Context<TF::Tok>, RULE_action_, 24, |_parentctx| Action_ContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena Action_Context<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(237);
 		recog.base.match_token(ANTLRv4Parser_AT,&mut recog.err_handler)?;
@@ -1473,21 +1450,18 @@ where
 		match recog.base.input.la(1) {
 		    ANTLRv4Parser_TOKEN_REF |ANTLRv4Parser_RULE_REF  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(246);
 		        recog.identifier()?;
 		        }}
 		    ANTLRv4Parser_LEXER  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(247);
 		        recog.base.match_token(ANTLRv4Parser_LEXER,&mut recog.err_handler)?;
 		        }}
 		    ANTLRv4Parser_PARSER  => {
 		        /*------- Outer Most Alt 3 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 		        {
 		        recog.base.set_state(248);
 		        recog.base.match_token(ANTLRv4Parser_PARSER,&mut recog.err_handler)?;
@@ -1533,7 +1507,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, ActionBlockContext<TF::Tok>, RULE_actionBlock, 28, |_parentctx| ActionBlockContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena ActionBlockContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(251);
 		recog.base.match_token(ANTLRv4Parser_ACTION,&mut recog.err_handler)?;
@@ -1600,7 +1573,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena ArgActionBlockContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(253);
 		recog.base.match_token(ANTLRv4Parser_BEGIN_ARGUMENT,&mut recog.err_handler)?;
@@ -1683,7 +1655,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena ModeSpecContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(262);
 		recog.base.match_token(ANTLRv4Parser_MODE,&mut recog.err_handler)?;
@@ -1746,7 +1717,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena RulesContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(274);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -1806,7 +1776,6 @@ where
 		match { let _sdp = recog.base.dfa_predict(18)?; _sdp } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(277);
 				recog.parserRuleSpec()?;
@@ -1815,7 +1784,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(278);
 				recog.lexerRuleSpec()?;
@@ -1916,7 +1884,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena ParserRuleSpecContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(282);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -2037,7 +2004,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena ExceptionGroupContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(311);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -2111,7 +2077,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, ExceptionHandlerContext<TF::Tok>, RULE_exceptionHandler, 42, |_parentctx| ExceptionHandlerContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena ExceptionHandlerContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(317);
 		recog.base.match_token(ANTLRv4Parser_CATCH,&mut recog.err_handler)?;
@@ -2163,7 +2128,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, FinallyClauseContext<TF::Tok>, RULE_finallyClause, 44, |_parentctx| FinallyClauseContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena FinallyClauseContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(321);
 		recog.base.match_token(ANTLRv4Parser_FINALLY,&mut recog.err_handler)?;
@@ -2213,14 +2177,12 @@ where
 		match recog.base.input.la(1) {
 		    ANTLRv4Parser_OPTIONS  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(324);
 		        recog.optionsSpec()?;
 		        }}
 		    ANTLRv4Parser_AT  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(325);
 		        recog.ruleAction()?;
@@ -2270,7 +2232,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, RuleReturnsContext<TF::Tok>, RULE_ruleReturns, 48, |_parentctx| RuleReturnsContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena RuleReturnsContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(328);
 		recog.base.match_token(ANTLRv4Parser_RETURNS,&mut recog.err_handler)?;
@@ -2339,7 +2300,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena ThrowsSpecContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(331);
 		recog.base.match_token(ANTLRv4Parser_THROWS,&mut recog.err_handler)?;
@@ -2405,7 +2365,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, LocalsSpecContext<TF::Tok>, RULE_localsSpec, 52, |_parentctx| LocalsSpecContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena LocalsSpecContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(340);
 		recog.base.match_token(ANTLRv4Parser_LOCALS,&mut recog.err_handler)?;
@@ -2459,7 +2418,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, RuleActionContext<TF::Tok>, RULE_ruleAction, 54, |_parentctx| RuleActionContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena RuleActionContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(343);
 		recog.base.match_token(ANTLRv4Parser_AT,&mut recog.err_handler)?;
@@ -2508,7 +2466,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena RuleModifiersContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(348); 
 		recog.err_handler.sync(&mut recog.base)?;
@@ -2590,7 +2547,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena RuleModifierContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(352);
 		_la = recog.base.input.la(1);
@@ -2638,7 +2594,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, RuleBlockContext<TF::Tok>, RULE_ruleBlock, 60, |_parentctx| RuleBlockContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena RuleBlockContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(354);
 		recog.ruleAltList()?;
@@ -2697,7 +2652,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena RuleAltListContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(356);
 		recog.labeledAlt()?;
@@ -2766,7 +2720,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena LabeledAltContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(364);
 		recog.alternative()?;
@@ -2855,7 +2808,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena LexerRuleSpecContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(370);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -2921,7 +2873,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, LexerRuleBlockContext<TF::Tok>, RULE_lexerRuleBlock, 68, |_parentctx| LexerRuleBlockContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena LexerRuleBlockContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(380);
 		recog.lexerAltList()?;
@@ -2980,7 +2931,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena LexerAltListContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(382);
 		recog.lexerAlt()?;
@@ -3045,7 +2995,6 @@ where
 		match { let _sdp = recog.base.dfa_predict(36)?; if _sdp == INVALID_ALT { recog.get_interpreter().adaptive_predict(36,&mut recog.base)? } else { _sdp } } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(390);
 				recog.lexerElements()?;
@@ -3064,7 +3013,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				}
 			}
@@ -3116,7 +3064,6 @@ where
 		    ANTLRv4Parser_TOKEN_REF |ANTLRv4Parser_LEXER_CHAR_SET |ANTLRv4Parser_STRING_LITERAL |
 		    ANTLRv4Parser_ACTION |ANTLRv4Parser_LPAREN |ANTLRv4Parser_DOT |ANTLRv4Parser_NOT  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(398); 
 		        recog.err_handler.sync(&mut recog.base)?;
@@ -3136,7 +3083,6 @@ where
 		        }}
 		    ANTLRv4Parser_SEMI |ANTLRv4Parser_RPAREN |ANTLRv4Parser_RARROW |ANTLRv4Parser_OR  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        }}
 			_ => Err(ANTLRError::no_alt(&mut recog.base))?
@@ -3202,7 +3148,6 @@ where
 		    ANTLRv4Parser_TOKEN_REF |ANTLRv4Parser_LEXER_CHAR_SET |ANTLRv4Parser_STRING_LITERAL |
 		    ANTLRv4Parser_DOT |ANTLRv4Parser_NOT  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(405);
 		        recog.lexerAtom()?;
@@ -3219,7 +3164,6 @@ where
 		        }}
 		    ANTLRv4Parser_LPAREN  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(409);
 		        recog.lexerBlock()?;
@@ -3236,7 +3180,6 @@ where
 		        }}
 		    ANTLRv4Parser_ACTION  => {
 		        /*------- Outer Most Alt 3 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 		        {
 		        recog.base.set_state(413);
 		        recog.actionBlock()?;
@@ -3304,7 +3247,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, LexerBlockContext<TF::Tok>, RULE_lexerBlock, 78, |_parentctx| LexerBlockContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena LexerBlockContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(419);
 		recog.base.match_token(ANTLRv4Parser_LPAREN,&mut recog.err_handler)?;
@@ -3375,7 +3317,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena LexerCommandsContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(423);
 		recog.base.match_token(ANTLRv4Parser_RARROW,&mut recog.err_handler)?;
@@ -3457,7 +3398,6 @@ where
 		match { let _sdp = recog.base.dfa_predict(44)?; _sdp } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(432);
 				recog.lexerCommandName()?;
@@ -3472,7 +3412,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(437);
 				recog.lexerCommandName()?;
@@ -3528,14 +3467,12 @@ where
 		match recog.base.input.la(1) {
 		    ANTLRv4Parser_TOKEN_REF |ANTLRv4Parser_RULE_REF  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(440);
 		        recog.identifier()?;
 		        }}
 		    ANTLRv4Parser_MODE  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(441);
 		        recog.base.match_token(ANTLRv4Parser_MODE,&mut recog.err_handler)?;
@@ -3589,14 +3526,12 @@ where
 		match recog.base.input.la(1) {
 		    ANTLRv4Parser_TOKEN_REF |ANTLRv4Parser_RULE_REF  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(444);
 		        recog.identifier()?;
 		        }}
 		    ANTLRv4Parser_INT  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(445);
 		        recog.base.match_token(ANTLRv4Parser_INT,&mut recog.err_handler)?;
@@ -3657,7 +3592,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena AltListContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(448);
 		recog.alternative()?;
@@ -3728,7 +3662,6 @@ where
 		    ANTLRv4Parser_ACTION |ANTLRv4Parser_LPAREN |ANTLRv4Parser_LT |ANTLRv4Parser_DOT |
 		    ANTLRv4Parser_NOT  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(457);
 		        recog.err_handler.sync(&mut recog.base)?;
@@ -3758,7 +3691,6 @@ where
 		        }}
 		    ANTLRv4Parser_SEMI |ANTLRv4Parser_RPAREN |ANTLRv4Parser_OR |ANTLRv4Parser_POUND  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        }}
 			_ => Err(ANTLRError::no_alt(&mut recog.base))?
@@ -3831,7 +3763,6 @@ where
 		match { let _sdp = recog.base.dfa_predict(55)?; _sdp } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(467);
 				recog.labeledElement()?;
@@ -3856,7 +3787,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(472);
 				recog.atom()?;
@@ -3881,7 +3811,6 @@ where
 		,
 			3 =>{
 				/*------- Outer Most Alt 3 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 				{
 				recog.base.set_state(477);
 				recog.ebnf()?;
@@ -3890,7 +3819,6 @@ where
 		,
 			4 =>{
 				/*------- Outer Most Alt 4 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(4); }
 				{
 				recog.base.set_state(478);
 				recog.actionBlock()?;
@@ -3989,7 +3917,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena PredicateOptionsContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(487);
 		recog.base.match_token(ANTLRv4Parser_LT,&mut recog.err_handler)?;
@@ -4085,7 +4012,6 @@ where
 		match { let _sdp = recog.base.dfa_predict(58)?; if _sdp == INVALID_ALT { recog.get_interpreter().adaptive_predict(58,&mut recog.base)? } else { _sdp } } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(498);
 				recog.elementOption()?;
@@ -4094,7 +4020,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(499);
 				recog.identifier()?;
@@ -4185,7 +4110,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena LabeledElementContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(508);
 		recog.identifier()?;
@@ -4256,7 +4180,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena EbnfContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(514);
 		recog.block()?;
@@ -4306,7 +4229,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, BlockSuffixContext<TF::Tok>, RULE_blockSuffix, 102, |_parentctx| BlockSuffixContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena BlockSuffixContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(518);
 		recog.ebnfSuffix()?;
@@ -4377,7 +4299,6 @@ where
 		match recog.base.input.la(1) {
 		    ANTLRv4Parser_QUESTION  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(520);
 		        recog.base.match_token(ANTLRv4Parser_QUESTION,&mut recog.err_handler)?;
@@ -4394,7 +4315,6 @@ where
 		        }}
 		    ANTLRv4Parser_STAR  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(524);
 		        recog.base.match_token(ANTLRv4Parser_STAR,&mut recog.err_handler)?;
@@ -4411,7 +4331,6 @@ where
 		        }}
 		    ANTLRv4Parser_PLUS  => {
 		        /*------- Outer Most Alt 3 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 		        {
 		        recog.base.set_state(528);
 		        recog.base.match_token(ANTLRv4Parser_PLUS,&mut recog.err_handler)?;
@@ -4487,7 +4406,6 @@ where
 		match { let _sdp = recog.base.dfa_predict(65)?; _sdp } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(534);
 				recog.characterRange()?;
@@ -4496,7 +4414,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(535);
 				recog.terminalDef()?;
@@ -4505,7 +4422,6 @@ where
 		,
 			3 =>{
 				/*------- Outer Most Alt 3 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 				{
 				recog.base.set_state(536);
 				recog.notSet()?;
@@ -4514,7 +4430,6 @@ where
 		,
 			4 =>{
 				/*------- Outer Most Alt 4 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(4); }
 				{
 				recog.base.set_state(537);
 				recog.base.match_token(ANTLRv4Parser_LEXER_CHAR_SET,&mut recog.err_handler)?;
@@ -4523,7 +4438,6 @@ where
 		,
 			5 =>{
 				/*------- Outer Most Alt 5 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(5); }
 				{
 				recog.base.set_state(538);
 				recog.wildcard()?;
@@ -4583,28 +4497,24 @@ where
 		match recog.base.input.la(1) {
 		    ANTLRv4Parser_TOKEN_REF |ANTLRv4Parser_STRING_LITERAL  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(541);
 		        recog.terminalDef()?;
 		        }}
 		    ANTLRv4Parser_RULE_REF  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(542);
 		        recog.ruleref()?;
 		        }}
 		    ANTLRv4Parser_NOT  => {
 		        /*------- Outer Most Alt 3 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 		        {
 		        recog.base.set_state(543);
 		        recog.notSet()?;
 		        }}
 		    ANTLRv4Parser_DOT  => {
 		        /*------- Outer Most Alt 4 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(4); }
 		        {
 		        recog.base.set_state(544);
 		        recog.wildcard()?;
@@ -4655,7 +4565,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena WildcardContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(547);
 		recog.base.match_token(ANTLRv4Parser_DOT,&mut recog.err_handler)?;
@@ -4721,7 +4630,6 @@ where
 		match { let _sdp = recog.base.dfa_predict(68)?; _sdp } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(551);
 				recog.base.match_token(ANTLRv4Parser_NOT,&mut recog.err_handler)?;
@@ -4732,7 +4640,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(553);
 				recog.base.match_token(ANTLRv4Parser_NOT,&mut recog.err_handler)?;
@@ -4813,7 +4720,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena BlockSetContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(557);
 		recog.base.match_token(ANTLRv4Parser_LPAREN,&mut recog.err_handler)?;
@@ -4906,7 +4812,6 @@ where
 		match { let _sdp = recog.base.dfa_predict(72)?; _sdp } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(568);
 				recog.base.match_token(ANTLRv4Parser_TOKEN_REF,&mut recog.err_handler)?;
@@ -4925,7 +4830,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(572);
 				recog.base.match_token(ANTLRv4Parser_STRING_LITERAL,&mut recog.err_handler)?;
@@ -4944,7 +4848,6 @@ where
 		,
 			3 =>{
 				/*------- Outer Most Alt 3 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(3); }
 				{
 				recog.base.set_state(576);
 				recog.characterRange()?;
@@ -4953,7 +4856,6 @@ where
 		,
 			4 =>{
 				/*------- Outer Most Alt 4 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(4); }
 				{
 				recog.base.set_state(577);
 				recog.base.match_token(ANTLRv4Parser_LEXER_CHAR_SET,&mut recog.err_handler)?;
@@ -5034,7 +4936,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena BlockContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(580);
 		recog.base.match_token(ANTLRv4Parser_LPAREN,&mut recog.err_handler)?;
@@ -5125,7 +5026,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena RulerefContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(596);
 		recog.base.match_token(ANTLRv4Parser_RULE_REF,&mut recog.err_handler)?;
@@ -5203,7 +5103,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, CharacterRangeContext<TF::Tok>, RULE_characterRange, 122, |_parentctx| CharacterRangeContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena CharacterRangeContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(603);
 		recog.base.match_token(ANTLRv4Parser_STRING_LITERAL,&mut recog.err_handler)?;
@@ -5268,7 +5167,6 @@ where
 		match recog.base.input.la(1) {
 		    ANTLRv4Parser_TOKEN_REF  => {
 		        /*------- Outer Most Alt 1 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		        {
 		        recog.base.set_state(607);
 		        recog.base.match_token(ANTLRv4Parser_TOKEN_REF,&mut recog.err_handler)?;
@@ -5285,7 +5183,6 @@ where
 		        }}
 		    ANTLRv4Parser_STRING_LITERAL  => {
 		        /*------- Outer Most Alt 2 -------*/
-		        unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 		        {
 		        recog.base.set_state(611);
 		        recog.base.match_token(ANTLRv4Parser_STRING_LITERAL,&mut recog.err_handler)?;
@@ -5372,7 +5269,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena ElementOptionsContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(617);
 		recog.base.match_token(ANTLRv4Parser_LT,&mut recog.err_handler)?;
@@ -5464,7 +5360,6 @@ where
 		match { let _sdp = recog.base.dfa_predict(83)?; _sdp } {
 			1 =>{
 				/*------- Outer Most Alt 1 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 				{
 				recog.base.set_state(628);
 				recog.qualifiedIdentifier()?;
@@ -5473,7 +5368,6 @@ where
 		,
 			2 =>{
 				/*------- Outer Most Alt 2 -------*/
-				unsafe { recog.ctx_mut().unwrap().set_alt_number(2); }
 				{
 				recog.base.set_state(629);
 				recog.identifier()?;
@@ -5552,7 +5446,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena IdentifierContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(638);
 		_la = recog.base.input.la(1);
@@ -5619,7 +5512,6 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena QualifiedIdentifierContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(640);
 		recog.identifier()?;

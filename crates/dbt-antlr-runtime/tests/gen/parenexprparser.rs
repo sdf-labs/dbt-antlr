@@ -197,7 +197,6 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, SContext<TF::Tok>, RULE_s, 0, |_parentctx| SContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena SContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(6);
 		recog.e_rec(0)?;
@@ -228,7 +227,6 @@ where
 
 dbt_antlr_runtime::impl_rule_context! { EContextAll { } { AddContext, ColContext, ParensContext, SubqueryContext, RowConstructorContext, MulContext, NumContext, UnaryContext, Error, } }
 dbt_antlr_runtime::impl_parser_rule_context! { EContextAll { } { AddContext, ColContext, ParensContext, SubqueryContext, RowConstructorContext, MulContext, NumContext, UnaryContext, Error, } }
-dbt_antlr_runtime::impl_tree_trait_delegates! { ParenExprParserNodeKind::EContextAll { AddContext, ColContext, ParensContext, SubqueryContext, RowConstructorContext, MulContext, NumContext, UnaryContext, Error, } }
 dbt_antlr_runtime::impl_node_inner! { ParenExprParserNodeKind::EContext::EContextAll { AddContext, ColContext, ParensContext, SubqueryContext, RowConstructorContext, MulContext, NumContext, UnaryContext, Error, } }
 
 impl<'input, 'arena, Tok> Deref for EContextAll<'input, 'arena, Tok>
@@ -760,7 +758,6 @@ where
 		let mut _la: i32 = -1;
         let mut _alt: i32;
 		/*------- Outer Most Alt 1 -------*/
-		unsafe { recog.ctx_mut().unwrap().set_alt_number(1); }
 		{
 		recog.base.set_state(32);
 		recog.err_handler.sync(&mut recog.base)?;
@@ -947,7 +944,6 @@ where
 
 dbt_antlr_runtime::impl_rule_context! { QContextAll { } { SelectContext, TableContext, NestedContext, Error, } }
 dbt_antlr_runtime::impl_parser_rule_context! { QContextAll { } { SelectContext, TableContext, NestedContext, Error, } }
-dbt_antlr_runtime::impl_tree_trait_delegates! { ParenExprParserNodeKind::QContextAll { SelectContext, TableContext, NestedContext, Error, } }
 dbt_antlr_runtime::impl_node_inner! { ParenExprParserNodeKind::QContext::QContextAll { SelectContext, TableContext, NestedContext, Error, } }
 
 impl<'input, 'arena, Tok> Deref for QContextAll<'input, 'arena, Tok>
@@ -1185,7 +1181,6 @@ where
 		        /*------- Outer Most Alt 1 -------*/
 		        recog.base.with_mut_ctx(|ctx| {
 		            SelectContextExt::copy_from(ctx);
-		            ctx.set_alt_number(1);
 		        });
 		        let _local_ctx_fn = |recog: &Self| -> &'arena SelectContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		        {
@@ -1198,7 +1193,6 @@ where
 		        /*------- Outer Most Alt 2 -------*/
 		        recog.base.with_mut_ctx(|ctx| {
 		            TableContextExt::copy_from(ctx);
-		            ctx.set_alt_number(2);
 		        });
 		        let _local_ctx_fn = |recog: &Self| -> &'arena TableContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		        {
@@ -1209,7 +1203,6 @@ where
 		        /*------- Outer Most Alt 3 -------*/
 		        recog.base.with_mut_ctx(|ctx| {
 		            NestedContextExt::copy_from(ctx);
-		            ctx.set_alt_number(3);
 		        });
 		        let _local_ctx_fn = |recog: &Self| -> &'arena NestedContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		        {
