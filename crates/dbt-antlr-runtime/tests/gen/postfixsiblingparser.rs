@@ -169,7 +169,7 @@ where
     fn r(&self, i: usize) -> Option<&'arena RContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
-    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn EOF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn q(&self) -> Option<&'arena QContextAll<'input, 'arena, Tok>>;
     fn c(&self) -> Option<&'arena CContextAll<'input, 'arena, Tok>>;
     fn m(&self) -> Option<&'arena MContextAll<'input, 'arena, Tok>>;
@@ -180,15 +180,15 @@ where
     'input: 'arena,
 {
     fn r_all(&self) -> Vec<&'arena RContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn r(&self, i: usize) -> Option<&'arena RContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
-    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == PostfixSibling_EOF)
+    fn EOF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(PostfixSibling_EOF, 0)
     }
     fn q(&self) -> Option<&'arena QContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -407,7 +407,7 @@ where
     'input: 'arena,
 {
     fn q_all(&self) -> Vec<&'arena QContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn q(&self, i: usize) -> Option<&'arena QContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -655,7 +655,7 @@ where
         self.child_of_type(0)
     }
     fn m_all(&self) -> Vec<&'arena MContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn m(&self, i: usize) -> Option<&'arena MContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)

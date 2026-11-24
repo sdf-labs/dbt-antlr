@@ -166,7 +166,7 @@ where
         self.child_of_type(0)
     }
     fn row_all(&self) -> Vec<&'arena RowContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn row(&self, i: usize) -> Option<&'arena RowContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -266,7 +266,7 @@ where
     'input: 'arena,
 {
     fn field_all(&self) -> Vec<&'arena FieldContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn field(&self, i: usize) -> Option<&'arena FieldContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -332,10 +332,10 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token TEXT
     /// Returns `None` if there is no child corresponding to token TEXT
-    fn TEXT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn TEXT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token STRING
     /// Returns `None` if there is no child corresponding to token STRING
-    fn STRING(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn STRING(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> FieldContextAttrs<'input, 'arena, Tok> for FieldContext<'input, 'arena, Tok>
@@ -344,13 +344,13 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token TEXT
     /// Returns `None` if there is no child corresponding to token TEXT
-    fn TEXT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == CSV_TEXT)
+    fn TEXT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(CSV_TEXT, 0)
     }
     /// Retrieves first TerminalNode corresponding to token STRING
     /// Returns `None` if there is no child corresponding to token STRING
-    fn STRING(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == CSV_STRING)
+    fn STRING(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(CSV_STRING, 0)
     }
 }
 

@@ -199,7 +199,7 @@ where
     fn item(&self, i: usize) -> Option<&'arena ItemContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
-    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn EOF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn binding(&self) -> Option<&'arena BindingContextAll<'input, 'arena, Tok>>;
     fn alias(&self) -> Option<&'arena AliasContextAll<'input, 'arena, Tok>>;
     fn name(&self) -> Option<&'arena NameContextAll<'input, 'arena, Tok>>;
@@ -210,15 +210,15 @@ where
     'input: 'arena,
 {
     fn item_all(&self) -> Vec<&'arena ItemContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn item(&self, i: usize) -> Option<&'arena ItemContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
-    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == FuzzExpr_EOF)
+    fn EOF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(FuzzExpr_EOF, 0)
     }
     fn binding(&self) -> Option<&'arena BindingContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -573,7 +573,7 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> NameContextAttrs<'input, 'arena, Tok> for NameContext<'input, 'arena, Tok>
@@ -582,8 +582,8 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == FuzzExpr_ID)
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(FuzzExpr_ID, 0)
     }
 }
 
@@ -632,7 +632,7 @@ where
     'input: 'arena,
 {
     fn name_all(&self) -> Vec<&'arena NameContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn name(&self, i: usize) -> Option<&'arena NameContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -695,7 +695,7 @@ where
     'input: 'arena,
 {
     fn e_all(&self) -> Vec<&'arena EContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn e(&self, i: usize) -> Option<&'arena EContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -867,12 +867,12 @@ where
     fn q(&self) -> Option<&'arena QContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn e_all(&self) -> Vec<&'arena EContextAll<'input, 'arena, Tok>>;
     fn e(&self, i: usize) -> Option<&'arena EContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> AtomContextAttrs<'input, 'arena, Tok> for AtomContext<'input, 'arena, Tok>
@@ -884,19 +884,19 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == FuzzExpr_INT)
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(FuzzExpr_INT, 0)
     }
     fn e_all(&self) -> Vec<&'arena EContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn e(&self, i: usize) -> Option<&'arena EContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == FuzzExpr_ID)
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(FuzzExpr_ID, 0)
     }
 }
 

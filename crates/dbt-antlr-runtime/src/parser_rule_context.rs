@@ -2,6 +2,7 @@
 use std::any::type_name;
 use std::borrow::{Borrow, BorrowMut};
 use std::fmt::{Debug, Error, Formatter};
+use std::iter::FusedIterator;
 use std::ops::{Deref, DerefMut};
 
 use crate::errors::ANTLRError;
@@ -9,7 +10,10 @@ use crate::rule_context::{
     BaseRuleContext, CustomRuleContext, EmptyCustomRuleContext, EmptyNodeKind, RuleContext,
 };
 use crate::token::{CommonToken, Token};
-use crate::tree::{CtxPtr, NodeChildren, NodeInner, NodeKindType, Tree as _, TreeNode};
+use crate::tree::{
+    ChildrenOfType, CtxPtr, NodeChildren, NodeInner, NodeKindType, TerminalNode, TokensOfType,
+    Tree as _, TreeChildren, TreeNode,
+};
 use crate::{token_factory, Arena};
 
 /// Language-agnostic behaviors of the Antlr AST.
@@ -46,16 +50,23 @@ where
 
     fn get_child_count(&self) -> usize;
 
-    fn iter_children<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = &'arena dyn ParserRuleContext<'input, 'arena>> + 'a>
+    fn iter_children<'a>(&'a self) -> ChildrenIter<'a, 'input, 'arena>
     where
         'input: 'a,
         'arena: 'a;
 
-    fn get_token(&self, _ttype: i32, _pos: usize) -> Option<&dyn Token>;
+    fn get_token(&self, _ttype: i32, _pos: usize) -> Option<&'arena dyn Token>;
 
-    fn get_tokens(&self, _ttype: i32) -> Vec<&dyn Token>;
+    fn get_tokens<'a>(&'a self, _ttype: i32) -> TokensIter<'a, 'input, 'arena>
+    where
+        'input: 'a,
+        'arena: 'a;
+
+    /// Returns the underlying token if this node is a terminal node.
+    #[inline]
+    fn as_terminal_token(&self) -> Option<&'arena dyn Token> {
+        None
+    }
 
     /// Return combined text of this AST node.
     /// To create resulting string it does traverse whole subtree,
@@ -240,36 +251,25 @@ where
         self.children.len()
     }
 
-    fn iter_children<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = &'arena dyn ParserRuleContext<'input, 'arena>> + 'a>
+    fn iter_children<'a>(&'a self) -> ChildrenIter<'a, 'input, 'arena>
     where
         'input: 'a,
         'arena: 'a,
     {
-        Box::new(
-            self.children
-                .iter()
-                .map(|item| *item as &dyn ParserRuleContext<'input, 'arena>),
-        )
+        ChildrenIter::new(self)
     }
 
-    fn get_token(&self, ttype: i32, pos: usize) -> Option<&dyn Token> {
-        self.children
-            .iter()
-            .filter_map(|it| it.as_terminal_node())
-            .filter(|it| it.symbol.get_token_type() == ttype)
-            .nth(pos)
-            .map(|t| t.symbol as &dyn Token)
+    fn get_token(&self, ttype: i32, pos: usize) -> Option<&'arena dyn Token> {
+        self.token_of_type(ttype, pos)
+            .map(|t| t.symbol as &'arena dyn Token)
     }
 
-    fn get_tokens(&self, ttype: i32) -> Vec<&dyn Token> {
-        self.children
-            .iter()
-            .filter_map(|it| it.as_terminal_node())
-            .filter(|it| it.symbol.get_token_type() == ttype)
-            .map(|t| t.symbol as &dyn Token)
-            .collect()
+    fn get_tokens<'a>(&'a self, ttype: i32) -> TokensIter<'a, 'input, 'arena>
+    where
+        'input: 'a,
+        'arena: 'a,
+    {
+        TokensIter::new(self, ttype)
     }
 
     fn get_text(&self) -> String {
@@ -318,9 +318,8 @@ where
         unsafe { TreeNode::from_ctx_ptr_mut(self as *mut Self as CtxPtr<'input, 'arena>) }
     }
 
-    fn iter_child_nodes<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = &'arena TreeNode<'input, 'arena, Node, Tok>> + 'a> {
+    #[inline]
+    fn iter_child_nodes(&self) -> TreeChildren<'_, 'arena, TreeNode<'input, 'arena, Node, Tok>> {
         self.get_children()
     }
 }
@@ -446,10 +445,11 @@ where
         self.children.get(i)
     }
 
-    pub fn get_children<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = &'arena TreeNode<'input, 'arena, Ext::NodeKind, Tok>> + 'a> {
-        Box::new(self.children.iter().copied())
+    #[inline]
+    pub fn get_children(
+        &self,
+    ) -> TreeChildren<'_, 'arena, TreeNode<'input, 'arena, Ext::NodeKind, Tok>> {
+        TreeChildren::new(self.children.as_slice())
     }
 
     /// Return the direct children of this rule context as a slice.
@@ -458,29 +458,38 @@ where
         self.children.as_slice()
     }
 
-    pub fn child_of_type<'a, T>(&'a self, pos: usize) -> Option<&'arena T>
+    /// Returns the `pos`-th direct child node that matches rule context type `T`.
+    #[inline]
+    pub fn child_of_type<T>(&self, pos: usize) -> Option<&'arena T>
     where
-        'input: 'a,
-        'arena: 'a,
         T: ParserRuleContext<'input, 'arena> + NodeInner<'input, 'arena, Node, Tok>,
     {
-        self.children
-            .iter()
-            .filter_map(|it| it.as_rule_context::<T>())
-            .nth(pos)
+        self.children_of_type::<T>().nth(pos)
     }
 
-    // todo, return iterator
-    pub fn children_of_type<'a, T>(&'a self) -> Vec<&'arena T>
+    /// Returns an iterator over direct child nodes that match rule context type `T`.
+    #[inline]
+    pub fn children_of_type<T>(&self) -> ChildrenOfType<'_, 'input, 'arena, Node, Tok, T>
     where
-        'input: 'a,
-        'arena: 'a,
         T: ParserRuleContext<'input, 'arena> + NodeInner<'input, 'arena, Node, Tok>,
     {
-        self.children
-            .iter()
-            .filter_map(|it| it.as_rule_context::<T>())
-            .collect()
+        ChildrenOfType::new(self.children.as_slice())
+    }
+
+    /// Returns the `pos`-th direct [`TerminalNode`] child with token type `ttype`.
+    #[inline]
+    pub fn token_of_type(
+        &self,
+        ttype: i32,
+        pos: usize,
+    ) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ttype).nth(pos)
+    }
+
+    /// Returns an iterator over direct [`TerminalNode`] children with token type `ttype`.
+    #[inline]
+    pub fn tokens_of_type(&self, ttype: i32) -> TokensOfType<'_, 'input, 'arena, Node, Tok> {
+        TokensOfType::new(self.children.as_slice(), ttype)
     }
 
     // pub fn to_string(self: Rc<Self>, rule_names: Option<&[&str]>, stop: Option<Rc<Ctx::Ctx::Type>>) -> String {
@@ -523,3 +532,246 @@ where
         result
     }
 }
+
+/// Iterator over direct children of a [`ParserRuleContext`].
+pub struct ChildrenIter<'a, 'input, 'arena>
+where
+    'input: 'arena,
+{
+    ctx: &'a dyn ParserRuleContext<'input, 'arena>,
+    front: usize,
+    back: usize,
+}
+
+impl<'a, 'input, 'arena> ChildrenIter<'a, 'input, 'arena>
+where
+    'input: 'arena,
+{
+    #[inline]
+    pub(crate) fn new(ctx: &'a dyn ParserRuleContext<'input, 'arena>) -> Self {
+        let back = ctx.get_child_count();
+        Self {
+            ctx,
+            front: 0,
+            back,
+        }
+    }
+}
+
+impl<'input, 'arena> Clone for ChildrenIter<'_, 'input, 'arena>
+where
+    'input: 'arena,
+{
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            ctx: self.ctx,
+            front: self.front,
+            back: self.back,
+        }
+    }
+}
+
+impl<'input, 'arena> Debug for ChildrenIter<'_, 'input, 'arena>
+where
+    'input: 'arena,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        f.debug_struct("ChildrenIter")
+            .field("front", &self.front)
+            .field("back", &self.back)
+            .finish()
+    }
+}
+
+impl<'input, 'arena> Iterator for ChildrenIter<'_, 'input, 'arena>
+where
+    'input: 'arena,
+{
+    type Item = &'arena dyn ParserRuleContext<'input, 'arena>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.front < self.back {
+            let idx = self.front;
+            self.front += 1;
+            let item = self.ctx.get_child_ctx(idx);
+            if item.is_none() {
+                self.front = self.back;
+            }
+            item
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let rem = self.back - self.front;
+        (rem, Some(rem))
+    }
+
+    #[inline]
+    fn count(self) -> usize {
+        self.back - self.front
+    }
+
+    #[inline]
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        let rem = self.back - self.front;
+        if n < rem {
+            let idx = self.front + n;
+            self.front = idx + 1;
+            let item = self.ctx.get_child_ctx(idx);
+            if item.is_none() {
+                self.front = self.back;
+            }
+            item
+        } else {
+            self.front = self.back;
+            None
+        }
+    }
+
+    #[inline]
+    fn last(mut self) -> Option<Self::Item> {
+        self.next_back()
+    }
+}
+
+impl<'input, 'arena> DoubleEndedIterator for ChildrenIter<'_, 'input, 'arena>
+where
+    'input: 'arena,
+{
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.front < self.back {
+            self.back -= 1;
+            let item = self.ctx.get_child_ctx(self.back);
+            if item.is_none() {
+                self.back = self.front;
+            }
+            item
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
+        let rem = self.back - self.front;
+        if n < rem {
+            self.back -= n + 1;
+            let item = self.ctx.get_child_ctx(self.back);
+            if item.is_none() {
+                self.back = self.front;
+            }
+            item
+        } else {
+            self.back = self.front;
+            None
+        }
+    }
+}
+
+impl<'input, 'arena> ExactSizeIterator for ChildrenIter<'_, 'input, 'arena>
+where
+    'input: 'arena,
+{
+    #[inline]
+    fn len(&self) -> usize {
+        self.back - self.front
+    }
+}
+
+impl<'input, 'arena> FusedIterator for ChildrenIter<'_, 'input, 'arena> where 'input: 'arena {}
+
+/// Iterator over direct terminal tokens of a [`ParserRuleContext`] that match a token type.
+pub struct TokensIter<'a, 'input, 'arena>
+where
+    'input: 'arena,
+{
+    children: ChildrenIter<'a, 'input, 'arena>,
+    ttype: i32,
+}
+
+impl<'a, 'input, 'arena> TokensIter<'a, 'input, 'arena>
+where
+    'input: 'arena,
+{
+    #[inline]
+    pub(crate) fn new(ctx: &'a dyn ParserRuleContext<'input, 'arena>, ttype: i32) -> Self {
+        Self {
+            children: ChildrenIter::new(ctx),
+            ttype,
+        }
+    }
+}
+
+impl<'input, 'arena> Clone for TokensIter<'_, 'input, 'arena>
+where
+    'input: 'arena,
+{
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            children: self.children.clone(),
+            ttype: self.ttype,
+        }
+    }
+}
+
+impl<'input, 'arena> Debug for TokensIter<'_, 'input, 'arena>
+where
+    'input: 'arena,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        f.debug_struct("TokensIter")
+            .field("ttype", &self.ttype)
+            .field("remaining_children", &self.children.len())
+            .finish()
+    }
+}
+
+impl<'input, 'arena> Iterator for TokensIter<'_, 'input, 'arena>
+where
+    'input: 'arena,
+{
+    type Item = &'arena dyn Token;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        for child in self.children.by_ref() {
+            if let Some(tok) = child.as_terminal_token() {
+                if tok.get_token_type() == self.ttype {
+                    return Some(tok);
+                }
+            }
+        }
+        None
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, Some(self.children.len()))
+    }
+}
+
+impl<'input, 'arena> DoubleEndedIterator for TokensIter<'_, 'input, 'arena>
+where
+    'input: 'arena,
+{
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        while let Some(child) = self.children.next_back() {
+            if let Some(tok) = child.as_terminal_token() {
+                if tok.get_token_type() == self.ttype {
+                    return Some(tok);
+                }
+            }
+        }
+        None
+    }
+}
+
+impl<'input, 'arena> FusedIterator for TokensIter<'_, 'input, 'arena> where 'input: 'arena {}

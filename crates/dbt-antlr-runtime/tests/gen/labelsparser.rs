@@ -336,7 +336,7 @@ where
 impl<'input: 'arena, 'arena, Tok: Token + 'input> AddContextAttrs<'input, 'arena, Tok> for AddContext<'input, 'arena, Tok>
 {
     fn e_all(&self) -> Vec<&'arena EContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn e(&self, i: usize) -> Option<&'arena EContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -459,7 +459,7 @@ where
 impl<'input: 'arena, 'arena, Tok: Token + 'input> MultContextAttrs<'input, 'arena, Tok> for MultContext<'input, 'arena, Tok>
 {
     fn e_all(&self) -> Vec<&'arena EContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn e(&self, i: usize) -> Option<&'arena EContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -579,15 +579,15 @@ where
 {
 	/// Retrieves first TerminalNode corresponding to token ID
 	/// Returns `None` if there is no child corresponding to token ID
-	fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+	fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input: 'arena, 'arena, Tok: Token + 'input> AnIDContextAttrs<'input, 'arena, Tok> for AnIDContext<'input, 'arena, Tok>
 {
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == Labels_ID)
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(Labels_ID, 0)
     }
 }
 #[derive(Debug)]
@@ -642,15 +642,15 @@ where
 {
 	/// Retrieves first TerminalNode corresponding to token INT
 	/// Returns `None` if there is no child corresponding to token INT
-	fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+	fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input: 'arena, 'arena, Tok: Token + 'input> AnIntContextAttrs<'input, 'arena, Tok> for AnIntContext<'input, 'arena, Tok>
 {
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == Labels_INT)
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(Labels_INT, 0)
     }
 }
 #[derive(Debug)]

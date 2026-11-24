@@ -23,7 +23,9 @@ pub use crate::lexer::{BaseLexer, Lexer, LexerRecog};
 pub use crate::lexer_atn_simulator::{ILexerATNSimulator, LexerATNSimulator};
 pub use crate::parser::{BaseParser, ListenerId, Parser, ParserRecog};
 pub use crate::parser_atn_simulator::ParserATNSimulator;
-pub use crate::parser_rule_context::{BaseParserRuleContext, ParserRuleContext};
+pub use crate::parser_rule_context::{
+    BaseParserRuleContext, ChildrenIter, ParserRuleContext, TokensIter,
+};
 pub use crate::recognizer::{Actions, Recognizer};
 pub use crate::rule_context::{
     BaseRuleContext, CustomRuleContext, EmptyCustomRuleContext, EmptyNodeKind, EmptyRuleNode,
