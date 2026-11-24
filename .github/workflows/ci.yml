@@ -97,6 +97,25 @@ jobs:
 
       - name: cargo test
         run: cargo test --workspace --all-targets
+
+  release-tests:
+    name: Release test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-tests
+
+      - name: cargo test --release
+        run: cargo test --release --workspace --all-targets
+
   # Self-hosting guarantee: regenerating the g4-parser front-end and the
   # runtime test goldens with the shipped codegen must be a zero diff.
   bootstrap:
@@ -157,7 +176,7 @@ jobs:
   ci-status:
     name: ci status
     if: always() && github.event_name == 'workflow_dispatch'
-    needs: [quality, unittests, bootstrap, runtime-testsuite]
+    needs: [quality, unittests, release-tests, bootstrap, runtime-testsuite]
     runs-on: ubuntu-latest
     permissions:
       statuses: write

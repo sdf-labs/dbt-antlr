@@ -1,6 +1,7 @@
 //! General AST
 use std::any::{Any, TypeId};
 
+use std::cell::UnsafeCell;
 use std::fmt::{Debug, Formatter};
 use std::iter::FusedIterator;
 use std::marker::PhantomData;
@@ -174,6 +175,7 @@ where
     len: u32,
     cap: u32,
     storage: ChildrenStore<'input, 'arena, NodeKind, Tok>,
+    _interior: UnsafeCell<()>,
 }
 
 impl<'input, 'arena, NodeKind, Tok> Debug for NodeChildren<'input, 'arena, NodeKind, Tok>
@@ -201,6 +203,7 @@ where
             storage: ChildrenStore {
                 inline: [MaybeUninit::uninit(); MAX_INLINE_CHILDREN],
             },
+            _interior: UnsafeCell::new(()),
         }
     }
 
@@ -414,6 +417,8 @@ const _: () = {
     >;
     type Node = TreeNode<'static, 'static, EmptyNodeKind>;
 
+    assert!(size_of::<Node>() == 8);
+    assert!(offset_of!(Node, body) == 8);
     assert!(size_of::<NodeChildren<'static, 'static, EmptyNodeKind>>() == 32);
     assert!(align_of::<NodeChildren<'static, 'static, EmptyNodeKind>>() == 8);
     assert!(size_of::<Common>() == 56);
@@ -436,7 +441,7 @@ where
     pub(crate) label_tag: u16,
     pub node_tag: NodeKind,
     invoking_state: i32,
-    body: (),
+    body: UnsafeCell<()>,
 
     _mark: PhantomData<(&'input Tok, *mut &'arena ())>,
 }
@@ -453,7 +458,7 @@ where
             node_tag: NodeKind::terminal(),
             label_tag: 0,
             invoking_state: -1,
-            body: (),
+            body: UnsafeCell::new(()),
             _mark: PhantomData,
         };
         let leaf = TerminalNode::new(symbol);
@@ -466,7 +471,7 @@ where
             node_tag: NodeKind::error(),
             label_tag: 0,
             invoking_state: -1,
-            body: (),
+            body: UnsafeCell::new(()),
             _mark: PhantomData,
         };
         let leaf = ErrorNode::new(symbol);
@@ -491,7 +496,7 @@ where
 
     #[inline]
     pub fn ctx_ptr(&self) -> CtxPtr<'input, 'arena> {
-        &self.body as *const _ as *mut (&'input (), *mut &'arena ())
+        self.body.get() as *mut (&'input (), *mut &'arena ())
     }
 
     #[allow(dead_code)]
