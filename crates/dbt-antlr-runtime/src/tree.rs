@@ -1,7 +1,8 @@
 //! General AST
-use std::any::Any;
+use std::any::{Any, TypeId};
 
 use std::fmt::{Debug, Formatter};
+use std::iter::FusedIterator;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ptr::{self, NonNull};
@@ -11,7 +12,7 @@ use crate::char_stream::InputData;
 use crate::errors::ANTLRError;
 use crate::int_stream::EOF;
 use crate::interval_set::Interval;
-use crate::parser_rule_context::ParserRuleContext;
+use crate::parser_rule_context::{ChildrenIter, ParserRuleContext, TokensIter};
 use crate::rule_context::RuleContext;
 use crate::token::{CommonToken, Token};
 use crate::{cast_unchecked, token_factory, Arena};
@@ -30,7 +31,7 @@ pub trait Tree<'arena>: Sized {
 
     fn get_child_count(&self) -> usize;
 
-    fn get_children<'a>(&'a self) -> Box<dyn Iterator<Item = &'arena Self> + 'a>;
+    fn get_children(&self) -> TreeChildren<'_, 'arena, Self>;
 }
 
 /// Tree that knows about underlying text
@@ -93,9 +94,7 @@ where
     fn as_node_mut(&mut self) -> &mut TreeNode<'input, 'arena, Node, Tok>;
 
     /// Iterate over children as [TreeNode]s
-    fn iter_child_nodes<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = &'arena TreeNode<'input, 'arena, Node, Tok>> + 'a>;
+    fn iter_child_nodes(&self) -> TreeChildren<'_, 'arena, TreeNode<'input, 'arena, Node, Tok>>;
 }
 
 pub type CtxPtr<'input, 'arena> = *mut (&'input (), *mut &'arena ());
@@ -394,10 +393,9 @@ where
         unsafe { TreeNode::from_ctx_ptr_mut(self as *mut Self as CtxPtr<'input, 'arena>) }
     }
 
-    fn iter_child_nodes<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = &'arena TreeNode<'input, 'arena, Node, Tok>> + 'a> {
-        Box::new(self.children.iter().copied())
+    #[inline]
+    fn iter_child_nodes(&self) -> TreeChildren<'_, 'arena, TreeNode<'input, 'arena, Node, Tok>> {
+        TreeChildren::new(self.children.as_slice())
     }
 }
 
@@ -674,6 +672,40 @@ where
             .map_or(&[], |ctx| ctx.children.as_slice())
     }
 
+    /// Returns the `pos`-th direct child node that matches rule context type `T`.
+    #[inline]
+    pub fn child_of_type<T>(&self, pos: usize) -> Option<&'arena T>
+    where
+        T: ParserRuleContext<'input, 'arena> + NodeInner<'input, 'arena, NodeKind, Tok>,
+    {
+        self.children_of_type::<T>().nth(pos)
+    }
+
+    /// Returns an iterator over direct child nodes that match rule context type `T`.
+    #[inline]
+    pub fn children_of_type<T>(&self) -> ChildrenOfType<'_, 'input, 'arena, NodeKind, Tok, T>
+    where
+        T: ParserRuleContext<'input, 'arena> + NodeInner<'input, 'arena, NodeKind, Tok>,
+    {
+        ChildrenOfType::new(self.children_slice())
+    }
+
+    /// Returns the `pos`-th direct [`TerminalNode`] child with token type `ttype`.
+    #[inline]
+    pub fn token_of_type(
+        &self,
+        ttype: i32,
+        pos: usize,
+    ) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ttype).nth(pos)
+    }
+
+    /// Returns an iterator over direct [`TerminalNode`] children with token type `ttype`.
+    #[inline]
+    pub fn tokens_of_type(&self, ttype: i32) -> TokensOfType<'_, 'input, 'arena, NodeKind, Tok> {
+        TokensOfType::new(self.children_slice(), ttype)
+    }
+
     pub fn add_child(&mut self, child: &'arena Self, arena: &'arena Arena) {
         let Some(ctx) = self.as_rule_context_common_mut() else {
             return;
@@ -724,12 +756,8 @@ where
     }
 
     #[inline]
-    fn get_children<'a>(&'a self) -> Box<dyn Iterator<Item = &'arena Self> + 'a> {
-        if let Some(ctx) = self.as_rule_context_common() {
-            Box::new(ctx.children.iter().copied())
-        } else {
-            Box::new(std::iter::empty())
-        }
+    fn get_children(&self) -> TreeChildren<'_, 'arena, Self> {
+        TreeChildren::new(self.children_slice())
     }
 }
 
@@ -862,43 +890,31 @@ where
             .map(|child| child.get_rule_context() as &dyn ParserRuleContext<'input, 'arena>)
     }
 
-    fn iter_children<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = &'arena dyn ParserRuleContext<'input, 'arena>> + 'a>
+    fn iter_children<'a>(&'a self) -> ChildrenIter<'a, 'input, 'arena>
     where
         'input: 'a,
         'arena: 'a,
     {
-        let Some(ctx) = self.as_rule_context_common() else {
-            return Box::new(std::iter::empty());
-        };
-        Box::new(
-            ctx.children
-                .iter()
-                .map(|child| child.get_rule_context() as &dyn ParserRuleContext<'input, 'arena>),
-        )
+        ChildrenIter::new(self)
     }
 
-    fn get_token(&self, _ttype: i32, _pos: usize) -> Option<&dyn Token> {
-        let ctx = self.as_rule_context_common()?;
-        ctx.children
-            .iter()
-            .filter_map(|child| child.as_terminal_node())
-            .filter(|t| t.symbol.get_token_type() == _ttype)
-            .nth(_pos)
-            .map(|t| t.symbol as &dyn Token)
+    fn get_token(&self, ttype: i32, pos: usize) -> Option<&'arena dyn Token> {
+        self.token_of_type(ttype, pos)
+            .map(|t| t.symbol as &'arena dyn Token)
     }
 
-    fn get_tokens(&self, _ttype: i32) -> Vec<&dyn Token> {
-        let Some(ctx) = self.as_rule_context_common() else {
-            return vec![];
-        };
-        ctx.children
-            .iter()
-            .filter_map(|child| child.as_terminal_node())
-            .filter(|t| t.symbol.get_token_type() == _ttype)
-            .map(|t| t.symbol as &dyn Token)
-            .collect()
+    fn get_tokens<'a>(&'a self, ttype: i32) -> TokensIter<'a, 'input, 'arena>
+    where
+        'input: 'a,
+        'arena: 'a,
+    {
+        TokensIter::new(self, ttype)
+    }
+
+    #[inline]
+    fn as_terminal_token(&self) -> Option<&'arena dyn Token> {
+        self.as_terminal_node()
+            .map(|t| t.symbol as &'arena dyn Token)
     }
 
     fn to_string_tree(&self, rule_names: &[&str]) -> String {
@@ -968,22 +984,33 @@ where
         0
     }
 
-    fn iter_children<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = &'arena dyn ParserRuleContext<'input, 'arena>> + 'a>
+    fn iter_children<'a>(&'a self) -> ChildrenIter<'a, 'input, 'arena>
     where
         'input: 'a,
         'arena: 'a,
     {
-        Box::new(std::iter::empty())
+        ChildrenIter::new(self)
     }
 
-    fn get_token(&self, _ttype: i32, _pos: usize) -> Option<&dyn Token> {
+    fn get_token(&self, _ttype: i32, _pos: usize) -> Option<&'arena dyn Token> {
         None
     }
 
-    fn get_tokens(&self, _ttype: i32) -> Vec<&dyn Token> {
-        vec![]
+    fn get_tokens<'a>(&'a self, ttype: i32) -> TokensIter<'a, 'input, 'arena>
+    where
+        'input: 'a,
+        'arena: 'a,
+    {
+        TokensIter::new(self, ttype)
+    }
+
+    #[inline]
+    fn as_terminal_token(&self) -> Option<&'arena dyn Token> {
+        if TypeId::of::<E>() == TypeId::of::<NoError>() {
+            Some(self.symbol)
+        } else {
+            None
+        }
     }
 }
 
@@ -1028,10 +1055,9 @@ where
         unsafe { TreeNode::from_ctx_ptr_mut(self as *mut Self as CtxPtr<'input, 'arena>) }
     }
 
-    fn iter_child_nodes<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = &'arena TreeNode<'input, 'arena, Node, Tok>> + 'a> {
-        Box::new(std::iter::empty())
+    #[inline]
+    fn iter_child_nodes(&self) -> TreeChildren<'_, 'arena, TreeNode<'input, 'arena, Node, Tok>> {
+        TreeChildren::empty()
     }
 }
 
@@ -1076,10 +1102,9 @@ where
         unsafe { TreeNode::from_ctx_ptr_mut(self as *mut Self as CtxPtr<'input, 'arena>) }
     }
 
-    fn iter_child_nodes<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = &'arena TreeNode<'input, 'arena, Node, Tok>> + 'a> {
-        Box::new(std::iter::empty())
+    #[inline]
+    fn iter_child_nodes(&self) -> TreeChildren<'_, 'arena, TreeNode<'input, 'arena, Node, Tok>> {
+        TreeChildren::empty()
     }
 }
 
@@ -1125,6 +1150,339 @@ pub type TerminalNode<'input, 'arena, Tok = CommonToken<'input>> =
 /// Created for each token created or consumed during recovery
 pub type ErrorNode<'input, 'arena, Tok = CommonToken<'input>> =
     LeafNodeInner<'input, 'arena, IsError, Tok>;
+
+/// Iterator over direct child references stored in a tree node.
+pub struct TreeChildren<'a, 'arena, T> {
+    iter: slice::Iter<'a, &'arena T>,
+}
+
+impl<'a, 'arena, T> TreeChildren<'a, 'arena, T> {
+    #[inline]
+    pub(crate) fn new(children: &'a [&'arena T]) -> Self {
+        Self {
+            iter: children.iter(),
+        }
+    }
+
+    /// Returns an empty iterator.
+    #[inline]
+    pub fn empty() -> Self {
+        Self { iter: [].iter() }
+    }
+
+    /// Returns the remaining children as a slice.
+    #[inline]
+    pub fn as_slice(&self) -> &'a [&'arena T] {
+        self.iter.as_slice()
+    }
+}
+
+impl<T> Default for TreeChildren<'_, '_, T> {
+    #[inline]
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+impl<T> Clone for TreeChildren<'_, '_, T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            iter: self.iter.clone(),
+        }
+    }
+}
+
+impl<T: Debug> Debug for TreeChildren<'_, '_, T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter.clone().copied()).finish()
+    }
+}
+
+impl<'arena, T> Iterator for TreeChildren<'_, 'arena, T> {
+    type Item = &'arena T;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next().copied()
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
+    }
+
+    #[inline]
+    fn count(self) -> usize {
+        self.iter.len()
+    }
+
+    #[inline]
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        self.iter.nth(n).copied()
+    }
+
+    #[inline]
+    fn last(mut self) -> Option<Self::Item> {
+        self.next_back()
+    }
+
+    #[inline]
+    fn fold<B, F>(self, init: B, mut f: F) -> B
+    where
+        F: FnMut(B, Self::Item) -> B,
+    {
+        self.iter.fold(init, |acc, &item| f(acc, item))
+    }
+}
+
+impl<'arena, T> DoubleEndedIterator for TreeChildren<'_, 'arena, T> {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.iter.next_back().copied()
+    }
+
+    #[inline]
+    fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
+        self.iter.nth_back(n).copied()
+    }
+
+    #[inline]
+    fn rfold<B, F>(self, init: B, mut f: F) -> B
+    where
+        F: FnMut(B, Self::Item) -> B,
+    {
+        self.iter.rfold(init, |acc, &item| f(acc, item))
+    }
+}
+
+impl<T> ExactSizeIterator for TreeChildren<'_, '_, T> {
+    #[inline]
+    fn len(&self) -> usize {
+        self.iter.len()
+    }
+}
+
+impl<T> FusedIterator for TreeChildren<'_, '_, T> {}
+
+/// Iterator over direct child nodes that match rule context type `T`.
+pub struct ChildrenOfType<'a, 'input, 'arena, Node, Tok, T>
+where
+    'input: 'arena,
+    Node: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+{
+    iter: slice::Iter<'a, &'arena TreeNode<'input, 'arena, Node, Tok>>,
+    _marker: PhantomData<fn() -> &'arena T>,
+}
+
+impl<'a, 'input, 'arena, Node, Tok, T> ChildrenOfType<'a, 'input, 'arena, Node, Tok, T>
+where
+    'input: 'arena,
+    Node: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+{
+    #[inline]
+    pub(crate) fn new(children: &'a [&'arena TreeNode<'input, 'arena, Node, Tok>]) -> Self {
+        Self {
+            iter: children.iter(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'input, 'arena, Node, Tok, T> Clone for ChildrenOfType<'_, 'input, 'arena, Node, Tok, T>
+where
+    'input: 'arena,
+    Node: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+{
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            iter: self.iter.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'input, 'arena, Node, Tok, T> Debug for ChildrenOfType<'_, 'input, 'arena, Node, Tok, T>
+where
+    'input: 'arena,
+    Node: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChildrenOfType")
+            .field("remaining_children", &self.iter.len())
+            .finish()
+    }
+}
+
+impl<'input, 'arena, Node, Tok, T> Iterator for ChildrenOfType<'_, 'input, 'arena, Node, Tok, T>
+where
+    'input: 'arena,
+    Node: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+    T: ParserRuleContext<'input, 'arena> + NodeInner<'input, 'arena, Node, Tok>,
+{
+    type Item = &'arena T;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        for child in self.iter.by_ref() {
+            if let Some(ctx) = child.as_rule_context::<T>() {
+                return Some(ctx);
+            }
+        }
+        None
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, Some(self.iter.len()))
+    }
+}
+
+impl<'input, 'arena, Node, Tok, T> DoubleEndedIterator
+    for ChildrenOfType<'_, 'input, 'arena, Node, Tok, T>
+where
+    'input: 'arena,
+    Node: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+    T: ParserRuleContext<'input, 'arena> + NodeInner<'input, 'arena, Node, Tok>,
+{
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        while let Some(child) = self.iter.next_back() {
+            if let Some(ctx) = child.as_rule_context::<T>() {
+                return Some(ctx);
+            }
+        }
+        None
+    }
+}
+
+impl<'input, 'arena, Node, Tok, T> FusedIterator
+    for ChildrenOfType<'_, 'input, 'arena, Node, Tok, T>
+where
+    'input: 'arena,
+    Node: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+    T: ParserRuleContext<'input, 'arena> + NodeInner<'input, 'arena, Node, Tok>,
+{
+}
+
+/// Iterator over direct [`TerminalNode`] children that match a token type.
+pub struct TokensOfType<'a, 'input, 'arena, Node, Tok>
+where
+    'input: 'arena,
+    Node: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+{
+    iter: slice::Iter<'a, &'arena TreeNode<'input, 'arena, Node, Tok>>,
+    ttype: i32,
+}
+
+impl<'a, 'input, 'arena, Node, Tok> TokensOfType<'a, 'input, 'arena, Node, Tok>
+where
+    'input: 'arena,
+    Node: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+{
+    #[inline]
+    pub(crate) fn new(
+        children: &'a [&'arena TreeNode<'input, 'arena, Node, Tok>],
+        ttype: i32,
+    ) -> Self {
+        Self {
+            iter: children.iter(),
+            ttype,
+        }
+    }
+}
+
+impl<'input, 'arena, Node, Tok> Clone for TokensOfType<'_, 'input, 'arena, Node, Tok>
+where
+    'input: 'arena,
+    Node: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+{
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            iter: self.iter.clone(),
+            ttype: self.ttype,
+        }
+    }
+}
+
+impl<'input, 'arena, Node, Tok> Debug for TokensOfType<'_, 'input, 'arena, Node, Tok>
+where
+    'input: 'arena,
+    Node: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokensOfType")
+            .field("ttype", &self.ttype)
+            .field("remaining_children", &self.iter.len())
+            .finish()
+    }
+}
+
+impl<'input, 'arena, Node, Tok> Iterator for TokensOfType<'_, 'input, 'arena, Node, Tok>
+where
+    'input: 'arena,
+    Node: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+{
+    type Item = &'arena TerminalNode<'input, 'arena, Tok>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        for child in self.iter.by_ref() {
+            if let Some(terminal) = child.as_terminal_node() {
+                if terminal.symbol.get_token_type() == self.ttype {
+                    return Some(terminal);
+                }
+            }
+        }
+        None
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, Some(self.iter.len()))
+    }
+}
+
+impl<'input, 'arena, Node, Tok> DoubleEndedIterator for TokensOfType<'_, 'input, 'arena, Node, Tok>
+where
+    'input: 'arena,
+    Node: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+{
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        while let Some(child) = self.iter.next_back() {
+            if let Some(terminal) = child.as_terminal_node() {
+                if terminal.symbol.get_token_type() == self.ttype {
+                    return Some(terminal);
+                }
+            }
+        }
+        None
+    }
+}
+
+impl<'input, 'arena, Node, Tok> FusedIterator for TokensOfType<'_, 'input, 'arena, Node, Tok>
+where
+    'input: 'arena,
+    Node: NodeKindType<'arena, Tok>,
+    Tok: Token + 'input,
+{
+}
 
 pub trait ParseTreeVisitor<'input, 'arena, Node, Tok>
 where
@@ -1465,6 +1823,155 @@ mod tests {
             assert_eq!(Tree::get_child_count(root), 2);
             assert!(ptr::eq(root.get_child(1).unwrap(), leaves[1]));
             assert!(root.get_child(2).is_none());
+        });
+    }
+
+    #[test]
+    fn zero_alloc_children_and_token_iterators() {
+        Arena::with(|arena| {
+            let source = arena.alloc_source_info(crate::token::SourceInfo::new_stream("abcdef"));
+            let root =
+                BaseParserRuleContext::create(arena, None, -1, EmptyCustomRuleContext(PhantomData))
+                    .expect("create root");
+            let child_rule =
+                BaseParserRuleContext::create(arena, None, 1, EmptyCustomRuleContext(PhantomData))
+                    .expect("create child rule");
+
+            let tok_a0 = arena.alloc_token(CommonToken::new_slice(source, 10, 0, 0, 0, 0));
+            let tok_b0 = arena.alloc_token(CommonToken::new_slice(source, 20, 0, 1, 1, 1));
+            let tok_err = arena.alloc_token(CommonToken::new_slice(source, 10, 0, 2, 2, 2));
+            let tok_a1 = arena.alloc_token(CommonToken::new_slice(source, 10, 0, 3, 3, 3));
+
+            let leaf_a0 =
+                unsafe { &*TreeNode::<EmptyNodeKind, _>::create_token_node(arena, tok_a0) };
+            let leaf_b0 =
+                unsafe { &*TreeNode::<EmptyNodeKind, _>::create_token_node(arena, tok_b0) };
+            let leaf_err =
+                unsafe { &*TreeNode::<EmptyNodeKind, _>::create_error_node(arena, tok_err) };
+            let leaf_a1 =
+                unsafe { &*TreeNode::<EmptyNodeKind, _>::create_token_node(arena, tok_a1) };
+
+            root.add_child(leaf_a0, arena);
+            root.add_child(child_rule, arena);
+            root.add_child(leaf_b0, arena);
+            root.add_child(leaf_err, arena);
+            root.add_child(leaf_a1, arena);
+
+            type EmptyCtx<'i, 'a> =
+                BaseParserRuleContext<'i, 'a, EmptyCustomRuleContext<'i, 'a>, EmptyNodeKind>;
+
+            let ctx = root.as_rule_context::<EmptyCtx>().unwrap();
+
+            // TreeChildren: ExactSize, DoubleEnded, nth, nth_back, clone, as_slice.
+            let mut tc = root.get_children();
+            assert_eq!(tc.len(), 5);
+            assert_eq!(tc.as_slice().len(), 5);
+            assert!(ptr::eq(tc.next().unwrap(), leaf_a0));
+            assert!(ptr::eq(tc.next_back().unwrap(), leaf_a1));
+            assert_eq!(tc.len(), 3);
+            let tc_clone = tc.clone();
+            assert_eq!(tc_clone.count(), 3);
+            assert!(ptr::eq(tc.nth(1).unwrap(), leaf_b0));
+            assert!(ptr::eq(tc.nth_back(0).unwrap(), leaf_err));
+            assert!(tc.next().is_none());
+            assert!(tc.next().is_none());
+            assert!(leaf_a0.get_children().next().is_none());
+            assert!(leaf_err.get_children().next().is_none());
+
+            // NodeInner::iter_child_nodes via dyn dispatch.
+            let dyn_inner: &dyn NodeInner<'_, '_, EmptyNodeKind, CommonToken<'_>> = ctx;
+            assert_eq!(dyn_inner.iter_child_nodes().len(), 5);
+            let dyn_term: &dyn NodeInner<'_, '_, EmptyNodeKind, CommonToken<'_>> =
+                leaf_a0.as_terminal_node().unwrap();
+            assert_eq!(dyn_term.iter_child_nodes().len(), 0);
+            let dyn_err: &dyn NodeInner<'_, '_, EmptyNodeKind, CommonToken<'_>> =
+                leaf_err.as_error_node().unwrap();
+            assert_eq!(dyn_err.iter_child_nodes().len(), 0);
+
+            // ChildrenOfType on both TreeNode and BaseParserRuleContext.
+            let rules_from_node: Vec<_> = root.children_of_type::<EmptyCtx>().collect();
+            assert_eq!(rules_from_node.len(), 1);
+            assert!(ptr::eq(
+                root.child_of_type::<EmptyCtx>(0).unwrap().as_node(),
+                child_rule
+            ));
+            assert!(root.child_of_type::<EmptyCtx>(1).is_none());
+            assert_eq!(ctx.children_of_type::<EmptyCtx>().rev().count(), 1);
+            assert_eq!(
+                root.children_of_type::<TerminalNode>().count(),
+                3,
+                "TerminalNode excludes ErrorNode"
+            );
+            assert_eq!(root.children_of_type::<ErrorNode>().count(), 1);
+
+            // TokensOfType on both TreeNode and BaseParserRuleContext (excludes ErrorNode).
+            let a_indices: Vec<isize> = root
+                .tokens_of_type(10)
+                .map(|t| t.symbol.get_token_index())
+                .collect();
+            assert_eq!(a_indices, vec![0, 3]);
+            let a_rev: Vec<isize> = ctx
+                .tokens_of_type(10)
+                .rev()
+                .map(|t| t.symbol.get_token_index())
+                .collect();
+            assert_eq!(a_rev, vec![3, 0]);
+            assert_eq!(
+                root.token_of_type(10, 0).unwrap().symbol.get_token_index(),
+                0
+            );
+            assert_eq!(
+                root.token_of_type(10, 1).unwrap().symbol.get_token_index(),
+                3
+            );
+            assert!(root.token_of_type(10, 2).is_none());
+            assert_eq!(
+                ctx.token_of_type(20, 0).unwrap().symbol.get_token_index(),
+                1
+            );
+            assert!(leaf_a0.tokens_of_type(10).next().is_none());
+
+            // ParserRuleContext::iter_children and get_tokens via &dyn ParserRuleContext
+            // on both TreeNode and BaseParserRuleContext (ErrorNode must be skipped).
+            for dyn_prc in [
+                root as &dyn ParserRuleContext<'_, '_>,
+                ctx as &dyn ParserRuleContext<'_, '_>,
+            ] {
+                let mut iter = dyn_prc.iter_children();
+                assert_eq!(iter.len(), 5);
+                assert_eq!(iter.clone().rev().count(), 5);
+                assert!(iter.nth(2).is_some());
+                assert_eq!(iter.len(), 2);
+                assert!(iter.nth_back(1).is_some());
+                assert_eq!(iter.len(), 0);
+                assert!(iter.next().is_none());
+                assert!(iter.next().is_none());
+
+                let tok_indices: Vec<isize> = dyn_prc
+                    .get_tokens(10)
+                    .map(|t| t.get_token_index())
+                    .collect();
+                assert_eq!(tok_indices, vec![0, 3]);
+                let tok_indices_rev: Vec<isize> = dyn_prc
+                    .get_tokens(10)
+                    .rev()
+                    .map(|t| t.get_token_index())
+                    .collect();
+                assert_eq!(tok_indices_rev, vec![3, 0]);
+                assert_eq!(dyn_prc.get_token(10, 0).unwrap().get_token_index(), 0);
+                assert_eq!(dyn_prc.get_token(10, 1).unwrap().get_token_index(), 3);
+                assert!(dyn_prc.get_token(10, 2).is_none());
+            }
+
+            // Leaf nodes have empty ChildrenIter and TokensIter.
+            let leaf_prc: &dyn ParserRuleContext<'_, '_> = leaf_a0.as_terminal_node().unwrap();
+            assert_eq!(leaf_prc.iter_children().len(), 0);
+            assert!(leaf_prc.get_tokens(10).next().is_none());
+            assert!(leaf_prc.as_terminal_token().is_some());
+            let err_prc: &dyn ParserRuleContext<'_, '_> = leaf_err.as_error_node().unwrap();
+            assert_eq!(err_prc.iter_children().len(), 0);
+            assert!(err_prc.get_tokens(10).next().is_none());
+            assert!(err_prc.as_terminal_token().is_none());
         });
     }
 }

@@ -203,10 +203,10 @@ where
     fn a(&self) -> Option<&'arena AContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token X
     /// Returns `None` if there is no child corresponding to token X
-    fn X(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn X(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token Y
     /// Returns `None` if there is no child corresponding to token Y
-    fn Y(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn Y(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> TopContextAttrs<'input, 'arena, Tok> for TopContext<'input, 'arena, Tok>
@@ -218,13 +218,13 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token X
     /// Returns `None` if there is no child corresponding to token X
-    fn X(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_X)
+    fn X(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_X, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Y
     /// Returns `None` if there is no child corresponding to token Y
-    fn Y(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Y)
+    fn Y(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_Y, 0)
     }
 }
 
@@ -292,45 +292,45 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token D
     /// Returns `None` if there is no child corresponding to token D
-    fn D(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn D(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token A
     /// Returns `None` if there is no child corresponding to token A
-    fn A(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn A(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token C
     /// Returns `None` if there is no child corresponding to token C
-    fn C(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn C(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token B in current rule
-    fn B_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn B_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token B, starting from 0.
     /// Returns `None` if number of children corresponding to token B is less than or equal to `i`.
-    fn B(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn B(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn a(&self) -> Option<&'arena AContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token E
     /// Returns `None` if there is no child corresponding to token E
-    fn E(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn E(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token Z
     /// Returns `None` if there is no child corresponding to token Z
-    fn Z(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn Z(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn r0(&self) -> Option<&'arena R0ContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token M
     /// Returns `None` if there is no child corresponding to token M
-    fn M(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn M(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token W
     /// Returns `None` if there is no child corresponding to token W
-    fn W(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn W(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token N
     /// Returns `None` if there is no child corresponding to token N
-    fn N(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn N(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token P in current rule
-    fn P_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn P_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token P, starting from 0.
     /// Returns `None` if number of children corresponding to token P is less than or equal to `i`.
-    fn P(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn P(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token Q in current rule
-    fn Q_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn Q_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token Q, starting from 0.
     /// Returns `None` if number of children corresponding to token Q is less than or equal to `i`.
-    fn Q(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn Q(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> AContextAttrs<'input, 'arena, Tok> for AContext<'input, 'arena, Tok>
@@ -339,76 +339,76 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token D
     /// Returns `None` if there is no child corresponding to token D
-    fn D(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_D)
+    fn D(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_D, 0)
     }
     /// Retrieves first TerminalNode corresponding to token A
     /// Returns `None` if there is no child corresponding to token A
-    fn A(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_A)
+    fn A(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_A, 0)
     }
     /// Retrieves first TerminalNode corresponding to token C
     /// Returns `None` if there is no child corresponding to token C
-    fn C(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_C)
+    fn C(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_C, 0)
     }
     /// Retrieves all `TerminalNode`s corresponding to token B in current rule
-    fn B_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == WidenedTrust_B).collect()
+    fn B_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(WidenedTrust_B).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token B, starting from 0.
     /// Returns `None` if number of children corresponding to token B is less than or equal to `i`.
-    fn B(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == WidenedTrust_B).nth(i)
+    fn B(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_B, i)
     }
     fn a(&self) -> Option<&'arena AContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token E
     /// Returns `None` if there is no child corresponding to token E
-    fn E(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_E)
+    fn E(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_E, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Z
     /// Returns `None` if there is no child corresponding to token Z
-    fn Z(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Z)
+    fn Z(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_Z, 0)
     }
     fn r0(&self) -> Option<&'arena R0ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token M
     /// Returns `None` if there is no child corresponding to token M
-    fn M(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_M)
+    fn M(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_M, 0)
     }
     /// Retrieves first TerminalNode corresponding to token W
     /// Returns `None` if there is no child corresponding to token W
-    fn W(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_W)
+    fn W(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_W, 0)
     }
     /// Retrieves first TerminalNode corresponding to token N
     /// Returns `None` if there is no child corresponding to token N
-    fn N(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_N)
+    fn N(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_N, 0)
     }
     /// Retrieves all `TerminalNode`s corresponding to token P in current rule
-    fn P_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == WidenedTrust_P).collect()
+    fn P_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(WidenedTrust_P).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token P, starting from 0.
     /// Returns `None` if number of children corresponding to token P is less than or equal to `i`.
-    fn P(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == WidenedTrust_P).nth(i)
+    fn P(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_P, i)
     }
     /// Retrieves all `TerminalNode`s corresponding to token Q in current rule
-    fn Q_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == WidenedTrust_Q).collect()
+    fn Q_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(WidenedTrust_Q).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token Q, starting from 0.
     /// Returns `None` if number of children corresponding to token Q is less than or equal to `i`.
-    fn Q(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == WidenedTrust_Q).nth(i)
+    fn Q(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_Q, i)
     }
 }
 
@@ -619,17 +619,17 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn r1(&self) -> Option<&'arena R1ContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token U0
     /// Returns `None` if there is no child corresponding to token U0
-    fn U0(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn U0(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token V0
     /// Returns `None` if there is no child corresponding to token V0
-    fn V0(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn V0(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> R0ContextAttrs<'input, 'arena, Tok> for R0Context<'input, 'arena, Tok>
@@ -638,26 +638,26 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r1(&self) -> Option<&'arena R1ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token U0
     /// Returns `None` if there is no child corresponding to token U0
-    fn U0(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U0)
+    fn U0(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_U0, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V0
     /// Returns `None` if there is no child corresponding to token V0
-    fn V0(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V0)
+    fn V0(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_V0, 0)
     }
 }
 
@@ -710,17 +710,17 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn r2(&self) -> Option<&'arena R2ContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token U1
     /// Returns `None` if there is no child corresponding to token U1
-    fn U1(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn U1(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token V1
     /// Returns `None` if there is no child corresponding to token V1
-    fn V1(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn V1(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> R1ContextAttrs<'input, 'arena, Tok> for R1Context<'input, 'arena, Tok>
@@ -729,26 +729,26 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r2(&self) -> Option<&'arena R2ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token U1
     /// Returns `None` if there is no child corresponding to token U1
-    fn U1(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U1)
+    fn U1(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_U1, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V1
     /// Returns `None` if there is no child corresponding to token V1
-    fn V1(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V1)
+    fn V1(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_V1, 0)
     }
 }
 
@@ -801,17 +801,17 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn r3(&self) -> Option<&'arena R3ContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token U2
     /// Returns `None` if there is no child corresponding to token U2
-    fn U2(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn U2(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token V2
     /// Returns `None` if there is no child corresponding to token V2
-    fn V2(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn V2(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> R2ContextAttrs<'input, 'arena, Tok> for R2Context<'input, 'arena, Tok>
@@ -820,26 +820,26 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r3(&self) -> Option<&'arena R3ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token U2
     /// Returns `None` if there is no child corresponding to token U2
-    fn U2(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U2)
+    fn U2(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_U2, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V2
     /// Returns `None` if there is no child corresponding to token V2
-    fn V2(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V2)
+    fn V2(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_V2, 0)
     }
 }
 
@@ -892,17 +892,17 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn r4(&self) -> Option<&'arena R4ContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token U3
     /// Returns `None` if there is no child corresponding to token U3
-    fn U3(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn U3(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token V3
     /// Returns `None` if there is no child corresponding to token V3
-    fn V3(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn V3(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> R3ContextAttrs<'input, 'arena, Tok> for R3Context<'input, 'arena, Tok>
@@ -911,26 +911,26 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r4(&self) -> Option<&'arena R4ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token U3
     /// Returns `None` if there is no child corresponding to token U3
-    fn U3(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U3)
+    fn U3(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_U3, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V3
     /// Returns `None` if there is no child corresponding to token V3
-    fn V3(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V3)
+    fn V3(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_V3, 0)
     }
 }
 
@@ -983,17 +983,17 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn r5(&self) -> Option<&'arena R5ContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token U4
     /// Returns `None` if there is no child corresponding to token U4
-    fn U4(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn U4(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token V4
     /// Returns `None` if there is no child corresponding to token V4
-    fn V4(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn V4(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> R4ContextAttrs<'input, 'arena, Tok> for R4Context<'input, 'arena, Tok>
@@ -1002,26 +1002,26 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r5(&self) -> Option<&'arena R5ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token U4
     /// Returns `None` if there is no child corresponding to token U4
-    fn U4(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U4)
+    fn U4(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_U4, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V4
     /// Returns `None` if there is no child corresponding to token V4
-    fn V4(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V4)
+    fn V4(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_V4, 0)
     }
 }
 
@@ -1074,17 +1074,17 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn r6(&self) -> Option<&'arena R6ContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token U5
     /// Returns `None` if there is no child corresponding to token U5
-    fn U5(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn U5(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token V5
     /// Returns `None` if there is no child corresponding to token V5
-    fn V5(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn V5(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> R5ContextAttrs<'input, 'arena, Tok> for R5Context<'input, 'arena, Tok>
@@ -1093,26 +1093,26 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r6(&self) -> Option<&'arena R6ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token U5
     /// Returns `None` if there is no child corresponding to token U5
-    fn U5(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U5)
+    fn U5(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_U5, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V5
     /// Returns `None` if there is no child corresponding to token V5
-    fn V5(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V5)
+    fn V5(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_V5, 0)
     }
 }
 
@@ -1165,17 +1165,17 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn r7(&self) -> Option<&'arena R7ContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token U6
     /// Returns `None` if there is no child corresponding to token U6
-    fn U6(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn U6(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token V6
     /// Returns `None` if there is no child corresponding to token V6
-    fn V6(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn V6(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> R6ContextAttrs<'input, 'arena, Tok> for R6Context<'input, 'arena, Tok>
@@ -1184,26 +1184,26 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r7(&self) -> Option<&'arena R7ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token U6
     /// Returns `None` if there is no child corresponding to token U6
-    fn U6(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U6)
+    fn U6(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_U6, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V6
     /// Returns `None` if there is no child corresponding to token V6
-    fn V6(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V6)
+    fn V6(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_V6, 0)
     }
 }
 
@@ -1256,17 +1256,17 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn r8(&self) -> Option<&'arena R8ContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token U7
     /// Returns `None` if there is no child corresponding to token U7
-    fn U7(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn U7(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token V7
     /// Returns `None` if there is no child corresponding to token V7
-    fn V7(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn V7(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> R7ContextAttrs<'input, 'arena, Tok> for R7Context<'input, 'arena, Tok>
@@ -1275,26 +1275,26 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r8(&self) -> Option<&'arena R8ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token U7
     /// Returns `None` if there is no child corresponding to token U7
-    fn U7(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U7)
+    fn U7(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_U7, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V7
     /// Returns `None` if there is no child corresponding to token V7
-    fn V7(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V7)
+    fn V7(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_V7, 0)
     }
 }
 
@@ -1347,17 +1347,17 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn r9(&self) -> Option<&'arena R9ContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token U8
     /// Returns `None` if there is no child corresponding to token U8
-    fn U8(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn U8(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token V8
     /// Returns `None` if there is no child corresponding to token V8
-    fn V8(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn V8(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> R8ContextAttrs<'input, 'arena, Tok> for R8Context<'input, 'arena, Tok>
@@ -1366,26 +1366,26 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r9(&self) -> Option<&'arena R9ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token U8
     /// Returns `None` if there is no child corresponding to token U8
-    fn U8(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U8)
+    fn U8(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_U8, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V8
     /// Returns `None` if there is no child corresponding to token V8
-    fn V8(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V8)
+    fn V8(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_V8, 0)
     }
 }
 
@@ -1438,17 +1438,17 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn r10(&self) -> Option<&'arena R10ContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token U9
     /// Returns `None` if there is no child corresponding to token U9
-    fn U9(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn U9(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token V9
     /// Returns `None` if there is no child corresponding to token V9
-    fn V9(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn V9(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> R9ContextAttrs<'input, 'arena, Tok> for R9Context<'input, 'arena, Tok>
@@ -1457,26 +1457,26 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_P)
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_P, 0)
     }
     fn r10(&self) -> Option<&'arena R10ContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token U9
     /// Returns `None` if there is no child corresponding to token U9
-    fn U9(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_U9)
+    fn U9(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_U9, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_Q)
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token V9
     /// Returns `None` if there is no child corresponding to token V9
-    fn V9(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_V9)
+    fn V9(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_V9, 0)
     }
 }
 
@@ -1529,7 +1529,7 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token W
     /// Returns `None` if there is no child corresponding to token W
-    fn W(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn W(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> R10ContextAttrs<'input, 'arena, Tok> for R10Context<'input, 'arena, Tok>
@@ -1538,8 +1538,8 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token W
     /// Returns `None` if there is no child corresponding to token W
-    fn W(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == WidenedTrust_W)
+    fn W(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(WidenedTrust_W, 0)
     }
 }
 

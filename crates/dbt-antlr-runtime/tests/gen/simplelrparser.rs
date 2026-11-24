@@ -194,7 +194,7 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn a(&self) -> Option<&'arena AContextAll<'input, 'arena, Tok>>;
 }
 
@@ -204,8 +204,8 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == SimpleLR_ID)
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(SimpleLR_ID, 0)
     }
     fn a(&self) -> Option<&'arena AContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)

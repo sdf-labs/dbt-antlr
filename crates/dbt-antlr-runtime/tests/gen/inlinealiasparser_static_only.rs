@@ -187,10 +187,10 @@ where
     fn query(&self) -> Option<&'arena QueryContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
-    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn EOF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn expr_all(&self) -> Vec<&'arena ExprContextAll<'input, 'arena, Tok>>;
     fn expr(&self, i: usize) -> Option<&'arena ExprContextAll<'input, 'arena, Tok>>;
 }
@@ -204,16 +204,16 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
-    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == InlineAlias_EOF)
+    fn EOF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(InlineAlias_EOF, 0)
     }
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == InlineAlias_ID)
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(InlineAlias_ID, 0)
     }
     fn expr_all(&self) -> Vec<&'arena ExprContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn expr(&self, i: usize) -> Option<&'arena ExprContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -295,7 +295,7 @@ where
     fn expr(&self, i: usize) -> Option<&'arena ExprContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> QueryContextAttrs<'input, 'arena, Tok> for QueryContext<'input, 'arena, Tok>
@@ -303,15 +303,15 @@ where
     'input: 'arena,
 {
     fn expr_all(&self) -> Vec<&'arena ExprContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn expr(&self, i: usize) -> Option<&'arena ExprContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == InlineAlias_ID)
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(InlineAlias_ID, 0)
     }
 }
 
@@ -517,15 +517,15 @@ where
 {
 	/// Retrieves first TerminalNode corresponding to token ID
 	/// Returns `None` if there is no child corresponding to token ID
-	fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+	fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input: 'arena, 'arena, Tok: Token + 'input> ColContextAttrs<'input, 'arena, Tok> for ColContext<'input, 'arena, Tok>
 {
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == InlineAlias_ID)
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(InlineAlias_ID, 0)
     }
 }
 #[derive(Debug)]
@@ -695,7 +695,7 @@ where
 impl<'input: 'arena, 'arena, Tok: Token + 'input> AndContextAttrs<'input, 'arena, Tok> for AndContext<'input, 'arena, Tok>
 {
     fn expr_all(&self) -> Vec<&'arena ExprContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn expr(&self, i: usize) -> Option<&'arena ExprContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -749,15 +749,15 @@ where
 {
 	/// Retrieves first TerminalNode corresponding to token INT
 	/// Returns `None` if there is no child corresponding to token INT
-	fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+	fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input: 'arena, 'arena, Tok: Token + 'input> NumContextAttrs<'input, 'arena, Tok> for NumContext<'input, 'arena, Tok>
 {
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == InlineAlias_INT)
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(InlineAlias_INT, 0)
     }
 }
 #[derive(Debug)]
@@ -813,7 +813,7 @@ where
 impl<'input: 'arena, 'arena, Tok: Token + 'input> EqContextAttrs<'input, 'arena, Tok> for EqContext<'input, 'arena, Tok>
 {
     fn expr_all(&self) -> Vec<&'arena ExprContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn expr(&self, i: usize) -> Option<&'arena ExprContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -1013,7 +1013,7 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> AliasContextAttrs<'input, 'arena, Tok> for AliasContext<'input, 'arena, Tok>
@@ -1022,8 +1022,8 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == InlineAlias_ID)
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(InlineAlias_ID, 0)
     }
 }
 
@@ -1065,7 +1065,7 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> TypeContextAttrs<'input, 'arena, Tok> for TypeContext<'input, 'arena, Tok>
@@ -1074,8 +1074,8 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == InlineAlias_ID)
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(InlineAlias_ID, 0)
     }
 }
 

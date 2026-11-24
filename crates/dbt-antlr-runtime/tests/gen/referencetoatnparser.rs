@@ -135,15 +135,15 @@ where
     Tok: Token + 'input,
 {
     /// Retrieves all `TerminalNode`s corresponding to token ATN in current rule
-    fn ATN_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn ATN_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token ATN, starting from 0.
     /// Returns `None` if number of children corresponding to token ATN is less than or equal to `i`.
-    fn ATN(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ATN(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
-    fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
-    fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> AContextAttrs<'input, 'arena, Tok> for AContext<'input, 'arena, Tok>
@@ -151,22 +151,22 @@ where
     'input: 'arena,
 {
     /// Retrieves all `TerminalNode`s corresponding to token ATN in current rule
-    fn ATN_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ReferenceToATN_ATN).collect()
+    fn ATN_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ReferenceToATN_ATN).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token ATN, starting from 0.
     /// Returns `None` if number of children corresponding to token ATN is less than or equal to `i`.
-    fn ATN(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ReferenceToATN_ATN).nth(i)
+    fn ATN(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ReferenceToATN_ATN, i)
     }
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
-    fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ReferenceToATN_ID).collect()
+    fn ID_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ReferenceToATN_ID).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
-    fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ReferenceToATN_ID).nth(i)
+    fn ID(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ReferenceToATN_ID, i)
     }
 }
 

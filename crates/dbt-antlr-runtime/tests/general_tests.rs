@@ -792,3 +792,74 @@ fn test_alt_number_and_rule_error_handling() {
         assert!(bail_parser.s().is_err());
     });
 }
+
+#[test]
+fn test_zero_alloc_getters_on_parsed_tree() {
+    use dbt_antlr_runtime::parser_rule_context::ParserRuleContext;
+    use dbt_antlr_runtime::tree::{NodeInner, Tree};
+    use gen::csvlexer::CSVLexer;
+    use gen::csvparser::{
+        CSVParser, CsvFileContextAttrs, FieldContextAll, FieldContextAttrs, RowContextAll,
+        RowContextAttrs,
+    };
+
+    Arena::with(|arena| {
+        let input = InputStream::new("h1,h2,h3\na,b,c\n1,2,3\n");
+        let lexer = CSVLexer::<_>::new(arena, input);
+        let tokens = CommonTokenStream::new(lexer);
+        let mut parser = CSVParser::new(arena, tokens);
+        let root = parser.csvFile().expect("csv parse succeeds");
+
+        // Generated rule list getter vs zero-alloc children_of_type iterator.
+        let rows_vec = root.row_all();
+        let rows_iter: Vec<_> = root.children_of_type::<RowContextAll<_>>().collect();
+        assert_eq!(rows_vec.len(), 2);
+        assert_eq!(rows_iter.len(), 2);
+        assert_eq!(
+            root.as_node()
+                .children_of_type::<RowContextAll<_>>()
+                .count(),
+            2
+        );
+
+        let first_row = root.row(0).expect("first row");
+        let fields_from_ctx: Vec<_> = first_row
+            .children_of_type::<FieldContextAll<_>>()
+            .map(|f| f.get_text())
+            .collect();
+        assert_eq!(fields_from_ctx, vec!["a", "b", "c"]);
+        assert_eq!(
+            first_row
+                .as_node()
+                .child_of_type::<FieldContextAll<_>>(1)
+                .unwrap()
+                .get_text(),
+            "b"
+        );
+
+        // TreeNode & BaseParserRuleContext token iterators + dyn ParserRuleContext.
+        let first_row_node = first_row.as_node();
+        assert_eq!(
+            first_row_node.get_children().len(),
+            first_row.get_child_count()
+        );
+        assert_eq!(first_row.iter_children().len(), first_row.get_child_count());
+        let commas_from_node: Vec<_> = first_row_node
+            .tokens_of_type(csvparser::CSV_T__0)
+            .map(|t| t.symbol.get_text())
+            .collect();
+        assert_eq!(commas_from_node, vec![",", ","]);
+
+        let dyn_row: &dyn ParserRuleContext<'_, '_> = first_row;
+        let commas_from_dyn: Vec<_> = dyn_row
+            .get_tokens(csvparser::CSV_T__0)
+            .map(|t| t.get_text())
+            .collect();
+        assert_eq!(commas_from_dyn, vec![",", ","]);
+
+        // Generated single-token getter on FieldContext.
+        let field0 = first_row.field(0).expect("first field");
+        assert_eq!(field0.TEXT().expect("TEXT token").symbol.get_text(), "a");
+        assert!(field0.STRING().is_none());
+    });
+}

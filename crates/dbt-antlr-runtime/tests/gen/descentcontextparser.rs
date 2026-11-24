@@ -162,16 +162,16 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
-    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn EOF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn d(&self) -> Option<&'arena DContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn g(&self) -> Option<&'arena GContextAll<'input, 'arena, Tok>>;
     fn k(&self) -> Option<&'arena KContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> SContextAttrs<'input, 'arena, Tok> for SContext<'input, 'arena, Tok>
@@ -180,16 +180,16 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
-    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == DescentContext_EOF)
+    fn EOF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(DescentContext_EOF, 0)
     }
     fn d(&self) -> Option<&'arena DContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == DescentContext_INT)
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(DescentContext_INT, 0)
     }
     fn g(&self) -> Option<&'arena GContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -199,8 +199,8 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == DescentContext_ID)
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(DescentContext_ID, 0)
     }
 }
 
@@ -320,13 +320,13 @@ where
 {
     fn r(&self) -> Option<&'arena RContextAll<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
-    fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
-    fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> DContextAttrs<'input, 'arena, Tok> for DContext<'input, 'arena, Tok>
@@ -337,18 +337,18 @@ where
         self.child_of_type(0)
     }
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
-    fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == DescentContext_ID).collect()
+    fn ID_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(DescentContext_ID).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
-    fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == DescentContext_ID).nth(i)
+    fn ID(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(DescentContext_ID, i)
     }
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == DescentContext_INT)
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(DescentContext_INT, 0)
     }
 }
 
@@ -411,10 +411,10 @@ where
 {
     fn r(&self) -> Option<&'arena RContextAll<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
-    fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
-    fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> RContextAttrs<'input, 'arena, Tok> for RContext<'input, 'arena, Tok>
@@ -425,13 +425,13 @@ where
         self.child_of_type(0)
     }
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
-    fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == DescentContext_ID).collect()
+    fn ID_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(DescentContext_ID).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
-    fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == DescentContext_ID).nth(i)
+    fn ID(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(DescentContext_ID, i)
     }
 }
 
@@ -496,13 +496,13 @@ where
 {
     fn h(&self) -> Option<&'arena HContextAll<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
-    fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
-    fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> GContextAttrs<'input, 'arena, Tok> for GContext<'input, 'arena, Tok>
@@ -513,18 +513,18 @@ where
         self.child_of_type(0)
     }
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
-    fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == DescentContext_ID).collect()
+    fn ID_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(DescentContext_ID).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
-    fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == DescentContext_ID).nth(i)
+    fn ID(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(DescentContext_ID, i)
     }
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == DescentContext_INT)
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(DescentContext_INT, 0)
     }
 }
 
@@ -588,10 +588,10 @@ where
     fn h(&self) -> Option<&'arena HContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> KContextAttrs<'input, 'arena, Tok> for KContext<'input, 'arena, Tok>
@@ -603,13 +603,13 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == DescentContext_ID)
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(DescentContext_ID, 0)
     }
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == DescentContext_INT)
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(DescentContext_INT, 0)
     }
 }
 
@@ -672,7 +672,7 @@ where
     fn e(&self) -> Option<&'arena EContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> HContextAttrs<'input, 'arena, Tok> for HContext<'input, 'arena, Tok>
@@ -687,8 +687,8 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == DescentContext_ID)
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(DescentContext_ID, 0)
     }
 }
 
@@ -752,10 +752,10 @@ where
     Tok: Token + 'input,
 {
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
-    fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
-    fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> EContextAttrs<'input, 'arena, Tok> for EContext<'input, 'arena, Tok>
@@ -763,13 +763,13 @@ where
     'input: 'arena,
 {
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
-    fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == DescentContext_ID).collect()
+    fn ID_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(DescentContext_ID).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
-    fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == DescentContext_ID).nth(i)
+    fn ID(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(DescentContext_ID, i)
     }
 }
 

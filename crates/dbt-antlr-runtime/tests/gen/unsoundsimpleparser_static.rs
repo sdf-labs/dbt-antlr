@@ -149,10 +149,10 @@ where
     fn a(&self) -> Option<&'arena AContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token X
     /// Returns `None` if there is no child corresponding to token X
-    fn X(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn X(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token Y
     /// Returns `None` if there is no child corresponding to token Y
-    fn Y(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn Y(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> TopContextAttrs<'input, 'arena, Tok> for TopContext<'input, 'arena, Tok>
@@ -164,13 +164,13 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token X
     /// Returns `None` if there is no child corresponding to token X
-    fn X(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_X)
+    fn X(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(UnsoundSimple_X, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Y
     /// Returns `None` if there is no child corresponding to token Y
-    fn Y(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_Y)
+    fn Y(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(UnsoundSimple_Y, 0)
     }
 }
 
@@ -238,29 +238,29 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token D
     /// Returns `None` if there is no child corresponding to token D
-    fn D(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn D(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token A
     /// Returns `None` if there is no child corresponding to token A
-    fn A(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn A(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token C
     /// Returns `None` if there is no child corresponding to token C
-    fn C(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn C(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token B
     /// Returns `None` if there is no child corresponding to token B
-    fn B(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn B(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn a(&self) -> Option<&'arena AContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token E
     /// Returns `None` if there is no child corresponding to token E
-    fn E(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn E(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token M
     /// Returns `None` if there is no child corresponding to token M
-    fn M(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn M(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> AContextAttrs<'input, 'arena, Tok> for AContext<'input, 'arena, Tok>
@@ -269,46 +269,46 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token D
     /// Returns `None` if there is no child corresponding to token D
-    fn D(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_D)
+    fn D(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(UnsoundSimple_D, 0)
     }
     /// Retrieves first TerminalNode corresponding to token A
     /// Returns `None` if there is no child corresponding to token A
-    fn A(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_A)
+    fn A(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(UnsoundSimple_A, 0)
     }
     /// Retrieves first TerminalNode corresponding to token C
     /// Returns `None` if there is no child corresponding to token C
-    fn C(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_C)
+    fn C(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(UnsoundSimple_C, 0)
     }
     /// Retrieves first TerminalNode corresponding to token B
     /// Returns `None` if there is no child corresponding to token B
-    fn B(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_B)
+    fn B(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(UnsoundSimple_B, 0)
     }
     /// Retrieves first TerminalNode corresponding to token P
     /// Returns `None` if there is no child corresponding to token P
-    fn P(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_P)
+    fn P(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(UnsoundSimple_P, 0)
     }
     fn a(&self) -> Option<&'arena AContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token E
     /// Returns `None` if there is no child corresponding to token E
-    fn E(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_E)
+    fn E(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(UnsoundSimple_E, 0)
     }
     /// Retrieves first TerminalNode corresponding to token Q
     /// Returns `None` if there is no child corresponding to token Q
-    fn Q(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_Q)
+    fn Q(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(UnsoundSimple_Q, 0)
     }
     /// Retrieves first TerminalNode corresponding to token M
     /// Returns `None` if there is no child corresponding to token M
-    fn M(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == UnsoundSimple_M)
+    fn M(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(UnsoundSimple_M, 0)
     }
 }
 

@@ -223,15 +223,15 @@ where
 {
 	/// Retrieves first TerminalNode corresponding to token ID
 	/// Returns `None` if there is no child corresponding to token ID
-	fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+	fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input: 'arena, 'arena, Tok: Token + 'input> CreateTableContextAttrs<'input, 'arena, Tok> for CreateTableContext<'input, 'arena, Tok>
 {
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == StaticDFA_ID)
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(StaticDFA_ID, 0)
     }
 }
 #[derive(Debug)]
@@ -282,15 +282,15 @@ where
 {
 	/// Retrieves first TerminalNode corresponding to token ID
 	/// Returns `None` if there is no child corresponding to token ID
-	fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+	fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input: 'arena, 'arena, Tok: Token + 'input> CreateViewContextAttrs<'input, 'arena, Tok> for CreateViewContext<'input, 'arena, Tok>
 {
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == StaticDFA_ID)
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(StaticDFA_ID, 0)
     }
 }
 #[derive(Debug)]
@@ -341,15 +341,15 @@ where
 {
 	/// Retrieves first TerminalNode corresponding to token ID
 	/// Returns `None` if there is no child corresponding to token ID
-	fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+	fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input: 'arena, 'arena, Tok: Token + 'input> DropTableContextAttrs<'input, 'arena, Tok> for DropTableContext<'input, 'arena, Tok>
 {
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == StaticDFA_ID)
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(StaticDFA_ID, 0)
     }
 }
 #[derive(Debug)]
@@ -684,10 +684,10 @@ where
     Tok: Token + 'input,
 {
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
-    fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
-    fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> NameContextAttrs<'input, 'arena, Tok> for NameContext<'input, 'arena, Tok>
@@ -695,13 +695,13 @@ where
     'input: 'arena,
 {
     /// Retrieves all `TerminalNode`s corresponding to token ID in current rule
-    fn ID_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == StaticDFA_ID).collect()
+    fn ID_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(StaticDFA_ID).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token ID, starting from 0.
     /// Returns `None` if number of children corresponding to token ID is less than or equal to `i`.
-    fn ID(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == StaticDFA_ID).nth(i)
+    fn ID(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(StaticDFA_ID, i)
     }
 }
 

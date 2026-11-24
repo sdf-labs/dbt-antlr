@@ -227,10 +227,10 @@ macro_rules! impl_tree {
                 }
             }
 
-            fn get_children<'a>(&'a self) -> Box<dyn Iterator<Item = &'arena Self> + 'a> {
+            fn get_children(&self) -> $crate::tree::TreeChildren<'_, 'arena, Self> {
                 match self {
                     $( $enum_name::$variant(inner) => inner.get_children(), )+
-                    _ => Box::new(std::iter::empty()) as Box<dyn Iterator<Item = &'arena Self>>,
+                    _ => $crate::tree::TreeChildren::empty(),
                 }
             }
 
@@ -571,7 +571,7 @@ macro_rules! impl_parser_rule_context {
 
             fn iter_children<'a>(
                 &'a self,
-            ) -> Box<dyn Iterator<Item = &'arena dyn ParserRuleContext<'input, 'arena>> + 'a>
+            ) -> $crate::parser_rule_context::ChildrenIter<'a, 'input, 'arena>
             where
                 'input: 'a,
                 'arena: 'a,
@@ -582,14 +582,21 @@ macro_rules! impl_parser_rule_context {
                 }
             }
 
-            fn get_token(&self, _ttype: i32, _pos: usize) -> Option<&dyn $crate::token::Token> {
+            fn get_token(&self, _ttype: i32, _pos: usize) -> Option<&'arena dyn $crate::token::Token> {
                 match self {
                     $( $enum_name::$ref_variant(inner) => ParserRuleContext::get_token(&**inner, _ttype, _pos), )*
                     $($( $enum_name::$inline_variant(inner) => ParserRuleContext::get_token(inner, _ttype, _pos), )+)?
                 }
             }
 
-            fn get_tokens(&self, _ttype: i32) -> Vec<&dyn $crate::token::Token> {
+            fn get_tokens<'a>(
+                &'a self,
+                _ttype: i32,
+            ) -> $crate::parser_rule_context::TokensIter<'a, 'input, 'arena>
+            where
+                'input: 'a,
+                'arena: 'a,
+            {
                 match self {
                     $( $enum_name::$ref_variant(inner) => ParserRuleContext::get_tokens(&**inner, _ttype), )*
                     $($( $enum_name::$inline_variant(inner) => ParserRuleContext::get_tokens(inner, _ttype), )+)?
@@ -653,7 +660,7 @@ macro_rules! impl_node_inner {
                 $crate::cast_unchecked!(self => mut TreeNode<'input, 'arena, $node_kind, Tok>)
             }
 
-            fn iter_child_nodes<'a>(&'a self) -> Box<dyn Iterator<Item = &'arena TreeNode<'input, 'arena, $node_kind, Tok>> + 'a> {
+            fn iter_child_nodes(&self) -> $crate::tree::TreeChildren<'_, 'arena, TreeNode<'input, 'arena, $node_kind, Tok>> {
                 match self {
                     $( $context_all::$variant(inner) => inner.get_children(), )+
                 }

@@ -1077,21 +1077,21 @@ let _old = std::mem::replace(dbt_antlr_runtime::cast_unchecked!(src => mut {{ cu
 {%- macro ContextTokenGetterDecl(t, parser) -%}
 /// Retrieves first TerminalNode corresponding to token {{ t.name }}
 /// Returns `None` if there is no child corresponding to token {{ t.name }}
-fn {{ t.name }}(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>{% if t.signature %};{% else %} {
-    self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == {{ parser.grammarName }}_{{ t.name }})
+fn {{ t.name }}(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>{% if t.signature %};{% else %} {
+    self.token_of_type({{ parser.grammarName }}_{{ t.name }}, 0)
 }{{ "" }}{% endif %}
 {%- endmacro -%}
 {%- macro ContextTokenListGetterDecl(t, parser) -%}
 /// Retrieves all `TerminalNode`s corresponding to token {{ t.name }} in current rule
-fn {{ t.name }}_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>{% if t.signature %};{% else %} {
-	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == {{ parser.grammarName }}_{{ t.name }}).collect()
+fn {{ t.name }}_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>{% if t.signature %};{% else %} {
+    self.tokens_of_type({{ parser.grammarName }}_{{ t.name }}).collect()
 }{{ "" }}{% endif %}
 {%- endmacro -%}
 {%- macro ContextTokenListIndexedGetterDecl(t, parser) -%}
 /// Retrieves 'i'th TerminalNode corresponding to token {{ t.name }}, starting from 0.
 /// Returns `None` if number of children corresponding to token {{ t.name }} is less than or equal to `i`.
-fn {{ t.name }}(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>{% if t.signature %};{% else %} {
-	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == {{ parser.grammarName }}_{{ t.name }}).nth(i)
+fn {{ t.name }}(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>{% if t.signature %};{% else %} {
+    self.token_of_type({{ parser.grammarName }}_{{ t.name }}, i)
 }{{ "" }}{% endif %}
 {%- endmacro -%}
 {%- macro ContextRuleGetterDecl(r, parser) -%}
@@ -1101,7 +1101,7 @@ fn {{ r.escapedName }}(&self) -> Option<&'arena {{ r.ctxName }}All<'input, 'aren
 {%- endmacro -%}
 {%- macro ContextRuleListGetterDecl(r, parser) -%}
 fn {{ r.name }}_all(&self) -> Vec<&'arena {{ r.ctxName }}All<'input, 'arena, Tok>>{% if r.signature %};{% else %} {
-    self.children_of_type()
+    self.children_of_type().collect()
 }{{ "" }}{% endif %}
 {%- endmacro -%}
 {%- macro ContextRuleListIndexedGetterDecl(r, parser) -%}

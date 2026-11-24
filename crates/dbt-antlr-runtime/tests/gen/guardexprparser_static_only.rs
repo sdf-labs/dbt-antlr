@@ -176,7 +176,7 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
-    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn EOF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn stmt_all(&self) -> Vec<&'arena StmtContextAll<'input, 'arena, Tok>>;
     fn stmt(&self, i: usize) -> Option<&'arena StmtContextAll<'input, 'arena, Tok>>;
 }
@@ -187,11 +187,11 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
-    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == GuardExpr_EOF)
+    fn EOF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(GuardExpr_EOF, 0)
     }
     fn stmt_all(&self) -> Vec<&'arena StmtContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn stmt(&self, i: usize) -> Option<&'arena StmtContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -305,7 +305,7 @@ where
 impl<'input: 'arena, 'arena, Tok: Token + 'input> AssignContextAttrs<'input, 'arena, Tok> for AssignContext<'input, 'arena, Tok>
 {
     fn expr_all(&self) -> Vec<&'arena ExprContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn expr(&self, i: usize) -> Option<&'arena ExprContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -645,7 +645,7 @@ where
 impl<'input: 'arena, 'arena, Tok: Token + 'input> OrContextAttrs<'input, 'arena, Tok> for OrContext<'input, 'arena, Tok>
 {
     fn expr_all(&self) -> Vec<&'arena ExprContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn expr(&self, i: usize) -> Option<&'arena ExprContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -704,7 +704,7 @@ where
 impl<'input: 'arena, 'arena, Tok: Token + 'input> AndContextAttrs<'input, 'arena, Tok> for AndContext<'input, 'arena, Tok>
 {
     fn expr_all(&self) -> Vec<&'arena ExprContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn expr(&self, i: usize) -> Option<&'arena ExprContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -1095,10 +1095,10 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn expr(&self) -> Option<&'arena ExprContextAll<'input, 'arena, Tok>>;
 }
 
@@ -1108,13 +1108,13 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == GuardExpr_ID)
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(GuardExpr_ID, 0)
     }
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == GuardExpr_INT)
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(GuardExpr_INT, 0)
     }
     fn expr(&self) -> Option<&'arena ExprContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)

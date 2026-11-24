@@ -172,7 +172,7 @@ where
     fn expr(&self) -> Option<&'arena ExprContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
-    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn EOF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> SContextAttrs<'input, 'arena, Tok> for SContext<'input, 'arena, Tok>
@@ -184,8 +184,8 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
-    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == VisitorCalc_EOF)
+    fn EOF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(VisitorCalc_EOF, 0)
     }
 }
 
@@ -285,29 +285,29 @@ where
 	fn expr(&self, i: usize) -> Option<&'arena ExprContextAll<'input, 'arena, Tok>>;
 	/// Retrieves first TerminalNode corresponding to token ADD
 	/// Returns `None` if there is no child corresponding to token ADD
-	fn ADD(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+	fn ADD(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 	/// Retrieves first TerminalNode corresponding to token SUB
 	/// Returns `None` if there is no child corresponding to token SUB
-	fn SUB(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+	fn SUB(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input: 'arena, 'arena, Tok: Token + 'input> AddContextAttrs<'input, 'arena, Tok> for AddContext<'input, 'arena, Tok>
 {
     fn expr_all(&self) -> Vec<&'arena ExprContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn expr(&self, i: usize) -> Option<&'arena ExprContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves first TerminalNode corresponding to token ADD
     /// Returns `None` if there is no child corresponding to token ADD
-    fn ADD(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == VisitorCalc_ADD)
+    fn ADD(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(VisitorCalc_ADD, 0)
     }
     /// Retrieves first TerminalNode corresponding to token SUB
     /// Returns `None` if there is no child corresponding to token SUB
-    fn SUB(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == VisitorCalc_SUB)
+    fn SUB(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(VisitorCalc_SUB, 0)
     }
 }
 #[derive(Debug)]
@@ -358,15 +358,15 @@ where
 {
 	/// Retrieves first TerminalNode corresponding to token INT
 	/// Returns `None` if there is no child corresponding to token INT
-	fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+	fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input: 'arena, 'arena, Tok: Token + 'input> NumberContextAttrs<'input, 'arena, Tok> for NumberContext<'input, 'arena, Tok>
 {
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == VisitorCalc_INT)
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(VisitorCalc_INT, 0)
     }
 }
 #[derive(Debug)]
@@ -419,29 +419,29 @@ where
 	fn expr(&self, i: usize) -> Option<&'arena ExprContextAll<'input, 'arena, Tok>>;
 	/// Retrieves first TerminalNode corresponding to token MUL
 	/// Returns `None` if there is no child corresponding to token MUL
-	fn MUL(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+	fn MUL(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 	/// Retrieves first TerminalNode corresponding to token DIV
 	/// Returns `None` if there is no child corresponding to token DIV
-	fn DIV(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+	fn DIV(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input: 'arena, 'arena, Tok: Token + 'input> MultiplyContextAttrs<'input, 'arena, Tok> for MultiplyContext<'input, 'arena, Tok>
 {
     fn expr_all(&self) -> Vec<&'arena ExprContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn expr(&self, i: usize) -> Option<&'arena ExprContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves first TerminalNode corresponding to token MUL
     /// Returns `None` if there is no child corresponding to token MUL
-    fn MUL(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == VisitorCalc_MUL)
+    fn MUL(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(VisitorCalc_MUL, 0)
     }
     /// Retrieves first TerminalNode corresponding to token DIV
     /// Returns `None` if there is no child corresponding to token DIV
-    fn DIV(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == VisitorCalc_DIV)
+    fn DIV(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(VisitorCalc_DIV, 0)
     }
 }
 #[derive(Debug)]

@@ -171,7 +171,7 @@ where
     fn p(&self) -> Option<&'arena PContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
-    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn EOF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> SContextAttrs<'input, 'arena, Tok> for SContext<'input, 'arena, Tok>
@@ -183,8 +183,8 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
-    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopObligation_EOF)
+    fn EOF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(LoopObligation_EOF, 0)
     }
 }
 
@@ -221,7 +221,7 @@ where
     fn p(&self, i: usize) -> Option<&'arena PContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> PContextAttrs<'input, 'arena, Tok> for PContext<'input, 'arena, Tok>
@@ -229,15 +229,15 @@ where
     'input: 'arena,
 {
     fn p_all(&self) -> Vec<&'arena PContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn p(&self, i: usize) -> Option<&'arena PContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == LoopObligation_ID)
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(LoopObligation_ID, 0)
     }
 }
 

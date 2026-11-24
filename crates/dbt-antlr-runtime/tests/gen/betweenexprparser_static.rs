@@ -195,7 +195,7 @@ where
     fn b(&self) -> Option<&'arena BContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
-    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn EOF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> SContextAttrs<'input, 'arena, Tok> for SContext<'input, 'arena, Tok>
@@ -207,8 +207,8 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
-    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == BetweenExpr_EOF)
+    fn EOF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(BetweenExpr_EOF, 0)
     }
 }
 
@@ -425,7 +425,7 @@ where
 impl<'input: 'arena, 'arena, Tok: Token + 'input> OrContextAttrs<'input, 'arena, Tok> for OrContext<'input, 'arena, Tok>
 {
     fn b_all(&self) -> Vec<&'arena BContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn b(&self, i: usize) -> Option<&'arena BContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -484,7 +484,7 @@ where
 impl<'input: 'arena, 'arena, Tok: Token + 'input> AndContextAttrs<'input, 'arena, Tok> for AndContext<'input, 'arena, Tok>
 {
     fn b_all(&self) -> Vec<&'arena BContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn b(&self, i: usize) -> Option<&'arena BContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -719,7 +719,7 @@ where
 impl<'input: 'arena, 'arena, Tok: Token + 'input> BetweenContextAttrs<'input, 'arena, Tok> for BetweenContext<'input, 'arena, Tok>
 {
     fn v_all(&self) -> Vec<&'arena VContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn v(&self, i: usize) -> Option<&'arena VContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -906,7 +906,7 @@ where
         self.child_of_type(0)
     }
     fn v_all(&self) -> Vec<&'arena VContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn v(&self, i: usize) -> Option<&'arena VContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -1022,10 +1022,10 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn b(&self) -> Option<&'arena BContextAll<'input, 'arena, Tok>>;
 }
 
@@ -1035,13 +1035,13 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token ID
     /// Returns `None` if there is no child corresponding to token ID
-    fn ID(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == BetweenExpr_ID)
+    fn ID(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(BetweenExpr_ID, 0)
     }
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == BetweenExpr_INT)
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(BetweenExpr_INT, 0)
     }
     fn b(&self) -> Option<&'arena BContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)

@@ -357,7 +357,7 @@ where
     fn rules(&self) -> Option<&'arena RulesContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
-    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn EOF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn prequelConstruct_all(&self) -> Vec<&'arena PrequelConstructContextAll<'input, 'arena, Tok>>;
     fn prequelConstruct(&self, i: usize) -> Option<&'arena PrequelConstructContextAll<'input, 'arena, Tok>>;
     fn modeSpec_all(&self) -> Vec<&'arena ModeSpecContextAll<'input, 'arena, Tok>>;
@@ -376,17 +376,17 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token EOF
     /// Returns `None` if there is no child corresponding to token EOF
-    fn EOF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_EOF)
+    fn EOF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_EOF, 0)
     }
     fn prequelConstruct_all(&self) -> Vec<&'arena PrequelConstructContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn prequelConstruct(&self, i: usize) -> Option<&'arena PrequelConstructContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     fn modeSpec_all(&self) -> Vec<&'arena ModeSpecContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn modeSpec(&self, i: usize) -> Option<&'arena ModeSpecContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -457,7 +457,7 @@ where
     fn identifier(&self) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token SEMI
     /// Returns `None` if there is no child corresponding to token SEMI
-    fn SEMI(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn SEMI(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> GrammarDeclContextAttrs<'input, 'arena, Tok> for GrammarDeclContext<'input, 'arena, Tok>
@@ -472,8 +472,8 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token SEMI
     /// Returns `None` if there is no child corresponding to token SEMI
-    fn SEMI(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_SEMI)
+    fn SEMI(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_SEMI, 0)
     }
 }
 
@@ -510,13 +510,13 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token LEXER
     /// Returns `None` if there is no child corresponding to token LEXER
-    fn LEXER(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn LEXER(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token GRAMMAR
     /// Returns `None` if there is no child corresponding to token GRAMMAR
-    fn GRAMMAR(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn GRAMMAR(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token PARSER
     /// Returns `None` if there is no child corresponding to token PARSER
-    fn PARSER(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn PARSER(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> GrammarTypeContextAttrs<'input, 'arena, Tok> for GrammarTypeContext<'input, 'arena, Tok>
@@ -525,18 +525,18 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token LEXER
     /// Returns `None` if there is no child corresponding to token LEXER
-    fn LEXER(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_LEXER)
+    fn LEXER(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_LEXER, 0)
     }
     /// Retrieves first TerminalNode corresponding to token GRAMMAR
     /// Returns `None` if there is no child corresponding to token GRAMMAR
-    fn GRAMMAR(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_GRAMMAR)
+    fn GRAMMAR(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_GRAMMAR, 0)
     }
     /// Retrieves first TerminalNode corresponding to token PARSER
     /// Returns `None` if there is no child corresponding to token PARSER
-    fn PARSER(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_PARSER)
+    fn PARSER(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_PARSER, 0)
     }
 }
 
@@ -676,17 +676,17 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token OPTIONS
     /// Returns `None` if there is no child corresponding to token OPTIONS
-    fn OPTIONS(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn OPTIONS(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token RBRACE
     /// Returns `None` if there is no child corresponding to token RBRACE
-    fn RBRACE(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn RBRACE(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn option_all(&self) -> Vec<&'arena OptionContextAll<'input, 'arena, Tok>>;
     fn option(&self, i: usize) -> Option<&'arena OptionContextAll<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token SEMI in current rule
-    fn SEMI_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn SEMI_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token SEMI, starting from 0.
     /// Returns `None` if number of children corresponding to token SEMI is less than or equal to `i`.
-    fn SEMI(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn SEMI(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> OptionsSpecContextAttrs<'input, 'arena, Tok> for OptionsSpecContext<'input, 'arena, Tok>
@@ -695,28 +695,28 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token OPTIONS
     /// Returns `None` if there is no child corresponding to token OPTIONS
-    fn OPTIONS(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_OPTIONS)
+    fn OPTIONS(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_OPTIONS, 0)
     }
     /// Retrieves first TerminalNode corresponding to token RBRACE
     /// Returns `None` if there is no child corresponding to token RBRACE
-    fn RBRACE(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_RBRACE)
+    fn RBRACE(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_RBRACE, 0)
     }
     fn option_all(&self) -> Vec<&'arena OptionContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn option(&self, i: usize) -> Option<&'arena OptionContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves all `TerminalNode`s corresponding to token SEMI in current rule
-    fn SEMI_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_SEMI).collect()
+    fn SEMI_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ANTLRv4Parser_SEMI).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token SEMI, starting from 0.
     /// Returns `None` if number of children corresponding to token SEMI is less than or equal to `i`.
-    fn SEMI(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_SEMI).nth(i)
+    fn SEMI(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_SEMI, i)
     }
 }
 
@@ -769,7 +769,7 @@ where
     fn identifier(&self) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token ASSIGN
     /// Returns `None` if there is no child corresponding to token ASSIGN
-    fn ASSIGN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ASSIGN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn optionValue(&self) -> Option<&'arena OptionValueContextAll<'input, 'arena, Tok>>;
 }
 
@@ -782,8 +782,8 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token ASSIGN
     /// Returns `None` if there is no child corresponding to token ASSIGN
-    fn ASSIGN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_ASSIGN)
+    fn ASSIGN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_ASSIGN, 0)
     }
     fn optionValue(&self) -> Option<&'arena OptionValueContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -824,17 +824,17 @@ where
     fn identifier_all(&self) -> Vec<&'arena IdentifierContextAll<'input, 'arena, Tok>>;
     fn identifier(&self, i: usize) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token DOT in current rule
-    fn DOT_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn DOT_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token DOT, starting from 0.
     /// Returns `None` if number of children corresponding to token DOT is less than or equal to `i`.
-    fn DOT(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn DOT(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token STRING_LITERAL
     /// Returns `None` if there is no child corresponding to token STRING_LITERAL
-    fn STRING_LITERAL(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn STRING_LITERAL(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn actionBlock(&self) -> Option<&'arena ActionBlockContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> OptionValueContextAttrs<'input, 'arena, Tok> for OptionValueContext<'input, 'arena, Tok>
@@ -842,32 +842,32 @@ where
     'input: 'arena,
 {
     fn identifier_all(&self) -> Vec<&'arena IdentifierContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn identifier(&self, i: usize) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves all `TerminalNode`s corresponding to token DOT in current rule
-    fn DOT_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_DOT).collect()
+    fn DOT_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ANTLRv4Parser_DOT).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token DOT, starting from 0.
     /// Returns `None` if number of children corresponding to token DOT is less than or equal to `i`.
-    fn DOT(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_DOT).nth(i)
+    fn DOT(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_DOT, i)
     }
     /// Retrieves first TerminalNode corresponding to token STRING_LITERAL
     /// Returns `None` if there is no child corresponding to token STRING_LITERAL
-    fn STRING_LITERAL(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_STRING_LITERAL)
+    fn STRING_LITERAL(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_STRING_LITERAL, 0)
     }
     fn actionBlock(&self) -> Option<&'arena ActionBlockContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_INT)
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_INT, 0)
     }
 }
 
@@ -941,17 +941,17 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token IMPORT
     /// Returns `None` if there is no child corresponding to token IMPORT
-    fn IMPORT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn IMPORT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn delegateGrammar_all(&self) -> Vec<&'arena DelegateGrammarContextAll<'input, 'arena, Tok>>;
     fn delegateGrammar(&self, i: usize) -> Option<&'arena DelegateGrammarContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token SEMI
     /// Returns `None` if there is no child corresponding to token SEMI
-    fn SEMI(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn SEMI(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token COMMA in current rule
-    fn COMMA_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn COMMA_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token COMMA, starting from 0.
     /// Returns `None` if number of children corresponding to token COMMA is less than or equal to `i`.
-    fn COMMA(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn COMMA(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> DelegateGrammarsContextAttrs<'input, 'arena, Tok> for DelegateGrammarsContext<'input, 'arena, Tok>
@@ -960,28 +960,28 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token IMPORT
     /// Returns `None` if there is no child corresponding to token IMPORT
-    fn IMPORT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_IMPORT)
+    fn IMPORT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_IMPORT, 0)
     }
     fn delegateGrammar_all(&self) -> Vec<&'arena DelegateGrammarContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn delegateGrammar(&self, i: usize) -> Option<&'arena DelegateGrammarContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves first TerminalNode corresponding to token SEMI
     /// Returns `None` if there is no child corresponding to token SEMI
-    fn SEMI(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_SEMI)
+    fn SEMI(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_SEMI, 0)
     }
     /// Retrieves all `TerminalNode`s corresponding to token COMMA in current rule
-    fn COMMA_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_COMMA).collect()
+    fn COMMA_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ANTLRv4Parser_COMMA).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token COMMA, starting from 0.
     /// Returns `None` if number of children corresponding to token COMMA is less than or equal to `i`.
-    fn COMMA(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_COMMA).nth(i)
+    fn COMMA(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_COMMA, i)
     }
 }
 
@@ -1037,7 +1037,7 @@ where
     fn identifier(&self, i: usize) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token ASSIGN
     /// Returns `None` if there is no child corresponding to token ASSIGN
-    fn ASSIGN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ASSIGN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> DelegateGrammarContextAttrs<'input, 'arena, Tok> for DelegateGrammarContext<'input, 'arena, Tok>
@@ -1045,15 +1045,15 @@ where
     'input: 'arena,
 {
     fn identifier_all(&self) -> Vec<&'arena IdentifierContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn identifier(&self, i: usize) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves first TerminalNode corresponding to token ASSIGN
     /// Returns `None` if there is no child corresponding to token ASSIGN
-    fn ASSIGN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_ASSIGN)
+    fn ASSIGN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_ASSIGN, 0)
     }
 }
 
@@ -1106,10 +1106,10 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token TOKENS
     /// Returns `None` if there is no child corresponding to token TOKENS
-    fn TOKENS(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn TOKENS(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token RBRACE
     /// Returns `None` if there is no child corresponding to token RBRACE
-    fn RBRACE(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn RBRACE(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn idList(&self) -> Option<&'arena IdListContextAll<'input, 'arena, Tok>>;
 }
 
@@ -1119,13 +1119,13 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token TOKENS
     /// Returns `None` if there is no child corresponding to token TOKENS
-    fn TOKENS(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_TOKENS)
+    fn TOKENS(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_TOKENS, 0)
     }
     /// Retrieves first TerminalNode corresponding to token RBRACE
     /// Returns `None` if there is no child corresponding to token RBRACE
-    fn RBRACE(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_RBRACE)
+    fn RBRACE(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_RBRACE, 0)
     }
     fn idList(&self) -> Option<&'arena IdListContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -1174,10 +1174,10 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token CHANNELS
     /// Returns `None` if there is no child corresponding to token CHANNELS
-    fn CHANNELS(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn CHANNELS(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token RBRACE
     /// Returns `None` if there is no child corresponding to token RBRACE
-    fn RBRACE(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn RBRACE(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn idList(&self) -> Option<&'arena IdListContextAll<'input, 'arena, Tok>>;
 }
 
@@ -1187,13 +1187,13 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token CHANNELS
     /// Returns `None` if there is no child corresponding to token CHANNELS
-    fn CHANNELS(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_CHANNELS)
+    fn CHANNELS(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_CHANNELS, 0)
     }
     /// Retrieves first TerminalNode corresponding to token RBRACE
     /// Returns `None` if there is no child corresponding to token RBRACE
-    fn RBRACE(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_RBRACE)
+    fn RBRACE(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_RBRACE, 0)
     }
     fn idList(&self) -> Option<&'arena IdListContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -1243,10 +1243,10 @@ where
     fn identifier_all(&self) -> Vec<&'arena IdentifierContextAll<'input, 'arena, Tok>>;
     fn identifier(&self, i: usize) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token COMMA in current rule
-    fn COMMA_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn COMMA_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token COMMA, starting from 0.
     /// Returns `None` if number of children corresponding to token COMMA is less than or equal to `i`.
-    fn COMMA(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn COMMA(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> IdListContextAttrs<'input, 'arena, Tok> for IdListContext<'input, 'arena, Tok>
@@ -1254,19 +1254,19 @@ where
     'input: 'arena,
 {
     fn identifier_all(&self) -> Vec<&'arena IdentifierContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn identifier(&self, i: usize) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves all `TerminalNode`s corresponding to token COMMA in current rule
-    fn COMMA_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_COMMA).collect()
+    fn COMMA_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ANTLRv4Parser_COMMA).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token COMMA, starting from 0.
     /// Returns `None` if number of children corresponding to token COMMA is less than or equal to `i`.
-    fn COMMA(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_COMMA).nth(i)
+    fn COMMA(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_COMMA, i)
     }
 }
 
@@ -1329,13 +1329,13 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token AT
     /// Returns `None` if there is no child corresponding to token AT
-    fn AT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn AT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn identifier(&self) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>>;
     fn actionBlock(&self) -> Option<&'arena ActionBlockContextAll<'input, 'arena, Tok>>;
     fn actionScopeName(&self) -> Option<&'arena ActionScopeNameContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token COLONCOLON
     /// Returns `None` if there is no child corresponding to token COLONCOLON
-    fn COLONCOLON(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn COLONCOLON(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> Action_ContextAttrs<'input, 'arena, Tok> for Action_Context<'input, 'arena, Tok>
@@ -1344,8 +1344,8 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token AT
     /// Returns `None` if there is no child corresponding to token AT
-    fn AT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_AT)
+    fn AT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_AT, 0)
     }
     fn identifier(&self) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -1358,8 +1358,8 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token COLONCOLON
     /// Returns `None` if there is no child corresponding to token COLONCOLON
-    fn COLONCOLON(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_COLONCOLON)
+    fn COLONCOLON(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_COLONCOLON, 0)
     }
 }
 
@@ -1411,10 +1411,10 @@ where
     fn identifier(&self) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token LEXER
     /// Returns `None` if there is no child corresponding to token LEXER
-    fn LEXER(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn LEXER(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token PARSER
     /// Returns `None` if there is no child corresponding to token PARSER
-    fn PARSER(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn PARSER(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> ActionScopeNameContextAttrs<'input, 'arena, Tok> for ActionScopeNameContext<'input, 'arena, Tok>
@@ -1426,13 +1426,13 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token LEXER
     /// Returns `None` if there is no child corresponding to token LEXER
-    fn LEXER(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_LEXER)
+    fn LEXER(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_LEXER, 0)
     }
     /// Retrieves first TerminalNode corresponding to token PARSER
     /// Returns `None` if there is no child corresponding to token PARSER
-    fn PARSER(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_PARSER)
+    fn PARSER(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_PARSER, 0)
     }
 }
 
@@ -1483,7 +1483,7 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token ACTION
     /// Returns `None` if there is no child corresponding to token ACTION
-    fn ACTION(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ACTION(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> ActionBlockContextAttrs<'input, 'arena, Tok> for ActionBlockContext<'input, 'arena, Tok>
@@ -1492,8 +1492,8 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token ACTION
     /// Returns `None` if there is no child corresponding to token ACTION
-    fn ACTION(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_ACTION)
+    fn ACTION(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_ACTION, 0)
     }
 }
 
@@ -1526,15 +1526,15 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token BEGIN_ARGUMENT
     /// Returns `None` if there is no child corresponding to token BEGIN_ARGUMENT
-    fn BEGIN_ARGUMENT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn BEGIN_ARGUMENT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token END_ARGUMENT
     /// Returns `None` if there is no child corresponding to token END_ARGUMENT
-    fn END_ARGUMENT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn END_ARGUMENT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token ARGUMENT_CONTENT in current rule
-    fn ARGUMENT_CONTENT_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn ARGUMENT_CONTENT_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token ARGUMENT_CONTENT, starting from 0.
     /// Returns `None` if number of children corresponding to token ARGUMENT_CONTENT is less than or equal to `i`.
-    fn ARGUMENT_CONTENT(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ARGUMENT_CONTENT(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> ArgActionBlockContextAttrs<'input, 'arena, Tok> for ArgActionBlockContext<'input, 'arena, Tok>
@@ -1543,22 +1543,22 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token BEGIN_ARGUMENT
     /// Returns `None` if there is no child corresponding to token BEGIN_ARGUMENT
-    fn BEGIN_ARGUMENT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_BEGIN_ARGUMENT)
+    fn BEGIN_ARGUMENT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_BEGIN_ARGUMENT, 0)
     }
     /// Retrieves first TerminalNode corresponding to token END_ARGUMENT
     /// Returns `None` if there is no child corresponding to token END_ARGUMENT
-    fn END_ARGUMENT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_END_ARGUMENT)
+    fn END_ARGUMENT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_END_ARGUMENT, 0)
     }
     /// Retrieves all `TerminalNode`s corresponding to token ARGUMENT_CONTENT in current rule
-    fn ARGUMENT_CONTENT_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_ARGUMENT_CONTENT).collect()
+    fn ARGUMENT_CONTENT_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ANTLRv4Parser_ARGUMENT_CONTENT).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token ARGUMENT_CONTENT, starting from 0.
     /// Returns `None` if number of children corresponding to token ARGUMENT_CONTENT is less than or equal to `i`.
-    fn ARGUMENT_CONTENT(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_ARGUMENT_CONTENT).nth(i)
+    fn ARGUMENT_CONTENT(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_ARGUMENT_CONTENT, i)
     }
 }
 
@@ -1610,11 +1610,11 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token MODE
     /// Returns `None` if there is no child corresponding to token MODE
-    fn MODE(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn MODE(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn identifier(&self) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token SEMI
     /// Returns `None` if there is no child corresponding to token SEMI
-    fn SEMI(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn SEMI(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn lexerRuleSpec_all(&self) -> Vec<&'arena LexerRuleSpecContextAll<'input, 'arena, Tok>>;
     fn lexerRuleSpec(&self, i: usize) -> Option<&'arena LexerRuleSpecContextAll<'input, 'arena, Tok>>;
 }
@@ -1625,19 +1625,19 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token MODE
     /// Returns `None` if there is no child corresponding to token MODE
-    fn MODE(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_MODE)
+    fn MODE(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_MODE, 0)
     }
     fn identifier(&self) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token SEMI
     /// Returns `None` if there is no child corresponding to token SEMI
-    fn SEMI(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_SEMI)
+    fn SEMI(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_SEMI, 0)
     }
     fn lexerRuleSpec_all(&self) -> Vec<&'arena LexerRuleSpecContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn lexerRuleSpec(&self, i: usize) -> Option<&'arena LexerRuleSpecContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -1699,7 +1699,7 @@ where
     'input: 'arena,
 {
     fn ruleSpec_all(&self) -> Vec<&'arena RuleSpecContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn ruleSpec(&self, i: usize) -> Option<&'arena RuleSpecContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -1807,14 +1807,14 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token RULE_REF
     /// Returns `None` if there is no child corresponding to token RULE_REF
-    fn RULE_REF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn RULE_REF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token COLON
     /// Returns `None` if there is no child corresponding to token COLON
-    fn COLON(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn COLON(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn ruleBlock(&self) -> Option<&'arena RuleBlockContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token SEMI
     /// Returns `None` if there is no child corresponding to token SEMI
-    fn SEMI(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn SEMI(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn exceptionGroup(&self) -> Option<&'arena ExceptionGroupContextAll<'input, 'arena, Tok>>;
     fn ruleModifiers(&self) -> Option<&'arena RuleModifiersContextAll<'input, 'arena, Tok>>;
     fn argActionBlock(&self) -> Option<&'arena ArgActionBlockContextAll<'input, 'arena, Tok>>;
@@ -1831,21 +1831,21 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token RULE_REF
     /// Returns `None` if there is no child corresponding to token RULE_REF
-    fn RULE_REF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_RULE_REF)
+    fn RULE_REF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_RULE_REF, 0)
     }
     /// Retrieves first TerminalNode corresponding to token COLON
     /// Returns `None` if there is no child corresponding to token COLON
-    fn COLON(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_COLON)
+    fn COLON(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_COLON, 0)
     }
     fn ruleBlock(&self) -> Option<&'arena RuleBlockContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token SEMI
     /// Returns `None` if there is no child corresponding to token SEMI
-    fn SEMI(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_SEMI)
+    fn SEMI(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_SEMI, 0)
     }
     fn exceptionGroup(&self) -> Option<&'arena ExceptionGroupContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -1866,7 +1866,7 @@ where
         self.child_of_type(0)
     }
     fn rulePrequel_all(&self) -> Vec<&'arena RulePrequelContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn rulePrequel(&self, i: usize) -> Option<&'arena RulePrequelContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -1983,7 +1983,7 @@ where
     'input: 'arena,
 {
     fn exceptionHandler_all(&self) -> Vec<&'arena ExceptionHandlerContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn exceptionHandler(&self, i: usize) -> Option<&'arena ExceptionHandlerContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -2045,7 +2045,7 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token CATCH
     /// Returns `None` if there is no child corresponding to token CATCH
-    fn CATCH(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn CATCH(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn argActionBlock(&self) -> Option<&'arena ArgActionBlockContextAll<'input, 'arena, Tok>>;
     fn actionBlock(&self) -> Option<&'arena ActionBlockContextAll<'input, 'arena, Tok>>;
 }
@@ -2056,8 +2056,8 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token CATCH
     /// Returns `None` if there is no child corresponding to token CATCH
-    fn CATCH(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_CATCH)
+    fn CATCH(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_CATCH, 0)
     }
     fn argActionBlock(&self) -> Option<&'arena ArgActionBlockContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -2100,7 +2100,7 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token FINALLY
     /// Returns `None` if there is no child corresponding to token FINALLY
-    fn FINALLY(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn FINALLY(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn actionBlock(&self) -> Option<&'arena ActionBlockContextAll<'input, 'arena, Tok>>;
 }
 
@@ -2110,8 +2110,8 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token FINALLY
     /// Returns `None` if there is no child corresponding to token FINALLY
-    fn FINALLY(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_FINALLY)
+    fn FINALLY(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_FINALLY, 0)
     }
     fn actionBlock(&self) -> Option<&'arena ActionBlockContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -2204,7 +2204,7 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token RETURNS
     /// Returns `None` if there is no child corresponding to token RETURNS
-    fn RETURNS(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn RETURNS(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn argActionBlock(&self) -> Option<&'arena ArgActionBlockContextAll<'input, 'arena, Tok>>;
 }
 
@@ -2214,8 +2214,8 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token RETURNS
     /// Returns `None` if there is no child corresponding to token RETURNS
-    fn RETURNS(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_RETURNS)
+    fn RETURNS(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_RETURNS, 0)
     }
     fn argActionBlock(&self) -> Option<&'arena ArgActionBlockContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -2253,14 +2253,14 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token THROWS
     /// Returns `None` if there is no child corresponding to token THROWS
-    fn THROWS(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn THROWS(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn qualifiedIdentifier_all(&self) -> Vec<&'arena QualifiedIdentifierContextAll<'input, 'arena, Tok>>;
     fn qualifiedIdentifier(&self, i: usize) -> Option<&'arena QualifiedIdentifierContextAll<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token COMMA in current rule
-    fn COMMA_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn COMMA_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token COMMA, starting from 0.
     /// Returns `None` if number of children corresponding to token COMMA is less than or equal to `i`.
-    fn COMMA(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn COMMA(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> ThrowsSpecContextAttrs<'input, 'arena, Tok> for ThrowsSpecContext<'input, 'arena, Tok>
@@ -2269,23 +2269,23 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token THROWS
     /// Returns `None` if there is no child corresponding to token THROWS
-    fn THROWS(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_THROWS)
+    fn THROWS(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_THROWS, 0)
     }
     fn qualifiedIdentifier_all(&self) -> Vec<&'arena QualifiedIdentifierContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn qualifiedIdentifier(&self, i: usize) -> Option<&'arena QualifiedIdentifierContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves all `TerminalNode`s corresponding to token COMMA in current rule
-    fn COMMA_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_COMMA).collect()
+    fn COMMA_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ANTLRv4Parser_COMMA).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token COMMA, starting from 0.
     /// Returns `None` if number of children corresponding to token COMMA is less than or equal to `i`.
-    fn COMMA(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_COMMA).nth(i)
+    fn COMMA(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_COMMA, i)
     }
 }
 
@@ -2337,7 +2337,7 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token LOCALS
     /// Returns `None` if there is no child corresponding to token LOCALS
-    fn LOCALS(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn LOCALS(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn argActionBlock(&self) -> Option<&'arena ArgActionBlockContextAll<'input, 'arena, Tok>>;
 }
 
@@ -2347,8 +2347,8 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token LOCALS
     /// Returns `None` if there is no child corresponding to token LOCALS
-    fn LOCALS(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_LOCALS)
+    fn LOCALS(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_LOCALS, 0)
     }
     fn argActionBlock(&self) -> Option<&'arena ArgActionBlockContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -2386,7 +2386,7 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token AT
     /// Returns `None` if there is no child corresponding to token AT
-    fn AT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn AT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn identifier(&self) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>>;
     fn actionBlock(&self) -> Option<&'arena ActionBlockContextAll<'input, 'arena, Tok>>;
 }
@@ -2397,8 +2397,8 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token AT
     /// Returns `None` if there is no child corresponding to token AT
-    fn AT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_AT)
+    fn AT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_AT, 0)
     }
     fn identifier(&self) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -2448,7 +2448,7 @@ where
     'input: 'arena,
 {
     fn ruleModifier_all(&self) -> Vec<&'arena RuleModifierContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn ruleModifier(&self, i: usize) -> Option<&'arena RuleModifierContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -2498,16 +2498,16 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token PUBLIC
     /// Returns `None` if there is no child corresponding to token PUBLIC
-    fn PUBLIC(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn PUBLIC(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token PRIVATE
     /// Returns `None` if there is no child corresponding to token PRIVATE
-    fn PRIVATE(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn PRIVATE(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token PROTECTED
     /// Returns `None` if there is no child corresponding to token PROTECTED
-    fn PROTECTED(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn PROTECTED(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token FRAGMENT
     /// Returns `None` if there is no child corresponding to token FRAGMENT
-    fn FRAGMENT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn FRAGMENT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> RuleModifierContextAttrs<'input, 'arena, Tok> for RuleModifierContext<'input, 'arena, Tok>
@@ -2516,23 +2516,23 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token PUBLIC
     /// Returns `None` if there is no child corresponding to token PUBLIC
-    fn PUBLIC(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_PUBLIC)
+    fn PUBLIC(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_PUBLIC, 0)
     }
     /// Retrieves first TerminalNode corresponding to token PRIVATE
     /// Returns `None` if there is no child corresponding to token PRIVATE
-    fn PRIVATE(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_PRIVATE)
+    fn PRIVATE(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_PRIVATE, 0)
     }
     /// Retrieves first TerminalNode corresponding to token PROTECTED
     /// Returns `None` if there is no child corresponding to token PROTECTED
-    fn PROTECTED(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_PROTECTED)
+    fn PROTECTED(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_PROTECTED, 0)
     }
     /// Retrieves first TerminalNode corresponding to token FRAGMENT
     /// Returns `None` if there is no child corresponding to token FRAGMENT
-    fn FRAGMENT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_FRAGMENT)
+    fn FRAGMENT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_FRAGMENT, 0)
     }
 }
 
@@ -2614,10 +2614,10 @@ where
     fn labeledAlt_all(&self) -> Vec<&'arena LabeledAltContextAll<'input, 'arena, Tok>>;
     fn labeledAlt(&self, i: usize) -> Option<&'arena LabeledAltContextAll<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token OR in current rule
-    fn OR_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn OR_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token OR, starting from 0.
     /// Returns `None` if number of children corresponding to token OR is less than or equal to `i`.
-    fn OR(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn OR(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> RuleAltListContextAttrs<'input, 'arena, Tok> for RuleAltListContext<'input, 'arena, Tok>
@@ -2625,19 +2625,19 @@ where
     'input: 'arena,
 {
     fn labeledAlt_all(&self) -> Vec<&'arena LabeledAltContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn labeledAlt(&self, i: usize) -> Option<&'arena LabeledAltContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves all `TerminalNode`s corresponding to token OR in current rule
-    fn OR_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_OR).collect()
+    fn OR_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ANTLRv4Parser_OR).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token OR, starting from 0.
     /// Returns `None` if number of children corresponding to token OR is less than or equal to `i`.
-    fn OR(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_OR).nth(i)
+    fn OR(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_OR, i)
     }
 }
 
@@ -2688,7 +2688,7 @@ where
     fn alternative(&self) -> Option<&'arena AlternativeContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token POUND
     /// Returns `None` if there is no child corresponding to token POUND
-    fn POUND(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn POUND(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn identifier(&self) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>>;
 }
 
@@ -2701,8 +2701,8 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token POUND
     /// Returns `None` if there is no child corresponding to token POUND
-    fn POUND(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_POUND)
+    fn POUND(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_POUND, 0)
     }
     fn identifier(&self) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -2751,17 +2751,17 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token TOKEN_REF
     /// Returns `None` if there is no child corresponding to token TOKEN_REF
-    fn TOKEN_REF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn TOKEN_REF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token COLON
     /// Returns `None` if there is no child corresponding to token COLON
-    fn COLON(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn COLON(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn lexerRuleBlock(&self) -> Option<&'arena LexerRuleBlockContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token SEMI
     /// Returns `None` if there is no child corresponding to token SEMI
-    fn SEMI(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn SEMI(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token FRAGMENT
     /// Returns `None` if there is no child corresponding to token FRAGMENT
-    fn FRAGMENT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn FRAGMENT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn optionsSpec(&self) -> Option<&'arena OptionsSpecContextAll<'input, 'arena, Tok>>;
 }
 
@@ -2771,26 +2771,26 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token TOKEN_REF
     /// Returns `None` if there is no child corresponding to token TOKEN_REF
-    fn TOKEN_REF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_TOKEN_REF)
+    fn TOKEN_REF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_TOKEN_REF, 0)
     }
     /// Retrieves first TerminalNode corresponding to token COLON
     /// Returns `None` if there is no child corresponding to token COLON
-    fn COLON(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_COLON)
+    fn COLON(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_COLON, 0)
     }
     fn lexerRuleBlock(&self) -> Option<&'arena LexerRuleBlockContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token SEMI
     /// Returns `None` if there is no child corresponding to token SEMI
-    fn SEMI(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_SEMI)
+    fn SEMI(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_SEMI, 0)
     }
     /// Retrieves first TerminalNode corresponding to token FRAGMENT
     /// Returns `None` if there is no child corresponding to token FRAGMENT
-    fn FRAGMENT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_FRAGMENT)
+    fn FRAGMENT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_FRAGMENT, 0)
     }
     fn optionsSpec(&self) -> Option<&'arena OptionsSpecContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -2893,10 +2893,10 @@ where
     fn lexerAlt_all(&self) -> Vec<&'arena LexerAltContextAll<'input, 'arena, Tok>>;
     fn lexerAlt(&self, i: usize) -> Option<&'arena LexerAltContextAll<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token OR in current rule
-    fn OR_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn OR_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token OR, starting from 0.
     /// Returns `None` if number of children corresponding to token OR is less than or equal to `i`.
-    fn OR(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn OR(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> LexerAltListContextAttrs<'input, 'arena, Tok> for LexerAltListContext<'input, 'arena, Tok>
@@ -2904,19 +2904,19 @@ where
     'input: 'arena,
 {
     fn lexerAlt_all(&self) -> Vec<&'arena LexerAltContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn lexerAlt(&self, i: usize) -> Option<&'arena LexerAltContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves all `TerminalNode`s corresponding to token OR in current rule
-    fn OR_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_OR).collect()
+    fn OR_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ANTLRv4Parser_OR).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token OR, starting from 0.
     /// Returns `None` if number of children corresponding to token OR is less than or equal to `i`.
-    fn OR(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_OR).nth(i)
+    fn OR(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_OR, i)
     }
 }
 
@@ -3041,7 +3041,7 @@ where
     'input: 'arena,
 {
     fn lexerElement_all(&self) -> Vec<&'arena LexerElementContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn lexerElement(&self, i: usize) -> Option<&'arena LexerElementContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -3106,7 +3106,7 @@ where
     fn actionBlock(&self) -> Option<&'arena ActionBlockContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token QUESTION
     /// Returns `None` if there is no child corresponding to token QUESTION
-    fn QUESTION(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn QUESTION(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> LexerElementContextAttrs<'input, 'arena, Tok> for LexerElementContext<'input, 'arena, Tok>
@@ -3127,8 +3127,8 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token QUESTION
     /// Returns `None` if there is no child corresponding to token QUESTION
-    fn QUESTION(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_QUESTION)
+    fn QUESTION(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_QUESTION, 0)
     }
 }
 
@@ -3211,11 +3211,11 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token LPAREN
     /// Returns `None` if there is no child corresponding to token LPAREN
-    fn LPAREN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn LPAREN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn lexerAltList(&self) -> Option<&'arena LexerAltListContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token RPAREN
     /// Returns `None` if there is no child corresponding to token RPAREN
-    fn RPAREN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn RPAREN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> LexerBlockContextAttrs<'input, 'arena, Tok> for LexerBlockContext<'input, 'arena, Tok>
@@ -3224,16 +3224,16 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token LPAREN
     /// Returns `None` if there is no child corresponding to token LPAREN
-    fn LPAREN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_LPAREN)
+    fn LPAREN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_LPAREN, 0)
     }
     fn lexerAltList(&self) -> Option<&'arena LexerAltListContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token RPAREN
     /// Returns `None` if there is no child corresponding to token RPAREN
-    fn RPAREN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_RPAREN)
+    fn RPAREN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_RPAREN, 0)
     }
 }
 
@@ -3270,14 +3270,14 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token RARROW
     /// Returns `None` if there is no child corresponding to token RARROW
-    fn RARROW(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn RARROW(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn lexerCommand_all(&self) -> Vec<&'arena LexerCommandContextAll<'input, 'arena, Tok>>;
     fn lexerCommand(&self, i: usize) -> Option<&'arena LexerCommandContextAll<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token COMMA in current rule
-    fn COMMA_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn COMMA_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token COMMA, starting from 0.
     /// Returns `None` if number of children corresponding to token COMMA is less than or equal to `i`.
-    fn COMMA(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn COMMA(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> LexerCommandsContextAttrs<'input, 'arena, Tok> for LexerCommandsContext<'input, 'arena, Tok>
@@ -3286,23 +3286,23 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token RARROW
     /// Returns `None` if there is no child corresponding to token RARROW
-    fn RARROW(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_RARROW)
+    fn RARROW(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_RARROW, 0)
     }
     fn lexerCommand_all(&self) -> Vec<&'arena LexerCommandContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn lexerCommand(&self, i: usize) -> Option<&'arena LexerCommandContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves all `TerminalNode`s corresponding to token COMMA in current rule
-    fn COMMA_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_COMMA).collect()
+    fn COMMA_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ANTLRv4Parser_COMMA).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token COMMA, starting from 0.
     /// Returns `None` if number of children corresponding to token COMMA is less than or equal to `i`.
-    fn COMMA(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_COMMA).nth(i)
+    fn COMMA(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_COMMA, i)
     }
 }
 
@@ -3355,11 +3355,11 @@ where
     fn lexerCommandName(&self) -> Option<&'arena LexerCommandNameContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token LPAREN
     /// Returns `None` if there is no child corresponding to token LPAREN
-    fn LPAREN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn LPAREN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn lexerCommandExpr(&self) -> Option<&'arena LexerCommandExprContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token RPAREN
     /// Returns `None` if there is no child corresponding to token RPAREN
-    fn RPAREN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn RPAREN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> LexerCommandContextAttrs<'input, 'arena, Tok> for LexerCommandContext<'input, 'arena, Tok>
@@ -3371,16 +3371,16 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token LPAREN
     /// Returns `None` if there is no child corresponding to token LPAREN
-    fn LPAREN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_LPAREN)
+    fn LPAREN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_LPAREN, 0)
     }
     fn lexerCommandExpr(&self) -> Option<&'arena LexerCommandExprContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token RPAREN
     /// Returns `None` if there is no child corresponding to token RPAREN
-    fn RPAREN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_RPAREN)
+    fn RPAREN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_RPAREN, 0)
     }
 }
 
@@ -3436,7 +3436,7 @@ where
     fn identifier(&self) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token MODE
     /// Returns `None` if there is no child corresponding to token MODE
-    fn MODE(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn MODE(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> LexerCommandNameContextAttrs<'input, 'arena, Tok> for LexerCommandNameContext<'input, 'arena, Tok>
@@ -3448,8 +3448,8 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token MODE
     /// Returns `None` if there is no child corresponding to token MODE
-    fn MODE(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_MODE)
+    fn MODE(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_MODE, 0)
     }
 }
 
@@ -3495,7 +3495,7 @@ where
     fn identifier(&self) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> LexerCommandExprContextAttrs<'input, 'arena, Tok> for LexerCommandExprContext<'input, 'arena, Tok>
@@ -3507,8 +3507,8 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_INT)
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_INT, 0)
     }
 }
 
@@ -3554,10 +3554,10 @@ where
     fn alternative_all(&self) -> Vec<&'arena AlternativeContextAll<'input, 'arena, Tok>>;
     fn alternative(&self, i: usize) -> Option<&'arena AlternativeContextAll<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token OR in current rule
-    fn OR_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn OR_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token OR, starting from 0.
     /// Returns `None` if number of children corresponding to token OR is less than or equal to `i`.
-    fn OR(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn OR(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> AltListContextAttrs<'input, 'arena, Tok> for AltListContext<'input, 'arena, Tok>
@@ -3565,19 +3565,19 @@ where
     'input: 'arena,
 {
     fn alternative_all(&self) -> Vec<&'arena AlternativeContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn alternative(&self, i: usize) -> Option<&'arena AlternativeContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves all `TerminalNode`s corresponding to token OR in current rule
-    fn OR_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_OR).collect()
+    fn OR_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ANTLRv4Parser_OR).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token OR, starting from 0.
     /// Returns `None` if number of children corresponding to token OR is less than or equal to `i`.
-    fn OR(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_OR).nth(i)
+    fn OR(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_OR, i)
     }
 }
 
@@ -3638,7 +3638,7 @@ where
         self.child_of_type(0)
     }
     fn element_all(&self) -> Vec<&'arena ElementContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn element(&self, i: usize) -> Option<&'arena ElementContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -3715,7 +3715,7 @@ where
     fn actionBlock(&self) -> Option<&'arena ActionBlockContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token QUESTION
     /// Returns `None` if there is no child corresponding to token QUESTION
-    fn QUESTION(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn QUESTION(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn predicateOptions(&self) -> Option<&'arena PredicateOptionsContextAll<'input, 'arena, Tok>>;
 }
 
@@ -3740,8 +3740,8 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token QUESTION
     /// Returns `None` if there is no child corresponding to token QUESTION
-    fn QUESTION(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_QUESTION)
+    fn QUESTION(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_QUESTION, 0)
     }
     fn predicateOptions(&self) -> Option<&'arena PredicateOptionsContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -3862,17 +3862,17 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token LT
     /// Returns `None` if there is no child corresponding to token LT
-    fn LT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn LT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn predicateOption_all(&self) -> Vec<&'arena PredicateOptionContextAll<'input, 'arena, Tok>>;
     fn predicateOption(&self, i: usize) -> Option<&'arena PredicateOptionContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token GT
     /// Returns `None` if there is no child corresponding to token GT
-    fn GT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn GT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token COMMA in current rule
-    fn COMMA_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn COMMA_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token COMMA, starting from 0.
     /// Returns `None` if number of children corresponding to token COMMA is less than or equal to `i`.
-    fn COMMA(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn COMMA(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> PredicateOptionsContextAttrs<'input, 'arena, Tok> for PredicateOptionsContext<'input, 'arena, Tok>
@@ -3881,28 +3881,28 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token LT
     /// Returns `None` if there is no child corresponding to token LT
-    fn LT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_LT)
+    fn LT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_LT, 0)
     }
     fn predicateOption_all(&self) -> Vec<&'arena PredicateOptionContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn predicateOption(&self, i: usize) -> Option<&'arena PredicateOptionContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves first TerminalNode corresponding to token GT
     /// Returns `None` if there is no child corresponding to token GT
-    fn GT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_GT)
+    fn GT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_GT, 0)
     }
     /// Retrieves all `TerminalNode`s corresponding to token COMMA in current rule
-    fn COMMA_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_COMMA).collect()
+    fn COMMA_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ANTLRv4Parser_COMMA).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token COMMA, starting from 0.
     /// Returns `None` if number of children corresponding to token COMMA is less than or equal to `i`.
-    fn COMMA(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_COMMA).nth(i)
+    fn COMMA(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_COMMA, i)
     }
 }
 
@@ -3958,14 +3958,14 @@ where
     fn identifier(&self) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token ASSIGN
     /// Returns `None` if there is no child corresponding to token ASSIGN
-    fn ASSIGN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ASSIGN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn actionBlock(&self) -> Option<&'arena ActionBlockContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token STRING_LITERAL
     /// Returns `None` if there is no child corresponding to token STRING_LITERAL
-    fn STRING_LITERAL(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn STRING_LITERAL(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> PredicateOptionContextAttrs<'input, 'arena, Tok> for PredicateOptionContext<'input, 'arena, Tok>
@@ -3980,21 +3980,21 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token ASSIGN
     /// Returns `None` if there is no child corresponding to token ASSIGN
-    fn ASSIGN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_ASSIGN)
+    fn ASSIGN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_ASSIGN, 0)
     }
     fn actionBlock(&self) -> Option<&'arena ActionBlockContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_INT)
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_INT, 0)
     }
     /// Retrieves first TerminalNode corresponding to token STRING_LITERAL
     /// Returns `None` if there is no child corresponding to token STRING_LITERAL
-    fn STRING_LITERAL(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_STRING_LITERAL)
+    fn STRING_LITERAL(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_STRING_LITERAL, 0)
     }
 }
 
@@ -4066,10 +4066,10 @@ where
     fn identifier(&self) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token ASSIGN
     /// Returns `None` if there is no child corresponding to token ASSIGN
-    fn ASSIGN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ASSIGN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token PLUS_ASSIGN
     /// Returns `None` if there is no child corresponding to token PLUS_ASSIGN
-    fn PLUS_ASSIGN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn PLUS_ASSIGN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn atom(&self) -> Option<&'arena AtomContextAll<'input, 'arena, Tok>>;
     fn block(&self) -> Option<&'arena BlockContextAll<'input, 'arena, Tok>>;
 }
@@ -4083,13 +4083,13 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token ASSIGN
     /// Returns `None` if there is no child corresponding to token ASSIGN
-    fn ASSIGN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_ASSIGN)
+    fn ASSIGN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_ASSIGN, 0)
     }
     /// Retrieves first TerminalNode corresponding to token PLUS_ASSIGN
     /// Returns `None` if there is no child corresponding to token PLUS_ASSIGN
-    fn PLUS_ASSIGN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_PLUS_ASSIGN)
+    fn PLUS_ASSIGN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_PLUS_ASSIGN, 0)
     }
     fn atom(&self) -> Option<&'arena AtomContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -4247,16 +4247,16 @@ where
     Tok: Token + 'input,
 {
     /// Retrieves all `TerminalNode`s corresponding to token QUESTION in current rule
-    fn QUESTION_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn QUESTION_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token QUESTION, starting from 0.
     /// Returns `None` if number of children corresponding to token QUESTION is less than or equal to `i`.
-    fn QUESTION(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn QUESTION(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token STAR
     /// Returns `None` if there is no child corresponding to token STAR
-    fn STAR(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn STAR(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token PLUS
     /// Returns `None` if there is no child corresponding to token PLUS
-    fn PLUS(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn PLUS(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> EbnfSuffixContextAttrs<'input, 'arena, Tok> for EbnfSuffixContext<'input, 'arena, Tok>
@@ -4264,23 +4264,23 @@ where
     'input: 'arena,
 {
     /// Retrieves all `TerminalNode`s corresponding to token QUESTION in current rule
-    fn QUESTION_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_QUESTION).collect()
+    fn QUESTION_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ANTLRv4Parser_QUESTION).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token QUESTION, starting from 0.
     /// Returns `None` if number of children corresponding to token QUESTION is less than or equal to `i`.
-    fn QUESTION(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_QUESTION).nth(i)
+    fn QUESTION(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_QUESTION, i)
     }
     /// Retrieves first TerminalNode corresponding to token STAR
     /// Returns `None` if there is no child corresponding to token STAR
-    fn STAR(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_STAR)
+    fn STAR(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_STAR, 0)
     }
     /// Retrieves first TerminalNode corresponding to token PLUS
     /// Returns `None` if there is no child corresponding to token PLUS
-    fn PLUS(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_PLUS)
+    fn PLUS(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_PLUS, 0)
     }
 }
 
@@ -4365,7 +4365,7 @@ where
     fn notSet(&self) -> Option<&'arena NotSetContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token LEXER_CHAR_SET
     /// Returns `None` if there is no child corresponding to token LEXER_CHAR_SET
-    fn LEXER_CHAR_SET(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn LEXER_CHAR_SET(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn wildcard(&self) -> Option<&'arena WildcardContextAll<'input, 'arena, Tok>>;
 }
 
@@ -4384,8 +4384,8 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token LEXER_CHAR_SET
     /// Returns `None` if there is no child corresponding to token LEXER_CHAR_SET
-    fn LEXER_CHAR_SET(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_LEXER_CHAR_SET)
+    fn LEXER_CHAR_SET(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_LEXER_CHAR_SET, 0)
     }
     fn wildcard(&self) -> Option<&'arena WildcardContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -4536,7 +4536,7 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token DOT
     /// Returns `None` if there is no child corresponding to token DOT
-    fn DOT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn DOT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn elementOptions(&self) -> Option<&'arena ElementOptionsContextAll<'input, 'arena, Tok>>;
 }
 
@@ -4546,8 +4546,8 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token DOT
     /// Returns `None` if there is no child corresponding to token DOT
-    fn DOT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_DOT)
+    fn DOT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_DOT, 0)
     }
     fn elementOptions(&self) -> Option<&'arena ElementOptionsContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -4594,7 +4594,7 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token NOT
     /// Returns `None` if there is no child corresponding to token NOT
-    fn NOT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn NOT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn setElement(&self) -> Option<&'arena SetElementContextAll<'input, 'arena, Tok>>;
     fn blockSet(&self) -> Option<&'arena BlockSetContextAll<'input, 'arena, Tok>>;
 }
@@ -4605,8 +4605,8 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token NOT
     /// Returns `None` if there is no child corresponding to token NOT
-    fn NOT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_NOT)
+    fn NOT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_NOT, 0)
     }
     fn setElement(&self) -> Option<&'arena SetElementContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -4665,17 +4665,17 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token LPAREN
     /// Returns `None` if there is no child corresponding to token LPAREN
-    fn LPAREN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn LPAREN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn setElement_all(&self) -> Vec<&'arena SetElementContextAll<'input, 'arena, Tok>>;
     fn setElement(&self, i: usize) -> Option<&'arena SetElementContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token RPAREN
     /// Returns `None` if there is no child corresponding to token RPAREN
-    fn RPAREN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn RPAREN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token OR in current rule
-    fn OR_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn OR_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token OR, starting from 0.
     /// Returns `None` if number of children corresponding to token OR is less than or equal to `i`.
-    fn OR(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn OR(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> BlockSetContextAttrs<'input, 'arena, Tok> for BlockSetContext<'input, 'arena, Tok>
@@ -4684,28 +4684,28 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token LPAREN
     /// Returns `None` if there is no child corresponding to token LPAREN
-    fn LPAREN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_LPAREN)
+    fn LPAREN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_LPAREN, 0)
     }
     fn setElement_all(&self) -> Vec<&'arena SetElementContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn setElement(&self, i: usize) -> Option<&'arena SetElementContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves first TerminalNode corresponding to token RPAREN
     /// Returns `None` if there is no child corresponding to token RPAREN
-    fn RPAREN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_RPAREN)
+    fn RPAREN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_RPAREN, 0)
     }
     /// Retrieves all `TerminalNode`s corresponding to token OR in current rule
-    fn OR_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_OR).collect()
+    fn OR_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ANTLRv4Parser_OR).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token OR, starting from 0.
     /// Returns `None` if number of children corresponding to token OR is less than or equal to `i`.
-    fn OR(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_OR).nth(i)
+    fn OR(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_OR, i)
     }
 }
 
@@ -4759,15 +4759,15 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token TOKEN_REF
     /// Returns `None` if there is no child corresponding to token TOKEN_REF
-    fn TOKEN_REF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn TOKEN_REF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn elementOptions(&self) -> Option<&'arena ElementOptionsContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token STRING_LITERAL
     /// Returns `None` if there is no child corresponding to token STRING_LITERAL
-    fn STRING_LITERAL(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn STRING_LITERAL(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn characterRange(&self) -> Option<&'arena CharacterRangeContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token LEXER_CHAR_SET
     /// Returns `None` if there is no child corresponding to token LEXER_CHAR_SET
-    fn LEXER_CHAR_SET(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn LEXER_CHAR_SET(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> SetElementContextAttrs<'input, 'arena, Tok> for SetElementContext<'input, 'arena, Tok>
@@ -4776,24 +4776,24 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token TOKEN_REF
     /// Returns `None` if there is no child corresponding to token TOKEN_REF
-    fn TOKEN_REF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_TOKEN_REF)
+    fn TOKEN_REF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_TOKEN_REF, 0)
     }
     fn elementOptions(&self) -> Option<&'arena ElementOptionsContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token STRING_LITERAL
     /// Returns `None` if there is no child corresponding to token STRING_LITERAL
-    fn STRING_LITERAL(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_STRING_LITERAL)
+    fn STRING_LITERAL(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_STRING_LITERAL, 0)
     }
     fn characterRange(&self) -> Option<&'arena CharacterRangeContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token LEXER_CHAR_SET
     /// Returns `None` if there is no child corresponding to token LEXER_CHAR_SET
-    fn LEXER_CHAR_SET(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_LEXER_CHAR_SET)
+    fn LEXER_CHAR_SET(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_LEXER_CHAR_SET, 0)
     }
 }
 
@@ -4879,14 +4879,14 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token LPAREN
     /// Returns `None` if there is no child corresponding to token LPAREN
-    fn LPAREN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn LPAREN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn altList(&self) -> Option<&'arena AltListContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token RPAREN
     /// Returns `None` if there is no child corresponding to token RPAREN
-    fn RPAREN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn RPAREN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token COLON
     /// Returns `None` if there is no child corresponding to token COLON
-    fn COLON(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn COLON(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn optionsSpec(&self) -> Option<&'arena OptionsSpecContextAll<'input, 'arena, Tok>>;
     fn ruleAction_all(&self) -> Vec<&'arena RuleActionContextAll<'input, 'arena, Tok>>;
     fn ruleAction(&self, i: usize) -> Option<&'arena RuleActionContextAll<'input, 'arena, Tok>>;
@@ -4898,27 +4898,27 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token LPAREN
     /// Returns `None` if there is no child corresponding to token LPAREN
-    fn LPAREN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_LPAREN)
+    fn LPAREN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_LPAREN, 0)
     }
     fn altList(&self) -> Option<&'arena AltListContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token RPAREN
     /// Returns `None` if there is no child corresponding to token RPAREN
-    fn RPAREN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_RPAREN)
+    fn RPAREN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_RPAREN, 0)
     }
     /// Retrieves first TerminalNode corresponding to token COLON
     /// Returns `None` if there is no child corresponding to token COLON
-    fn COLON(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_COLON)
+    fn COLON(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_COLON, 0)
     }
     fn optionsSpec(&self) -> Option<&'arena OptionsSpecContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     fn ruleAction_all(&self) -> Vec<&'arena RuleActionContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn ruleAction(&self, i: usize) -> Option<&'arena RuleActionContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
@@ -4993,7 +4993,7 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token RULE_REF
     /// Returns `None` if there is no child corresponding to token RULE_REF
-    fn RULE_REF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn RULE_REF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn argActionBlock(&self) -> Option<&'arena ArgActionBlockContextAll<'input, 'arena, Tok>>;
     fn elementOptions(&self) -> Option<&'arena ElementOptionsContextAll<'input, 'arena, Tok>>;
 }
@@ -5004,8 +5004,8 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token RULE_REF
     /// Returns `None` if there is no child corresponding to token RULE_REF
-    fn RULE_REF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_RULE_REF)
+    fn RULE_REF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_RULE_REF, 0)
     }
     fn argActionBlock(&self) -> Option<&'arena ArgActionBlockContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
@@ -5064,13 +5064,13 @@ where
     Tok: Token + 'input,
 {
     /// Retrieves all `TerminalNode`s corresponding to token STRING_LITERAL in current rule
-    fn STRING_LITERAL_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn STRING_LITERAL_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token STRING_LITERAL, starting from 0.
     /// Returns `None` if number of children corresponding to token STRING_LITERAL is less than or equal to `i`.
-    fn STRING_LITERAL(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn STRING_LITERAL(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token RANGE
     /// Returns `None` if there is no child corresponding to token RANGE
-    fn RANGE(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn RANGE(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> CharacterRangeContextAttrs<'input, 'arena, Tok> for CharacterRangeContext<'input, 'arena, Tok>
@@ -5078,18 +5078,18 @@ where
     'input: 'arena,
 {
     /// Retrieves all `TerminalNode`s corresponding to token STRING_LITERAL in current rule
-    fn STRING_LITERAL_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_STRING_LITERAL).collect()
+    fn STRING_LITERAL_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ANTLRv4Parser_STRING_LITERAL).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token STRING_LITERAL, starting from 0.
     /// Returns `None` if number of children corresponding to token STRING_LITERAL is less than or equal to `i`.
-    fn STRING_LITERAL(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_STRING_LITERAL).nth(i)
+    fn STRING_LITERAL(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_STRING_LITERAL, i)
     }
     /// Retrieves first TerminalNode corresponding to token RANGE
     /// Returns `None` if there is no child corresponding to token RANGE
-    fn RANGE(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_RANGE)
+    fn RANGE(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_RANGE, 0)
     }
 }
 
@@ -5126,11 +5126,11 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token TOKEN_REF
     /// Returns `None` if there is no child corresponding to token TOKEN_REF
-    fn TOKEN_REF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn TOKEN_REF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn elementOptions(&self) -> Option<&'arena ElementOptionsContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token STRING_LITERAL
     /// Returns `None` if there is no child corresponding to token STRING_LITERAL
-    fn STRING_LITERAL(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn STRING_LITERAL(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> TerminalDefContextAttrs<'input, 'arena, Tok> for TerminalDefContext<'input, 'arena, Tok>
@@ -5139,16 +5139,16 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token TOKEN_REF
     /// Returns `None` if there is no child corresponding to token TOKEN_REF
-    fn TOKEN_REF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_TOKEN_REF)
+    fn TOKEN_REF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_TOKEN_REF, 0)
     }
     fn elementOptions(&self) -> Option<&'arena ElementOptionsContextAll<'input, 'arena, Tok>> {
         self.child_of_type(0)
     }
     /// Retrieves first TerminalNode corresponding to token STRING_LITERAL
     /// Returns `None` if there is no child corresponding to token STRING_LITERAL
-    fn STRING_LITERAL(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_STRING_LITERAL)
+    fn STRING_LITERAL(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_STRING_LITERAL, 0)
     }
 }
 
@@ -5214,17 +5214,17 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token LT
     /// Returns `None` if there is no child corresponding to token LT
-    fn LT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn LT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     fn elementOption_all(&self) -> Vec<&'arena ElementOptionContextAll<'input, 'arena, Tok>>;
     fn elementOption(&self, i: usize) -> Option<&'arena ElementOptionContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token GT
     /// Returns `None` if there is no child corresponding to token GT
-    fn GT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn GT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token COMMA in current rule
-    fn COMMA_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn COMMA_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token COMMA, starting from 0.
     /// Returns `None` if number of children corresponding to token COMMA is less than or equal to `i`.
-    fn COMMA(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn COMMA(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> ElementOptionsContextAttrs<'input, 'arena, Tok> for ElementOptionsContext<'input, 'arena, Tok>
@@ -5233,28 +5233,28 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token LT
     /// Returns `None` if there is no child corresponding to token LT
-    fn LT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_LT)
+    fn LT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_LT, 0)
     }
     fn elementOption_all(&self) -> Vec<&'arena ElementOptionContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn elementOption(&self, i: usize) -> Option<&'arena ElementOptionContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves first TerminalNode corresponding to token GT
     /// Returns `None` if there is no child corresponding to token GT
-    fn GT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_GT)
+    fn GT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_GT, 0)
     }
     /// Retrieves all `TerminalNode`s corresponding to token COMMA in current rule
-    fn COMMA_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_COMMA).collect()
+    fn COMMA_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ANTLRv4Parser_COMMA).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token COMMA, starting from 0.
     /// Returns `None` if number of children corresponding to token COMMA is less than or equal to `i`.
-    fn COMMA(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_COMMA).nth(i)
+    fn COMMA(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_COMMA, i)
     }
 }
 
@@ -5310,13 +5310,13 @@ where
     fn identifier(&self) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token ASSIGN
     /// Returns `None` if there is no child corresponding to token ASSIGN
-    fn ASSIGN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn ASSIGN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token STRING_LITERAL
     /// Returns `None` if there is no child corresponding to token STRING_LITERAL
-    fn STRING_LITERAL(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn STRING_LITERAL(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> ElementOptionContextAttrs<'input, 'arena, Tok> for ElementOptionContext<'input, 'arena, Tok>
@@ -5331,18 +5331,18 @@ where
     }
     /// Retrieves first TerminalNode corresponding to token ASSIGN
     /// Returns `None` if there is no child corresponding to token ASSIGN
-    fn ASSIGN(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_ASSIGN)
+    fn ASSIGN(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_ASSIGN, 0)
     }
     /// Retrieves first TerminalNode corresponding to token STRING_LITERAL
     /// Returns `None` if there is no child corresponding to token STRING_LITERAL
-    fn STRING_LITERAL(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_STRING_LITERAL)
+    fn STRING_LITERAL(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_STRING_LITERAL, 0)
     }
     /// Retrieves first TerminalNode corresponding to token INT
     /// Returns `None` if there is no child corresponding to token INT
-    fn INT(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_INT)
+    fn INT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_INT, 0)
     }
 }
 
@@ -5413,10 +5413,10 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token RULE_REF
     /// Returns `None` if there is no child corresponding to token RULE_REF
-    fn RULE_REF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn RULE_REF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves first TerminalNode corresponding to token TOKEN_REF
     /// Returns `None` if there is no child corresponding to token TOKEN_REF
-    fn TOKEN_REF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn TOKEN_REF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> IdentifierContextAttrs<'input, 'arena, Tok> for IdentifierContext<'input, 'arena, Tok>
@@ -5425,13 +5425,13 @@ where
 {
     /// Retrieves first TerminalNode corresponding to token RULE_REF
     /// Returns `None` if there is no child corresponding to token RULE_REF
-    fn RULE_REF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_RULE_REF)
+    fn RULE_REF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_RULE_REF, 0)
     }
     /// Retrieves first TerminalNode corresponding to token TOKEN_REF
     /// Returns `None` if there is no child corresponding to token TOKEN_REF
-    fn TOKEN_REF(&self) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-        self.children_of_type::<TerminalNode<Tok>>().into_iter().find(|child| child.symbol.get_token_type() == ANTLRv4Parser_TOKEN_REF)
+    fn TOKEN_REF(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_TOKEN_REF, 0)
     }
 }
 
@@ -5474,10 +5474,10 @@ where
     fn identifier_all(&self) -> Vec<&'arena IdentifierContextAll<'input, 'arena, Tok>>;
     fn identifier(&self, i: usize) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>>;
     /// Retrieves all `TerminalNode`s corresponding to token DOT in current rule
-    fn DOT_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>>;
+    fn DOT_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>>;
     /// Retrieves 'i'th TerminalNode corresponding to token DOT, starting from 0.
     /// Returns `None` if number of children corresponding to token DOT is less than or equal to `i`.
-    fn DOT(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>>;
+    fn DOT(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
 }
 
 impl<'input, 'arena, Tok: Token + 'input> QualifiedIdentifierContextAttrs<'input, 'arena, Tok> for QualifiedIdentifierContext<'input, 'arena, Tok>
@@ -5485,19 +5485,19 @@ where
     'input: 'arena,
 {
     fn identifier_all(&self) -> Vec<&'arena IdentifierContextAll<'input, 'arena, Tok>> {
-        self.children_of_type()
+        self.children_of_type().collect()
     }
     fn identifier(&self, i: usize) -> Option<&'arena IdentifierContextAll<'input, 'arena, Tok>> {
         self.child_of_type(i)
     }
     /// Retrieves all `TerminalNode`s corresponding to token DOT in current rule
-    fn DOT_all(&self) -> Vec<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_DOT).collect()
+    fn DOT_all(&self) -> Vec<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.tokens_of_type(ANTLRv4Parser_DOT).collect()
     }
     /// Retrieves 'i'th TerminalNode corresponding to token DOT, starting from 0.
     /// Returns `None` if number of children corresponding to token DOT is less than or equal to `i`.
-    fn DOT(&self, i: usize) -> Option<&TerminalNode<'input, 'arena, Tok>> {
-    	self.children_of_type::<TerminalNode<Tok>>().into_iter().filter(|child| child.symbol.get_token_type() == ANTLRv4Parser_DOT).nth(i)
+    fn DOT(&self, i: usize) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(ANTLRv4Parser_DOT, i)
     }
 }
 
