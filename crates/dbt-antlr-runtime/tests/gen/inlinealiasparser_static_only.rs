@@ -231,6 +231,7 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena StmtContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		recog.base.set_state(30);
+		loop {
 		match recog.base.input.la(1) {
 		    InlineAlias_T__6  => {
 		        /*------- Outer Most Alt 1 -------*/
@@ -257,6 +258,7 @@ where
 		        recog.expr_rec(0)?;
 		        recog.base.set_state(23);
 		        _la = recog.base.input.la(1);
+		        loop {
 		        while _la==InlineAlias_T__4 {
 		        	{
 		        	{
@@ -269,6 +271,14 @@ where
 		        	recog.base.set_state(25);
 		        	_la = recog.base.input.la(1);
 		        }
+		        if !(_la==InlineAlias_T__5) && recog.err_handler.sync_deferred(&mut recog.base)? {
+		        	_la = recog.base.input.la(1);
+		        	if _la==InlineAlias_T__4 {
+		        		continue;
+		        	}
+		        }
+		        break;
+		        }
 		        recog.base.set_state(26);
 		        recog.base.match_token(InlineAlias_T__5,&mut recog.err_handler)?;
 		        recog.base.set_state(27);
@@ -276,7 +286,12 @@ where
 		        recog.base.set_state(28);
 		        recog.base.match_token(InlineAlias_EOF,&mut recog.err_handler)?;
 		        }}
-			_ => Err(ANTLRError::no_alt(&mut recog.base))?
+			_ => {
+				recog.err_handler.sync_block_start_or_no_alt(&mut recog.base)?;
+				continue;
+			}
+		}
+		break;
 		}
 		})
 	}
@@ -877,6 +892,7 @@ where
 		/*------- Outer Most Alt 1 -------*/
 		{
 		recog.base.set_state(67);
+		loop {
 		match recog.base.input.la(1) {
 		    InlineAlias_T__12  => {
 		        {
@@ -921,7 +937,12 @@ where
 		        recog.base.set_state(66);
 		        recog.base.match_token(InlineAlias_INT,&mut recog.err_handler)?;
 		        }}
-			_ => Err(ANTLRError::no_alt(&mut recog.base))?
+			_ => {
+				recog.err_handler.sync_block_start_or_no_alt(&mut recog.base)?;
+				continue;
+			}
+		}
+		break;
 		}
 		let tmp = recog.input.lt(-1);
 		recog.base.with_mut_ctx(|ctx| { ctx.set_stop(tmp.map(|t| t as _)); });
@@ -932,7 +953,7 @@ where
 				recog.trigger_exit_rule_event()?;
 				{
 				recog.base.set_state(78);
-				match { let _sdp = recog.base.dfa_predict(6)?; _sdp } {
+				match { let _sdp = recog.base.dfa_predict_sync(6, &mut recog.err_handler)?; _sdp } {
 					1 =>{
 						{
 						/*recRuleLabeledAltStartAction*/

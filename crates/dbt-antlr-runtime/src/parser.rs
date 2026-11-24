@@ -12,7 +12,7 @@ use crate::error_listener::{
     ConsoleErrorListener, ErrorListener, ErrorListenerDelegate, ProxyErrorListener,
 };
 use crate::error_strategy::ErrorStrategy;
-use crate::errors::ANTLRError;
+use crate::errors::{ANTLRError, ANTLRErrorKind};
 use crate::interval_set::IntervalSet;
 use crate::parser_atn_simulator::ParserATNSimulator;
 use crate::prediction_mode::PredictionMode;
@@ -665,6 +665,62 @@ where
     /// one of its member alternatives.
     pub fn dfa_predict_virtual(&mut self, decision: i32) -> Result<i32, ANTLRError> {
         self.dfa_walk(decision)
+    }
+
+    /// Predicts like [`Self::dfa_predict`], and runs deferred `sync` on a
+    /// `NoAltError` mismatch.
+    ///
+    /// If `sync` advances the input stream, prediction runs one more time.
+    #[inline]
+    pub fn dfa_predict_sync(
+        &mut self,
+        decision: i32,
+        err_handler: &mut impl ErrorStrategy<'input, 'arena, TF, Self>,
+    ) -> Result<i32, ANTLRError> {
+        match self.dfa_predict(decision) {
+            Ok(alt) => Ok(alt),
+            Err(err) => self.dfa_predict_sync_cold(decision, false, err, err_handler),
+        }
+    }
+
+    /// Predicts like [`Self::dfa_predict_virtual`], and runs deferred `sync` on
+    /// a `NoAltError` mismatch.
+    ///
+    /// If `sync` advances the input stream, prediction runs one more time.
+    #[inline]
+    pub fn dfa_predict_virtual_sync(
+        &mut self,
+        decision: i32,
+        err_handler: &mut impl ErrorStrategy<'input, 'arena, TF, Self>,
+    ) -> Result<i32, ANTLRError> {
+        match self.dfa_predict_virtual(decision) {
+            Ok(alt) => Ok(alt),
+            Err(err) => self.dfa_predict_sync_cold(decision, true, err, err_handler),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn dfa_predict_sync_cold(
+        &mut self,
+        decision: i32,
+        allow_virtual: bool,
+        err: ANTLRError,
+        err_handler: &mut impl ErrorStrategy<'input, 'arena, TF, Self>,
+    ) -> Result<i32, ANTLRError> {
+        if !matches!(&*err, ANTLRErrorKind::NoAltError(_)) {
+            return Err(err);
+        }
+        let before = self.input.index();
+        err_handler.sync(self)?;
+        if self.input.index() == before {
+            return Err(err);
+        }
+        if allow_virtual {
+            self.dfa_predict_virtual(decision)
+        } else {
+            self.dfa_predict(decision)
+        }
     }
     /// The table walk of [`Self::dfa_predict`] and
     /// [`Self::dfa_predict_virtual`].

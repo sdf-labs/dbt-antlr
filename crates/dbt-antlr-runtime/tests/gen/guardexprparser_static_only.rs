@@ -212,6 +212,9 @@ where
 		{
 		recog.base.set_state(11); 
 		_la = recog.base.input.la(1);
+		if !((((_la) & !0x3f) == 0 && ((1usize << _la) & 13330) != 0)) {
+			recog.err_handler.sync_cold(&mut recog.base)?;
+		}
 		loop {
 			{
 			{
@@ -221,7 +224,13 @@ where
 			}
 			recog.base.set_state(13); 
 			_la = recog.base.input.la(1);
-			if !((((_la) & !0x3f) == 0 && ((1usize << _la) & 13330) != 0)) {break}
+			if !((((_la) & !0x3f) == 0 && ((1usize << _la) & 13330) != 0)) {
+				if !(_la==GuardExpr_EOF) && recog.err_handler.sync_deferred(&mut recog.base)? {
+					_la = recog.base.input.la(1);
+					if (((_la) & !0x3f) == 0 && ((1usize << _la) & 13330) != 0) { continue }
+				}
+				break
+			}
 		}
 		recog.base.set_state(15);
 		recog.base.match_token(GuardExpr_EOF,&mut recog.err_handler)?;
@@ -415,6 +424,7 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, StmtContext<TF::Tok>, RULE_stmt, 2, |_parentctx| StmtContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena StmtContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(26);
+		loop {
 		match recog.base.input.la(1) {
 		    GuardExpr_T__0  => {
 		        /*------- Outer Most Alt 1 -------*/
@@ -446,7 +456,12 @@ where
 		        recog.base.set_state(24);
 		        recog.base.match_token(GuardExpr_T__2,&mut recog.err_handler)?;
 		        }}
-			_ => Err(ANTLRError::no_alt(&mut recog.base))?
+			_ => {
+				recog.err_handler.sync_block_start_or_no_alt(&mut recog.base)?;
+				continue;
+			}
+		}
+		break;
 		}
 		})
 	}
@@ -768,6 +783,7 @@ where
 		/*------- Outer Most Alt 1 -------*/
 		{
 		recog.base.set_state(35);
+		loop {
 		match recog.base.input.la(1) {
 		    GuardExpr_T__9 |GuardExpr_ID |GuardExpr_INT  => {
 		        {
@@ -797,7 +813,12 @@ where
 		        recog.base.set_state(34);
 		        recog.expr_rec(3)?;
 		        }}
-			_ => Err(ANTLRError::no_alt(&mut recog.base))?
+			_ => {
+				recog.err_handler.sync_block_start_or_no_alt(&mut recog.base)?;
+				continue;
+			}
+		}
+		break;
 		}
 		let tmp = recog.input.lt(-1);
 		recog.base.with_mut_ctx(|ctx| { ctx.set_stop(tmp.map(|t| t as _)); });
@@ -808,7 +829,7 @@ where
 				recog.trigger_exit_rule_event()?;
 				{
 				recog.base.set_state(43);
-				match { let _sdp = recog.base.dfa_predict(4)?; _sdp } {
+				match { let _sdp = recog.base.dfa_predict_sync(4, &mut recog.err_handler)?; _sdp } {
 					1 =>{
 						{
 						/*recRuleLabeledAltStartAction*/
@@ -1041,6 +1062,7 @@ where
         let _local_ctx_fn = |recog: &Self| -> &'arena PredContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		let mut _la: i32 = -1;
 		recog.base.set_state(55);
+		loop {
 		match recog.base.input.la(1) {
 		    GuardExpr_T__1 |GuardExpr_T__6 |GuardExpr_T__7  => {
 		        /*------- Outer Most Alt 1 -------*/
@@ -1078,7 +1100,12 @@ where
 		        recog.base.set_state(53);
 		        recog.base.match_token(GuardExpr_T__10,&mut recog.err_handler)?;
 		        }}
-			_ => Err(ANTLRError::no_alt(&mut recog.base))?
+			_ => {
+				recog.err_handler.sync_block_start_or_no_alt(&mut recog.base)?;
+				continue;
+			}
+		}
+		break;
 		}
 		})
 	}
@@ -1131,6 +1158,7 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, ValueContext<TF::Tok>, RULE_value, 8, |_parentctx| ValueContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena ValueContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(63);
+		loop {
 		match recog.base.input.la(1) {
 		    GuardExpr_ID  => {
 		        /*------- Outer Most Alt 1 -------*/
@@ -1154,7 +1182,12 @@ where
 		        recog.base.set_state(61);
 		        recog.base.match_token(GuardExpr_T__10,&mut recog.err_handler)?;
 		        }}
-			_ => Err(ANTLRError::no_alt(&mut recog.base))?
+			_ => {
+				recog.err_handler.sync_block_start_or_no_alt(&mut recog.base)?;
+				continue;
+			}
+		}
+		break;
 		}
 		})
 	}

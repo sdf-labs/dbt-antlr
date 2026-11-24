@@ -539,11 +539,21 @@ let _local_ctx_fn = |recog: &Self| -> &'arena {{ currentOuterMostAltCodeBlock.al
 {%- macro LL1AltBlock(choice, preamble, alts, error, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
 {{ sync(parser) }}{% if preamble %}{{ Ops(preamble, parser, file) }}
-{% endif %}match {{ self() }}.base.input.la(1) {
+{% endif %}{% if parser.omitSync and not choice.nullable %}loop {
+match {{ self() }}.base.input.la(1) {
+{% for alt in alts %}    {{ cases(choice.altLook[loop.index0], parser) }} => {
+{{ Op(alt, parser, file) | st_indent("        ") }}{{ "}" }}
+{% endfor %}	_ => {
+		{{ self() }}.err_handler.sync_block_start_or_no_alt(&mut {{ self() }}.base)?;
+		continue;
+	}
+}
+break;
+}{% else %}match {{ self() }}.base.input.la(1) {
 {% for alt in alts %}    {{ cases(choice.altLook[loop.index0], parser) }} => {
 {{ Op(alt, parser, file) | st_indent("        ") }}{{ "}" }}
 {% endfor %}	_ => Err({{ Op(error, parser, file) }})?
-}
+}{% endif %}
 {%- endmacro -%}
 {%- macro LL1OptionalBlock(choice, alts, error, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
@@ -564,24 +574,47 @@ let _local_ctx_fn = |recog: &Self| -> &'arena {{ currentOuterMostAltCodeBlock.al
 {{ Ops(alts, parser, file) | st_indent("\t") }}
 }{{ "\n" }}
 {%- endmacro -%}
-{%- macro LL1StarBlockSingleAlt(choice, loopExpr, alts, preamble, iteration, parser, file) -%}
+{%- macro LL1StarBlockSingleAlt(choice, loopExpr, alts, preamble, iteration, followExpr, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
 {{ sync(parser) }}{% if preamble %}{{ Ops(preamble, parser, file) }}
-{% endif %}while {{ Op(loopExpr, parser, file) }} {
+{% endif %}{% if parser.omitSync and not choice.nullable %}loop {
+while {{ Op(loopExpr, parser, file) }} {
+{{ Ops(alts, parser, file) | st_indent("\t") }}
+	{{ self() }}.base.set_state({{ choice.loopBackStateNumber }});
+{% if iteration %}{{ Ops(iteration, parser, file) | st_indent("\t") }}
+{% endif %}}
+if {% if followExpr %}!({{ Op(followExpr, parser, file) }}) && {% endif %}{{ self() }}.err_handler.sync_deferred(&mut {{ self() }}.base)? {
+	_la = {{ self() }}.base.input.la(1);
+	if {{ Op(loopExpr, parser, file) }} {
+		continue;
+	}
+}
+break;
+}{% else %}while {{ Op(loopExpr, parser, file) }} {
 {{ Ops(alts, parser, file) | st_indent("\t") }}
 	{{ self() }}.base.set_state({{ choice.loopBackStateNumber }});
 {{ sync(parser, "\t") }}{% if iteration %}{{ Ops(iteration, parser, file) | st_indent("\t") }}
-{% endif %}}
+{% endif %}}{% endif %}
 {%- endmacro -%}
-{%- macro LL1PlusBlockSingleAlt(choice, loopExpr, alts, preamble, iteration, parser, file) -%}
+{%- macro LL1PlusBlockSingleAlt(choice, loopExpr, alts, preamble, iteration, followExpr, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.blockStartStateNumber }}); {{ "" }}
 {{ sync(parser) }}{% if preamble %}{{ Ops(preamble, parser, file) }}
+{% endif %}{% if parser.omitSync %}if !({{ Op(loopExpr, parser, file) }}) {
+	{{ self() }}.err_handler.sync_cold(&mut {{ self() }}.base)?;
+}
 {% endif %}loop {
 {{ Ops(alts, parser, file) | st_indent("\t") }}
 	{{ self() }}.base.set_state({{ choice.stateNumber }}); {{ "" }}
 {{ sync(parser, "\t") }}{% if iteration %}{{ Ops(iteration, parser, file) | st_indent("\t") }}
-{% endif %}	if !({{ Op(loopExpr, parser, file) }}) {break}
-}
+{% endif %}{% if parser.omitSync and not choice.nullable %}	if !({{ Op(loopExpr, parser, file) }}) {
+		if {% if followExpr %}!({{ Op(followExpr, parser, file) }}) && {% endif %}{{ self() }}.err_handler.sync_deferred(&mut {{ self() }}.base)? {
+			_la = {{ self() }}.base.input.la(1);
+			if {{ Op(loopExpr, parser, file) }} { continue }
+		}
+		break
+	}
+{% else %}	if !({{ Op(loopExpr, parser, file) }}) {break}
+{% endif %}}
 {%- endmacro -%}
 
 {#- LL(*) stuff -#}
@@ -638,13 +671,13 @@ loop {
 	if _alt=={{ choice.exitAlt }} || _alt==INVALID_ALT { break }
 }
 {%- endmacro -%}
-{%- macro staticDFAPredict(choice) -%}
-{ let _sdp = {{ self() }}.base.dfa_predict({{ choice.decision }})?; {% if choice.tableCanDefer %}if _sdp == INVALID_ALT { {{ self() }}.get_interpreter().adaptive_predict({{ choice.decision }},&mut {{ self() }}.base)? } else { _sdp }{% else %}_sdp{% endif %} }
+{%- macro staticDFAPredict(choice, parser) -%}
+{ let _sdp = {% if parser.omitSync and not choice.nullable %}{{ self() }}.base.dfa_predict_sync({{ choice.decision }}, &mut {{ self() }}.err_handler)?{% else %}{{ self() }}.base.dfa_predict({{ choice.decision }})?{% endif %}; {% if choice.tableCanDefer %}if _sdp == INVALID_ALT { {{ self() }}.get_interpreter().adaptive_predict({{ choice.decision }},&mut {{ self() }}.base)? } else { _sdp }{% else %}_sdp{% endif %} }
 {%- endmacro -%}
 {%- macro DFAAltBlock(choice, preamble, alts, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
 {{ sync(parser) }}{% if preamble %}{{ Ops(preamble, parser, file) }}
-{% endif %}match {{ staticDFAPredict(choice) }} {
+{% endif %}match {{ staticDFAPredict(choice, parser) }} {
 {% for alt in alts %}
 	{{ loop.index }} =>{
 {{ Op(alt, parser, file) | st_indent("\t\t") }}
@@ -665,7 +698,7 @@ loop {
 {{ self() }}.base.set_state({{ choice.stateNumber }});
 {{ sync(parser) }}{% if preamble %}{{ Ops(preamble, parser, file) }}
 {% endif %}match {
-	let _vap = {{ self() }}.base.dfa_predict_virtual({{ choice.decision }})?;
+	let _vap = {% if parser.omitSync and not choice.nullable %}{{ self() }}.base.dfa_predict_virtual_sync({{ choice.decision }}, &mut {{ self() }}.err_handler)?{% else %}{{ self() }}.base.dfa_predict_virtual({{ choice.decision }})?{% endif %};
 	match _vap {
 {% for g in groups %}		{{ g.virtualAlt }} => dbt_antlr_runtime::shared_descent!(
 			{{ self() }},
@@ -699,7 +732,7 @@ if let Some(_node) = self.base.resume_take(RULE_{{ currentRule.name }})? {
 {%- endmacro -%}
 {%- macro DFAOptionalBlock(choice, alts, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
-{{ sync(parser) }}match {{ staticDFAPredict(choice) }} {
+{{ sync(parser) }}match {{ staticDFAPredict(choice, parser) }} {
 {% for alt in alts %}
 	x if x == {{ loop.index }} =>{
 {{ Op(alt, parser, file) | st_indent("\t\t") }}
@@ -710,19 +743,23 @@ if let Some(_node) = self.base.resume_take(RULE_{{ currentRule.name }})? {
 {%- endmacro -%}
 {%- macro DFAStarBlock(choice, alts, iteration, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.stateNumber }});
-{{ sync(parser) }}_alt = {{ staticDFAPredict(choice) }};
+{{ sync(parser) }}_alt = {{ staticDFAPredict(choice, parser) }};
 while { _alt!={{ choice.exitAlt }} && _alt!=INVALID_ALT } {
 	if _alt==1 {
 {% if iteration %}{{ Ops(iteration, parser, file) | st_indent("\t\t") }}
 {% endif %}{{ Ops(alts, parser, file) | st_indent("\t\t") }} {{ "" }}
 	}
 	{{ self() }}.base.set_state({{ choice.loopBackStateNumber }});
-{{ sync(parser, "\t") }}	_alt = {{ staticDFAPredict(choice) }};
+{{ sync(parser, "\t") }}	_alt = {{ staticDFAPredict(choice, parser) }};
 }
 {%- endmacro -%}
-{%- macro DFAPlusBlock(choice, alts, error, parser, file) -%}
+{%- macro DFAPlusBlock(choice, alts, error, starterExpr, parser, file) -%}
 {{ self() }}.base.set_state({{ choice.blockStartStateNumber }}); {{ "" }}
-{{ sync(parser) }}_alt = 1;
+{{ sync(parser) }}{% if parser.omitSync and starterExpr %}_la = {{ self() }}.base.input.la(1);
+if !({{ Op(starterExpr, parser, file) }}) {
+	{{ self() }}.err_handler.sync_cold(&mut {{ self() }}.base)?;
+}
+{% endif %}_alt = 1;
 loop {
 	match _alt {
 {% for alt in alts %}
@@ -733,7 +770,7 @@ loop {
 	_ => Err({{ Op(error, parser, file) }})?
 	}
 	{{ self() }}.base.set_state({{ choice.loopBackStateNumber }}); {{ "" }}
-{{ sync(parser, "\t") }}	_alt = {{ staticDFAPredict(choice) }};
+{{ sync(parser, "\t") }}	_alt = {{ staticDFAPredict(choice, parser) }};
 	if _alt=={{ choice.exitAlt }} || _alt==INVALID_ALT { break }
 }
 {%- endmacro -%}
@@ -755,7 +792,7 @@ ANTLRError::no_alt(&mut {{ self() }}.base)
 {%- endmacro -%}
 {#- isZero ::= ["0":true, default:false] -#}
 {%- macro offsetShift(shiftAmount, offset) -%}
-{% if offset != 0 %}({{ shiftAmount }} - {{ offset }}){% else %}{{ shiftAmount }}{% endif %}
+{% if offset > 0 %}({{ shiftAmount }} - {{ offset }}){% elif offset < 0 %}({{ shiftAmount }} + {{ -offset }}){% else %}{{ shiftAmount }}{% endif %}
 {%- endmacro -%}
 {#- produces more efficient bytecode when bits.tokens contains at most two items -#}
 {%- macro bitsetInlineComparison(s, bits, parser) -%}
@@ -887,9 +924,9 @@ unsafe { {{ self() }}.ctx_mut().unwrap().as_rule_context_mut::<{{ actionChunk.ct
 {%- elif op.kind == "LL1OptionalBlockSingleAlt" -%}
 {{ LL1OptionalBlockSingleAlt(op.choice, op.expr, op.alts, op.preamble, op.error, parser, file) }}
 {%- elif op.kind == "LL1StarBlockSingleAlt" -%}
-{{ LL1StarBlockSingleAlt(op.choice, op.loopExpr, op.alts, op.preamble, op.iteration, parser, file) }}
+{{ LL1StarBlockSingleAlt(op.choice, op.loopExpr, op.alts, op.preamble, op.iteration, op.followExpr, parser, file) }}
 {%- elif op.kind == "LL1PlusBlockSingleAlt" -%}
-{{ LL1PlusBlockSingleAlt(op.choice, op.loopExpr, op.alts, op.preamble, op.iteration, parser, file) }}
+{{ LL1PlusBlockSingleAlt(op.choice, op.loopExpr, op.alts, op.preamble, op.iteration, op.followExpr, parser, file) }}
 {%- elif op.kind == "AltBlock" -%}
 {{ AltBlock(op.choice, op.preamble, op.alts, op.error, parser, file) }}
 {%- elif op.kind == "OptionalBlock" -%}
@@ -907,7 +944,7 @@ unsafe { {{ self() }}.ctx_mut().unwrap().as_rule_context_mut::<{{ actionChunk.ct
 {%- elif op.kind == "DFAStarBlock" -%}
 {{ DFAStarBlock(op.choice, op.alts, op.iteration, parser, file) }}
 {%- elif op.kind == "DFAPlusBlock" -%}
-{{ DFAPlusBlock(op.choice, op.alts, op.error, parser, file) }}
+{{ DFAPlusBlock(op.choice, op.alts, op.error, op.starterExpr, parser, file) }}
 {%- elif op.kind == "InvokeRule" -%}
 {{ InvokeRule(op, parser) }}
 {%- elif op.kind == "MatchToken" -%}

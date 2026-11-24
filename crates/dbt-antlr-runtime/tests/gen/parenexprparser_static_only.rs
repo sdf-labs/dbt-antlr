@@ -764,7 +764,7 @@ where
 		{
 		recog.base.set_state(32);
 		match {
-			let _vap = recog.base.dfa_predict_virtual(1)?;
+			let _vap = recog.base.dfa_predict_virtual_sync(1, &mut recog.err_handler)?;
 			match _vap {
 				65536 => dbt_antlr_runtime::shared_descent!(
 					recog,
@@ -808,6 +808,9 @@ where
 				recog.e_rec(0)?;
 				recog.base.set_state(16); 
 				_la = recog.base.input.la(1);
+				if !(_la==ParenExpr_T__1) {
+					recog.err_handler.sync_cold(&mut recog.base)?;
+				}
 				loop {
 					{
 					{
@@ -819,7 +822,13 @@ where
 					}
 					recog.base.set_state(18); 
 					_la = recog.base.input.la(1);
-					if !(_la==ParenExpr_T__1) {break}
+					if !(_la==ParenExpr_T__1) {
+						if !(_la==ParenExpr_T__2) && recog.err_handler.sync_deferred(&mut recog.base)? {
+							_la = recog.base.input.la(1);
+							if _la==ParenExpr_T__1 { continue }
+						}
+						break
+					}
 				}
 				recog.base.set_state(20);
 				recog.base.match_token(ParenExpr_T__2,&mut recog.err_handler)?;
@@ -874,7 +883,7 @@ where
 				recog.trigger_exit_rule_event()?;
 				{
 				recog.base.set_state(40);
-				match { let _sdp = recog.base.dfa_predict(2)?; _sdp } {
+				match { let _sdp = recog.base.dfa_predict_sync(2, &mut recog.err_handler)?; _sdp } {
 					1 =>{
 						{
 						/*recRuleLabeledAltStartAction*/
@@ -1187,6 +1196,7 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, QContext<TF::Tok>, RULE_q, 4, |_parentctx| QContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena QContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(52);
+		loop {
 		match recog.base.input.la(1) {
 		    ParenExpr_T__7  => {
 		        /*------- Outer Most Alt 1 -------*/
@@ -1224,7 +1234,12 @@ where
 		        recog.base.set_state(50);
 		        recog.base.match_token(ParenExpr_T__2,&mut recog.err_handler)?;
 		        }}
-			_ => Err(ANTLRError::no_alt(&mut recog.base))?
+			_ => {
+				recog.err_handler.sync_block_start_or_no_alt(&mut recog.base)?;
+				continue;
+			}
+		}
+		break;
 		}
 		})
 	}

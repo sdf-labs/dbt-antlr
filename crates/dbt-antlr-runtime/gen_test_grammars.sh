@@ -170,3 +170,12 @@ echo "Generating: parser/DescentContext"
 echo "Generating: descentcontextparser_static"
 "$GEN_BIN" -no-listener --static-parser-dfa -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/DescentContext.g4"
 mv "$STATIC_TMP/descentcontextparser.rs" "$SCRIPT_DIR/tests/gen/descentcontextparser_static.rs"
+
+# Deferred error-synchronization witness under `--static-dfa-only`: bounded and
+# rule-trailing loops, LL(1)/DFA alternative blocks, and skipped-optional
+# expected sets compared against the adaptive oracle.
+echo "Generating: parser/DeferredSync"
+"$GEN_BIN" -no-listener -o "$SCRIPT_DIR/tests/gen" "$SCRIPT_DIR/grammars/parser/DeferredSync.g4"
+echo "Generating: deferredsyncparser_static_only"
+"$GEN_BIN" -no-listener --static-dfa-only -o "$STATIC_TMP" "$SCRIPT_DIR/grammars/parser/DeferredSync.g4"
+mv "$STATIC_TMP/deferredsyncparser.rs" "$SCRIPT_DIR/tests/gen/deferredsyncparser_static_only.rs"

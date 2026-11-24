@@ -219,6 +219,7 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, StmtContext<TF::Tok>, RULE_stmt, 0, |_parentctx| StmtContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena StmtContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(34);
+		loop {
 		match recog.base.input.la(1) {
 		    Repro4TwoCastWithWrap_T__0  => {
 		        /*------- Outer Most Alt 1 -------*/
@@ -284,7 +285,12 @@ where
 		        recog.base.set_state(32);
 		        recog.base.match_token(Repro4TwoCastWithWrap_EOF,&mut recog.err_handler)?;
 		        }}
-			_ => Err(ANTLRError::no_alt(&mut recog.base))?
+			_ => {
+				recog.err_handler.sync_block_start_or_no_alt(&mut recog.base)?;
+				continue;
+			}
+		}
+		break;
 		}
 		})
 	}
@@ -364,7 +370,7 @@ where
 				recog.trigger_exit_rule_event()?;
 				{
 				recog.base.set_state(53);
-				match { let _sdp = recog.base.dfa_predict(1)?; _sdp } {
+				match { let _sdp = recog.base.dfa_predict_sync(1, &mut recog.err_handler)?; _sdp } {
 					1 =>{
 						{
 						/*recRuleAltStartAction*/
@@ -475,6 +481,7 @@ where
         dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, SubContext<TF::Tok>, RULE_sub, 4, |_parentctx| SubContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
         let _local_ctx_fn = |recog: &Self| -> &'arena SubContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
 		recog.base.set_state(63);
+		loop {
 		match recog.base.input.la(1) {
 		    Repro4TwoCastWithWrap_T__4  => {
 		        /*------- Outer Most Alt 1 -------*/
@@ -492,7 +499,12 @@ where
 		        recog.base.set_state(62);
 		        recog.base.match_token(Repro4TwoCastWithWrap_ID,&mut recog.err_handler)?;
 		        }}
-			_ => Err(ANTLRError::no_alt(&mut recog.base))?
+			_ => {
+				recog.err_handler.sync_block_start_or_no_alt(&mut recog.base)?;
+				continue;
+			}
+		}
+		break;
 		}
 		})
 	}
