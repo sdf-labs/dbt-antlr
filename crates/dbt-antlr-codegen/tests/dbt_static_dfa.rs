@@ -1514,3 +1514,82 @@ fn static_dfa_only_omits_sync_calls() {
         );
     }
 }
+
+#[test]
+fn static_dfa_only_emits_deferred_sync_only_on_cold_paths() {
+    let path = grammars_dir().join("parser/DeferredSync.g4");
+    let static_only = emit_static_only(&path, false).expect("static-only emission succeeds");
+    let src = lexer_content(&static_only, "deferredsyncparser.rs");
+
+    assert_eq!(src.matches("err_handler.sync(").count(), 0);
+    assert!(src.contains("err_handler.sync_deferred("));
+    assert!(src.contains("err_handler.sync_cold("));
+    assert!(src.contains("err_handler.sync_block_start_or_no_alt("));
+    assert!(src.contains("dfa_predict_sync("));
+
+    let rule_body = |fn_header: &str| {
+        let start = src
+            .find(fn_header)
+            .unwrap_or_else(|| panic!("missing {fn_header}"));
+        let rest = &src[start..];
+        let end = rest.find("\n//-------------------").unwrap_or(rest.len());
+        &rest[..end]
+    };
+
+    let trail_star = rule_body("pub fn trailStar(");
+    assert_eq!(trail_star.matches("sync_deferred(").count(), 0);
+    assert_eq!(trail_star.matches("sync_cold(").count(), 0);
+    assert_eq!(trail_star.matches("dfa_predict_sync(").count(), 0);
+
+    let trail_plus = rule_body("pub fn trailPlus(");
+    assert_eq!(trail_plus.matches("sync_cold(").count(), 1);
+    assert_eq!(trail_plus.matches("sync_deferred(").count(), 0);
+
+    let ll1_star = rule_body("pub fn ll1Star(");
+    assert_eq!(ll1_star.matches("sync_deferred(").count(), 1);
+
+    let ll1_plus = rule_body("pub fn ll1Plus(");
+    assert_eq!(ll1_plus.matches("sync_cold(").count(), 1);
+    assert_eq!(ll1_plus.matches("sync_deferred(").count(), 1);
+
+    let ll1_alt = rule_body("pub fn ll1Alt(");
+    assert_eq!(ll1_alt.matches("sync_block_start_or_no_alt(").count(), 1);
+
+    let dfa_star = rule_body("pub fn dfaStar(");
+    assert_eq!(dfa_star.matches("dfa_predict_sync(").count(), 2);
+
+    let dfa_plus = rule_body("pub fn dfaPlus(");
+    assert_eq!(dfa_plus.matches("sync_cold(").count(), 1);
+    assert_eq!(dfa_plus.matches("dfa_predict_sync(").count(), 1);
+
+    let guard_path = grammars_dir().join("parser/GuardExpr.g4");
+    let guard_only = emit_static_only(&guard_path, false).expect("GuardExpr static-only succeeds");
+    let guard_src = lexer_content(&guard_only, "guardexprparser.rs");
+    let expr_start = guard_src.find("fn expr_rec(").expect("expr_rec present");
+    let expr_end = guard_src[expr_start..]
+        .find("\n//-------------------")
+        .map_or(guard_src.len(), |n| expr_start + n);
+    let expr_body = &guard_src[expr_start..expr_end];
+    assert!(expr_body.contains("dfa_predict(2)"));
+    assert!(expr_body.contains("dfa_predict(5)"));
+    assert!(expr_body.contains("dfa_predict_sync(4, &mut recog.err_handler)"));
+    assert!(!expr_body.contains("dfa_predict_sync(2"));
+    assert!(!expr_body.contains("dfa_predict_sync(5"));
+
+    let paren_path = grammars_dir().join("parser/ParenExpr.g4");
+    let paren_only = emit_static_only(&paren_path, false).expect("ParenExpr static-only succeeds");
+    let paren_src = lexer_content(&paren_only, "parenexprparser.rs");
+    assert!(paren_src.contains("dfa_predict_virtual_sync("));
+
+    let mut hybrid_opts = OptimizationOptions::new();
+    hybrid_opts.static_parser_dfa(true);
+    let hybrid = emit_files_with_options(&path, &[grammars_dir()], true, false, &hybrid_opts)
+        .expect("hybrid emission succeeds");
+    let hybrid_src = lexer_content(&hybrid, "deferredsyncparser.rs");
+    assert!(hybrid_src.contains("err_handler.sync("));
+    assert!(!hybrid_src.contains("sync_deferred("));
+    assert!(!hybrid_src.contains("sync_cold("));
+    assert!(!hybrid_src.contains("sync_block_start_or_no_alt("));
+    assert!(!hybrid_src.contains("dfa_predict_sync("));
+    assert!(!hybrid_src.contains("dfa_predict_virtual_sync("));
+}

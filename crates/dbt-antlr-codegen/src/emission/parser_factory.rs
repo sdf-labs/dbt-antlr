@@ -16,6 +16,10 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use dbt_antlr_runtime::atn::ATN;
+use dbt_antlr_runtime::interval_set::IntervalSet;
+use dbt_antlr_runtime::token::{CommonToken, TOKEN_EPSILON};
+
 use crate::emission::action_translator::{ActionScope, LabelDef, split_action, translate_action};
 use crate::emission::lexer_factory::{
     ANTLR_VERSION, capitalize, collect_named_actions, escape_if_needed, rule_context_struct_name,
@@ -136,6 +140,7 @@ struct WalkContext<'a> {
     unit: &'a GrammarUnit,
     recognizer: &'a RecognizerModel,
     graph: &'a FinalizedAtnGraph,
+    atn: &'static ATN,
     /// Synthetic block/loop states by owning model node and state kind.
     synthetic_states: BTreeMap<ModelNodeId, Vec<(AtnStateKind, usize)>>,
     /// Decision number of each decision state.
@@ -226,6 +231,7 @@ impl<'a> WalkContext<'a> {
             unit,
             recognizer,
             graph,
+            atn: compiled.atn,
             synthetic_states,
             decision_by_state,
             token_names,
@@ -238,6 +244,20 @@ impl<'a> WalkContext<'a> {
                 .map(|tables| tables.shared_rules().collect())
                 .unwrap_or_default(),
         }
+    }
+
+    fn omit_sync(&self) -> bool {
+        self.static_tables
+            .is_some_and(|tables| tables.atn_fallback() == AtnFallback::Forbidden)
+    }
+
+    fn state_next_tokens(&self, state: usize) -> &'static IntervalSet {
+        let state_ref = self.atn.make_state_ref(to_i32(state));
+        self.atn.next_tokens::<CommonToken<'_>>(&state_ref)
+    }
+
+    fn state_is_nullable(&self, state: usize) -> bool {
+        self.state_next_tokens(state).contains(TOKEN_EPSILON)
     }
 
     /// `true` when the decision predicts from a static table.
@@ -1013,6 +1033,7 @@ impl RuleWalk<'_, '_> {
         let look = self.walk.decision_look(state)?;
         if look.disjoint {
             let mut choice = choice_model(state, decision);
+            choice.nullable = self.walk.state_is_nullable(state);
             choice.alt_look = self.alt_look_token_lists(&look.alternatives);
             Ok(SrcOpModel::LL1AltBlock {
                 choice,
@@ -1022,6 +1043,7 @@ impl RuleWalk<'_, '_> {
             })
         } else if self.walk.has_static_table(decision) {
             let mut choice = choice_model(state, decision);
+            choice.nullable = self.walk.state_is_nullable(state);
             choice.table_can_defer = self.walk.static_table_defers(decision)?;
             if let Some(plan) = self.walk.descent_plan(decision) {
                 let groups = plan
@@ -1102,6 +1124,7 @@ impl RuleWalk<'_, '_> {
                 } else if greedy && self.walk.has_static_table(decision) {
                     self.walk.no_descent_groups(decision)?;
                     let mut choice = choice_model(state, decision);
+                    choice.nullable = self.walk.state_is_nullable(state);
                     choice.table_can_defer = self.walk.static_table_defers(decision)?;
                     Ok(SrcOpModel::DFAOptionalBlock { choice, alts })
                 } else {
@@ -1124,17 +1147,26 @@ impl RuleWalk<'_, '_> {
                 choice.loop_back_state_number = to_i32(loop_back);
                 choice.exit_alt = if greedy { to_i32(alts.len()) + 1 } else { 1 };
                 choice.greedy = greedy;
+                choice.nullable = self.walk.state_is_nullable(loop_back);
                 if greedy && look.disjoint && alts.len() == 1 {
                     let Some(enter_look) = &look.alternatives[0] else {
                         return Err(unsupported("star block with empty enter look".to_owned()));
                     };
                     self.add_token_type_local("_la");
+                    let follow_expr = if self.walk.omit_sync() && !choice.nullable {
+                        let loop_end = self.walk.synthetic_state(owner, AtnStateKind::LoopEnd)?;
+                        let ranges = interval_set_ranges(self.walk.state_next_tokens(loop_end));
+                        (!ranges.is_empty()).then(|| Box::new(self.test_set_inline(&ranges)))
+                    } else {
+                        None
+                    };
                     Ok(SrcOpModel::LL1StarBlockSingleAlt {
                         choice,
                         loop_expr: Box::new(self.test_set_inline(enter_look)),
                         alts,
                         preamble: vec![capture_next_token_type()],
                         iteration: vec![capture_next_token_type()],
+                        follow_expr,
                     })
                 } else if greedy && self.walk.has_static_table(decision) {
                     self.walk.no_descent_groups(decision)?;
@@ -1167,6 +1199,7 @@ impl RuleWalk<'_, '_> {
                 choice.loop_back_state_number = to_i32(loop_back);
                 choice.exit_alt = if greedy { to_i32(alts.len()) + 1 } else { 1 };
                 choice.greedy = greedy;
+                choice.nullable = self.walk.state_is_nullable(loop_back);
                 if greedy && look.disjoint && alts.len() == 1 {
                     let Some(loop_back_look) = &look.alternatives[0] else {
                         return Err(unsupported(
@@ -1174,20 +1207,40 @@ impl RuleWalk<'_, '_> {
                         ));
                     };
                     self.add_token_type_local("_la");
+                    let follow_expr = if self.walk.omit_sync() && !choice.nullable {
+                        let loop_end = self.walk.synthetic_state(owner, AtnStateKind::LoopEnd)?;
+                        let ranges = interval_set_ranges(self.walk.state_next_tokens(loop_end));
+                        (!ranges.is_empty()).then(|| Box::new(self.test_set_inline(&ranges)))
+                    } else {
+                        None
+                    };
                     Ok(SrcOpModel::LL1PlusBlockSingleAlt {
                         choice,
                         loop_expr: Box::new(self.test_set_inline(loop_back_look)),
                         alts,
                         preamble: vec![capture_next_token_type()],
                         iteration: vec![capture_next_token_type()],
+                        follow_expr,
                     })
                 } else if greedy && self.walk.has_static_table(decision) {
                     self.walk.no_descent_groups(decision)?;
                     choice.table_can_defer = self.walk.static_table_defers(decision)?;
+                    let starter_expr = if self.walk.omit_sync() {
+                        let ranges = interval_set_ranges(self.walk.state_next_tokens(block_start));
+                        if ranges.is_empty() {
+                            None
+                        } else {
+                            self.add_token_type_local("_la");
+                            Some(Box::new(self.test_set_inline(&ranges)))
+                        }
+                    } else {
+                        None
+                    };
                     Ok(SrcOpModel::DFAPlusBlock {
                         choice,
                         alts,
                         error: Box::new(SrcOpModel::ThrowNoViableAlt),
+                        starter_expr,
                     })
                 } else {
                     self.walk.adaptive_prediction(decision)?;
@@ -1802,7 +1855,23 @@ fn choice_model(state_number: usize, decision: usize) -> ChoiceModel {
         greedy: true,
         alt_look: Vec::new(),
         table_can_defer: false,
+        nullable: false,
     }
+}
+
+fn interval_set_ranges(set: &IntervalSet) -> Vec<(i32, i32)> {
+    let mut ranges = Vec::new();
+    for interval in set.as_slice() {
+        let start = if interval.a == TOKEN_EPSILON {
+            interval.a + 1
+        } else {
+            interval.a
+        };
+        if start <= interval.b {
+            ranges.push((start, interval.b));
+        }
+    }
+    ranges
 }
 
 fn capture_next_token_type() -> SrcOpModel {

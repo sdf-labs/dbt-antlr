@@ -340,6 +340,9 @@ pub struct ChoiceModel {
     /// `Choice.tableCanDefer`: whether the static table prediction can return
     /// no alternative and has to fall back to `adaptive_predict`.
     pub table_can_defer: bool,
+    /// `true` when `TOKEN_EPSILON` is in `next_tokens` of the decision or
+    /// loop-back state.
+    pub nullable: bool,
 }
 
 /// One shared-descent group of a `DescentAltBlock`.
@@ -589,6 +592,7 @@ pub enum SrcOpModel {
         alts: Vec<Self>,
         preamble: Vec<Self>,
         iteration: Vec<Self>,
+        follow_expr: Option<Box<Self>>,
     },
     LL1PlusBlockSingleAlt {
         choice: ChoiceModel,
@@ -596,6 +600,7 @@ pub enum SrcOpModel {
         alts: Vec<Self>,
         preamble: Vec<Self>,
         iteration: Vec<Self>,
+        follow_expr: Option<Box<Self>>,
     },
     AltBlock {
         choice: ChoiceModel,
@@ -646,6 +651,7 @@ pub enum SrcOpModel {
         choice: ChoiceModel,
         alts: Vec<Self>,
         error: Box<Self>,
+        starter_expr: Option<Box<Self>>,
     },
     InvokeRule {
         name: String,

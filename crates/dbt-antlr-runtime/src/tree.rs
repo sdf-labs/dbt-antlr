@@ -504,6 +504,10 @@ where
         self.as_rule_context_common().and_then(|ctx| ctx.stop)
     }
 
+    pub(crate) fn get_start_token(&self) -> Option<&'arena Tok> {
+        self.as_rule_context_common().and_then(|ctx| ctx.start)
+    }
+
     /// # Safety
     /// Caller must ensure that the provided pointer is a valid pointer to a
     /// properly instantiated [NodeInner] object:

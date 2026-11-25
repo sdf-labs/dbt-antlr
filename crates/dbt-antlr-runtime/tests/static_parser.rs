@@ -946,7 +946,7 @@ fn static_dfa_only_reports_a_syntax_error_after_a_wrong_skip() {
     );
     assert_eq!(
         static_only.1,
-        ["line 1:18 mismatched input '=' expecting ';'"]
+        ["line 1:18 mismatched input '=' expecting {';', 'AND', 'OR'}"]
     );
 }
 
