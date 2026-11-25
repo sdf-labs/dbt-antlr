@@ -116,10 +116,10 @@ impl PerfTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum PerfParserNodeKind {
-    StatContext,
-    ExprContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    StatContext = 2,
+    ExprContext = 3,
 }
 pub type PerfParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, PerfParserNodeKind, Tok>;
 

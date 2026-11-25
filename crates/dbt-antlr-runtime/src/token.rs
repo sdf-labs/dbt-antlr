@@ -232,6 +232,7 @@ fn advance_to_char_boundary(s: &str, mut index: usize) -> usize {
 /// Zero-copy token backed by a shared [`SourceInfo`] and lazy line/column index.
 #[derive(Clone, Debug)]
 #[allow(missing_docs)]
+#[repr(C)]
 pub struct CommonToken<'input> {
     source: &'input SourceInfo<'input>,
     type_and_channel: i32,
@@ -240,7 +241,20 @@ pub struct CommonToken<'input> {
     pub token_index: i32,
 }
 
-const _: () = assert!(size_of::<CommonToken<'static>>() == 24);
+// The exact layout of `CommonToken` is exposed through FFI, and therefore must
+// stay fixed:
+const _: () = {
+    use std::mem::offset_of;
+
+    assert!(size_of::<CommonToken<'static>>() == 24);
+    assert!(align_of::<CommonToken<'static>>() == 8);
+    assert!(offset_of!(CommonToken<'static>, source) == 0);
+    assert!(offset_of!(CommonToken<'static>, type_and_channel) == 8);
+    assert!(offset_of!(CommonToken<'static>, start) == 12);
+    assert!(offset_of!(CommonToken<'static>, stop) == 16);
+    assert!(offset_of!(CommonToken<'static>, token_index) == 20);
+};
+
 impl<'input> CommonToken<'input> {
     #[inline]
     pub(crate) const fn new_slice(

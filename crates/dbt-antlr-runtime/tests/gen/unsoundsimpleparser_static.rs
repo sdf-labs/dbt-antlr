@@ -114,10 +114,10 @@ impl UnsoundSimpleTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum UnsoundSimpleParserNodeKind {
-    TopContext,
-    AContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    TopContext = 2,
+    AContext = 3,
 }
 pub type UnsoundSimpleParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, UnsoundSimpleParserNodeKind, Tok>;
 

@@ -120,13 +120,13 @@ impl GuardExprTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum GuardExprParserNodeKind {
-    ProgContext,
-    StmtContext,
-    ExprContext,
-    PredContext,
-    ValueContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    ProgContext = 2,
+    StmtContext = 3,
+    ExprContext = 4,
+    PredContext = 5,
+    ValueContext = 6,
 }
 pub type GuardExprParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, GuardExprParserNodeKind, Tok>;
 

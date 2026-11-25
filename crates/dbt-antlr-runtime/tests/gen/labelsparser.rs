@@ -116,11 +116,11 @@ impl LabelsTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum LabelsParserNodeKind {
-    SContext,
-    EContext,
-    BlkContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    SContext = 2,
+    EContext = 3,
+    BlkContext = 4,
 }
 pub type LabelsParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, LabelsParserNodeKind, Tok>;
 

@@ -157,21 +157,21 @@ impl WidenedTrustTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum WidenedTrustParserNodeKind {
-    TopContext,
-    AContext,
-    R0Context,
-    R1Context,
-    R2Context,
-    R3Context,
-    R4Context,
-    R5Context,
-    R6Context,
-    R7Context,
-    R8Context,
-    R9Context,
-    R10Context,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    TopContext = 2,
+    AContext = 3,
+    R0Context = 4,
+    R1Context = 5,
+    R2Context = 6,
+    R3Context = 7,
+    R4Context = 8,
+    R5Context = 9,
+    R6Context = 10,
+    R7Context = 11,
+    R8Context = 12,
+    R9Context = 13,
+    R10Context = 14,
 }
 pub type WidenedTrustParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, WidenedTrustParserNodeKind, Tok>;
 

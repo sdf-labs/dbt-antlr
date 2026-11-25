@@ -123,15 +123,15 @@ impl StaticDFATreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum StaticDFAParserNodeKind {
-    StatContext,
-    ExprContext,
-    NameContext,
-    StarLoopContext,
-    PlusLoopContext,
-    OptContext,
-    DupContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    StatContext = 2,
+    ExprContext = 3,
+    NameContext = 4,
+    StarLoopContext = 5,
+    PlusLoopContext = 6,
+    OptContext = 7,
+    DupContext = 8,
 }
 pub type StaticDFAParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, StaticDFAParserNodeKind, Tok>;
 

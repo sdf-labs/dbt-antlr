@@ -11,6 +11,12 @@ use crate::{
 const DEFAULT_TOKENS_CAPACITY: usize = 1024;
 const DEFAULT_CONTEXTS_CAPACITY: usize = 4096;
 
+#[repr(C)]
+pub(crate) struct NodeAllocLayout<Header, Body> {
+    pub(crate) header: Header,
+    pub(crate) body: Body,
+}
+
 #[derive(Debug)]
 pub struct Arena {
     tokens: bumpalo::Bump,
@@ -160,7 +166,10 @@ impl Arena {
     {
         check_allocation_limit!(self);
         let zeroed_header = unsafe { std::mem::zeroed::<TreeNode<'input, 'a, N, Tok>>() };
-        let ptr = self.contexts.alloc((zeroed_header, body));
+        let ptr = self.contexts.alloc(NodeAllocLayout {
+            header: zeroed_header,
+            body,
+        });
         ptr as *mut _ as *mut TreeNode<'input, 'a, N, Tok>
     }
 
@@ -177,7 +186,7 @@ impl Arena {
         Tok: Token + 'input,
     {
         check_allocation_limit!(self);
-        let ptr = self.contexts.alloc((header, body));
+        let ptr = self.contexts.alloc(NodeAllocLayout { header, body });
         ptr as *mut _ as *mut TreeNode<'input, 'a, N, Tok>
     }
 

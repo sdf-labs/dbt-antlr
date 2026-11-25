@@ -103,10 +103,10 @@ impl SimpleLRTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum SimpleLRParserNodeKind {
-    SContext,
-    AContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    SContext = 2,
+    AContext = 3,
 }
 pub type SimpleLRParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, SimpleLRParserNodeKind, Tok>;
 

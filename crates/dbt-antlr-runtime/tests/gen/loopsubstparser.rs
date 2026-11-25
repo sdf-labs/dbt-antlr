@@ -147,13 +147,13 @@ impl LoopSubstTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum LoopSubstParserNodeKind {
-    StartContext,
-    ExprContext,
-    OperandContext,
-    Type_Context,
-    WhenClauseContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    StartContext = 2,
+    ExprContext = 3,
+    OperandContext = 4,
+    Type_Context = 5,
+    WhenClauseContext = 6,
 }
 pub type LoopSubstParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, LoopSubstParserNodeKind, Tok>;
 

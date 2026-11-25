@@ -155,22 +155,22 @@ impl WidenedPrecedenceTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum WidenedPrecedenceParserNodeKind {
-    SContext,
-    EContext,
-    OpContext,
-    C0Context,
-    C1Context,
-    C2Context,
-    C3Context,
-    C4Context,
-    C5Context,
-    C6Context,
-    C7Context,
-    C8Context,
-    C9Context,
-    C10Context,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    SContext = 2,
+    EContext = 3,
+    OpContext = 4,
+    C0Context = 5,
+    C1Context = 6,
+    C2Context = 7,
+    C3Context = 8,
+    C4Context = 9,
+    C5Context = 10,
+    C6Context = 11,
+    C7Context = 12,
+    C8Context = 13,
+    C9Context = 14,
+    C10Context = 15,
 }
 pub type WidenedPrecedenceParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, WidenedPrecedenceParserNodeKind, Tok>;
 

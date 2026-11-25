@@ -397,9 +397,22 @@ const fn unsupported(message: String) -> EmitError {
     EmitError::Unsupported(message)
 }
 
-/// Builds one `RuleFunction` model, the Java
-/// `OutputModelController.buildRuleFunction` (with
-/// `buildLeftRecursiveRuleFunction` for left-recursive rules).
+/// The `NodeKind` tag of the first rule context. Tags `0` and `1` are
+/// universally assigned to the `Error` and `Terminal` leaf tags, respectively.
+const FIRST_RULE_NODE_TAG: usize = 2;
+
+fn rule_node_tag(rule_index: usize) -> Result<u16, EmitError> {
+    rule_index
+        .checked_add(FIRST_RULE_NODE_TAG)
+        .and_then(|tag| u16::try_from(tag).ok())
+        .ok_or_else(|| {
+            unsupported(format!(
+                "rule index {rule_index} has no u16 node tag: a parser can have at most {} rules",
+                usize::from(u16::MAX) + 1 - FIRST_RULE_NODE_TAG
+            ))
+        })
+}
+
 fn build_rule_function(
     walk: &WalkContext<'_>,
     unit: &GrammarUnit,
@@ -492,6 +505,7 @@ fn build_rule_function(
                 .collect(),
             ctx_type: rule_context_struct_name(&rule.name),
             index: rule_index,
+            node_tag: rule_node_tag(rule_index)?,
             start_state: to_i32(walk.graph.rule_starts[rule_index]),
             has_lookahead_block,
             left_recursive: left_recursion,
@@ -2695,4 +2709,23 @@ fn element_frequencies(walk: &WalkContext<'_>, element: &Element) -> (Frequencie
         Quantifier::One => {}
     }
     (freq, min)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rule_node_tags_start_after_the_leaf_tags() {
+        assert_eq!(rule_node_tag(0).unwrap(), 2);
+        assert_eq!(rule_node_tag(1).unwrap(), 3);
+        assert_eq!(rule_node_tag(65533).unwrap(), u16::MAX);
+    }
+
+    #[test]
+    fn rule_node_tag_rejects_rules_past_the_u16_range() {
+        let error = rule_node_tag(65534).unwrap_err().to_string();
+        assert!(error.contains("at most 65534 rules"), "{error}");
+        assert!(rule_node_tag(usize::MAX).is_err());
+    }
 }

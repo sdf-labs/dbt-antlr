@@ -115,11 +115,11 @@ impl ParenExprTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum ParenExprParserNodeKind {
-    SContext,
-    EContext,
-    QContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    SContext = 2,
+    EContext = 3,
+    QContext = 4,
 }
 pub type ParenExprParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, ParenExprParserNodeKind, Tok>;
 

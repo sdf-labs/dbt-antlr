@@ -127,13 +127,13 @@ impl InlineAliasTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum InlineAliasParserNodeKind {
-    StmtContext,
-    QueryContext,
-    ExprContext,
-    AliasContext,
-    TypeContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    StmtContext = 2,
+    QueryContext = 3,
+    ExprContext = 4,
+    AliasContext = 5,
+    TypeContext = 6,
 }
 pub type InlineAliasParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, InlineAliasParserNodeKind, Tok>;
 

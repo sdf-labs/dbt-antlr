@@ -103,9 +103,9 @@ impl ReferenceToATNTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum ReferenceToATNParserNodeKind {
-    AContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    AContext = 2,
 }
 pub type ReferenceToATNParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, ReferenceToATNParserNodeKind, Tok>;
 

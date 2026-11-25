@@ -105,10 +105,10 @@ impl LoopVetoTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum LoopVetoParserNodeKind {
-    StartContext,
-    SendContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    StartContext = 2,
+    SendContext = 3,
 }
 pub type LoopVetoParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, LoopVetoParserNodeKind, Tok>;
 

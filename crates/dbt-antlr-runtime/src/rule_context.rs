@@ -133,15 +133,15 @@ pub struct EmptyCustomRuleContext<'input, 'arena>(
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum EmptyNodeKind {
-    EmptyContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    EmptyContext = 2,
 }
 
 impl_node_kind! {EmptyNodeKind { EmptyContext(EmptyContextAll),; }; }
 
 #[derive(Debug)]
-#[repr(u16)]
+#[repr(C, u16)]
 pub enum EmptyContextAll<'input, 'arena, Tok: Token = CommonToken<'input>> {
     EmptyContext(EmptyParserRuleContext<'input, 'arena, Tok>),
     Error(EmptyParserRuleContext<'input, 'arena, Tok>),

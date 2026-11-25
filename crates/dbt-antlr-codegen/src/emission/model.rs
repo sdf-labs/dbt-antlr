@@ -289,6 +289,8 @@ pub struct RuleFunctionModel {
     pub modifiers: Vec<String>,
     pub ctx_type: String,
     pub index: usize,
+    /// Discriminant of the rule context in the `NodeKind` enum.
+    pub node_tag: u16,
     /// Rule start state number.
     pub start_state: i32,
     pub has_lookahead_block: bool,

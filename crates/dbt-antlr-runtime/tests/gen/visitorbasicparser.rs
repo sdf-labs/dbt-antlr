@@ -110,9 +110,9 @@ impl VisitorBasicTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum VisitorBasicParserNodeKind {
-    SContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    SContext = 2,
 }
 pub type VisitorBasicParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, VisitorBasicParserNodeKind, Tok>;
 

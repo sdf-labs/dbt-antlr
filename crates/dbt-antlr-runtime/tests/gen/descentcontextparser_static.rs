@@ -123,15 +123,15 @@ impl DescentContextTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum DescentContextParserNodeKind {
-    SContext,
-    DContext,
-    RContext,
-    GContext,
-    KContext,
-    HContext,
-    EContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    SContext = 2,
+    DContext = 3,
+    RContext = 4,
+    GContext = 5,
+    KContext = 6,
+    HContext = 7,
+    EContext = 8,
 }
 pub type DescentContextParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, DescentContextParserNodeKind, Tok>;
 
