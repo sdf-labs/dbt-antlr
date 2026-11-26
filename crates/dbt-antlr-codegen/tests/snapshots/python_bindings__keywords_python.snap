@@ -1,0 +1,53 @@
+---
+source: crates/dbt-antlr-codegen/tests/python_bindings.rs
+expression: "file(&output.python_files, \"keywords_parser.py\")"
+---
+# Generated from Keywords.g4 by ANTLR 4.13.2
+"""The entry functions of the ``Keywords`` grammar.
+
+Each entry function parses an input from one rule and returns a
+``dbt_antlr.ParseContext``. Enter the context in a ``with`` statement to get
+the parse tree. The tree is valid only in the ``with`` block.
+"""
+
+from __future__ import annotations
+
+from dbt_antlr import GrammarBundle as _GrammarBundle
+from dbt_antlr import ParseContext as _ParseContext
+
+from . import _native
+
+_grammar = _GrammarBundle.load(_native).grammar(
+    "keywords",
+    rule_names=(
+        "from",
+        "class",
+        "type",
+        "with",
+    ),
+)
+
+EOF = -1
+True_ = 1
+ID = 2
+WS = 3
+
+RULE_from = 0
+RULE_class = 1
+RULE_type = 2
+RULE_with = 3
+
+
+def from_(input: str | bytes, *, recovery: bool = False) -> _ParseContext:
+    """Parses ``input`` from the rule ``from``."""
+    return _grammar.parse(0, input, recovery=recovery)
+
+
+def class_(input: str | bytes, *, recovery: bool = False) -> _ParseContext:
+    """Parses ``input`` from the rule ``class``."""
+    return _grammar.parse(1, input, recovery=recovery)
+
+
+def type(input: str | bytes, *, recovery: bool = False) -> _ParseContext:
+    """Parses ``input`` from the rule ``type``."""
+    return _grammar.parse(2, input, recovery=recovery)

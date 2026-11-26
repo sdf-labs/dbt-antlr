@@ -50,18 +50,33 @@ jobs:
 
       # The release PR bumps the workspace version, which changes the
       # check_version! stamps in freshly generated recognizers. Regenerate
-      # the checked-in recognizers on the release branch so that version,
-      # stamps, and checked-in files agree when the release PR merges.
-      - name: Regenerate checked-in recognizers on the release PR
+      # the checked-in recognizers and sync python/pyproject.toml on the
+      # release branch so that versions, stamps, and checked-in files agree
+      # when the release PR merges.
+      - name: Regenerate checked-in recognizers and sync Python version
         if: steps.release-pr.outputs.branch != ''
         run: |
           branch="${{ steps.release-pr.outputs.branch }}"
           git fetch --depth=1 origin "+refs/heads/$branch:refs/remotes/origin/$branch"
           git checkout -b "$branch" "refs/remotes/origin/$branch"
+          python3 - <<'PY'
+          import pathlib, re, tomllib
+          with open("Cargo.toml", "rb") as f:
+              version = tomllib.load(f)["workspace"]["package"]["version"]
+          pyproject = pathlib.Path("python/pyproject.toml")
+          updated = re.sub(
+              r'(?m)^version = "[^"]+"$',
+              f'version = "{version}"',
+              pyproject.read_text(),
+              count=1,
+          )
+          pyproject.write_text(updated)
+          PY
           crates/dbt-antlr-g4-parser/regen_frontend.sh
           crates/dbt-antlr-runtime/gen_test_grammars.sh
+          tests/ffi-bundle/gen_grammars.sh
           if git diff --quiet; then
-            echo "checked-in recognizers already match the bumped version"
+            echo "checked-in recognizers and python/pyproject.toml already match the bumped version"
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

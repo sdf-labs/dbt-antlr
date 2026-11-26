@@ -45,6 +45,7 @@ jobs:
       # generator binary and dev-dependencies.
       - name: cargo clippy (slim feature sets)
         run: |
+          cargo clippy -p dbt-antlr-runtime --no-default-features -- -D warnings
           cargo clippy -p dbt-antlr-codegen --no-default-features -- -D warnings
           cargo clippy -p dbt-antlr-codegen --no-default-features --features download -- -D warnings
 
@@ -55,7 +56,21 @@ jobs:
       - name: cargo check (big-endian)
         env:
           RUSTFLAGS: -D warnings
-        run: cargo check -p dbt-antlr-runtime --lib --target s390x-unknown-linux-gnu
+        run: |
+          cargo check -p dbt-antlr-runtime --lib --target s390x-unknown-linux-gnu
+          cargo check -p dbt-antlr-runtime --lib --features ffi --target s390x-unknown-linux-gnu
+
+      - name: Check Cargo and Python package versions match
+        run: |
+          python3 - <<'PY'
+          import tomllib
+          with open("Cargo.toml", "rb") as f:
+              cargo_ver = tomllib.load(f)["workspace"]["package"]["version"]
+          with open("python/pyproject.toml", "rb") as f:
+              py_ver = tomllib.load(f)["project"]["version"]
+          if cargo_ver != py_ver:
+              raise SystemExit(f"version mismatch: Cargo.toml={cargo_ver}, python/pyproject.toml={py_ver}")
+          PY
 
   # Workspace unit/integration tests on the MSRV and current stable.
   unittests:
@@ -114,7 +129,9 @@ jobs:
           key: release-tests
 
       - name: cargo test --release
-        run: cargo test --release --workspace --all-targets
+        run: |
+          cargo test --release --workspace --all-targets
+          cargo test --release -p dbt-antlr-ffi-test-bundle --features arena-allocation-limit
 
   # Self-hosting guarantee: regenerating the g4-parser front-end and the
   # runtime test goldens with the shipped codegen must be a zero diff.
@@ -138,6 +155,9 @@ jobs:
 
       - name: Regenerate runtime test goldens
         run: crates/dbt-antlr-runtime/gen_test_grammars.sh
+
+      - name: Regenerate the FFI test bundle
+        run: tests/ffi-bundle/gen_grammars.sh
 
       - name: Verify zero diff
         run: git diff --exit-code
@@ -168,6 +188,43 @@ jobs:
       - name: Run static dfa runtime conformance suite
         run: cargo run -p runtime-testsuite --release --color never -- --static-lexer-dfa --static-parser-dfa
 
+  # The dbt_antlr Python package, against the FFI test bundle
+  # (tests/ffi-bundle) linked into a CFFI extension module.
+  python:
+    name: python bindings (${{ matrix.os }}, ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest ]
+        python: [ "3.10", "3.14" ]
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: python-${{ matrix.os }}
+
+      - name: Install Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install the Python test dependencies
+        run: python -m pip install build cffi pytest setuptools
+
+      - name: Build wheel and sdist
+        if: runner.os == 'Linux' && matrix.python == '3.10'
+        run: python -m build python --outdir "${{ runner.temp }}/dbt-antlr-dist"
+
+      - name: pytest
+        run: python -m pytest python/tests
+
   # Release PRs are opened by GITHUB_TOKEN, so they never trigger
   # pull_request workflows; the Release-plz workflow dispatches this
   # workflow onto the release branch instead. workflow_dispatch check runs
@@ -176,7 +233,7 @@ jobs:
   ci-status:
     name: ci status
     if: always() && github.event_name == 'workflow_dispatch'
-    needs: [quality, unittests, release-tests, bootstrap, runtime-testsuite]
+    needs: [quality, unittests, release-tests, bootstrap, runtime-testsuite, python]
     runs-on: ubuntu-latest
     permissions:
       statuses: write

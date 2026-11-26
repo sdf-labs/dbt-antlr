@@ -55,10 +55,13 @@ pub use arena::Arena;
 pub use arena::{get_default_arena_alloc_limit, set_default_arena_alloc_limit};
 
 mod arena;
+
 #[doc(hidden)]
 pub mod atn_config;
 #[doc(hidden)]
 pub mod atn_simulator;
+#[cfg(feature = "ffi")]
+pub mod ffi;
 pub mod int_stream;
 #[doc(hidden)]
 pub mod lexer_action;

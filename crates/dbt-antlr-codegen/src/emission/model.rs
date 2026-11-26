@@ -873,3 +873,60 @@ pub struct LexerModel {
     /// Static lexer DFA tables (`--static-lexer-dfa`); `None` with the flag off.
     pub static_tables: Option<StaticLexerTablesModel>,
 }
+
+/// Root render context of the binding templates: `FfiFile` renders the
+/// `<parser>_ffi.rs` grammar description for `dbt_antlr_runtime::ffi` bundles, and
+/// `PythonFile` renders the `<name>_parser.py` module for the `dbt_antlr`
+/// Python package. These files have no counterpart in the Java tool.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BindingsFileContext {
+    /// Template selector: `FfiFile` or `PythonFile`.
+    pub kind: &'static str,
+    pub grammar_file_name: String,
+    #[serde(rename = "ANTLRVersion")]
+    pub antlr_version: String,
+    /// Grammar name (`CSV`), as [`ParserFileModel::grammar_name`].
+    pub grammar_name: String,
+    /// Parser recognizer name, for example `CSVParser`.
+    pub parser_name: String,
+    /// Module of the parser, for example `csvparser`.
+    pub parser_module: String,
+    /// Lexer recognizer name, for example `CSVLexer`.
+    pub lexer_name: String,
+    /// Module of the lexer, for example `csvlexer`.
+    pub lexer_module: String,
+    /// The name that the Python module looks the grammar up by in its
+    /// bundle, for example `csv`.
+    pub bundle_name: String,
+    pub rules: Vec<BindingRuleModel>,
+    /// Token constants with a positive token type, in declaration order.
+    pub tokens: Vec<BindingTokenModel>,
+}
+
+/// One parser rule of a [`BindingsFileContext`].
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BindingRuleModel {
+    /// The rule name as the grammar spells it.
+    pub name: String,
+    /// The Rust name of the rule method of the parser.
+    pub rust_name: String,
+    /// The Python name of the entry function of the rule.
+    pub python_name: String,
+    pub index: usize,
+    /// Whether a parse can start at the rule (no arguments, no modifiers).
+    pub entry: bool,
+    /// The labels of the labeled alternatives, in `*ContextAll` variant
+    /// order.
+    pub alt_labels: Vec<String>,
+}
+
+/// One token constant of a [`BindingsFileContext`].
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BindingTokenModel {
+    /// The Python constant name.
+    pub python_name: String,
+    pub value: i32,
+}

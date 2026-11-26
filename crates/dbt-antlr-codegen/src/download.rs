@@ -242,34 +242,47 @@ fn ensure_binary(release: &PinnedRelease, out_dir: &Path) -> Result<PathBuf, Emi
     Ok(binary)
 }
 
+/// The files that the pinned binary generates beside the recognizers, as
+/// command-line flags.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PinnedOutputs<'a> {
+    pub(crate) gen_listener: bool,
+    pub(crate) gen_visitor: bool,
+    pub(crate) python: bool,
+    pub(crate) python_out_dir: Option<&'a Path>,
+}
+
 /// Runs the pinned binary over the configured grammars and returns the
 /// generated file paths in `out_dir`.
 pub(crate) fn generate_with_pinned_binary(
     release: &PinnedRelease,
     grammars: &[PathBuf],
     lib_dirs: &[PathBuf],
-    gen_listener: bool,
-    gen_visitor: bool,
+    outputs: PinnedOutputs<'_>,
     optimization: &OptimizationOptions,
     out_dir: &Path,
 ) -> Result<Vec<PathBuf>, EmitError> {
     let binary = ensure_binary(release, out_dir)?;
-    let staging = out_dir.join(".dbt-antlr-codegen-out");
-    std::fs::remove_dir_all(&staging).ok();
-    std::fs::create_dir_all(&staging).map_err(|source| EmitError::Write {
-        path: staging.clone(),
-        source,
-    })?;
+    let staging = fresh_dir(out_dir.join(".dbt-antlr-codegen-out"))?;
+    // The Python modules go to their own staging directory, next to their
+    // destination, so that the rename stays on one file system.
+    let python_staging = match (outputs.python, outputs.python_out_dir) {
+        (true, Some(python_out_dir)) => Some((
+            fresh_dir(python_out_dir.join(".dbt-antlr-codegen-python-out"))?,
+            python_out_dir,
+        )),
+        _ => None,
+    };
 
     let mut command = Command::new(&binary);
     command.arg("-o").arg(&staging);
     for dir in lib_dirs {
         command.arg("-lib").arg(dir);
     }
-    if gen_visitor {
+    if outputs.gen_visitor {
         command.arg("-visitor");
     }
-    if !gen_listener {
+    if !outputs.gen_listener {
         command.arg("-no-listener");
     }
     for entry in optimization.entry_rules() {
@@ -299,6 +312,11 @@ pub(crate) fn generate_with_pinned_binary(
     if optimization.is_report_only() {
         command.arg("--report-only");
     }
+    if let Some((python_staging, _)) = &python_staging {
+        command.arg("--python-out").arg(python_staging);
+    } else if outputs.python {
+        command.arg("--python");
+    }
     command.args(grammars);
     let status = command.status().map_err(|error| {
         EmitError::Download(format!("failed to launch {}: {error}", binary.display()))
@@ -311,25 +329,49 @@ pub(crate) fn generate_with_pinned_binary(
     }
 
     let mut written = Vec::new();
-    let entries = std::fs::read_dir(&staging).map_err(|source| EmitError::Write {
-        path: staging.clone(),
+    move_entries(&staging, out_dir, &mut written)?;
+    if let Some((python_staging, python_out_dir)) = &python_staging {
+        move_entries(python_staging, python_out_dir, &mut written)?;
+    }
+    written.sort();
+    Ok(written)
+}
+
+/// Creates `dir` without content.
+fn fresh_dir(dir: PathBuf) -> Result<PathBuf, EmitError> {
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).map_err(|source| EmitError::Write {
+        path: dir.clone(),
+        source,
+    })?;
+    Ok(dir)
+}
+
+/// Moves the files of the staging directory `staging` into `destination`,
+/// appends their new paths to `written`, and removes `staging`.
+fn move_entries(
+    staging: &Path,
+    destination: &Path,
+    written: &mut Vec<PathBuf>,
+) -> Result<(), EmitError> {
+    let entries = std::fs::read_dir(staging).map_err(|source| EmitError::Write {
+        path: staging.to_path_buf(),
         source,
     })?;
     for entry in entries {
         let entry = entry.map_err(|source| EmitError::Write {
-            path: staging.clone(),
+            path: staging.to_path_buf(),
             source,
         })?;
-        let destination = out_dir.join(entry.file_name());
-        std::fs::rename(entry.path(), &destination).map_err(|source| EmitError::Write {
-            path: destination.clone(),
+        let path = destination.join(entry.file_name());
+        std::fs::rename(entry.path(), &path).map_err(|source| EmitError::Write {
+            path: path.clone(),
             source,
         })?;
-        written.push(destination);
+        written.push(path);
     }
-    std::fs::remove_dir_all(&staging).ok();
-    written.sort();
-    Ok(written)
+    std::fs::remove_dir_all(staging).ok();
+    Ok(())
 }
 
 #[cfg(test)]

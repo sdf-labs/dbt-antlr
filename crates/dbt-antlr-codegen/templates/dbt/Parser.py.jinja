@@ -1,0 +1,49 @@
+{#-
+======================================================================
+Parser.py.jinja — the `<name>_parser.py` module of a parser for the
+`dbt_antlr` Python package (`dbt-antlr-codegen --python`). It has no
+counterpart in the Java tool's Rust.stg.
+
+The module imports the native extension module `_native` of its package,
+which must export the grammar under `bundleName`.
+======================================================================
+-#}
+# Generated from {{ grammarFileName }} by ANTLR {{ ANTLRVersion }}
+"""The entry functions of the ``{{ grammarName }}`` grammar.
+
+Each entry function parses an input from one rule and returns a
+``dbt_antlr.ParseContext``. Enter the context in a ``with`` statement to get
+the parse tree. The tree is valid only in the ``with`` block.
+"""
+
+from __future__ import annotations
+
+from dbt_antlr import GrammarBundle as _GrammarBundle
+from dbt_antlr import ParseContext as _ParseContext
+
+from . import _native
+
+_grammar = _GrammarBundle.load(_native).grammar(
+    {{ bundleName | py_str }},
+    rule_names=(
+{% for rule in rules %}
+        {{ rule.name | py_str }},
+{% endfor %}
+    ),
+)
+
+EOF = -1
+{% for token in tokens %}
+{{ token.pythonName }} = {{ token.value }}
+{% endfor %}
+
+{% for rule in rules %}
+RULE_{{ rule.name }} = {{ rule.index }}
+{% endfor %}
+{% for rule in rules if rule.entry %}
+
+
+def {{ rule.pythonName }}(input: str | bytes, *, recovery: bool = False) -> _ParseContext:
+    """Parses ``input`` from the rule ``{{ rule.name }}``."""
+    return _grammar.parse({{ rule.index }}, input, recovery=recovery)
+{% endfor %}

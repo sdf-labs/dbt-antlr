@@ -9,6 +9,10 @@
 //!   -lib <dir>        grammar/library search dir for imports (repeatable)
 //!   -visitor          generate visitor (+base visitor)
 //!   -no-listener      do not generate listener (+base listener)
+//!   --python          also generate Python bindings: <parser>_ffi.rs for a
+//!                     grammar bundle and <name>_parser.py for dbt_antlr
+//!   --python-out <dir>  output directory of <name>_parser.py (implies --python;
+//!                     default: the -o directory)
 //!   -Dkey=value       ignored with a warning (compat)
 //!   -n, --dry-run, --report-only  compile, analyze, and optimize without writing output files
 //!   --static-lexer-dfa            precompute static lexer DFA tables (lexer scope only)
@@ -52,6 +56,10 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   -lib <dir>        grammar/library search dir for imports (repeatable)
   -visitor          generate visitor (+base visitor)
   -no-listener      do not generate listener (+base listener)
+  --python          also generate Python bindings: <parser>_ffi.rs for a
+                    grammar bundle and <name>_parser.py for dbt_antlr
+  --python-out <dir>  output directory of <name>_parser.py (implies --python;
+                    default: the -o directory)
   -Dkey=value       ignored with a warning (compat)
   -n, --dry-run, --report-only  compile, analyze, and optimize without writing output files
   --static-lexer-dfa            precompute static lexer DFA tables (lexer scope only)
@@ -92,6 +100,8 @@ struct CliArgs {
     lib_dirs: Vec<PathBuf>,
     gen_listener: bool,
     gen_visitor: bool,
+    python: bool,
+    python_out: Option<PathBuf>,
     static_lexer_dfa: bool,
     static_parser_dfa: bool,
     static_dfa_only: bool,
@@ -130,6 +140,8 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let mut lib_dirs = Vec::new();
     let mut gen_listener = true;
     let mut gen_visitor = false;
+    let mut python = false;
+    let mut python_out = None;
     let mut static_lexer_dfa = false;
     let mut static_parser_dfa = false;
     let mut static_dfa_only = false;
@@ -164,6 +176,11 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
             "-no-visitor" => gen_visitor = false,
             "-listener" => gen_listener = true,
             "-no-listener" => gen_listener = false,
+            "--python" => python = true,
+            "--python-out" => {
+                python = true;
+                python_out = Some(PathBuf::from(value_after(arg, args, &mut index)?));
+            }
             "-n" | "--dry-run" | "--report-only" => report_only = true,
             "--static-lexer-dfa" => static_lexer_dfa = true,
             "--static-parser-dfa" => static_parser_dfa = true,
@@ -285,6 +302,8 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         lib_dirs,
         gen_listener,
         gen_visitor,
+        python,
+        python_out,
         static_lexer_dfa,
         static_parser_dfa,
         static_dfa_only,
@@ -342,6 +361,7 @@ pub fn run(
         .out_dir(&cli.out_dir)
         .listener(cli.gen_listener)
         .visitor(cli.gen_visitor)
+        .python(cli.python)
         .cargo_directives(false)
         .static_lexer_dfa(cli.static_lexer_dfa)
         .static_parser_dfa(cli.static_parser_dfa)
@@ -354,6 +374,9 @@ pub fn run(
         .strict(cli.strict);
     if let Some(spec) = &cli.dump_dfas {
         config.dump_dfas(spec);
+    }
+    if let Some(dir) = &cli.python_out {
+        config.python_out_dir(dir);
     }
     for dir in &cli.lib_dirs {
         config.lib_dir(dir);
@@ -673,6 +696,20 @@ mod tests {
         assert!(cli.static_dfa_only);
         let cli = parse(&["T.g4"]).expect("minimal command line parses");
         assert!(!cli.static_dfa_only);
+    }
+
+    #[test]
+    fn python_flags_parse() {
+        let cli = parse(&["T.g4"]).expect("minimal command line parses");
+        assert!(!cli.python);
+        assert_eq!(cli.python_out, None);
+        let cli = parse(&["--python", "T.g4"]).expect("flag parses");
+        assert!(cli.python);
+        assert_eq!(cli.python_out, None);
+        let cli = parse(&["--python-out", "py", "T.g4"]).expect("flag parses");
+        assert!(cli.python);
+        assert_eq!(cli.python_out, Some(std::path::PathBuf::from("py")));
+        assert!(parse(&["T.g4", "--python-out"]).is_err());
     }
 
     #[test]

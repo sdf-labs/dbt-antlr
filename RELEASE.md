@@ -8,7 +8,7 @@ This workspace ships three crates in lock-step from one shared `workspace.packag
 | `dbt-antlr-codegen`   | The generator: `dbt-antlr-codegen` binary + `dbt_antlr_codegen` build-script library | Occasional    |
 | `dbt-antlr-g4-parser` | Internal grammar front-end of the generator                          | Rides along with the tool |
 
-`tests/runtime-testsuite` and `tests/build-generate` are `publish = false`.
+`tests/runtime-testsuite` and `tests/ffi-bundle` are `publish = false`.
 
 ## Setup (one time)
 
@@ -29,12 +29,12 @@ g4-parser, then dbt-antlr-codegen).
    order, tags the release commit (`dbt-antlr-runtime-vX.Y.Z`,
    `dbt-antlr-g4-parser-vX.Y.Z`, or `dbt-antlr-codegen-vX.Y.Z`), and creates the
    GitHub release.
-3. The same workflow run regenerates the checked-in recognizers (the
-   `dbt-antlr-g4-parser` front-end and the runtime test goldens) on the
-   release branch and commits any diff. The version bump changes the
-   `check_version!` stamps in freshly generated recognizers, so the
-   regeneration keeps the version, the stamps, and the checked-in files in
-   agreement when the release PR merges.
+3. The same workflow run updates the version in `python/pyproject.toml` and
+   regenerates the checked-in recognizers (`dbt-antlr-g4-parser`, runtime test
+   goldens, and `tests/ffi-bundle`) on the release branch. The version bump
+   changes the `check_version!` stamps in freshly generated recognizers, so
+   this step keeps the versions, stamps, and checked-in files synchronized
+   when the release PR merges.
 4. Wait for the checks on the release PR before merging. GitHub does not
    run `pull_request` workflows on PRs opened by `GITHUB_TOKEN`
    (anti-recursion), so the Release-plz workflow dispatches the CI workflow
@@ -43,6 +43,20 @@ g4-parser, then dbt-antlr-codegen).
    `ci-status` job mirrors the aggregated result as a `ci (dispatched)`
    commit status, which does appear in the release PR checks and links to
    the full run.
+
+## Python package (`python/`)
+
+`python/` defines the pure-Python `dbt-antlr` package (`py3-none-any.whl` and
+`sdist`). It wraps grammar bundles compiled against `dbt-antlr-runtime` with
+`features = ["ffi"]`. Its version in `python/pyproject.toml` stays equal to the
+Cargo workspace version, and `GrammarBundle.load` compares `ANTLR_ABI_VERSION`
+with the native module at import time.
+
+To build the distribution archives locally, run:
+
+```bash
+python -m build python
+```
 
 Binary distribution is currently disabled; see below.
 
