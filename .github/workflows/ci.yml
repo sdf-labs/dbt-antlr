@@ -45,6 +45,7 @@ jobs:
       # generator binary and dev-dependencies.
       - name: cargo clippy (slim feature sets)
         run: |
+          cargo clippy -p dbt-antlr-runtime --no-default-features -- -D warnings
           cargo clippy -p dbt-antlr-codegen --no-default-features -- -D warnings
           cargo clippy -p dbt-antlr-codegen --no-default-features --features download -- -D warnings
 
@@ -55,7 +56,21 @@ jobs:
       - name: cargo check (big-endian)
         env:
           RUSTFLAGS: -D warnings
-        run: cargo check -p dbt-antlr-runtime --lib --target s390x-unknown-linux-gnu
+        run: |
+          cargo check -p dbt-antlr-runtime --lib --target s390x-unknown-linux-gnu
+          cargo check -p dbt-antlr-runtime --lib --features ffi --target s390x-unknown-linux-gnu
+
+      - name: Check Cargo and Python package versions match
+        run: |
+          python3 - <<'PY'
+          import tomllib
+          with open("Cargo.toml", "rb") as f:
+              cargo_ver = tomllib.load(f)["workspace"]["package"]["version"]
+          with open("python/pyproject.toml", "rb") as f:
+              py_ver = tomllib.load(f)["project"]["version"]
+          if cargo_ver != py_ver:
+              raise SystemExit(f"version mismatch: Cargo.toml={cargo_ver}, python/pyproject.toml={py_ver}")
+          PY
 
   # Workspace unit/integration tests on the MSRV and current stable.
   unittests:
@@ -114,7 +129,9 @@ jobs:
           key: release-tests
 
       - name: cargo test --release
-        run: cargo test --release --workspace --all-targets
+        run: |
+          cargo test --release --workspace --all-targets
+          cargo test --release -p dbt-antlr-ffi-test-bundle --features arena-allocation-limit
 
   # Self-hosting guarantee: regenerating the g4-parser front-end and the
   # runtime test goldens with the shipped codegen must be a zero diff.
@@ -199,7 +216,11 @@ jobs:
           python-version: ${{ matrix.python }}
 
       - name: Install the Python test dependencies
-        run: python -m pip install cffi pytest setuptools
+        run: python -m pip install build cffi pytest setuptools
+
+      - name: Build wheel and sdist
+        if: runner.os == 'Linux' && matrix.python == '3.10'
+        run: python -m build python --outdir "${{ runner.temp }}/dbt-antlr-dist"
 
       - name: pytest
         run: python -m pytest python/tests
