@@ -77,15 +77,7 @@ impl Arena {
         f(&arena)
     }
 
-    /// Creates an arena that the caller owns.
-    ///
-    /// Use this constructor when the parse tree must outlive a single
-    /// function scope, for example when a foreign-language binding keeps the
-    /// arena on the heap. Otherwise, prefer [`Arena::with`].
-    ///
-    /// With the `arena-allocation-limit` feature, the arena uses the default
-    /// limit that `set_default_arena_alloc_limit` sets.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         #[cfg(feature = "arena-allocation-limit")]
         {
             Self::new_with_limit(get_default_arena_alloc_limit())
@@ -144,6 +136,28 @@ impl Arena {
             self.source_infos.borrow_mut().push(raw);
         }
         ptr
+    }
+
+    #[cfg(feature = "ffi")]
+    pub(crate) fn stream_source_info(&self, input: &str) -> *const std::ffi::c_void {
+        let matches_input = |raw: *mut SourceInfo<'static>| -> bool {
+            // SAFETY: Every non-null pointer in `primary_source_info` and
+            // `source_infos` points to an initialized `SourceInfo` in `self.tokens`.
+            let info = unsafe { &*raw };
+            info.fallback.is_none()
+                && info.input.as_ptr() == input.as_ptr()
+                && info.input.len() == input.len()
+        };
+        let first = self.primary_source_info.get();
+        if !first.is_null() && matches_input(first) {
+            return first.cast();
+        }
+        for &raw in self.source_infos.borrow().iter() {
+            if matches_input(raw) {
+                return raw.cast();
+            }
+        }
+        ptr::null()
     }
 
     #[inline]
@@ -230,12 +244,6 @@ impl Arena {
     #[cfg(feature = "arena-allocation-limit")]
     pub fn allocation_limit_bytes(&self) -> usize {
         self.limit_bytes
-    }
-}
-
-impl Default for Arena {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

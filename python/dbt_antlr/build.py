@@ -1,7 +1,7 @@
 """Builds the native extension module of a grammar bundle with CFFI.
 
 A grammar bundle is a Rust crate with ``crate-type = ["staticlib"]`` that
-exports grammars with ``dbt_antlr_ffi::export_grammars!``. This module links
+exports grammars with ``dbt_antlr_runtime::ffi::export_grammars!``. This module links
 the static library into a CFFI extension module (API mode, ``abi3``):
 
     from dbt_antlr import build

@@ -10,7 +10,7 @@
 //!   -visitor          generate visitor (+base visitor)
 //!   -no-listener      do not generate listener (+base listener)
 //!   --python          also generate Python bindings: <parser>_ffi.rs for a
-//!                     dbt-antlr-ffi bundle and <name>_parser.py for dbt_antlr
+//!                     grammar bundle and <name>_parser.py for dbt_antlr
 //!   --python-out <dir>  output directory of <name>_parser.py (implies --python;
 //!                     default: the -o directory)
 //!   -Dkey=value       ignored with a warning (compat)
@@ -57,7 +57,7 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   -visitor          generate visitor (+base visitor)
   -no-listener      do not generate listener (+base listener)
   --python          also generate Python bindings: <parser>_ffi.rs for a
-                    dbt-antlr-ffi bundle and <name>_parser.py for dbt_antlr
+                    grammar bundle and <name>_parser.py for dbt_antlr
   --python-out <dir>  output directory of <name>_parser.py (implies --python;
                     default: the -o directory)
   -Dkey=value       ignored with a warning (compat)

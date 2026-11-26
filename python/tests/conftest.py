@@ -34,7 +34,7 @@ def bundle_package(tmp_path_factory: pytest.TempPathFactory) -> Path:
     output_dir = tmp_path_factory.mktemp("bundle")
     package_dir = output_dir / PACKAGE
     package_dir.mkdir()
-    (package_dir / "__init__.py").write_text('"""The dbt-antlr-ffi test bundle."""\n')
+    (package_dir / "__init__.py").write_text('"""The FFI test bundle."""\n')
     for module in (BUNDLE_DIR / "python").glob("*_parser.py"):
         shutil.copy(module, package_dir / module.name)
     build.compile_bundle(f"{PACKAGE}._native", library, output_dir)

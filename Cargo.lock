@@ -203,18 +203,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "dbt-antlr-ffi"
-version = "0.12.0"
-dependencies = [
- "cbindgen",
- "dbt-antlr-runtime",
-]
-
-[[package]]
 name = "dbt-antlr-ffi-test-bundle"
 version = "0.12.0"
 dependencies = [
- "dbt-antlr-ffi",
  "dbt-antlr-runtime",
 ]
 
@@ -234,6 +225,7 @@ dependencies = [
  "bit-set",
  "bumpalo",
  "byteorder",
+ "cbindgen",
  "dbt-antlr-codegen",
  "dbt-antlr-runtime",
  "fxhash",

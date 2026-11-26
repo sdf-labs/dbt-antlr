@@ -44,13 +44,13 @@ the command-line tool and noticeably shrinks the build-dependency tree.
 Python package needs for each parser:
 
 - `<parser>_ffi.rs` in the output directory, which describes the grammar to
-  a `dbt-antlr-ffi` bundle crate, and
+  a `dbt_antlr_runtime::ffi` bundle crate, and
 - `<name>_parser.py`, the Python entry functions of the grammar. `<name>` is
   the lowercase parser name without its `Parser` suffix. `--python-out <dir>`
   (`Config::python_out_dir`) sets the directory of this module.
 
 A parser grammar needs a `tokenVocab` option, which names its lexer. See the
-`dbt-antlr-ffi` crate for the bundle crate.
+`dbt_antlr_runtime::ffi` module (`features = ["ffi"]`) and `python/README.md`.
 
 ## Pinned-binary mode
 

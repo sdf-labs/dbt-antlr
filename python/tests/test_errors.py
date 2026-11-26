@@ -131,3 +131,17 @@ def test_grammar_lookup_errors(native) -> None:
     assert grammar.token_name(1) == "','"
     assert grammar.token_name(-1) == "EOF"
     assert grammar.token_name(99) is None
+
+
+def test_abi_version_handshake(native) -> None:
+    import types
+
+    assert native.lib.antlr_abi_version() == 1
+    stale_lib = types.SimpleNamespace(antlr_abi_version=lambda: 999)
+    stale_native = types.SimpleNamespace(ffi=native.ffi, lib=stale_lib)
+    with pytest.raises(RuntimeError, match="ABI version mismatch"):
+        GrammarBundle.load(stale_native)
+
+    missing_native = types.SimpleNamespace(ffi=native.ffi, lib=types.SimpleNamespace())
+    with pytest.raises(RuntimeError, match="antlr_abi_version"):
+        GrammarBundle.load(missing_native)

@@ -1,20 +1,23 @@
 //! The C entry points.
 //!
-//! This module defines the entry points that do not depend on the grammars
-//! of a bundle. [`export_grammars!`](crate::export_grammars) defines the
-//! other entry points in the bundle crate; the `extern "C"` block below
-//! declares them, so that `antlr.h` and Rust callers see one complete ABI.
+//! [`export_grammars!`](super::export_grammars) defines every unmangled C
+//! entry point in the bundle crate, so that Cargo feature unification never
+//! exports global C symbols into pure-Rust binaries. The `extern "C"` block
+//! below declares all entry points so that `antlr.h` and Rust callers see one
+//! complete ABI.
 
 use std::ffi::c_char;
 use std::panic::{self, AssertUnwindSafe};
 use std::ptr;
 
-use dbt_antlr_runtime::token::{CommonToken, Token};
+use crate::token::{CommonToken, Token};
 
-use crate::grammar::AntlrGrammarInfo;
-use crate::overlay::{AntlrToken, AntlrTreeNode};
-use crate::session::{AntlrParseSession, AntlrSessionInfo};
+use super::grammar::AntlrGrammarInfo;
+use super::overlay::{AntlrToken, AntlrTreeNode};
+use super::session::{AntlrParseSession, AntlrSessionInfo};
 
+/// The type of [`antlr_abi_version`].
+pub type AbiVersionFn = unsafe extern "C" fn() -> u32;
 /// The type of [`antlr_grammar_lookup`].
 pub type GrammarLookupFn = unsafe extern "C" fn(*const c_char, usize) -> i32;
 /// The type of [`antlr_grammar_info`].
@@ -25,10 +28,26 @@ pub type ParseEntryFn =
 /// The type of [`antlr_node_to_string_tree`].
 pub type NodeToStringTreeFn =
     unsafe extern "C" fn(i32, *const AntlrTreeNode, *mut usize) -> *mut c_char;
+/// The type of [`antlr_session_info`].
+pub type SessionInfoFn = unsafe extern "C" fn(*const AntlrParseSession) -> *const AntlrSessionInfo;
+/// The type of [`antlr_session_free`].
+pub type SessionFreeFn = unsafe extern "C" fn(*mut AntlrParseSession);
+/// The type of [`antlr_token_location`].
+pub type TokenLocationFn = unsafe extern "C" fn(*const AntlrToken, *mut u32, *mut i32) -> bool;
+/// The type of [`antlr_token_text_fallback`].
+pub type TokenTextFallbackFn = unsafe extern "C" fn(*const AntlrToken, *mut usize) -> *const c_char;
+/// The type of [`antlr_string_free`].
+pub type StringFreeFn = unsafe extern "C" fn(*mut c_char, usize);
+/// The type of [`antlr_set_arena_allocation_limit`].
+pub type SetArenaAllocationLimitFn = unsafe extern "C" fn(usize) -> bool;
 
 // C code uses `AntlrParseSession` only through pointers, as an opaque type.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
+    /// Returns `ANTLR_ABI_VERSION` from the compiled bundle. A client compares
+    /// this value with its own `ANTLR_ABI_VERSION` to detect ABI mismatches.
+    pub fn antlr_abi_version() -> u32;
+
     /// Finds a grammar of the bundle by the name that `export_grammars!`
     /// gives it. `name` points to `name_len` bytes of UTF-8, which need no
     /// NUL terminator.
@@ -73,36 +92,94 @@ unsafe extern "C" {
         node: *const AntlrTreeNode,
         out_len: *mut usize,
     ) -> *mut c_char;
+
+    /// Returns the result of the parse of `session`. The result stays valid
+    /// until `antlr_session_free`. Returns NULL when `session` is NULL.
+    ///
+    /// `session` must be NULL or a live session from `antlr_parse`.
+    pub fn antlr_session_info(session: *const AntlrParseSession) -> *const AntlrSessionInfo;
+
+    /// Frees a session, its parse tree, and its diagnostics. After this call,
+    /// all pointers into the session are dangling. A NULL `session` has no
+    /// effect.
+    ///
+    /// `session` must be NULL or a live session from `antlr_parse`.
+    pub fn antlr_session_free(session: *mut AntlrParseSession);
+
+    /// Computes the line (1-based) and the column (0-based, in Unicode code
+    /// points) of the first character of `token`. A conjured token gets the
+    /// location of the token that the parser conjured it at.
+    ///
+    /// Returns false when the location is not available, or when a pointer is
+    /// NULL.
+    ///
+    /// `token` must be NULL or a token of a live session. `out_line` and
+    /// `out_column` must be NULL or valid for writes.
+    pub fn antlr_token_location(
+        token: *const AntlrToken,
+        out_line: *mut u32,
+        out_column: *mut i32,
+    ) -> bool;
+
+    /// Returns the text of `token` as the runtime computes it: `<EOF>` for the
+    /// EOF token, the replaced text for tokens with replaced or conjured text
+    /// (for example `<missing ')'>`), and the input slice for other tokens.
+    ///
+    /// The text has `*out_len` bytes of UTF-8 and stays valid until
+    /// `antlr_session_free`. Returns NULL on failure, or when a pointer is
+    /// NULL.
+    ///
+    /// `token` must be NULL or a token of a live session. `out_len` must be
+    /// NULL or valid for writes.
+    pub fn antlr_token_text_fallback(
+        token: *const AntlrToken,
+        out_len: *mut usize,
+    ) -> *const c_char;
+
+    /// Frees a string from `antlr_node_to_string_tree`. A NULL `text` has no
+    /// effect.
+    ///
+    /// `text` must be NULL or a string from `antlr_node_to_string_tree` with
+    /// its length `len`.
+    pub fn antlr_string_free(text: *mut c_char, len: usize);
+
+    /// Sets the arena allocation limit in bytes for the parses that start
+    /// after this call, for all grammars of the bundle. 0 removes the limit.
+    /// A parse that goes above the limit ends with `ANTLR_PARSE_STATUS_FATAL`.
+    ///
+    /// Returns false and has no effect when the bundle was built without the
+    /// `arena-allocation-limit` feature of `dbt-antlr-runtime`.
+    pub fn antlr_set_arena_allocation_limit(limit_bytes: usize) -> bool;
 }
 
+const _: AbiVersionFn = antlr_abi_version;
 const _: GrammarLookupFn = antlr_grammar_lookup;
 const _: GrammarInfoFn = antlr_grammar_info;
 const _: ParseEntryFn = antlr_parse;
 const _: NodeToStringTreeFn = antlr_node_to_string_tree;
+const _: SessionInfoFn = antlr_session_info;
+const _: SessionFreeFn = antlr_session_free;
+const _: TokenLocationFn = antlr_token_location;
+const _: TokenTextFallbackFn = antlr_token_text_fallback;
+const _: StringFreeFn = antlr_string_free;
+const _: SetArenaAllocationLimitFn = antlr_set_arena_allocation_limit;
 
-/// Returns the result of the parse of `session`. The result stays valid
-/// until `antlr_session_free`. Returns NULL when `session` is NULL.
+/// See [`antlr_session_info`].
 ///
 /// # Safety
 ///
 /// `session` must be NULL or a live session from `antlr_parse`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn antlr_session_info(
-    session: *const AntlrParseSession,
-) -> *const AntlrSessionInfo {
+pub unsafe fn session_info(session: *const AntlrParseSession) -> *const AntlrSessionInfo {
     // SAFETY: The caller passes NULL or a live session.
     unsafe { session.as_ref() }.map_or(ptr::null(), |session| ptr::from_ref(session.info()))
 }
 
-/// Frees a session, its parse tree, and its diagnostics. After this call,
-/// all pointers into the session are dangling. A NULL `session` has no
-/// effect.
+/// See [`antlr_session_free`].
 ///
 /// # Safety
 ///
 /// `session` must be NULL or a live session from `antlr_parse`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn antlr_session_free(session: *mut AntlrParseSession) {
+pub unsafe fn session_free(session: *mut AntlrParseSession) {
     if session.is_null() {
         return;
     }
@@ -116,19 +193,13 @@ pub unsafe extern "C" fn antlr_session_free(session: *mut AntlrParseSession) {
     }
 }
 
-/// Computes the line (1-based) and the column (0-based, in Unicode code
-/// points) of the first character of `token`. A conjured token gets the
-/// location of the token that the parser conjured it at.
-///
-/// Returns false when the location is not available, or when a pointer is
-/// NULL.
+/// See [`antlr_token_location`].
 ///
 /// # Safety
 ///
 /// `token` must be NULL or a token of a live session. `out_line` and
 /// `out_column` must be NULL or valid for writes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn antlr_token_location(
+pub unsafe fn token_location(
     token: *const AntlrToken,
     out_line: *mut u32,
     out_column: *mut i32,
@@ -151,22 +222,13 @@ pub unsafe extern "C" fn antlr_token_location(
     true
 }
 
-/// Returns the text of `token` as the runtime computes it: `<EOF>` for the
-/// EOF token, the replaced text for tokens with replaced or conjured text
-/// (for example `<missing ')'>`), and the input slice for other tokens.
-///
-/// The text has `*out_len` bytes of UTF-8 and stays valid until
-/// `antlr_session_free`. Returns NULL on failure, or when a pointer is NULL.
+/// See [`antlr_token_text_fallback`].
 ///
 /// # Safety
 ///
-/// `token` must be NULL or a token of a live session. `out_len` must be
-/// NULL or valid for writes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn antlr_token_text_fallback(
-    token: *const AntlrToken,
-    out_len: *mut usize,
-) -> *const c_char {
+/// `token` must be NULL or a token of a live session. `out_len` must be NULL
+/// or valid for writes.
+pub unsafe fn token_text_fallback(token: *const AntlrToken, out_len: *mut usize) -> *const c_char {
     if token.is_null() || out_len.is_null() {
         return ptr::null();
     }
@@ -184,15 +246,13 @@ pub unsafe extern "C" fn antlr_token_text_fallback(
     text
 }
 
-/// Frees a string from `antlr_node_to_string_tree`. A NULL `text` has no
-/// effect.
+/// See [`antlr_string_free`].
 ///
 /// # Safety
 ///
 /// `text` must be NULL or a string from `antlr_node_to_string_tree` with its
 /// length `len`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn antlr_string_free(text: *mut c_char, len: usize) {
+pub unsafe fn string_free(text: *mut c_char, len: usize) {
     if text.is_null() {
         return;
     }
@@ -200,17 +260,11 @@ pub unsafe extern "C" fn antlr_string_free(text: *mut c_char, len: usize) {
     drop(unsafe { Box::from_raw(ptr::slice_from_raw_parts_mut(text.cast::<u8>(), len)) });
 }
 
-/// Sets the arena allocation limit in bytes for the parses that start after
-/// this call, for all grammars of the bundle. 0 removes the limit. A parse
-/// that goes above the limit ends with `ANTLR_PARSE_STATUS_FATAL`.
-///
-/// Returns false and has no effect when the bundle was built without the
-/// `arena-allocation-limit` feature of `dbt-antlr-ffi`.
-#[unsafe(no_mangle)]
-pub extern "C" fn antlr_set_arena_allocation_limit(limit_bytes: usize) -> bool {
+/// See [`antlr_set_arena_allocation_limit`].
+pub fn set_arena_allocation_limit(limit_bytes: usize) -> bool {
     #[cfg(feature = "arena-allocation-limit")]
     {
-        dbt_antlr_runtime::set_default_arena_alloc_limit(limit_bytes);
+        crate::set_default_arena_alloc_limit(limit_bytes);
         true
     }
     #[cfg(not(feature = "arena-allocation-limit"))]
@@ -236,7 +290,7 @@ unsafe fn common_token<'a>(token: *const AntlrToken) -> &'a CommonToken<'a> {
 /// # Safety
 ///
 /// `out_len` must be valid for writes.
-pub(crate) unsafe fn into_c_string(text: String, out_len: *mut usize) -> *mut c_char {
+pub(super) unsafe fn into_c_string(text: String, out_len: *mut usize) -> *mut c_char {
     let bytes = text.into_bytes().into_boxed_slice();
     // SAFETY: The caller passes a pointer that is valid for writes.
     unsafe { out_len.write(bytes.len()) };

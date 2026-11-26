@@ -145,7 +145,7 @@ impl Config {
     /// Also generates Python bindings (`--python`). Default: `false`.
     ///
     /// Each parser gets a `<parser>_ffi.rs` file in the output directory,
-    /// which describes the grammar to a `dbt-antlr-ffi` bundle, and a
+    /// which describes the grammar to a `dbt_antlr_runtime::ffi` bundle, and a
     /// `<name>_parser.py` module, which gives the grammar to the `dbt_antlr`
     /// Python package. `<name>` is the lowercase parser name without its
     /// `Parser` suffix. The module goes into the

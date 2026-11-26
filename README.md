@@ -11,16 +11,15 @@ for SQL-like languages.
   mirrors the Java tool's `Rust.stg`; the `dbt-antlr-codegen` binary is the
   Java-tool-like command line (`-o`, `-lib`, `-visitor`, `-no-listener`).
 - `crates/dbt-antlr-g4-parser` — the `.g4` grammar front-end.
-- `crates/dbt-antlr-runtime` — our ANTLR4 runtime for Rust. This is the code
-  generation target.
-- `crates/dbt-antlr-ffi` — a C ABI (`include/antlr.h`) over runtime parse
-  trees, for foreign-language bindings.
+- `crates/dbt-antlr-runtime` — our ANTLR4 runtime for Rust, plus the optional
+  C ABI (`src/ffi/`, `include/antlr.h`, behind `features = ["ffi"]`) over
+  parse trees for foreign-language bindings.
 - `python/` — the `dbt_antlr` Python package: CFFI bindings of the parse
-  trees, over `dbt-antlr-ffi`.
+  trees over `dbt_antlr_runtime::ffi`.
 - `tests/runtime-testsuite` — harness and vendored post-rendered corpus for the
   official ANTLR runtime conformance suite.
-- `tests/ffi-bundle` — a `dbt-antlr-ffi` bundle of test grammars, for the Rust
-  ABI tests and the Python tests.
+- `tests/ffi-bundle` — a multi-grammar FFI bundle of test grammars, for the
+  Rust ABI tests and the Python tests.
 
 ## History and credits
 

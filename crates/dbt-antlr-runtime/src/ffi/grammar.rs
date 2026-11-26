@@ -1,15 +1,15 @@
 //! Static grammar descriptions and the hooks that generated code provides.
 
-use std::ffi::{c_char, c_void};
+use std::ffi::c_char;
 use std::ptr;
 
-use dbt_antlr_runtime::Arena;
-use dbt_antlr_runtime::errors::ANTLRError;
-use dbt_antlr_runtime::token::{CommonToken, SourceInfo};
-use dbt_antlr_runtime::tree::{NodeKindType, TreeNode};
+use crate::errors::ANTLRError;
+use crate::token::CommonToken;
+use crate::tree::{NodeKindType, TreeNode};
+use crate::Arena;
 
-use crate::overlay::AntlrTreeNode;
-use crate::session::ErrorCollector;
+use super::overlay::AntlrTreeNode;
+use super::session::ErrorCollector;
 
 /// A UTF-8 string that is not NUL-terminated. A NULL `ptr` tells that the
 /// string is absent.
@@ -49,7 +49,7 @@ impl AntlrStr {
     }
 
     /// A view of `text` that is valid while `text` is.
-    pub(crate) const fn borrowed(text: &str) -> Self {
+    pub(super) const fn borrowed(text: &str) -> Self {
         Self {
             ptr: text.as_ptr().cast(),
             len: text.len(),
@@ -154,26 +154,17 @@ unsafe impl Sync for AntlrGrammarInfo {}
 /// The result of a successful [`ParseFn`] call.
 #[derive(Debug)]
 pub struct ParseOutput {
-    pub(crate) root: *const AntlrTreeNode,
-    pub(crate) primary_source: *const c_void,
+    pub(super) root: *const AntlrTreeNode,
 }
 
 impl ParseOutput {
-    /// Records the root node of a parse and the source of the input stream
-    /// (see [`CommonTokenFactory::source_info`]).
-    ///
-    /// [`CommonTokenFactory::source_info`]: dbt_antlr_runtime::token_factory::CommonTokenFactory::source_info
-    pub fn new<'a, N>(
-        root: &'a TreeNode<'a, 'a, N, CommonToken<'a>>,
-        primary_source: Option<&'a SourceInfo<'a>>,
-    ) -> Self
+    /// Records the root node of a parse.
+    pub fn new<'a, N>(root: &'a TreeNode<'a, 'a, N, CommonToken<'a>>) -> Self
     where
         N: NodeKindType<'a, CommonToken<'a>>,
     {
         Self {
             root: ptr::from_ref(root).cast(),
-            primary_source: primary_source
-                .map_or(ptr::null(), |source| ptr::from_ref(source).cast()),
         }
     }
 }
@@ -202,12 +193,12 @@ pub type StringTreeFn = unsafe fn(node: *const AntlrTreeNode) -> String;
 /// The `<parser>_ffi.rs` file that `dbt-antlr-codegen --python` generates
 /// defines a `GRAMMAR` static of this type.
 ///
-/// [`export_grammars!`]: crate::export_grammars
+/// [`export_grammars!`]: super::export_grammars
 #[derive(Debug)]
 pub struct Grammar {
-    pub(crate) info: AntlrGrammarInfo,
-    pub(crate) parse: ParseFn,
-    pub(crate) string_tree: StringTreeFn,
+    pub(super) info: AntlrGrammarInfo,
+    pub(super) parse: ParseFn,
+    pub(super) string_tree: StringTreeFn,
 }
 
 // SAFETY: `Grammar` refers only to immutable static data and to functions.

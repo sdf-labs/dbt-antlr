@@ -1,9 +1,9 @@
-//! Makes sure that the checked-in copies of `antlr.h` agree with the crate.
+//! Makes sure that the checked-in copies of `antlr.h` agree with `src/ffi`.
 //!
 //! To update the copies, run:
 //!
 //! ```text
-//! DBT_ANTLR_FFI_UPDATE_HEADER=1 cargo test -p dbt-antlr-ffi --test header
+//! DBT_ANTLR_FFI_UPDATE_HEADER=1 cargo test -p dbt-antlr-runtime --features ffi --test ffi_header
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -30,7 +30,7 @@ fn generate_header() -> String {
         .expect("cbindgen.toml is valid");
     let bindings = cbindgen::Builder::new()
         .with_config(config)
-        .with_src(crate_dir.join("src/lib.rs"))
+        .with_src(crate_dir.join("src/ffi/mod.rs"))
         .generate()
         .expect("cbindgen generates the header");
     let mut header = Vec::new();
@@ -44,11 +44,15 @@ fn check_copy(path: &Path, expected: &str) -> Result<(), String> {
         return Ok(());
     }
     if std::env::var_os(UPDATE_ENV_VAR).is_some() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("{}: {error}", parent.display()))?;
+        }
         std::fs::write(path, expected).map_err(|error| format!("{}: {error}", path.display()))?;
         return Ok(());
     }
     Err(format!(
-        "{} is out of date; run `{UPDATE_ENV_VAR}=1 cargo test -p dbt-antlr-ffi --test header`",
+        "{} is out of date; run `{UPDATE_ENV_VAR}=1 cargo test -p dbt-antlr-runtime --features ffi --test ffi_header`",
         path.display()
     ))
 }
@@ -67,6 +71,7 @@ fn header_copies_are_up_to_date() {
 fn header_declares_every_entry_point() {
     let header = generate_header();
     for function in [
+        "antlr_abi_version",
         "antlr_grammar_lookup",
         "antlr_grammar_info",
         "antlr_parse",

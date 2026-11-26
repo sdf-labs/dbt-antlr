@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Iterator, Optional, Tuple, Union
 
 # Values of antlr.h. `GrammarBundle` makes sure that its native module agrees.
+_ABI_VERSION = 1
 _NODE_TAG_ERROR = 0
 _NODE_TAG_TERMINAL = 1
 _NODE_TAG_FIRST_RULE = 2
@@ -26,6 +27,7 @@ _PARSE_STATUS_INVALID_UTF8 = 4
 _ERROR_ORIGIN_LEXER = 0
 
 _HEADER_CONSTANTS = {
+    "ANTLR_ABI_VERSION": _ABI_VERSION,
     "ANTLR_NODE_TAG_ERROR": _NODE_TAG_ERROR,
     "ANTLR_NODE_TAG_TERMINAL": _NODE_TAG_TERMINAL,
     "ANTLR_NODE_TAG_FIRST_RULE": _NODE_TAG_FIRST_RULE,
@@ -124,7 +126,7 @@ class GrammarBundle:
 
     A native module is a CFFI extension module (for example ``_native``) that
     links a Rust bundle crate. The crate names its grammars with
-    ``dbt_antlr_ffi::export_grammars!``.
+    ``dbt_antlr_runtime::ffi::export_grammars!``.
     """
 
     __slots__ = ("ffi", "lib", "_grammars")
@@ -132,6 +134,18 @@ class GrammarBundle:
     _loaded: "dict[int, Tuple[Any, GrammarBundle]]" = {}
 
     def __init__(self, ffi: Any, lib: Any) -> None:
+        abi_version_fn = getattr(lib, "antlr_abi_version", None)
+        if abi_version_fn is None:
+            raise RuntimeError(
+                "the native module does not export antlr_abi_version: rebuild it with "
+                "dbt_antlr_runtime::ffi::export_grammars!"
+            )
+        actual_abi = abi_version_fn()
+        if actual_abi != _ABI_VERSION:
+            raise RuntimeError(
+                f"ABI version mismatch: the native module has ABI version {actual_abi}, "
+                f"dbt_antlr expects {_ABI_VERSION}"
+            )
         for name, value in _HEADER_CONSTANTS.items():
             if getattr(lib, name) != value:
                 raise ImportError(
@@ -169,7 +183,7 @@ class GrammarBundle:
             if grammar_id < 0:
                 raise ImportError(
                     f"the native module exports no grammar {name!r}: export it "
-                    f"with dbt_antlr_ffi::export_grammars!"
+                    f"with dbt_antlr_runtime::ffi::export_grammars!"
                 )
             grammar = Grammar(self, name, grammar_id)
             self._grammars[name] = grammar
@@ -187,14 +201,14 @@ class GrammarBundle:
         above the limit raises ``ParseError``. ``0`` removes the limit.
 
         Raises ``RuntimeError`` when the bundle was built without the
-        ``arena-allocation-limit`` feature of ``dbt-antlr-ffi``.
+        ``arena-allocation-limit`` feature of ``dbt-antlr-runtime``.
         """
         if limit_bytes < 0:
             raise ValueError("the limit cannot be negative")
         if not self.lib.antlr_set_arena_allocation_limit(limit_bytes):
             raise RuntimeError(
                 "the bundle was built without the arena-allocation-limit feature "
-                "of dbt-antlr-ffi"
+                "of dbt-antlr-runtime"
             )
 
 

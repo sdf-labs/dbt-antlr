@@ -3,8 +3,8 @@
 //! The types in this module describe arena memory that `dbt-antlr-runtime`
 //! owns. C code reads parse trees through pointers to these types: it never
 //! copies them and it never writes through them. The compile-time assertions
-//! at the end of this module make sure that the mirrors agree with
-//! [`dbt_antlr_runtime::layout`].
+//! at the end of this module make sure that the mirrors agree with the
+//! runtime structs.
 //!
 //! A leaf node is only [`ANTLR_NODE_LEAF_SIZE`] bytes long. Do not read an
 //! [`AntlrTreeNode`] by value. Examine `node_tag` first, and then read only
@@ -13,8 +13,9 @@
 use std::ffi::c_void;
 use std::mem::{align_of, offset_of, size_of};
 
-use dbt_antlr_runtime::layout;
-
+/// The version of the C ABI. A native client compares this value with the
+/// return value of `antlr_abi_version` at load time.
+pub const ANTLR_ABI_VERSION: u32 = 1;
 /// The `node_tag` of an error leaf.
 pub const ANTLR_NODE_TAG_ERROR: u16 = 0;
 /// The `node_tag` of a terminal leaf.
@@ -39,7 +40,7 @@ pub struct AntlrToken {
     /// The identity of the source that holds the token text. All tokens that
     /// slice the input have the `primary_source` of their session. Other
     /// tokens (for example conjured `<missing ...>` tokens) have a different
-    /// source; get their text with `antlr_token_text_fallback`.
+    /// source. Get their text with `antlr_token_text_fallback`.
     pub source: *const c_void,
     /// The low `ANTLR_TOKEN_TYPE_BITS` bits hold the signed token type, and
     /// the high bits hold the signed channel. Use `antlr_token_type` and
@@ -148,41 +149,53 @@ pub struct AntlrTreeNode {
 }
 
 const _: () = {
-    assert!(ANTLR_NODE_TAG_ERROR == layout::NODE_TAG_ERROR);
-    assert!(ANTLR_NODE_TAG_TERMINAL == layout::NODE_TAG_TERMINAL);
-    assert!(ANTLR_NODE_TAG_FIRST_RULE == layout::NODE_TAG_FIRST_RULE);
-    assert!(ANTLR_CHILDREN_INLINE_SLOTS == layout::CHILDREN_INLINE_SLOTS);
-    assert!(ANTLR_TOKEN_TYPE_BITS == layout::TOKEN_TYPE_BITS);
-    assert!(ANTLR_TOKEN_EOF == dbt_antlr_runtime::token::TOKEN_EOF);
+    use crate::rule_context::EmptyNodeKind;
+    use crate::token::{CommonToken, TOKEN_EOF, TOKEN_TYPE_BITS};
+    use crate::tree::{
+        NodeChildren, ParserRuleContextCommon, TerminalNode, TreeNode, MAX_INLINE_CHILDREN,
+    };
 
-    assert!(size_of::<AntlrToken>() == layout::TOKEN_SIZE);
-    assert!(align_of::<AntlrToken>() == layout::TOKEN_ALIGN);
-    assert!(offset_of!(AntlrToken, source) == layout::TOKEN_SOURCE_OFFSET);
-    assert!(offset_of!(AntlrToken, type_and_channel) == layout::TOKEN_TYPE_AND_CHANNEL_OFFSET);
-    assert!(offset_of!(AntlrToken, start) == layout::TOKEN_START_OFFSET);
-    assert!(offset_of!(AntlrToken, stop) == layout::TOKEN_STOP_OFFSET);
-    assert!(offset_of!(AntlrToken, token_index) == layout::TOKEN_INDEX_OFFSET);
+    type Tok = CommonToken<'static>;
+    type Node = TreeNode<'static, 'static, EmptyNodeKind>;
+    type Common = ParserRuleContextCommon<'static, 'static, EmptyNodeKind>;
+    type Children = NodeChildren<'static, 'static, EmptyNodeKind>;
+    type Leaf = TerminalNode<'static, 'static>;
 
-    assert!(align_of::<AntlrTreeNode>() == layout::NODE_ALIGN);
-    assert!(offset_of!(AntlrTreeNode, label_tag) == layout::NODE_LABEL_TAG_OFFSET);
-    assert!(offset_of!(AntlrTreeNode, node_tag) == layout::NODE_TAG_OFFSET);
-    assert!(offset_of!(AntlrTreeNode, invoking_state) == layout::NODE_INVOKING_STATE_OFFSET);
-    assert!(offset_of!(AntlrTreeNode, body) == layout::NODE_BODY_OFFSET);
-    assert!(offset_of!(AntlrTreeNode, body) == layout::NODE_HEADER_SIZE);
+    assert!(ANTLR_NODE_TAG_ERROR == EmptyNodeKind::Error as u16);
+    assert!(ANTLR_NODE_TAG_TERMINAL == EmptyNodeKind::Terminal as u16);
+    assert!(ANTLR_NODE_TAG_FIRST_RULE == EmptyNodeKind::EmptyContext as u16);
+    assert!(ANTLR_CHILDREN_INLINE_SLOTS == MAX_INLINE_CHILDREN);
+    assert!(ANTLR_TOKEN_TYPE_BITS == TOKEN_TYPE_BITS);
+    assert!(ANTLR_TOKEN_EOF == TOKEN_EOF);
 
-    assert!(size_of::<AntlrRuleBody>() == layout::RULE_BODY_SIZE);
-    assert!(offset_of!(AntlrRuleBody, start) == layout::RULE_BODY_START_OFFSET);
-    assert!(offset_of!(AntlrRuleBody, stop) == layout::RULE_BODY_STOP_OFFSET);
-    assert!(offset_of!(AntlrRuleBody, children) == layout::RULE_BODY_CHILDREN_OFFSET);
-    assert!(offset_of!(AntlrRuleBody, parent) == layout::RULE_BODY_PARENT_OFFSET);
+    assert!(size_of::<AntlrToken>() == size_of::<Tok>());
+    assert!(align_of::<AntlrToken>() == align_of::<Tok>());
+    assert!(offset_of!(AntlrToken, source) == offset_of!(Tok, source));
+    assert!(offset_of!(AntlrToken, type_and_channel) == offset_of!(Tok, type_and_channel));
+    assert!(offset_of!(AntlrToken, start) == offset_of!(Tok, start));
+    assert!(offset_of!(AntlrToken, stop) == offset_of!(Tok, stop));
+    assert!(offset_of!(AntlrToken, token_index) == offset_of!(Tok, token_index));
 
-    assert!(size_of::<AntlrNodeChildren>() == layout::CHILDREN_SIZE);
-    assert!(offset_of!(AntlrNodeChildren, len) == layout::CHILDREN_LEN_OFFSET);
-    assert!(offset_of!(AntlrNodeChildren, cap) == layout::CHILDREN_CAP_OFFSET);
-    assert!(offset_of!(AntlrNodeChildren, storage) == layout::CHILDREN_STORAGE_OFFSET);
+    assert!(align_of::<AntlrTreeNode>() == align_of::<Node>());
+    assert!(offset_of!(AntlrTreeNode, label_tag) == offset_of!(Node, label_tag));
+    assert!(offset_of!(AntlrTreeNode, node_tag) == offset_of!(Node, node_tag));
+    assert!(offset_of!(AntlrTreeNode, invoking_state) == offset_of!(Node, invoking_state));
+    assert!(offset_of!(AntlrTreeNode, body) == offset_of!(Node, body));
+    assert!(offset_of!(AntlrTreeNode, body) == size_of::<Node>());
+
+    assert!(size_of::<AntlrRuleBody>() == size_of::<Common>());
+    assert!(offset_of!(AntlrRuleBody, start) == offset_of!(Common, start));
+    assert!(offset_of!(AntlrRuleBody, stop) == offset_of!(Common, stop));
+    assert!(offset_of!(AntlrRuleBody, children) == offset_of!(Common, children));
+    assert!(offset_of!(AntlrRuleBody, parent) == offset_of!(Common, parent));
+
+    assert!(size_of::<AntlrNodeChildren>() == size_of::<Children>());
+    assert!(offset_of!(AntlrNodeChildren, len) == offset_of!(Children, len));
+    assert!(offset_of!(AntlrNodeChildren, cap) == offset_of!(Children, cap));
+    assert!(offset_of!(AntlrNodeChildren, storage) == offset_of!(Children, storage));
     assert!(size_of::<AntlrChildrenStore>() == size_of::<[*const AntlrTreeNode; 3]>());
 
-    assert!(size_of::<AntlrLeafBody>() == layout::LEAF_BODY_SIZE);
-    assert!(offset_of!(AntlrLeafBody, symbol) == layout::LEAF_BODY_SYMBOL_OFFSET);
-    assert!(ANTLR_NODE_LEAF_SIZE == layout::NODE_HEADER_SIZE + layout::LEAF_BODY_SIZE);
+    assert!(size_of::<AntlrLeafBody>() == size_of::<Leaf>());
+    assert!(offset_of!(AntlrLeafBody, symbol) == offset_of!(Leaf, symbol));
+    assert!(ANTLR_NODE_LEAF_SIZE == size_of::<Node>() + size_of::<Leaf>());
 };

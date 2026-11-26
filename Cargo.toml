@@ -3,7 +3,6 @@ members = [
   "crates/dbt-antlr-g4-parser",
   "crates/dbt-antlr-codegen",
   "crates/dbt-antlr-runtime",
-  "crates/dbt-antlr-ffi",
   "tests/runtime-testsuite",
   "tests/ffi-bundle",
 ]
@@ -21,7 +20,6 @@ repository = "https://github.com/sdf-labs/dbt-antlr"
 [workspace.dependencies]
 dbt-antlr-g4-parser = { path = "crates/dbt-antlr-g4-parser", version = "=0.12.0" }
 dbt-antlr-runtime = { path = "crates/dbt-antlr-runtime", version = "=0.12.0" }
-dbt-antlr-ffi = { path = "crates/dbt-antlr-ffi", version = "=0.12.0" }
 icu_properties = { version = "2.2.0", features = ["alloc"] }
 insta = { version = "1", default-features = false }
 memchr = "2"

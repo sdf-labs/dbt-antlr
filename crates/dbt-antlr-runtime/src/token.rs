@@ -88,7 +88,7 @@ pub trait Token: Debug + Display {
     fn set_token_index(&mut self, _v: isize);
 }
 
-const TOKEN_TYPE_BITS: u32 = 22;
+pub(crate) const TOKEN_TYPE_BITS: u32 = 22;
 const TOKEN_CHANNEL_BITS: u32 = 32 - TOKEN_TYPE_BITS;
 const TOKEN_TYPE_MASK: i32 = (1 << TOKEN_TYPE_BITS) - 1;
 const TOKEN_CHANNEL_MASK: i32 = !TOKEN_TYPE_MASK;
@@ -234,8 +234,8 @@ fn advance_to_char_boundary(s: &str, mut index: usize) -> usize {
 #[allow(missing_docs)]
 #[repr(C)]
 pub struct CommonToken<'input> {
-    source: &'input SourceInfo<'input>,
-    type_and_channel: i32,
+    pub(crate) source: &'input SourceInfo<'input>,
+    pub(crate) type_and_channel: i32,
     pub start: i32,
     pub stop: i32,
     pub token_index: i32,
@@ -254,35 +254,6 @@ const _: () = {
     assert!(offset_of!(CommonToken<'static>, stop) == 16);
     assert!(offset_of!(CommonToken<'static>, token_index) == 20);
 };
-
-/// The byte layout of [`CommonToken`]. [`crate::layout`] re-exports it.
-pub(crate) mod layout {
-    use std::mem::{align_of, offset_of, size_of};
-
-    use super::CommonToken;
-
-    type Tok = CommonToken<'static>;
-
-    /// The size of a [`CommonToken`].
-    pub const TOKEN_SIZE: usize = size_of::<Tok>();
-    /// The alignment of a [`CommonToken`].
-    pub const TOKEN_ALIGN: usize = align_of::<Tok>();
-    /// The offset of the `SourceInfo` pointer. Tokens that slice the input
-    /// stream share one `SourceInfo` (see
-    /// [`CommonTokenFactory::source_info`](crate::token_factory::CommonTokenFactory::source_info)).
-    pub const TOKEN_SOURCE_OFFSET: usize = offset_of!(Tok, source);
-    /// The offset of the `i32` that packs the token type and the channel.
-    pub const TOKEN_TYPE_AND_CHANNEL_OFFSET: usize = offset_of!(Tok, type_and_channel);
-    /// The offset of the `i32` UTF-8 byte offset of the first token byte.
-    pub const TOKEN_START_OFFSET: usize = offset_of!(Tok, start);
-    /// The offset of the `i32` UTF-8 byte offset of the last token byte.
-    pub const TOKEN_STOP_OFFSET: usize = offset_of!(Tok, stop);
-    /// The offset of the `i32` index of the token in the token stream.
-    pub const TOKEN_INDEX_OFFSET: usize = offset_of!(Tok, token_index);
-    /// The low `TOKEN_TYPE_BITS` bits of `type_and_channel` hold the signed
-    /// token type. The high bits hold the signed channel.
-    pub const TOKEN_TYPE_BITS: u32 = super::TOKEN_TYPE_BITS;
-}
 
 impl<'input> CommonToken<'input> {
     #[inline]

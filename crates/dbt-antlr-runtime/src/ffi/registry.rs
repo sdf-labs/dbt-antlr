@@ -1,14 +1,15 @@
-//! The implementations of the entry points that `export_grammars!` defines.
+//! The implementations of the grammar-dependent entry points that
+//! `export_grammars!` defines.
 
 use std::ffi::c_char;
 use std::panic::{self, AssertUnwindSafe};
 use std::ptr;
 
-use crate::abi::into_c_string;
-use crate::grammar::{AntlrGrammarInfo, Grammar};
-use crate::overlay::AntlrTreeNode;
-use crate::session::{
-    self, ANTLR_PARSE_STATUS_INVALID_GRAMMAR, ANTLR_PARSE_STATUS_INVALID_INPUT, AntlrParseSession,
+use super::abi::into_c_string;
+use super::grammar::{AntlrGrammarInfo, Grammar};
+use super::overlay::AntlrTreeNode;
+use super::session::{
+    self, AntlrParseSession, ANTLR_PARSE_STATUS_INVALID_GRAMMAR, ANTLR_PARSE_STATUS_INVALID_INPUT,
 };
 
 /// A grammar with the name that `export_grammars!` gives it.
@@ -93,7 +94,7 @@ pub fn grammar_info(grammars: &[RegisteredGrammar], grammar_id: i32) -> *const A
 /// # Safety
 ///
 /// `input` must point to `input_len` readable bytes, which stay valid and
-/// unchanged until the session is freed.
+/// unchanged until `antlr_session_free`.
 pub unsafe fn parse(
     grammars: &[RegisteredGrammar],
     grammar_id: i32,

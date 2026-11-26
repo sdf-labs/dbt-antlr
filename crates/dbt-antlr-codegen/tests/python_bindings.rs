@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Bo Lin
 //! Tests for the Python bindings (`--python`): the `<parser>_ffi.rs` grammar
-//! description for `dbt-antlr-ffi` bundles and the `<name>_parser.py` module
+//! description for `dbt_antlr_runtime::ffi` bundles and the `<name>_parser.py` module
 //! for the `dbt_antlr` Python package.
 
 mod common;

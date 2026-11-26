@@ -2,11 +2,11 @@
 //!
 //! The limit is global, so this test runs in its own process.
 
-use dbt_antlr_ffi::{
+use dbt_antlr_ffi_test_bundle::GRAMMAR_NAMES;
+use dbt_antlr_runtime::ffi::{
     ANTLR_PARSE_STATUS_FATAL, ANTLR_PARSE_STATUS_OK, antlr_grammar_lookup, antlr_parse,
     antlr_session_free, antlr_session_info, antlr_set_arena_allocation_limit,
 };
-use dbt_antlr_ffi_test_bundle::GRAMMAR_NAMES;
 
 fn parse_status(input: &str) -> (i32, String) {
     let name = GRAMMAR_NAMES[0];
@@ -30,7 +30,8 @@ fn parse_status(input: &str) -> (i32, String) {
 #[test]
 fn arena_allocation_limit() {
     let input = "a,b,c\n".repeat(100);
-    let supported = antlr_set_arena_allocation_limit(1024);
+    // SAFETY: `antlr_set_arena_allocation_limit` has no memory preconditions.
+    let supported = unsafe { antlr_set_arena_allocation_limit(1024) };
     assert_eq!(supported, cfg!(feature = "arena-allocation-limit"));
     if !supported {
         return;
@@ -39,6 +40,6 @@ fn arena_allocation_limit() {
     assert_eq!(status, ANTLR_PARSE_STATUS_FATAL);
     assert!(message.contains("limit"), "{message}");
 
-    assert!(antlr_set_arena_allocation_limit(0));
+    assert!(unsafe { antlr_set_arena_allocation_limit(0) });
     assert_eq!(parse_status(&input).0, ANTLR_PARSE_STATUS_OK);
 }

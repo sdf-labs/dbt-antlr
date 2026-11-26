@@ -1,20 +1,20 @@
-//! Tests of the C ABI of `dbt-antlr-ffi`, through the entry points of the
-//! test bundle.
+//! Tests of the C ABI of `dbt_antlr_runtime::ffi`, through the entry points of
+//! the test bundle.
 
 use std::ffi::c_char;
 use std::ptr;
 
-use dbt_antlr_ffi::{
-    ANTLR_ERROR_ORIGIN_LEXER, ANTLR_ERROR_ORIGIN_PARSER, ANTLR_NODE_TAG_ERROR,
+use dbt_antlr_ffi_test_bundle::GRAMMAR_NAMES;
+use dbt_antlr_runtime::ffi::{
+    ANTLR_ABI_VERSION, ANTLR_ERROR_ORIGIN_LEXER, ANTLR_ERROR_ORIGIN_PARSER, ANTLR_NODE_TAG_ERROR,
     ANTLR_NODE_TAG_FIRST_RULE, ANTLR_NODE_TAG_TERMINAL, ANTLR_PARSE_STATUS_FATAL,
     ANTLR_PARSE_STATUS_INVALID_GRAMMAR, ANTLR_PARSE_STATUS_INVALID_INPUT,
     ANTLR_PARSE_STATUS_INVALID_RULE, ANTLR_PARSE_STATUS_INVALID_UTF8, ANTLR_PARSE_STATUS_OK,
     ANTLR_TOKEN_EOF, AntlrGrammarInfo, AntlrSessionInfo, AntlrStr, AntlrToken, AntlrTreeNode,
-    antlr_grammar_info, antlr_grammar_lookup, antlr_node_to_string_tree, antlr_parse,
-    antlr_session_free, antlr_session_info, antlr_string_free, antlr_token_location,
+    antlr_abi_version, antlr_grammar_info, antlr_grammar_lookup, antlr_node_to_string_tree,
+    antlr_parse, antlr_session_free, antlr_session_info, antlr_string_free, antlr_token_location,
     antlr_token_text_fallback,
 };
-use dbt_antlr_ffi_test_bundle::GRAMMAR_NAMES;
 
 fn grammar_id(name: &str) -> i32 {
     // SAFETY: `name` is readable.
@@ -35,7 +35,7 @@ fn text(view: AntlrStr) -> &'static str {
 struct Session {
     grammar_id: i32,
     input: Box<[u8]>,
-    raw: *mut dbt_antlr_ffi::AntlrParseSession,
+    raw: *mut dbt_antlr_runtime::ffi::AntlrParseSession,
 }
 
 impl Session {
@@ -480,4 +480,10 @@ fn null_pointers_are_ignored() {
         );
         antlr_session_free(invalid);
     }
+}
+
+#[test]
+fn abi_version_matches_constant() {
+    // SAFETY: `antlr_abi_version` has no preconditions.
+    assert_eq!(unsafe { antlr_abi_version() }, ANTLR_ABI_VERSION);
 }

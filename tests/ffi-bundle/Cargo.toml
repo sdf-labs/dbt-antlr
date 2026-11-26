@@ -3,7 +3,7 @@ name = "dbt-antlr-ffi-test-bundle"
 version = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
-description = "Test bundle of dbt-antlr-ffi: the CSV, Labels, and Keywords grammars"
+description = "Test bundle of dbt_antlr_runtime::ffi: the CSV, Labels, and Keywords grammars"
 license = { workspace = true }
 publish = false
 
@@ -13,11 +13,10 @@ publish = false
 crate-type = ["rlib", "staticlib"]
 
 [features]
-arena-allocation-limit = ["dbt-antlr-ffi/arena-allocation-limit"]
+arena-allocation-limit = ["dbt-antlr-runtime/arena-allocation-limit"]
 
 [dependencies]
-dbt-antlr-ffi = { workspace = true }
-dbt-antlr-runtime = { workspace = true }
+dbt-antlr-runtime = { workspace = true, features = ["ffi"] }
 
 [lints]
 workspace = true

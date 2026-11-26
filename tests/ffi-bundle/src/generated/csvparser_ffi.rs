@@ -1,9 +1,11 @@
 // Generated from CSV.g4 by ANTLR 4.13.2
-//! The `CSV` grammar for `dbt_antlr_ffi::export_grammars!`.
+//! The `CSV` grammar for `dbt_antlr_runtime::ffi::export_grammars!`.
 
-use dbt_antlr_ffi::{AntlrRuleInfo, AntlrStr, AntlrTreeNode, ErrorCollector, Grammar, ParseOutput};
 use dbt_antlr_runtime::common_token_stream::CommonTokenStream;
 use dbt_antlr_runtime::errors::ANTLRError;
+use dbt_antlr_runtime::ffi::{
+    AntlrRuleInfo, AntlrStr, AntlrTreeNode, ErrorCollector, Grammar, ParseOutput,
+};
 use dbt_antlr_runtime::parser::Parser as _;
 use dbt_antlr_runtime::token_factory::CommonTokenFactory;
 use dbt_antlr_runtime::tree::NodeInner as _;
@@ -30,10 +32,10 @@ static RULES: [AntlrRuleInfo; 4] = [
 ];
 
 static LITERAL_NAMES: [AntlrStr; csvparser::_LITERAL_NAMES.len()] =
-    dbt_antlr_ffi::names(&csvparser::_LITERAL_NAMES);
+    dbt_antlr_runtime::ffi::names(&csvparser::_LITERAL_NAMES);
 
 static SYMBOLIC_NAMES: [AntlrStr; csvparser::_SYMBOLIC_NAMES.len()] =
-    dbt_antlr_ffi::names(&csvparser::_SYMBOLIC_NAMES);
+    dbt_antlr_runtime::ffi::names(&csvparser::_SYMBOLIC_NAMES);
 
 fn parse<'a>(
     arena: &'a Arena,
@@ -54,10 +56,7 @@ fn parse<'a>(
         3 => parser.field()?.as_node(),
         _ => return Ok(None),
     };
-    Ok(Some(ParseOutput::new(
-        root,
-        parser.get_token_factory().source_info(),
-    )))
+    Ok(Some(ParseOutput::new(root)))
 }
 
 /// # Safety

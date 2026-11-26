@@ -7,14 +7,14 @@ use std::panic::{self, AssertUnwindSafe};
 use std::ptr;
 use std::rc::Rc;
 
-use dbt_antlr_runtime::Arena;
-use dbt_antlr_runtime::error_listener::ErrorListener;
-use dbt_antlr_runtime::errors::{ANTLRError, ANTLRErrorKind};
-use dbt_antlr_runtime::recognizer::Recognizer;
-use dbt_antlr_runtime::token::Token;
+use crate::error_listener::ErrorListener;
+use crate::errors::{ANTLRError, ANTLRErrorKind};
+use crate::recognizer::Recognizer;
+use crate::token::Token;
+use crate::Arena;
 
-use crate::grammar::{AntlrStr, Grammar, ParseOutput};
-use crate::overlay::AntlrTreeNode;
+use super::grammar::{AntlrStr, Grammar};
+use super::overlay::AntlrTreeNode;
 
 /// `AntlrSessionInfo::status`: the parse produced a tree. The tree can
 /// contain error nodes: examine `AntlrSessionInfo::syntax_error_count`.
@@ -105,14 +105,22 @@ impl AntlrParseSession {
         &self.info
     }
 
-    pub(crate) fn failure(status: i32, message: impl Into<Box<str>>) -> Self {
-        Self::new(status, None, None, Vec::new(), Some(message.into()))
+    pub(super) fn failure(status: i32, message: impl Into<Box<str>>) -> Self {
+        Self::new(
+            status,
+            None,
+            ptr::null(),
+            ptr::null(),
+            Vec::new(),
+            Some(message.into()),
+        )
     }
 
     fn new(
         status: i32,
         arena: Option<Box<Arena>>,
-        output: Option<ParseOutput>,
+        root: *const AntlrTreeNode,
+        primary_source: *const c_void,
         errors: Vec<CollectedError>,
         message: Option<Box<str>>,
     ) -> Self {
@@ -134,9 +142,6 @@ impl AntlrParseSession {
             strings.push(message);
             view
         });
-        let (root, primary_source) = output.map_or((ptr::null(), ptr::null()), |output| {
-            (output.root, output.primary_source)
-        });
         Self {
             info: AntlrSessionInfo {
                 status,
@@ -154,7 +159,7 @@ impl AntlrParseSession {
 }
 
 /// Parses `input` with `grammar` from the rule with index `rule_index`.
-pub(crate) fn parse(grammar: &Grammar, rule_index: u32, input: &[u8]) -> AntlrParseSession {
+pub(super) fn parse(grammar: &Grammar, rule_index: u32, input: &[u8]) -> AntlrParseSession {
     let Ok(input) = std::str::from_utf8(input) else {
         return AntlrParseSession::failure(
             ANTLR_PARSE_STATUS_INVALID_UTF8,
@@ -174,13 +179,17 @@ pub(crate) fn parse(grammar: &Grammar, rule_index: u32, input: &[u8]) -> AntlrPa
     }));
     let collected = errors.take();
     match outcome {
-        Ok(Ok(Some(output))) => AntlrParseSession::new(
-            ANTLR_PARSE_STATUS_OK,
-            Some(arena),
-            Some(output),
-            collected,
-            None,
-        ),
+        Ok(Ok(Some(output))) => {
+            let primary_source = arena.stream_source_info(input);
+            AntlrParseSession::new(
+                ANTLR_PARSE_STATUS_OK,
+                Some(arena),
+                output.root,
+                primary_source,
+                collected,
+                None,
+            )
+        }
         Ok(Ok(None)) => {
             // SAFETY: `Grammar::new` stores a view of a `&'static str`.
             let name = unsafe { grammar.info.name.as_str() }.unwrap_or_default();
@@ -188,7 +197,8 @@ pub(crate) fn parse(grammar: &Grammar, rule_index: u32, input: &[u8]) -> AntlrPa
             AntlrParseSession::new(
                 ANTLR_PARSE_STATUS_INVALID_RULE,
                 None,
-                None,
+                ptr::null(),
+                ptr::null(),
                 collected,
                 Some(message.into()),
             )
@@ -196,14 +206,16 @@ pub(crate) fn parse(grammar: &Grammar, rule_index: u32, input: &[u8]) -> AntlrPa
         Ok(Err(error)) => AntlrParseSession::new(
             ANTLR_PARSE_STATUS_FATAL,
             None,
-            None,
+            ptr::null(),
+            ptr::null(),
             collected,
             Some(error.to_string().into()),
         ),
         Err(payload) => AntlrParseSession::new(
             ANTLR_PARSE_STATUS_FATAL,
             None,
-            None,
+            ptr::null(),
+            ptr::null(),
             collected,
             Some(panic_message(payload.as_ref()).into()),
         ),
@@ -211,7 +223,7 @@ pub(crate) fn parse(grammar: &Grammar, rule_index: u32, input: &[u8]) -> AntlrPa
 }
 
 /// The text of a panic payload.
-pub(crate) fn panic_message(payload: &(dyn Any + Send)) -> String {
+pub(super) fn panic_message(payload: &(dyn Any + Send)) -> String {
     let detail = payload
         .downcast_ref::<&str>()
         .copied()

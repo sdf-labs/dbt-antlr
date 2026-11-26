@@ -201,7 +201,7 @@ pub fn emit_files_with_options(
 ///
 /// When `python_bindings` is set, every parser also gets a
 /// `<parser>_ffi.rs` file in [`EmittedOutput::files`], which describes the
-/// grammar to a `dbt-antlr-ffi` bundle, and a `<name>_parser.py` module in
+/// grammar to a `dbt_antlr_runtime::ffi` bundle, and a `<name>_parser.py` module in
 /// [`EmittedOutput::python_files`], which gives the grammar to the
 /// `dbt_antlr` Python package. `<name>` is the lowercase parser name without
 /// its `Parser` suffix.

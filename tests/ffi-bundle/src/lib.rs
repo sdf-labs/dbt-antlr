@@ -1,4 +1,4 @@
-//! A `dbt-antlr-ffi` bundle with the grammars of the Python binding tests:
+//! A `dbt_antlr_runtime::ffi` bundle with the grammars of the Python binding tests:
 //!
 //! - `csv`: the combined `CSV` grammar (hidden whitespace, rows with many
 //!   children).
@@ -29,7 +29,7 @@ mod generated {
 /// The names of the grammars of the bundle, in grammar ID order.
 pub const GRAMMAR_NAMES: [&str; 3] = ["csv", "labels", "keywords"];
 
-dbt_antlr_ffi::export_grammars! {
+dbt_antlr_runtime::ffi::export_grammars! {
     "csv" => generated::csvparser_ffi::GRAMMAR,
     "labels" => generated::labelsparser_ffi::GRAMMAR,
     "keywords" => generated::keywordsparser_ffi::GRAMMAR,

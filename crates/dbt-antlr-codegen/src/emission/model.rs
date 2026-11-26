@@ -875,7 +875,7 @@ pub struct LexerModel {
 }
 
 /// Root render context of the binding templates: `FfiFile` renders the
-/// `<parser>_ffi.rs` grammar description for `dbt-antlr-ffi` bundles, and
+/// `<parser>_ffi.rs` grammar description for `dbt_antlr_runtime::ffi` bundles, and
 /// `PythonFile` renders the `<name>_parser.py` module for the `dbt_antlr`
 /// Python package. These files have no counterpart in the Java tool.
 #[derive(Clone, Debug, Serialize)]
