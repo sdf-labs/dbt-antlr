@@ -465,6 +465,73 @@ const _: () = {
     assert!(offset_of!(NodeAllocLayout<Node, Leaf>, body) == offset_of!(Node, body));
 };
 
+/// The byte layout of the tree types. [`crate::layout`] re-exports it.
+pub(crate) mod layout {
+    use std::mem::{align_of, offset_of, size_of};
+
+    use super::{
+        NodeChildren, ParserRuleContextCommon, TerminalNode, TreeNode, MAX_INLINE_CHILDREN,
+    };
+    use crate::rule_context::EmptyNodeKind;
+
+    type Node = TreeNode<'static, 'static, EmptyNodeKind>;
+    type Common = ParserRuleContextCommon<'static, 'static, EmptyNodeKind>;
+    type Children = NodeChildren<'static, 'static, EmptyNodeKind>;
+    type Leaf = TerminalNode<'static, 'static>;
+
+    /// The `node_tag` of an error leaf.
+    pub const NODE_TAG_ERROR: u16 = EmptyNodeKind::Error as u16;
+    /// The `node_tag` of a terminal leaf.
+    pub const NODE_TAG_TERMINAL: u16 = EmptyNodeKind::Terminal as u16;
+    /// The `node_tag` of the rule with index 0. Rule `i` has the tag
+    /// `NODE_TAG_FIRST_RULE + i`.
+    pub const NODE_TAG_FIRST_RULE: u16 = EmptyNodeKind::EmptyContext as u16;
+
+    /// The size of the [`TreeNode`] header. The body starts after it.
+    pub const NODE_HEADER_SIZE: usize = size_of::<Node>();
+    /// The alignment of every node.
+    pub const NODE_ALIGN: usize = align_of::<Node>();
+    /// The offset of the `u16` label tag. For a rule with labeled
+    /// alternatives, it is the variant index of the `*ContextAll` enum.
+    pub const NODE_LABEL_TAG_OFFSET: usize = offset_of!(Node, label_tag);
+    /// The offset of the `u16` node tag.
+    pub const NODE_TAG_OFFSET: usize = offset_of!(Node, node_tag);
+    /// The offset of the `i32` invoking state.
+    pub const NODE_INVOKING_STATE_OFFSET: usize = offset_of!(Node, invoking_state);
+    /// The offset of the node body: a rule body or a leaf body.
+    pub const NODE_BODY_OFFSET: usize = offset_of!(Node, body);
+
+    /// The size of the part of a rule body that is the same for all rules.
+    pub const RULE_BODY_SIZE: usize = size_of::<Common>();
+    /// The offset of the nullable start token pointer in a rule body.
+    pub const RULE_BODY_START_OFFSET: usize = offset_of!(Common, start);
+    /// The offset of the nullable stop token pointer in a rule body.
+    pub const RULE_BODY_STOP_OFFSET: usize = offset_of!(Common, stop);
+    /// The offset of the children list in a rule body.
+    pub const RULE_BODY_CHILDREN_OFFSET: usize = offset_of!(Common, children);
+    /// The offset of the nullable parent node pointer in a rule body.
+    pub const RULE_BODY_PARENT_OFFSET: usize = offset_of!(Common, parent);
+
+    /// The size of a children list.
+    pub const CHILDREN_SIZE: usize = size_of::<Children>();
+    /// The offset of the `u32` child count.
+    pub const CHILDREN_LEN_OFFSET: usize = offset_of!(Children, len);
+    /// The offset of the `u32` capacity. `0` tells that the children are in
+    /// the inline slots. Other values tell that `storage` holds a pointer to
+    /// an array of `capacity` child pointers.
+    pub const CHILDREN_CAP_OFFSET: usize = offset_of!(Children, cap);
+    /// The offset of the storage union: the inline slots or the array
+    /// pointer.
+    pub const CHILDREN_STORAGE_OFFSET: usize = offset_of!(Children, storage);
+    /// The number of inline child slots.
+    pub const CHILDREN_INLINE_SLOTS: usize = MAX_INLINE_CHILDREN;
+
+    /// The size of a leaf body.
+    pub const LEAF_BODY_SIZE: usize = size_of::<Leaf>();
+    /// The offset of the token pointer in a leaf body.
+    pub const LEAF_BODY_SYMBOL_OFFSET: usize = offset_of!(Leaf, symbol);
+}
+
 #[derive(Debug)]
 #[repr(C, align(8))]
 pub struct TreeNode<'input, 'arena, NodeKind, Tok = CommonToken<'input>>

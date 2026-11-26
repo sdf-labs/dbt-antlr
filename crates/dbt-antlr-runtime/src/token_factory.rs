@@ -66,6 +66,19 @@ where
         }
     }
 
+    /// The [`SourceInfo`] of the input stream that this factory creates tokens
+    /// from, or `None` before the first token from a stream.
+    ///
+    /// Tokens that slice the input stream refer to this `SourceInfo`. Tokens
+    /// with replaced text (lexer `setText`, conjured `<missing ...>` tokens)
+    /// refer to a different `SourceInfo`. Thus, a raw-pointer reader can
+    /// compare the `source` pointer of a token with this pointer to find the
+    /// tokens whose text is the input slice `start..=stop`. The EOF token is
+    /// an exception: it refers to this `SourceInfo`, but its text is `<EOF>`.
+    pub fn source_info(&self) -> Option<&'input SourceInfo<'input>> {
+        self.source_info.get()
+    }
+
     #[cold]
     #[inline(never)]
     fn init_source_info<T>(&self, x: &T) -> &'input SourceInfo<'input>

@@ -5,6 +5,11 @@
 
 PLAN-*.md
 
+# Python
+__pycache__/
+.pytest_cache/
+*.egg-info/
+
 # Emacs
 *~
 \#*#

@@ -4,8 +4,9 @@
 # Flow: on every push to main, release-plz opens or refreshes one release PR
 # per crate with unreleased changes (changelogs come from commit messages).
 # Merging a release PR publishes that crate to crates.io in dependency order
-# (dbt-antlr-runtime -> dbt-antlr-g4-parser -> dbt-antlr-codegen), tags the
-# release commit, and creates the GitHub release.
+# (dbt-antlr-runtime -> dbt-antlr-g4-parser -> dbt-antlr-codegen, and
+# dbt-antlr-runtime -> dbt-antlr-ffi), tags the release commit, and creates
+# the GitHub release.
 
 
 [workspace]
@@ -36,6 +37,12 @@ git_release_enable = true
 name = "dbt-antlr-g4-parser"
 version_group = "dbt-antlr"
 git_tag_name = "dbt-antlr-g4-parser-v{{ version }}"
+git_release_enable = true
+
+[[package]]
+name = "dbt-antlr-ffi"
+version_group = "dbt-antlr"
+git_tag_name = "dbt-antlr-ffi-v{{ version }}"
 git_release_enable = true
 
 [[package]]

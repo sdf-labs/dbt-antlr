@@ -1,0 +1,38 @@
+---
+source: crates/dbt-antlr-codegen/tests/python_bindings.rs
+expression: "file(&output.python_files, \"split_parser.py\")"
+---
+# Generated from SplitParser.g4 by ANTLR 4.13.2
+"""The entry functions of the ``SplitParser`` grammar.
+
+Each entry function parses an input from one rule and returns a
+``dbt_antlr.ParseContext``. Enter the context in a ``with`` statement to get
+the parse tree. The tree is valid only in the ``with`` block.
+"""
+
+from __future__ import annotations
+
+from dbt_antlr import GrammarBundle as _GrammarBundle
+from dbt_antlr import ParseContext as _ParseContext
+
+from . import _native
+
+_grammar = _GrammarBundle.load(_native).grammar(
+    "split",
+    rule_names=(
+        "statement",
+    ),
+)
+
+EOF = -1
+SELECT = 1
+CACHE = 2
+ID = 3
+WS = 4
+
+RULE_statement = 0
+
+
+def statement(input: str | bytes, *, recovery: bool = False) -> _ParseContext:
+    """Parses ``input`` from the rule ``statement``."""
+    return _grammar.parse(0, input, recovery=recovery)

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::OptimizationOptions;
 #[cfg(feature = "generator")]
-use crate::emission::emit_files_with_options;
+use crate::emission::emit_files_with_bindings;
 use crate::error::{Diagnostic, EmitError, Severity};
 
 /// Generator configuration, primarily for use from a `build.rs` build script.
@@ -61,6 +61,8 @@ pub struct Config {
     gen_visitor: bool,
     cargo_directives: bool,
     quiet: bool,
+    python: bool,
+    python_out_dir: Option<PathBuf>,
     optimization: OptimizationOptions,
     pinned_release_version: Option<String>,
     pinned_release_sha256: Option<String>,
@@ -78,6 +80,8 @@ impl Config {
             gen_visitor: false,
             cargo_directives: true,
             quiet: false,
+            python: false,
+            python_out_dir: None,
             optimization: OptimizationOptions::default(),
             pinned_release_version: None,
             pinned_release_sha256: None,
@@ -135,6 +139,28 @@ impl Config {
     /// this setting has no effect on it.
     pub const fn quiet(&mut self, enabled: bool) -> &mut Self {
         self.quiet = enabled;
+        self
+    }
+
+    /// Also generates Python bindings (`--python`). Default: `false`.
+    ///
+    /// Each parser gets a `<parser>_ffi.rs` file in the output directory,
+    /// which describes the grammar to a `dbt-antlr-ffi` bundle, and a
+    /// `<name>_parser.py` module, which gives the grammar to the `dbt_antlr`
+    /// Python package. `<name>` is the lowercase parser name without its
+    /// `Parser` suffix. The module goes into the
+    /// [Python output directory](Config::python_out_dir), which defaults to
+    /// the output directory.
+    pub const fn python(&mut self, enabled: bool) -> &mut Self {
+        self.python = enabled;
+        self
+    }
+
+    /// Sets the directory of the generated Python modules (`--python-out`)
+    /// and enables [Python bindings](Config::python).
+    pub fn python_out_dir(&mut self, dir: impl Into<PathBuf>) -> &mut Self {
+        self.python = true;
+        self.python_out_dir = Some(dir.into());
         self
     }
 
@@ -377,8 +403,12 @@ impl Config {
             &release,
             &self.grammars,
             &self.lib_dirs,
-            self.gen_listener,
-            self.gen_visitor,
+            crate::download::PinnedOutputs {
+                gen_listener: self.gen_listener,
+                gen_visitor: self.gen_visitor,
+                python: self.python,
+                python_out_dir: self.python_out_dir.as_deref(),
+            },
             &self.optimization,
             out_dir,
         )?;
@@ -415,21 +445,20 @@ impl Config {
         let mut optimization_messages = Vec::new();
         let mut reports = Vec::new();
         for grammar in &self.grammars {
-            let output = emit_files_with_options(
+            let output = emit_files_with_bindings(
                 grammar,
                 &self.lib_dirs,
                 self.gen_listener,
                 self.gen_visitor,
                 &self.optimization,
+                self.python,
             )?;
             if let Some(out_dir) = out_dir {
-                for file in &output.files {
-                    let path = out_dir.join(&file.name);
-                    std::fs::write(&path, &file.content).map_err(|source| EmitError::Write {
-                        path: path.clone(),
-                        source,
-                    })?;
-                    written.push(path);
+                write_files(out_dir, &output.files, &mut written)?;
+                if !output.python_files.is_empty() {
+                    let python_out_dir = self.python_out_dir.as_deref().unwrap_or(out_dir);
+                    create_out_dir(python_out_dir)?;
+                    write_files(python_out_dir, &output.python_files, &mut written)?;
                 }
                 write_optimization_manifest(
                     out_dir,
@@ -455,7 +484,7 @@ impl Config {
         &self,
         out_dir: Option<&std::path::Path>,
     ) -> Result<Generation, EmitError> {
-        let _ = out_dir;
+        let _ = (out_dir, self.python, &self.python_out_dir);
         Err(EmitError::Config(
             "this build of dbt-antlr-codegen was compiled without the `generator` feature; \
              enable it or use Config::pinned_release"
@@ -479,6 +508,24 @@ fn cargo_warnings(diagnostics: &[Diagnostic], quiet: bool) -> Vec<String> {
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+/// Writes `files` into `dir` and appends their paths to `written`.
+#[cfg(feature = "generator")]
+fn write_files(
+    dir: &std::path::Path,
+    files: &[crate::emission::EmittedFile],
+    written: &mut Vec<PathBuf>,
+) -> Result<(), EmitError> {
+    for file in files {
+        let path = dir.join(&file.name);
+        std::fs::write(&path, &file.content).map_err(|source| EmitError::Write {
+            path: path.clone(),
+            source,
+        })?;
+        written.push(path);
+    }
+    Ok(())
 }
 
 fn create_out_dir(out_dir: &std::path::Path) -> Result<(), EmitError> {

@@ -28,6 +28,12 @@ pub const TEMPLATE_PATH_ENV_VAR: &str = "DBT_RUST_TEMPLATE";
 /// The template source embedded at compile time.
 const EMBEDDED_TEMPLATE: &str = include_str!("../../templates/dbt/Rust.stg.jinja");
 
+/// The template of the `<parser>_ffi.rs` grammar description.
+const FFI_TEMPLATE: &str = include_str!("../../templates/dbt/Ffi.rs.jinja");
+
+/// The template of the `<name>_parser.py` Python module.
+const PYTHON_TEMPLATE: &str = include_str!("../../templates/dbt/Parser.py.jinja");
+
 /// Line width the ANTLR code generator configures on its ST4 writer.
 const LINE_WIDTH: usize = 72;
 
@@ -78,6 +84,64 @@ pub fn render_template(ctx: &Value) -> Result<String, Error> {
     env.add_global("RUNTIME_VERSION_MINOR", dbt_antlr_runtime::VERSION_MINOR);
     let template = env.template_from_str(&source)?;
     Ok(resolve_wraps(&template.render(ctx)?))
+}
+
+/// Renders a binding template: `FfiFile` (`<parser>_ffi.rs`) or
+/// `PythonFile` (`<name>_parser.py`), selected by the `kind` attribute of
+/// `ctx`.
+///
+/// Unlike [`render_template`], these templates do not port an ST4 template,
+/// so the environment needs no ST4 emulation. It adds the `rust_str` and
+/// `py_str` filters, which render a value as a string literal of the target
+/// language.
+///
+/// # Errors
+///
+/// Returns an error when `kind` names no binding template, or when the
+/// template cannot be parsed or rendered.
+pub fn render_bindings_template(ctx: &Value) -> Result<String, Error> {
+    let kind = ctx.get_attr("kind")?;
+    let source = match kind.as_str() {
+        Some("FfiFile") => FFI_TEMPLATE,
+        Some("PythonFile") => PYTHON_TEMPLATE,
+        _ => {
+            return Err(Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                format!("no binding template for kind {kind}"),
+            ));
+        }
+    };
+    let mut env = Environment::new();
+    env.set_trim_blocks(true);
+    env.set_lstrip_blocks(true);
+    env.set_keep_trailing_newline(true);
+    env.add_filter("rust_str", rust_str_filter);
+    env.add_filter("py_str", py_str_filter);
+    env.template_from_str(source)?.render(ctx)
+}
+
+/// A Rust string literal with the value of `value`.
+fn rust_str_filter(value: &str) -> String {
+    format!("{value:?}")
+}
+
+/// A Python string literal with the value of `value`.
+fn py_str_filter(value: &str) -> String {
+    let mut literal = String::with_capacity(value.len() + 2);
+    literal.push('"');
+    for c in value.chars() {
+        match c {
+            '"' => literal.push_str("\\\""),
+            '\\' => literal.push_str("\\\\"),
+            '\n' => literal.push_str("\\n"),
+            '\r' => literal.push_str("\\r"),
+            '\t' => literal.push_str("\\t"),
+            c if c.is_control() => literal.push_str(&format!("\\u{:04x}", u32::from(c))),
+            c => literal.push(c),
+        }
+    }
+    literal.push('"');
+    literal
 }
 
 /// Resolves the [`WRAP_MARK`] wrap points like ST4's `AutoIndentWriter`:

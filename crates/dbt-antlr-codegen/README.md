@@ -38,6 +38,20 @@ the generated files with `include!` inside a module carrying
 `default-features = false` skips the `fancy` diagnostics rendering used by
 the command-line tool and noticeably shrinks the build-dependency tree.
 
+## Python bindings
+
+`--python` (`Config::python`) also generates the files that the `dbt_antlr`
+Python package needs for each parser:
+
+- `<parser>_ffi.rs` in the output directory, which describes the grammar to
+  a `dbt-antlr-ffi` bundle crate, and
+- `<name>_parser.py`, the Python entry functions of the grammar. `<name>` is
+  the lowercase parser name without its `Parser` suffix. `--python-out <dir>`
+  (`Config::python_out_dir`) sets the directory of this module.
+
+A parser grammar needs a `tokenVocab` option, which names its lexer. See the
+`dbt-antlr-ffi` crate for the bundle crate.
+
 ## Pinned-binary mode
 
 If compiling the generator itself is too expensive for your build pipeline,

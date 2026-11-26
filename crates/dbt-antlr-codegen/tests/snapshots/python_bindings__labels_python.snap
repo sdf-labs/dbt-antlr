@@ -1,0 +1,59 @@
+---
+source: crates/dbt-antlr-codegen/tests/python_bindings.rs
+expression: "file(&output.python_files, \"labels_parser.py\")"
+---
+# Generated from Labels.g4 by ANTLR 4.13.2
+"""The entry functions of the ``Labels`` grammar.
+
+Each entry function parses an input from one rule and returns a
+``dbt_antlr.ParseContext``. Enter the context in a ``with`` statement to get
+the parse tree. The tree is valid only in the ``with`` block.
+"""
+
+from __future__ import annotations
+
+from dbt_antlr import GrammarBundle as _GrammarBundle
+from dbt_antlr import ParseContext as _ParseContext
+
+from . import _native
+
+_grammar = _GrammarBundle.load(_native).grammar(
+    "labels",
+    rule_names=(
+        "s",
+        "e",
+        "blk",
+    ),
+)
+
+EOF = -1
+T__0 = 1
+T__1 = 2
+T__2 = 3
+T__3 = 4
+T__4 = 5
+T__5 = 6
+T__6 = 7
+T__7 = 8
+ID = 9
+INT = 10
+WS = 11
+
+RULE_s = 0
+RULE_e = 1
+RULE_blk = 2
+
+
+def s(input: str | bytes, *, recovery: bool = False) -> _ParseContext:
+    """Parses ``input`` from the rule ``s``."""
+    return _grammar.parse(0, input, recovery=recovery)
+
+
+def e(input: str | bytes, *, recovery: bool = False) -> _ParseContext:
+    """Parses ``input`` from the rule ``e``."""
+    return _grammar.parse(1, input, recovery=recovery)
+
+
+def blk(input: str | bytes, *, recovery: bool = False) -> _ParseContext:
+    """Parses ``input`` from the rule ``blk``."""
+    return _grammar.parse(2, input, recovery=recovery)

@@ -55,6 +55,22 @@ pub use arena::Arena;
 pub use arena::{get_default_arena_alloc_limit, set_default_arena_alloc_limit};
 
 mod arena;
+
+/// The byte layout of parse tree nodes and tokens.
+///
+/// The layout is the same for all generated parsers. Code that reads parse
+/// trees through raw pointers (for example, the C overlay types of
+/// `dbt-antlr-ffi`) can use these constants to assert that its own types
+/// agree with the runtime at compile time.
+///
+/// A node starts with a [`NODE_HEADER_SIZE`](layout::NODE_HEADER_SIZE)-byte
+/// header. A rule node continues with a rule body; an error or terminal leaf
+/// continues with a leaf body. Leaf allocations stop after the leaf body, so
+/// a reader must examine the node tag before it reads a rule body.
+pub mod layout {
+    pub use crate::token::layout::*;
+    pub use crate::tree::layout::*;
+}
 #[doc(hidden)]
 pub mod atn_config;
 #[doc(hidden)]

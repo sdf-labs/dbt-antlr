@@ -77,7 +77,15 @@ impl Arena {
         f(&arena)
     }
 
-    pub(crate) fn new() -> Self {
+    /// Creates an arena that the caller owns.
+    ///
+    /// Use this constructor when the parse tree must outlive a single
+    /// function scope, for example when a foreign-language binding keeps the
+    /// arena on the heap. Otherwise, prefer [`Arena::with`].
+    ///
+    /// With the `arena-allocation-limit` feature, the arena uses the default
+    /// limit that `set_default_arena_alloc_limit` sets.
+    pub fn new() -> Self {
         #[cfg(feature = "arena-allocation-limit")]
         {
             Self::new_with_limit(get_default_arena_alloc_limit())
@@ -222,6 +230,12 @@ impl Arena {
     #[cfg(feature = "arena-allocation-limit")]
     pub fn allocation_limit_bytes(&self) -> usize {
         self.limit_bytes
+    }
+}
+
+impl Default for Arena {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

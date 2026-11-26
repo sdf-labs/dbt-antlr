@@ -13,6 +13,7 @@
 //! sources for the `dbt-antlr-runtime` runtime from `.g4` grammars.
 
 mod action_translator;
+mod bindings_factory;
 mod lexer_factory;
 mod listener_factory;
 pub mod model;
@@ -21,11 +22,12 @@ pub mod template;
 
 use std::path::{Path, PathBuf};
 
+use crate::emission::bindings_factory::build_bindings_file_contexts;
 use crate::emission::lexer_factory::build_lexer_file_context;
 use crate::emission::listener_factory::build_tree_walk_file_contexts;
 use crate::emission::model::StaticLexerTablesModel;
 use crate::emission::parser_factory::build_parser_file_context;
-use crate::emission::template::render_template;
+use crate::emission::template::{render_bindings_template, render_template};
 use crate::error::Diagnostic;
 use crate::grammar::compiler::{self, Compilation};
 use crate::grammar::loader::LoadOptions;
@@ -135,7 +137,9 @@ pub fn emit_files_with_flags(
     gen_visitor: bool,
 ) -> Result<Vec<EmittedFile>, EmitError> {
     let compilation = compile_grammar(grammar_path, library_dirs)?;
-    render_recognizer_files(&compilation, grammar_path, gen_listener, gen_visitor)
+    let (files, _) =
+        render_recognizer_files(&compilation, grammar_path, gen_listener, gen_visitor, false)?;
+    Ok(files)
 }
 
 /// Output of [`emit_files_with_options`].
@@ -160,6 +164,11 @@ pub struct EmittedOutput {
     /// Rendered stdout reports of the selected passes (`--dump-dfas` and
     /// `--profile-decisions`).
     pub reports: Vec<String>,
+    /// Generated Python modules (`<name>_parser.py`) of
+    /// [`emit_files_with_bindings`] with Python bindings enabled. The
+    /// `<parser>_ffi.rs` files that the modules need are in
+    /// [`files`](Self::files).
+    pub python_files: Vec<EmittedFile>,
 }
 
 /// [`emit_files_with_flags`] with an explicit optimization selection.
@@ -178,6 +187,37 @@ pub fn emit_files_with_options(
     gen_visitor: bool,
     optimization: &OptimizationOptions,
 ) -> Result<EmittedOutput, EmitError> {
+    emit_files_with_bindings(
+        grammar_path,
+        library_dirs,
+        gen_listener,
+        gen_visitor,
+        optimization,
+        false,
+    )
+}
+
+/// [`emit_files_with_options`] with optional Python bindings.
+///
+/// When `python_bindings` is set, every parser also gets a
+/// `<parser>_ffi.rs` file in [`EmittedOutput::files`], which describes the
+/// grammar to a `dbt-antlr-ffi` bundle, and a `<name>_parser.py` module in
+/// [`EmittedOutput::python_files`], which gives the grammar to the
+/// `dbt_antlr` Python package. `<name>` is the lowercase parser name without
+/// its `Parser` suffix.
+///
+/// # Errors
+///
+/// See [`emit_lexer_files`]. Also returns [`EmitError::Unsupported`] when
+/// `python_bindings` is set and a parser grammar has no `tokenVocab` option.
+pub fn emit_files_with_bindings(
+    grammar_path: &Path,
+    library_dirs: &[PathBuf],
+    gen_listener: bool,
+    gen_visitor: bool,
+    optimization: &OptimizationOptions,
+    python_bindings: bool,
+) -> Result<EmittedOutput, EmitError> {
     let plan = OptimizationPlan::from_options(optimization)?;
     let compilation = compile_grammar_with(grammar_path, library_dirs, &plan)?;
     let mut diagnostics = crate::compile_error::non_fatal_diagnostics(&compilation);
@@ -189,10 +229,16 @@ pub fn emit_files_with_options(
     diagnostics.extend(reports.diagnostics.iter().map(|diagnostic| {
         crate::compile_error::public_diagnostic(diagnostic, &compilation.sources)
     }));
-    let files = if plan.report_only() {
-        Vec::new()
+    let (files, python_files) = if plan.report_only() {
+        (Vec::new(), Vec::new())
     } else {
-        render_recognizer_files(&compilation, grammar_path, gen_listener, gen_visitor)?
+        render_recognizer_files(
+            &compilation,
+            grammar_path,
+            gen_listener,
+            gen_visitor,
+            python_bindings,
+        )?
     };
     Ok(EmittedOutput {
         files,
@@ -200,15 +246,20 @@ pub fn emit_files_with_options(
         optimization_messages,
         optimization_manifest,
         reports: reports.reports,
+        python_files,
     })
 }
 
+/// Renders the recognizer files of `compilation`, and the Python binding
+/// files when `python_bindings` is set. Returns the Rust files and the
+/// Python files.
 fn render_recognizer_files(
     compilation: &Compilation,
     grammar_path: &Path,
     gen_listener: bool,
     gen_visitor: bool,
-) -> Result<Vec<EmittedFile>, EmitError> {
+    python_bindings: bool,
+) -> Result<(Vec<EmittedFile>, Vec<EmittedFile>), EmitError> {
     let grammar_file_name = bare_file_name(grammar_path);
     let grammar_name = grammar_path.file_stem().map_or_else(
         || grammar_file_name.clone(),
@@ -216,7 +267,11 @@ fn render_recognizer_files(
     );
 
     let mut files = Vec::new();
+    let mut python_files = Vec::new();
     for root in &compilation.roots {
+        let combined_lexer = root
+            .lexer
+            .map(|lexer_id| compilation.lexers[&lexer_id].semantic.unit.name.as_str());
         if let Some(lexer_id) = root.lexer {
             let compiled = &compilation.lexers[&lexer_id];
             let static_tables = compilation
@@ -248,9 +303,21 @@ fn render_recognizer_files(
                 gen_listener,
                 gen_visitor,
             )?);
+            if python_bindings {
+                let [ffi, python] =
+                    build_bindings_file_contexts(compiled, &context, combined_lexer)?;
+                files.push(EmittedFile {
+                    name: format!("{}_ffi.rs", ffi.parser_module),
+                    content: render_bindings_template(&minijinja::Value::from_serialize(&ffi))?,
+                });
+                python_files.push(EmittedFile {
+                    name: format!("{}_parser.py", python.bundle_name),
+                    content: render_bindings_template(&minijinja::Value::from_serialize(&python))?,
+                });
+            }
         }
     }
-    Ok(files)
+    Ok((files, python_files))
 }
 
 /// Emits only the listener/visitor source files for the grammars rooted at
