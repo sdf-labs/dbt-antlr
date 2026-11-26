@@ -124,13 +124,13 @@ impl BetweenExprTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum BetweenExprParserNodeKind {
-    SContext,
-    BContext,
-    PredContext,
-    VContext,
-    AtomContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    SContext = 2,
+    BContext = 3,
+    PredContext = 4,
+    VContext = 5,
+    AtomContext = 6,
 }
 pub type BetweenExprParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, BetweenExprParserNodeKind, Tok>;
 

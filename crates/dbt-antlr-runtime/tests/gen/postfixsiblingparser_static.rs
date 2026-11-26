@@ -126,17 +126,17 @@ impl PostfixSiblingTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum PostfixSiblingParserNodeKind {
-    StartContext,
-    RContext,
-    YContext,
-    QContext,
-    ZContext,
-    CContext,
-    WContext,
-    MContext,
-    VContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    StartContext = 2,
+    RContext = 3,
+    YContext = 4,
+    QContext = 5,
+    ZContext = 6,
+    CContext = 7,
+    WContext = 8,
+    MContext = 9,
+    VContext = 10,
 }
 pub type PostfixSiblingParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, PostfixSiblingParserNodeKind, Tok>;
 

@@ -116,10 +116,10 @@ impl LrDfaTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum LrDfaParserNodeKind {
-    SContext,
-    EContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    SContext = 2,
+    EContext = 3,
 }
 pub type LrDfaParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, LrDfaParserNodeKind, Tok>;
 

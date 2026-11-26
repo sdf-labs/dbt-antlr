@@ -114,10 +114,10 @@ impl LoopObligationTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum LoopObligationParserNodeKind {
-    SContext,
-    PContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    SContext = 2,
+    PContext = 3,
 }
 pub type LoopObligationParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, LoopObligationParserNodeKind, Tok>;
 

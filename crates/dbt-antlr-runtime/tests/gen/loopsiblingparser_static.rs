@@ -122,14 +122,14 @@ impl LoopSiblingTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum LoopSiblingParserNodeKind {
-    StartContext,
-    ExprContext,
-    TermContext,
-    CondContext,
-    TailContext,
-    PrecContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    StartContext = 2,
+    ExprContext = 3,
+    TermContext = 4,
+    CondContext = 5,
+    TailContext = 6,
+    PrecContext = 7,
 }
 pub type LoopSiblingParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, LoopSiblingParserNodeKind, Tok>;
 

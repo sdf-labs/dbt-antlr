@@ -118,12 +118,12 @@ impl CSVTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum CSVParserNodeKind {
-    CsvFileContext,
-    HdrContext,
-    RowContext,
-    FieldContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    CsvFileContext = 2,
+    HdrContext = 3,
+    RowContext = 4,
+    FieldContext = 5,
 }
 pub type CSVParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, CSVParserNodeKind, Tok>;
 

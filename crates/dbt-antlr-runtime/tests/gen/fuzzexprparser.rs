@@ -131,17 +131,17 @@ impl FuzzExprTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum FuzzExprParserNodeKind {
-    SContext,
-    ItemContext,
-    AliasContext,
-    BindingContext,
-    TargetContext,
-    NameContext,
-    QContext,
-    EContext,
-    AtomContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    SContext = 2,
+    ItemContext = 3,
+    AliasContext = 4,
+    BindingContext = 5,
+    TargetContext = 6,
+    NameContext = 7,
+    QContext = 8,
+    EContext = 9,
+    AtomContext = 10,
 }
 pub type FuzzExprParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, FuzzExprParserNodeKind, Tok>;
 

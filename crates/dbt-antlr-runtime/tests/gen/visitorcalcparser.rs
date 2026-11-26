@@ -117,10 +117,10 @@ impl VisitorCalcTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum VisitorCalcParserNodeKind {
-    SContext,
-    ExprContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    SContext = 2,
+    ExprContext = 3,
 }
 pub type VisitorCalcParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, VisitorCalcParserNodeKind, Tok>;
 

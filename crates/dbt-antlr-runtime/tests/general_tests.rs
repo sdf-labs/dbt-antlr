@@ -863,3 +863,136 @@ fn test_zero_alloc_getters_on_parsed_tree() {
         assert!(field0.STRING().is_none());
     });
 }
+
+/// Reads a parse tree through raw byte offsets only, like a C overlay does,
+/// and compares each value with the Rust accessors.
+#[test]
+#[serial(labelsparser)]
+fn test_parse_tree_layout_for_raw_overlays() {
+    use dbt_antlr_runtime::token::CommonToken;
+    use dbt_antlr_runtime::tree::{ErrorNode, NodeInner, Tree};
+    use gen::labelsparser::{LabelsParserNode, LabelsParserNodeKind};
+
+    const NODE_TAG: usize = 2;
+    const INVOKING_STATE: usize = 4;
+    const BODY: usize = 8;
+    const LEAF_SYMBOL: usize = 0;
+    const CTX_START: usize = 0;
+    const CTX_STOP: usize = 8;
+    const CTX_CHILD_LEN: usize = 16;
+    const CTX_CHILD_CAP: usize = 20;
+    const CTX_CHILD_STORE: usize = 24;
+    const CTX_PARENT: usize = 48;
+    const TOKEN_START: usize = 12;
+    const TOKEN_STOP: usize = 16;
+    const TOKEN_INDEX: usize = 20;
+
+    #[derive(Default)]
+    struct Seen {
+        errors: usize,
+        terminals: usize,
+        rules: [usize; labelsparser::ruleNames.len()],
+    }
+
+    unsafe fn read<T>(base: *const u8, offset: usize) -> T {
+        unsafe { base.add(offset).cast::<T>().read() }
+    }
+
+    unsafe fn check_token(token: *const CommonToken<'_>, expected: &CommonToken<'_>) {
+        assert!(std::ptr::eq(token, expected));
+        let token = token.cast::<u8>();
+        unsafe {
+            assert_eq!(
+                read::<i32>(token, TOKEN_START) as isize,
+                expected.get_start_index()
+            );
+            assert_eq!(
+                read::<i32>(token, TOKEN_STOP) as isize,
+                expected.get_stop_index()
+            );
+            assert_eq!(
+                read::<i32>(token, TOKEN_INDEX) as isize,
+                expected.get_token_index()
+            );
+        }
+    }
+
+    fn check(node: &LabelsParserNode<'_, '_>, seen: &mut Seen) {
+        let raw = (node as *const LabelsParserNode<'_, '_>).cast::<u8>();
+        let body = unsafe { raw.add(BODY) };
+        let tag = unsafe { read::<u16>(raw, NODE_TAG) };
+        assert_eq!(tag, node.node_tag() as u16);
+        assert_eq!(
+            unsafe { read::<i32>(raw, INVOKING_STATE) },
+            node.get_rule_context().get_invoking_state()
+        );
+        match tag {
+            0 | 1 => {
+                let symbol = unsafe { read::<*const CommonToken<'_>>(body, LEAF_SYMBOL) };
+                let expected = if tag == 0 {
+                    seen.errors += 1;
+                    assert_eq!(node.node_tag(), LabelsParserNodeKind::Error);
+                    ErrorNode::cast_from(node).expect("error leaf").symbol
+                } else {
+                    seen.terminals += 1;
+                    assert_eq!(node.node_tag(), LabelsParserNodeKind::Terminal);
+                    TerminalNode::cast_from(node).expect("terminal leaf").symbol
+                };
+                unsafe { check_token(symbol, expected) };
+            }
+            _ => {
+                let ctx = node.get_rule_context();
+                let rule_index = usize::from(tag - 2);
+                assert_eq!(rule_index, ctx.get_rule_index());
+                seen.rules[rule_index] += 1;
+
+                let parent = unsafe { read::<*const LabelsParserNode<'_, '_>>(body, CTX_PARENT) };
+                assert_eq!(
+                    parent,
+                    node.get_parent()
+                        .map_or(std::ptr::null(), |p| p as *const _)
+                );
+
+                let start = unsafe { read::<*const CommonToken<'_>>(body, CTX_START) };
+                let stop = unsafe { read::<*const CommonToken<'_>>(body, CTX_STOP) };
+                assert!(!start.is_null() && !stop.is_null());
+                assert_eq!(
+                    unsafe { (*start).get_token_index() },
+                    ctx.start().get_token_index()
+                );
+                assert_eq!(
+                    unsafe { (*stop).get_token_index() },
+                    ctx.stop().get_token_index()
+                );
+
+                let len = unsafe { read::<u32>(body, CTX_CHILD_LEN) } as usize;
+                let cap = unsafe { read::<u32>(body, CTX_CHILD_CAP) };
+                let children = if cap == 0 {
+                    unsafe { body.add(CTX_CHILD_STORE) }.cast::<*const LabelsParserNode<'_, '_>>()
+                } else {
+                    unsafe { read::<*const *const LabelsParserNode<'_, '_>>(body, CTX_CHILD_STORE) }
+                };
+                assert_eq!(len, ctx.get_child_count());
+                for (i, child) in node.get_children().enumerate() {
+                    assert!(std::ptr::eq(unsafe { *children.add(i) }, child));
+                    check(child, seen);
+                }
+            }
+        }
+    }
+
+    Arena::with(|arena| {
+        let input = InputStream::new("{ (a + 4) * 2 ++ x 1 x + b }");
+        let lexer = LabelsLexer::<_, CommonTokenFactory>::new(arena, input);
+        let token_source = CommonTokenStream::new(lexer);
+        let mut parser = LabelsParser::new(arena, token_source);
+        parser.remove_error_listeners();
+        let root = parser.s().expect("parser error");
+
+        let mut seen = Seen::default();
+        check(root.as_node(), &mut seen);
+        assert!(seen.errors > 0);
+        assert!(seen.terminals > 0);
+        assert!(seen.rules.iter().all(|&count| count > 0));
+    });
+}

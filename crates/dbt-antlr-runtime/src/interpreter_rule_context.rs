@@ -16,12 +16,12 @@ use crate::{cast_unchecked, Arena};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum InterpreterNodeKind {
-    /// Rule context node, see [InterpreterRuleContext]
-    Rule,
-    /// Token leaf node
-    Terminal,
     /// Error leaf node
-    Error,
+    Error = 0,
+    /// Token leaf node
+    Terminal = 1,
+    /// Rule context node, see [InterpreterRuleContext]
+    Rule = 2,
 }
 
 /// Extension data of [InterpreterRuleContext]: the backing field for

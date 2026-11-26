@@ -116,11 +116,11 @@ impl Repro4TwoCastWithWrapTreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum Repro4TwoCastWithWrapParserNodeKind {
-    StmtContext,
-    EContext,
-    SubContext,
-    Terminal,
-    Error,
+    Error = 0,
+    Terminal = 1,
+    StmtContext = 2,
+    EContext = 3,
+    SubContext = 4,
 }
 pub type Repro4TwoCastWithWrapParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, Repro4TwoCastWithWrapParserNodeKind, Tok>;
 

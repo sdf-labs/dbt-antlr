@@ -100,6 +100,19 @@ where
 
 pub type CtxPtr<'input, 'arena> = *mut (&'input (), *mut &'arena ());
 
+/// The tag type of a [TreeNode].
+///
+/// Each implementation is a `#[repr(u16)]` enum defined in the generated
+/// parser, and each parser contains exactly one [`NodeKindType`]
+/// implementation. As such, a [`NodeKindType`] type uniquely identifies a
+/// grammar at compile time.
+///
+/// Its tag values obey the following convention:
+///
+/// - `0` is the error leaf tag. This is grammar-independent.
+/// - `1` is the terminal leaf tag. This is grammar-independent.
+/// - A value of `2` or more is a rule context tag. In a generated parser, the
+///   rule index of the context is the tag value minus `2`.
 pub trait NodeKindType<'arena, Tok = CommonToken<'arena>>:
     Copy + Debug + PartialEq + Eq + 'static
 where
@@ -405,8 +418,9 @@ where
 const _: () = {
     use std::mem::{align_of, offset_of, size_of};
 
+    use crate::arena::NodeAllocLayout;
     use crate::parser_rule_context::BaseParserRuleContext;
-    use crate::rule_context::{EmptyCustomRuleContext, EmptyNodeKind};
+    use crate::rule_context::{EmptyContextAll, EmptyCustomRuleContext, EmptyNodeKind};
 
     type Common = ParserRuleContextCommon<'static, 'static, EmptyNodeKind>;
     type Base = BaseParserRuleContext<
@@ -416,18 +430,39 @@ const _: () = {
         EmptyNodeKind,
     >;
     type Node = TreeNode<'static, 'static, EmptyNodeKind>;
+    type Leaf = TerminalNode<'static, 'static>;
+    type Children = NodeChildren<'static, 'static, EmptyNodeKind>;
 
+    assert!(size_of::<EmptyNodeKind>() == 2);
     assert!(size_of::<Node>() == 8);
+    assert!(offset_of!(Node, label_tag) == 0);
+    assert!(offset_of!(Node, node_tag) == 2);
+    assert!(offset_of!(Node, invoking_state) == 4);
     assert!(offset_of!(Node, body) == 8);
-    assert!(size_of::<NodeChildren<'static, 'static, EmptyNodeKind>>() == 32);
-    assert!(align_of::<NodeChildren<'static, 'static, EmptyNodeKind>>() == 8);
+    assert!(size_of::<Children>() == 32);
+    assert!(align_of::<Children>() == 8);
+    assert!(offset_of!(Children, len) == 0);
+    assert!(offset_of!(Children, cap) == 4);
+    assert!(offset_of!(Children, storage) == 8);
     assert!(size_of::<Common>() == 56);
+    assert!(offset_of!(Common, start) == 0);
+    assert!(offset_of!(Common, stop) == 8);
+    assert!(offset_of!(Common, children) == 16);
+    assert!(offset_of!(Common, parent) == 48);
     assert!(size_of::<Base>() == 56);
-    assert!(size_of::<(Node, Base)>() == 64);
+    assert!(size_of::<NodeAllocLayout<Node, Base>>() == 64);
+    assert!(offset_of!(NodeAllocLayout<Node, Base>, body) == offset_of!(Node, body));
     assert!(offset_of!(Common, start) == offset_of!(Base, start));
     assert!(offset_of!(Common, stop) == offset_of!(Base, stop));
     assert!(offset_of!(Common, children) == offset_of!(Base, children));
     assert!(offset_of!(Common, parent) == offset_of!(Base, base));
+    assert!(size_of::<EmptyContextAll<'static, 'static>>() == 64);
+
+    assert!(size_of::<Leaf>() == 8);
+    assert!(align_of::<Leaf>() == 8);
+    assert!(offset_of!(Leaf, symbol) == 0);
+    assert!(size_of::<NodeAllocLayout<Node, Leaf>>() == 16);
+    assert!(offset_of!(NodeAllocLayout<Node, Leaf>, body) == offset_of!(Node, body));
 };
 
 #[derive(Debug)]
@@ -936,6 +971,7 @@ pub struct NoError;
 pub struct IsError;
 
 /// Generic leaf AST node
+#[repr(C)]
 pub struct LeafNodeInner<'input, 'arena, E, Tok>
 where
     'input: 'arena,
@@ -1683,7 +1719,10 @@ mod tests {
         assert_eq!(align_of::<NodeChildren<'_, '_, EmptyNodeKind>>(), 8);
         assert_eq!(size_of::<Common<'_, '_>>(), 56);
         assert_eq!(size_of::<Base<'_, '_>>(), 56);
-        assert_eq!(size_of::<(Node<'_, '_>, Base<'_, '_>)>(), 64);
+        assert_eq!(
+            size_of::<crate::arena::NodeAllocLayout<Node<'_, '_>, Base<'_, '_>>>(),
+            64
+        );
 
         assert_eq!(
             offset_of!(Common<'_, '_>, start),
@@ -1712,6 +1751,33 @@ mod tests {
         assert_eq!(size_of::<LabeledAll<'_, '_>>(), 64);
         assert_eq!(align_of::<LabeledAll<'_, '_>>(), 8);
         assert_eq!(offset_of!(Node<'_, '_>, body), 8);
+    }
+
+    #[test]
+    fn leaf_tags_are_fixed_and_rule_tags_follow() {
+        use crate::interpreter_rule_context::InterpreterNodeKind;
+
+        fn is_context<N: NodeKindType<'static>>(kind: N) -> bool {
+            kind.is_context()
+        }
+
+        assert_eq!(EmptyNodeKind::Error as u16, 0);
+        assert_eq!(EmptyNodeKind::Terminal as u16, 1);
+        assert_eq!(EmptyNodeKind::EmptyContext as u16, 2);
+        assert!(!is_context(EmptyNodeKind::Error));
+        assert!(!is_context(EmptyNodeKind::Terminal));
+        assert!(is_context(EmptyNodeKind::EmptyContext));
+
+        assert_eq!(InterpreterNodeKind::Error as u16, 0);
+        assert_eq!(InterpreterNodeKind::Terminal as u16, 1);
+        assert_eq!(InterpreterNodeKind::Rule as u16, 2);
+        assert!(!is_context(InterpreterNodeKind::Error));
+        assert!(!is_context(InterpreterNodeKind::Terminal));
+        assert!(is_context(InterpreterNodeKind::Rule));
+
+        // SAFETY: An all-zero `TreeNode` header is valid because tag `0` is `Error`.
+        let zeroed = unsafe { std::mem::zeroed::<TreeNode<'_, '_, EmptyNodeKind>>() };
+        assert_eq!(zeroed.node_tag(), EmptyNodeKind::Error);
     }
 
     #[test]

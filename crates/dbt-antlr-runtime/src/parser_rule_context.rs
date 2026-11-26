@@ -92,6 +92,20 @@ pub type EmptyParserRuleContext<'input, 'arena, Tok = CommonToken<'input>> = Bas
     Tok,
 >;
 
+/// Stops the compilation if the alignment of `Ext` is larger than the
+/// alignment of `usize`.
+///
+/// The context of a rule node starts at `TreeNode::body`, and it must have the
+/// exact same layout as `ParserRuleContextCommon`. An `Ext` with a larger
+/// alignment adds padding which moves the context and its fields away from
+/// these pre-determined offsets.
+const fn assert_ext_layout<Ext>() {
+    assert!(
+        align_of::<Ext>() <= align_of::<usize>(),
+        "the alignment of a rule context extension type must not be larger than the alignment of usize"
+    );
+}
+
 /// Core AST node type -- this augments [BaseParserRuleContext] with
 /// additional states that allows it to be strung together into a tree, as well
 /// as tying it back to the corresponding input.
@@ -341,6 +355,7 @@ where
         invoking_state: i32,
         ext: Ext,
     ) -> Result<&'arena mut TreeNode<'input, 'arena, Ext::NodeKind, Tok>, ANTLRError> {
+        const { assert_ext_layout::<Ext>() };
         let ctx = Self {
             start: None,
             stop: None,
@@ -379,6 +394,7 @@ where
     where
         Tgt: CustomRuleContext<'input, 'arena, Tok, NodeKind = Node>,
     {
+        const { assert_ext_layout::<Tgt>() };
         BaseParserRuleContext {
             base: self.base.morph(ctor),
             start: self.start,
@@ -775,3 +791,19 @@ where
 }
 
 impl<'input, 'arena> FusedIterator for TokensIter<'_, 'input, 'arena> where 'input: 'arena {}
+
+#[cfg(test)]
+mod tests {
+    use super::assert_ext_layout;
+
+    const _: () = assert_ext_layout::<(u64, Option<&str>)>();
+
+    #[test]
+    #[should_panic(expected = "alignment of a rule context extension type")]
+    fn assert_ext_layout_rejects_over_aligned_ext() {
+        #[repr(align(16))]
+        struct OverAligned;
+
+        assert_ext_layout::<OverAligned>();
+    }
+}

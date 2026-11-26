@@ -334,10 +334,10 @@ impl {{ file.grammarName }}TreeWalker
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum {{ parser.name }}NodeKind {
-{% for f in funcs %}    {{ f.ruleCtx.name }},
-{% endfor %}    Terminal,
-    Error,
-}
+    Error = 0,
+    Terminal = 1,
+{% for f in funcs %}    {{ f.ruleCtx.name }} = {{ f.nodeTag }},
+{% endfor %}}
 pub type {{ parser.name }}Node<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, {{ parser.name }}NodeKind, Tok>;
 
 dbt_antlr_runtime::impl_deref! { parser => {{ parser.name }} }
