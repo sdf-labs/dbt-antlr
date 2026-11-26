@@ -844,15 +844,7 @@ macro_rules! impl_ctx {
         $crate::impl_ctx!(@plain $nodekind::$ctx, $ext, $rule);
     };
 
-    (@ext_layout $ext:ident) => {
-        const _: () = $crate::parser_rule_context::assert_ext_layout::<
-            $ext<'static, 'static, $crate::token::CommonToken<'static>>,
-        >();
-    };
-
     (@plain $nodekind:ident::$variant:ident, $ext:ident, $rule:expr) => {
-        $crate::impl_ctx!(@ext_layout $ext);
-
         impl<'input: 'arena, 'arena, Tok> $crate::rule_context::CustomRuleContext<'input, 'arena, Tok>
             for $ext<'input, 'arena, Tok>
         where
@@ -942,8 +934,6 @@ macro_rules! impl_ctx {
     };
 
     (@labeled $nodekind:ident::$variant:ident, $ctxall:ident, $ext:ident, $rule:expr) => {
-        $crate::impl_ctx!(@ext_layout $ext);
-
         impl<'input: 'arena, 'arena, Tok> $crate::rule_context::CustomRuleContext<'input, 'arena, Tok>
             for $ext<'input, 'arena, Tok>
         where
@@ -1033,8 +1023,6 @@ macro_rules! impl_ctx {
     };
 
     (@alt $nodekind:ident::$base:ident, $ctxall:ident::$variant:ident, $ext:ident, $rule:expr) => {
-        $crate::impl_ctx!(@ext_layout $ext);
-
         impl<'input: 'arena, 'arena, Tok> $crate::rule_context::CustomRuleContext<'input, 'arena, Tok>
             for $ext<'input, 'arena, Tok>
         where

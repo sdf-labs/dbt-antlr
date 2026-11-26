@@ -99,23 +99,7 @@ pub type EmptyParserRuleContext<'input, 'arena, Tok = CommonToken<'input>> = Bas
 /// exact same layout as `ParserRuleContextCommon`. An `Ext` with a larger
 /// alignment adds padding which moves the context and its fields away from
 /// these pre-determined offsets.
-///
-/// ```
-/// use dbt_antlr_runtime::parser_rule_context::assert_ext_layout;
-///
-/// const _: () = assert_ext_layout::<(u64, Option<&str>)>();
-/// ```
-///
-/// ```compile_fail,E0080
-/// use dbt_antlr_runtime::parser_rule_context::assert_ext_layout;
-///
-/// #[repr(align(16))]
-/// struct OverAligned(u8);
-///
-/// const _: () = assert_ext_layout::<OverAligned>();
-/// ```
-#[doc(hidden)]
-pub const fn assert_ext_layout<Ext>() {
+const fn assert_ext_layout<Ext>() {
     assert!(
         align_of::<Ext>() <= align_of::<usize>(),
         "the alignment of a rule context extension type must not be larger than the alignment of usize"
@@ -807,3 +791,19 @@ where
 }
 
 impl<'input, 'arena> FusedIterator for TokensIter<'_, 'input, 'arena> where 'input: 'arena {}
+
+#[cfg(test)]
+mod tests {
+    use super::assert_ext_layout;
+
+    const _: () = assert_ext_layout::<(u64, Option<&str>)>();
+
+    #[test]
+    #[should_panic(expected = "alignment of a rule context extension type")]
+    fn assert_ext_layout_rejects_over_aligned_ext() {
+        #[repr(align(16))]
+        struct OverAligned;
+
+        assert_ext_layout::<OverAligned>();
+    }
+}
