@@ -164,11 +164,11 @@ where
     }
 }
 
-const MAX_INLINE_CHILDREN: usize = 3;
+pub(crate) const MAX_INLINE_CHILDREN: usize = 3;
 const INITIAL_SPILL_CAPACITY: usize = 8;
 
 #[repr(C)]
-union ChildrenStore<'input, 'arena, NodeKind, Tok>
+pub(crate) union ChildrenStore<'input, 'arena, NodeKind, Tok>
 where
     'input: 'arena,
     NodeKind: NodeKindType<'arena, Tok>,
@@ -185,9 +185,9 @@ where
     NodeKind: NodeKindType<'arena, Tok>,
     Tok: Token + 'input,
 {
-    len: u32,
-    cap: u32,
-    storage: ChildrenStore<'input, 'arena, NodeKind, Tok>,
+    pub(crate) len: u32,
+    pub(crate) cap: u32,
+    pub(crate) storage: ChildrenStore<'input, 'arena, NodeKind, Tok>,
     _interior: UnsafeCell<()>,
 }
 
@@ -475,8 +475,8 @@ where
 {
     pub(crate) label_tag: u16,
     pub node_tag: NodeKind,
-    invoking_state: i32,
-    body: UnsafeCell<()>,
+    pub(crate) invoking_state: i32,
+    pub(crate) body: UnsafeCell<()>,
 
     _mark: PhantomData<(&'input Tok, *mut &'arena ())>,
 }

@@ -45,6 +45,7 @@ jobs:
       # generator binary and dev-dependencies.
       - name: cargo clippy (slim feature sets)
         run: |
+          cargo clippy -p dbt-antlr-runtime --no-default-features -- -D warnings
           cargo clippy -p dbt-antlr-codegen --no-default-features -- -D warnings
           cargo clippy -p dbt-antlr-codegen --no-default-features --features download -- -D warnings
 
@@ -55,7 +56,9 @@ jobs:
       - name: cargo check (big-endian)
         env:
           RUSTFLAGS: -D warnings
-        run: cargo check -p dbt-antlr-runtime --lib --target s390x-unknown-linux-gnu
+        run: |
+          cargo check -p dbt-antlr-runtime --lib --target s390x-unknown-linux-gnu
+          cargo check -p dbt-antlr-runtime --lib --features ffi --target s390x-unknown-linux-gnu
 
   # Workspace unit/integration tests on the MSRV and current stable.
   unittests:
@@ -114,7 +117,9 @@ jobs:
           key: release-tests
 
       - name: cargo test --release
-        run: cargo test --release --workspace --all-targets
+        run: |
+          cargo test --release --workspace --all-targets
+          cargo test --release -p dbt-antlr-ffi-test-bundle --features arena-allocation-limit
 
   # Self-hosting guarantee: regenerating the g4-parser front-end and the
   # runtime test goldens with the shipped codegen must be a zero diff.
@@ -139,6 +144,8 @@ jobs:
       - name: Regenerate runtime test goldens
         run: crates/dbt-antlr-runtime/gen_test_grammars.sh
 
+      - name: Regenerate the FFI test bundle
+        run: tests/ffi-bundle/gen_grammars.sh
       - name: Verify zero diff
         run: git diff --exit-code
 

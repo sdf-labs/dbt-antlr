@@ -38,6 +38,15 @@ the generated files with `include!` inside a module carrying
 `default-features = false` skips the `fancy` diagnostics rendering used by
 the command-line tool and noticeably shrinks the build-dependency tree.
 
+## FFI bundles
+
+`--ffi` (`Config::ffi`) also generates `<parser>_ffi.rs` in the output
+directory for each parser. The generated module defines a
+`dbt_antlr_runtime::ffi::Grammar` static (`GRAMMAR`) so a `staticlib` or
+`cdylib` bundle crate can export one or more grammars through the C ABI of
+`dbt_antlr_runtime::ffi` (`features = ["ffi"]`).
+
+A parser grammar needs a `tokenVocab` option, which names its lexer.
 ## Pinned-binary mode
 
 If compiling the generator itself is too expensive for your build pipeline,

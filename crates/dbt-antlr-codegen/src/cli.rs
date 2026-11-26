@@ -9,6 +9,8 @@
 //!   -lib <dir>        grammar/library search dir for imports (repeatable)
 //!   -visitor          generate visitor (+base visitor)
 //!   -no-listener      do not generate listener (+base listener)
+//!   --ffi             also generate <parser>_ffi.rs for a dbt_antlr_runtime::ffi
+//!                     grammar bundle
 //!   -Dkey=value       ignored with a warning (compat)
 //!   -n, --dry-run, --report-only  compile, analyze, and optimize without writing output files
 //!   --static-lexer-dfa            precompute static lexer DFA tables (lexer scope only)
@@ -52,6 +54,8 @@ usage: dbt-antlr-codegen [OPTIONS] <grammar.g4>
   -lib <dir>        grammar/library search dir for imports (repeatable)
   -visitor          generate visitor (+base visitor)
   -no-listener      do not generate listener (+base listener)
+  --ffi             also generate <parser>_ffi.rs for a dbt_antlr_runtime::ffi
+                    grammar bundle
   -Dkey=value       ignored with a warning (compat)
   -n, --dry-run, --report-only  compile, analyze, and optimize without writing output files
   --static-lexer-dfa            precompute static lexer DFA tables (lexer scope only)
@@ -92,6 +96,7 @@ struct CliArgs {
     lib_dirs: Vec<PathBuf>,
     gen_listener: bool,
     gen_visitor: bool,
+    ffi: bool,
     static_lexer_dfa: bool,
     static_parser_dfa: bool,
     static_dfa_only: bool,
@@ -130,6 +135,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
     let mut lib_dirs = Vec::new();
     let mut gen_listener = true;
     let mut gen_visitor = false;
+    let mut ffi = false;
     let mut static_lexer_dfa = false;
     let mut static_parser_dfa = false;
     let mut static_dfa_only = false;
@@ -164,6 +170,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
             "-no-visitor" => gen_visitor = false,
             "-listener" => gen_listener = true,
             "-no-listener" => gen_listener = false,
+            "--ffi" => ffi = true,
             "-n" | "--dry-run" | "--report-only" => report_only = true,
             "--static-lexer-dfa" => static_lexer_dfa = true,
             "--static-parser-dfa" => static_parser_dfa = true,
@@ -285,6 +292,7 @@ fn parse_args(args: &[String], stderr: &mut impl Write) -> miette::Result<CliArg
         lib_dirs,
         gen_listener,
         gen_visitor,
+        ffi,
         static_lexer_dfa,
         static_parser_dfa,
         static_dfa_only,
@@ -342,6 +350,7 @@ pub fn run(
         .out_dir(&cli.out_dir)
         .listener(cli.gen_listener)
         .visitor(cli.gen_visitor)
+        .ffi(cli.ffi)
         .cargo_directives(false)
         .static_lexer_dfa(cli.static_lexer_dfa)
         .static_parser_dfa(cli.static_parser_dfa)
@@ -673,6 +682,14 @@ mod tests {
         assert!(cli.static_dfa_only);
         let cli = parse(&["T.g4"]).expect("minimal command line parses");
         assert!(!cli.static_dfa_only);
+    }
+
+    #[test]
+    fn ffi_flag_parses() {
+        let cli = parse(&["T.g4"]).expect("minimal command line parses");
+        assert!(!cli.ffi);
+        let cli = parse(&["--ffi", "T.g4"]).expect("flag parses");
+        assert!(cli.ffi);
     }
 
     #[test]

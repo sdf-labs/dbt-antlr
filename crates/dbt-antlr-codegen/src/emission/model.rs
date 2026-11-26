@@ -873,3 +873,41 @@ pub struct LexerModel {
     /// Static lexer DFA tables (`--static-lexer-dfa`); `None` with the flag off.
     pub static_tables: Option<StaticLexerTablesModel>,
 }
+
+/// Root render context of `templates/dbt/Ffi.rs.jinja` (`<parser>_ffi.rs` for
+/// `dbt_antlr_runtime::ffi` bundles). This file has no counterpart in the Java
+/// tool.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FfiFileContext {
+    pub grammar_file_name: String,
+    #[serde(rename = "ANTLRVersion")]
+    pub antlr_version: String,
+    /// Grammar name (`CSV`), as [`ParserFileModel::grammar_name`].
+    pub grammar_name: String,
+    /// Parser recognizer name, for example `CSVParser`.
+    pub parser_name: String,
+    /// Module of the parser, for example `csvparser`.
+    pub parser_module: String,
+    /// Lexer recognizer name, for example `CSVLexer`.
+    pub lexer_name: String,
+    /// Module of the lexer, for example `csvlexer`.
+    pub lexer_module: String,
+    pub rules: Vec<FfiRuleModel>,
+}
+
+/// One parser rule of an [`FfiFileContext`].
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FfiRuleModel {
+    /// The rule name as the grammar spells it.
+    pub name: String,
+    /// The Rust name of the rule method of the parser.
+    pub rust_name: String,
+    pub index: usize,
+    /// Whether a parse can start at the rule (no arguments, no modifiers).
+    pub entry: bool,
+    /// The labels of the labeled alternatives, in `*ContextAll` variant
+    /// order.
+    pub alt_labels: Vec<String>,
+}

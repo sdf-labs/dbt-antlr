@@ -1,0 +1,415 @@
+// Generated from CSV.g4 by ANTLR 4.13.2
+use dbt_antlr_runtime::prelude::*;
+use dbt_antlr_runtime::atn_simulator::ParserATNSimulatorManager as ATNSimulatorManager;
+dbt_antlr_runtime::check_version!("0","12");
+pub const CSV_T__0:i32=1; 
+pub const CSV_T__1:i32=2; 
+pub const CSV_T__2:i32=3; 
+pub const CSV_WS:i32=4; 
+pub const CSV_TEXT:i32=5; 
+pub const CSV_STRING:i32=6;
+pub const CSV_EOF:i32=EOF;
+pub const RULE_csvFile:usize = 0; 
+pub const RULE_hdr:usize = 1; 
+pub const RULE_row:usize = 2; 
+pub const RULE_field:usize = 3;
+pub const ruleNames: [&'static str; 4] = [
+    "csvFile", "hdr", "row", "field"
+];
+
+pub const _LITERAL_NAMES: [Option<&'static str>;4] = [
+	None, Some("','"), Some("'\\r'"), Some("'\\n'")
+];
+pub const _SYMBOLIC_NAMES: [Option<&'static str>;7]  = [
+	None, None, None, None, Some("WS"), Some("TEXT"), Some("STRING")
+];
+
+static VOCABULARY: LazyLock<Box<dyn Vocabulary>> = LazyLock::new(|| Box::new(VocabularyImpl::new(_LITERAL_NAMES.iter(), _SYMBOLIC_NAMES.iter(), None)));
+
+pub type BaseParserType<'input, 'arena, Input, TF> = BaseParser<'input, 'arena, CSVParserExt<'input, 'arena>, CSVParserNodeKind, Input, TF>;
+pub fn parser_simulator_manager() -> &'static ATNSimulatorManager { &ATN_SIMULATOR_MANAGER }
+
+pub struct CSVParser<'input, 'arena, Input, TF>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    Input: TokenStream<'input, 'arena, TF> + 'arena,
+{
+	base: BaseParserType<'input, 'arena, Input, TF>,
+    err_handler: ErrorStrategyDelegate<'input, 'arena, TF, BaseParserType<'input, 'arena, Input, TF>>,
+}
+
+impl<'input, 'arena, Input, TF> CSVParser<'input, 'arena, Input, TF>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    Input: TokenStream<'input, 'arena, TF> + 'arena,
+{
+    fn with_delegate(arena: &'arena Arena, input: Input, err_handler: ErrorStrategyDelegate<'input, 'arena, TF, BaseParserType<'input, 'arena, Input, TF>>) -> Self {
+		Self {
+			base: BaseParser::new_base_parser(
+				arena, input,
+				CSVParserExt {
+					_pd: Default::default(),
+				}
+			),
+            err_handler,
+        }
+    }
+
+    pub fn with_strategy(arena: &'arena Arena, input: Input, strategy: Box<dyn ErrorStrategy<'input, 'arena, TF, BaseParserType<'input, 'arena, Input, TF>> + 'arena>) -> Self {
+        Self::with_delegate(arena, input, unsafe { ErrorStrategyDelegate::new(strategy) })
+    }
+
+    pub fn new(arena: &'arena Arena, input: Input) -> Self {
+        Self::with_delegate(arena, input, ErrorStrategyDelegate::new_default())
+    }
+
+    pub fn set_error_strategy(&mut self, strategy: Box<dyn ErrorStrategy<'input, 'arena, TF, BaseParserType<'input, 'arena, Input, TF>> + 'arena>) {
+        self.err_handler = unsafe { ErrorStrategyDelegate::new(strategy) };
+    }
+
+    /// Adds parse listener for this parser
+    /// returns `listener_id` that can be used later to get listener back
+    ///
+    /// ### Example for listener usage:
+    /// todo
+    pub fn add_parse_listener<L>(
+        &mut self,
+        listener: Box<L>,
+    ) -> ListenerId<L>
+    where
+        L: ParseTreeListener<'arena, CSVParserNodeKind, TF::Tok> + 'static,
+    {
+        let id = ListenerId::new(&listener);
+        self.base.add_dyn_parse_listener(listener);
+        id
+    }
+}
+pub struct CSVTreeWalker;
+impl CSVTreeWalker
+{
+    pub fn walk<'input, 'arena, Tok, L, T>(
+        listener: Box<L>,
+        tree: &'arena T,
+    ) -> Result<Box<L>, ANTLRError>
+    where
+        'input: 'arena,
+        L: ParseTreeListener<'arena, CSVParserNodeKind, Tok> + 'static,
+        T: NodeInner<'input, 'arena, CSVParserNodeKind, Tok>,
+        Tok: Token + 'input,
+    {
+        let listener_ptr = Box::into_raw(listener);
+        let listener = unsafe { Box::from_raw(listener_ptr as *mut <CSVParserNodeKind as NodeKindType<Tok>>::Listener) };
+        let listener = ParseTreeWalker::walk(listener, tree.as_node())?;
+        Ok(unsafe { Box::from_raw(Box::into_raw(listener) as *mut L) } )
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u16)]
+pub enum CSVParserNodeKind {
+    Error = 0,
+    Terminal = 1,
+    CsvFileContext = 2,
+    HdrContext = 3,
+    RowContext = 4,
+    FieldContext = 5,
+}
+pub type CSVParserNode<'input, 'arena, Tok = CommonToken<'input>> = TreeNode<'input, 'arena, CSVParserNodeKind, Tok>;
+
+dbt_antlr_runtime::impl_deref! { parser => CSVParser }
+dbt_antlr_runtime::impl_node_kind! { CSVParserNodeKind {
+; CsvFileContext(), HdrContext(), RowContext(), FieldContext(), 
+    }; 
+}
+
+pub struct CSVParserExt<'input, 'arena> {
+	_pd: PhantomData<(&'input str, &'arena ())>,
+}
+
+impl<'input, 'arena> CSVParserExt<'input, 'arena> {
+}
+
+dbt_antlr_runtime::impl_parser_recog! { CSVParserExt, CSVParserNodeKind, "CSV.g4" }
+
+//------------------- csvFile ----------------
+pub type CsvFileContextAll<'input, 'arena, Tok = CommonToken<'input>> = CsvFileContext<'input, 'arena, Tok>;
+
+dbt_antlr_runtime::impl_ctx! { CSVParserNodeKind, CsvFileContext, CsvFileContextExt, RULE_csvFile }
+
+pub trait CsvFileContextAttrs<'input, 'arena, Tok>: ParserRuleContext<'input, 'arena>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+    fn hdr(&self) -> Option<&'arena HdrContextAll<'input, 'arena, Tok>>;
+    fn row_all(&self) -> Vec<&'arena RowContextAll<'input, 'arena, Tok>>;
+    fn row(&self, i: usize) -> Option<&'arena RowContextAll<'input, 'arena, Tok>>;
+}
+
+impl<'input, 'arena, Tok: Token + 'input> CsvFileContextAttrs<'input, 'arena, Tok> for CsvFileContext<'input, 'arena, Tok>
+where
+    'input: 'arena,
+{
+    fn hdr(&self) -> Option<&'arena HdrContextAll<'input, 'arena, Tok>> {
+        self.child_of_type(0)
+    }
+    fn row_all(&self) -> Vec<&'arena RowContextAll<'input, 'arena, Tok>> {
+        self.children_of_type().collect()
+    }
+    fn row(&self, i: usize) -> Option<&'arena RowContextAll<'input, 'arena, Tok>> {
+        self.child_of_type(i)
+    }
+}
+
+impl<'input, 'arena, Input, TF> CSVParser<'input, 'arena, Input, TF>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    Input: TokenStream<'input, 'arena, TF> + 'arena,
+{
+	pub fn csvFile(&mut self,) -> Result<&'arena CsvFileContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
+        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, CsvFileContext<TF::Tok>, RULE_csvFile, 0, |_parentctx| CsvFileContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        let _local_ctx_fn = |recog: &Self| -> &'arena CsvFileContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
+		let mut _la: i32 = -1;
+		/*------- Outer Most Alt 1 -------*/
+		{
+		recog.base.set_state(8);
+		recog.hdr()?;
+		recog.base.set_state(10); 
+		recog.err_handler.sync(&mut recog.base)?;
+		_la = recog.base.input.la(1);
+		loop {
+			{
+			{
+			recog.base.set_state(9);
+			recog.row()?;
+			}
+			}
+			recog.base.set_state(12); 
+			recog.err_handler.sync(&mut recog.base)?;
+			_la = recog.base.input.la(1);
+			if !((((_la) & !0x3f) == 0 && ((1usize << _la) & 110) != 0)) {break}
+		}
+		}
+		})
+	}
+}
+//------------------- hdr ----------------
+pub type HdrContextAll<'input, 'arena, Tok = CommonToken<'input>> = HdrContext<'input, 'arena, Tok>;
+
+dbt_antlr_runtime::impl_ctx! { CSVParserNodeKind, HdrContext, HdrContextExt, RULE_hdr }
+
+pub trait HdrContextAttrs<'input, 'arena, Tok>: ParserRuleContext<'input, 'arena>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+    fn row(&self) -> Option<&'arena RowContextAll<'input, 'arena, Tok>>;
+}
+
+impl<'input, 'arena, Tok: Token + 'input> HdrContextAttrs<'input, 'arena, Tok> for HdrContext<'input, 'arena, Tok>
+where
+    'input: 'arena,
+{
+    fn row(&self) -> Option<&'arena RowContextAll<'input, 'arena, Tok>> {
+        self.child_of_type(0)
+    }
+}
+
+impl<'input, 'arena, Input, TF> CSVParser<'input, 'arena, Input, TF>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    Input: TokenStream<'input, 'arena, TF> + 'arena,
+{
+	pub fn hdr(&mut self,) -> Result<&'arena HdrContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
+        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, HdrContext<TF::Tok>, RULE_hdr, 2, |_parentctx| HdrContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        let _local_ctx_fn = |recog: &Self| -> &'arena HdrContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
+		/*------- Outer Most Alt 1 -------*/
+		{
+		recog.base.set_state(14);
+		recog.row()?;
+		}
+		})
+	}
+}
+//------------------- row ----------------
+pub type RowContextAll<'input, 'arena, Tok = CommonToken<'input>> = RowContext<'input, 'arena, Tok>;
+
+dbt_antlr_runtime::impl_ctx! { CSVParserNodeKind, RowContext, RowContextExt, RULE_row }
+
+pub trait RowContextAttrs<'input, 'arena, Tok>: ParserRuleContext<'input, 'arena>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+    fn field_all(&self) -> Vec<&'arena FieldContextAll<'input, 'arena, Tok>>;
+    fn field(&self, i: usize) -> Option<&'arena FieldContextAll<'input, 'arena, Tok>>;
+}
+
+impl<'input, 'arena, Tok: Token + 'input> RowContextAttrs<'input, 'arena, Tok> for RowContext<'input, 'arena, Tok>
+where
+    'input: 'arena,
+{
+    fn field_all(&self) -> Vec<&'arena FieldContextAll<'input, 'arena, Tok>> {
+        self.children_of_type().collect()
+    }
+    fn field(&self, i: usize) -> Option<&'arena FieldContextAll<'input, 'arena, Tok>> {
+        self.child_of_type(i)
+    }
+}
+
+impl<'input, 'arena, Input, TF> CSVParser<'input, 'arena, Input, TF>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    Input: TokenStream<'input, 'arena, TF> + 'arena,
+{
+	pub fn row(&mut self,) -> Result<&'arena RowContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
+        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, RowContext<TF::Tok>, RULE_row, 4, |_parentctx| RowContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        let _local_ctx_fn = |recog: &Self| -> &'arena RowContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
+		let mut _la: i32 = -1;
+		/*------- Outer Most Alt 1 -------*/
+		{
+		recog.base.set_state(16);
+		recog.field()?;
+		recog.base.set_state(21);
+		recog.err_handler.sync(&mut recog.base)?;
+		_la = recog.base.input.la(1);
+		while _la==CSV_T__0 {
+			{
+			{
+			recog.base.set_state(17);
+			recog.base.match_token(CSV_T__0,&mut recog.err_handler)?;
+			recog.base.set_state(18);
+			recog.field()?;
+			}
+			}
+			recog.base.set_state(23);
+			recog.err_handler.sync(&mut recog.base)?;
+			_la = recog.base.input.la(1);
+		}
+		recog.base.set_state(25);
+		recog.err_handler.sync(&mut recog.base)?;
+		_la = recog.base.input.la(1);
+		if _la==CSV_T__1 {
+			{
+			recog.base.set_state(24);
+			recog.base.match_token(CSV_T__1,&mut recog.err_handler)?;
+			}
+		}
+
+		recog.base.set_state(27);
+		recog.base.match_token(CSV_T__2,&mut recog.err_handler)?;
+		}
+		})
+	}
+}
+//------------------- field ----------------
+pub type FieldContextAll<'input, 'arena, Tok = CommonToken<'input>> = FieldContext<'input, 'arena, Tok>;
+
+dbt_antlr_runtime::impl_ctx! { CSVParserNodeKind, FieldContext, FieldContextExt, RULE_field }
+
+pub trait FieldContextAttrs<'input, 'arena, Tok>: ParserRuleContext<'input, 'arena>
+where
+    'input: 'arena,
+    Tok: Token + 'input,
+{
+    /// Retrieves first TerminalNode corresponding to token TEXT
+    /// Returns `None` if there is no child corresponding to token TEXT
+    fn TEXT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
+    /// Retrieves first TerminalNode corresponding to token STRING
+    /// Returns `None` if there is no child corresponding to token STRING
+    fn STRING(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>>;
+}
+
+impl<'input, 'arena, Tok: Token + 'input> FieldContextAttrs<'input, 'arena, Tok> for FieldContext<'input, 'arena, Tok>
+where
+    'input: 'arena,
+{
+    /// Retrieves first TerminalNode corresponding to token TEXT
+    /// Returns `None` if there is no child corresponding to token TEXT
+    fn TEXT(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(CSV_TEXT, 0)
+    }
+    /// Retrieves first TerminalNode corresponding to token STRING
+    /// Returns `None` if there is no child corresponding to token STRING
+    fn STRING(&self) -> Option<&'arena TerminalNode<'input, 'arena, Tok>> {
+        self.token_of_type(CSV_STRING, 0)
+    }
+}
+
+impl<'input, 'arena, Input, TF> CSVParser<'input, 'arena, Input, TF>
+where
+    'input: 'arena,
+    TF: TokenFactory<'input, 'arena> + 'arena,
+    Input: TokenStream<'input, 'arena, TF> + 'arena,
+{
+	pub fn field(&mut self,) -> Result<&'arena FieldContextAll<'input, 'arena, TF::Tok>, ANTLRError> {
+        dbt_antlr_runtime::parse_rule!(recog = self, _parentctx, FieldContext<TF::Tok>, RULE_field, 6, |_parentctx| FieldContextExt::create(recog.get_arena(), _parentctx, recog.get_state()); {
+        let _local_ctx_fn = |recog: &Self| -> &'arena FieldContext<TF::Tok> {recog.ctx().unwrap().as_rule_context().unwrap()};
+		recog.base.set_state(32);
+		recog.err_handler.sync(&mut recog.base)?;
+		match recog.base.input.la(1) {
+		    CSV_TEXT  => {
+		        /*------- Outer Most Alt 1 -------*/
+		        {
+		        recog.base.set_state(29);
+		        recog.base.match_token(CSV_TEXT,&mut recog.err_handler)?;
+		        }}
+		    CSV_STRING  => {
+		        /*------- Outer Most Alt 2 -------*/
+		        {
+		        recog.base.set_state(30);
+		        recog.base.match_token(CSV_STRING,&mut recog.err_handler)?;
+		        }}
+		    CSV_T__0 |CSV_T__1 |CSV_T__2  => {
+		        /*------- Outer Most Alt 3 -------*/
+		        {
+		        }}
+			_ => Err(ANTLRError::no_alt(&mut recog.base))?
+		}
+		})
+	}
+}
+
+static ATN_SIMULATOR_MANAGER: LazyLock<ATNSimulatorManager> = LazyLock::new(|| ATNSimulatorManager::new(&_ATN));
+static _ATN: LazyLock<ATN> = LazyLock::new(|| {
+    PackedATNDeserializer::new()
+        .deserialize(&_serializedATN)
+        .expect("invalid packed parser ATN")
+});
+static _serializedATN: [u32; 461] = [
+    1346458702, 3, 16909060, 29, 6, 35, 35, 0, 0, 4, 4, 29, 245, 274, 175, 
+    449, 0, 449, 0, 449, 4, 453, 4, 457, 4, 461, 0, 449, 0, 2, 0, 8, 0, 
+    1, 4294967295, 4294967295, 7, 0, 16, 1, 0, 4294967295, 4294967295, 2, 
+    1, 8, 1, 1, 4294967295, 4294967295, 7, 1, 16, 2, 0, 4294967295, 4294967295, 
+    2, 2, 8, 2, 1, 4294967295, 4294967295, 7, 2, 16, 3, 0, 4294967295, 4294967295, 
+    2, 3, 8, 3, 1, 4294967295, 4294967295, 7, 3, 16, 4, 0, 4294967295, 4294967295, 
+    1, 0, 8, 4, 1, 4294967295, 4294967295, 1, 0, 8, 5, 1, 4294967295, 4294967295, 
+    4, 0, 8, 6, 1, 11, 4294967295, 8, 0, 8, 7, 1, 4294967295, 4294967295, 
+    11, 0, 8, 8, 2, 4294967295, 4294967295, 12, 0, 8, 10, 1, 4294967295, 
+    12, 1, 1, 8, 11, 1, 4294967295, 4294967295, 1, 1, 8, 12, 1, 4294967295, 
+    4294967295, 1, 2, 8, 13, 1, 4294967295, 4294967295, 1, 2, 32, 14, 1, 
+    4294967295, 4294967295, 1, 2, 8, 15, 1, 4294967295, 4294967295, 5, 2, 
+    8, 16, 1, 20, 4294967295, 8, 2, 8, 17, 1, 4294967295, 4294967295, 10, 
+    2, 8, 18, 2, 4294967295, 4294967295, 12, 2, 8, 20, 1, 4294967295, 23, 
+    9, 2, 8, 21, 1, 4294967295, 4294967295, 1, 2, 32, 22, 1, 4294967295, 
+    4294967295, 3, 2, 8, 23, 2, 26, 4294967295, 8, 2, 8, 25, 1, 4294967295, 
+    4294967295, 1, 2, 32, 26, 1, 4294967295, 4294967295, 1, 2, 8, 27, 1, 
+    4294967295, 4294967295, 1, 3, 32, 28, 1, 4294967295, 4294967295, 1, 
+    3, 32, 29, 1, 4294967295, 4294967295, 1, 3, 8, 30, 1, 4294967295, 4294967295, 
+    3, 3, 8, 31, 3, 33, 4294967295, 8, 3, 8, 34, 1, 4294967295, 4294967295, 
+    1, 3, 0, 35, 0, 4294967295, 4294967295, 1, 8, 0, 0, 0, 1, 14, 0, 0, 
+    0, 1, 16, 0, 0, 0, 1, 32, 0, 0, 0, 3, 2, 1, 10, 0, 3, 4, 2, 11, 0, 1, 
+    9, 0, 0, 0, 1, 12, 0, 0, 0, 1, 10, 0, 0, 0, 1, 13, 0, 0, 0, 1, 1, 0, 
+    0, 0, 3, 4, 2, 15, 0, 1, 3, 0, 0, 0, 3, 6, 3, 21, 0, 5, 18, 1, 0, 0, 
+    3, 6, 3, 20, 0, 1, 17, 0, 0, 0, 1, 23, 0, 0, 0, 1, 19, 0, 0, 0, 1, 22, 
+    0, 0, 0, 1, 25, 0, 0, 0, 1, 21, 0, 0, 0, 5, 26, 2, 0, 0, 1, 24, 0, 0, 
+    0, 1, 26, 0, 0, 0, 1, 27, 0, 0, 0, 5, 28, 3, 0, 0, 1, 5, 0, 0, 0, 5, 
+    33, 5, 0, 0, 5, 33, 6, 0, 0, 1, 33, 0, 0, 0, 1, 29, 0, 0, 0, 1, 30, 
+    0, 0, 0, 1, 31, 0, 0, 0, 1, 7, 0, 0, 0, 12, 21, 25, 32, 0, 2, 4, 6, 
+    1, 3, 5, 7
+];

@@ -13,6 +13,7 @@
 //! sources for the `dbt-antlr-runtime` runtime from `.g4` grammars.
 
 mod action_translator;
+mod ffi_factory;
 mod lexer_factory;
 mod listener_factory;
 pub mod model;
@@ -21,11 +22,12 @@ pub mod template;
 
 use std::path::{Path, PathBuf};
 
+use crate::emission::ffi_factory::build_ffi_file_context;
 use crate::emission::lexer_factory::build_lexer_file_context;
 use crate::emission::listener_factory::build_tree_walk_file_contexts;
 use crate::emission::model::StaticLexerTablesModel;
 use crate::emission::parser_factory::build_parser_file_context;
-use crate::emission::template::render_template;
+use crate::emission::template::{render_ffi_template, render_template};
 use crate::error::Diagnostic;
 use crate::grammar::compiler::{self, Compilation};
 use crate::grammar::loader::LoadOptions;
@@ -135,7 +137,7 @@ pub fn emit_files_with_flags(
     gen_visitor: bool,
 ) -> Result<Vec<EmittedFile>, EmitError> {
     let compilation = compile_grammar(grammar_path, library_dirs)?;
-    render_recognizer_files(&compilation, grammar_path, gen_listener, gen_visitor)
+    render_recognizer_files(&compilation, grammar_path, gen_listener, gen_visitor, false)
 }
 
 /// Output of [`emit_files_with_options`].
@@ -178,6 +180,34 @@ pub fn emit_files_with_options(
     gen_visitor: bool,
     optimization: &OptimizationOptions,
 ) -> Result<EmittedOutput, EmitError> {
+    emit_files_with_ffi(
+        grammar_path,
+        library_dirs,
+        gen_listener,
+        gen_visitor,
+        optimization,
+        false,
+    )
+}
+
+/// [`emit_files_with_options`] with optional FFI descriptor generation.
+///
+/// When `gen_ffi` is set, every parser also gets a `<parser>_ffi.rs` file in
+/// [`EmittedOutput::files`], which describes the grammar to a
+/// `dbt_antlr_runtime::ffi` bundle.
+///
+/// # Errors
+///
+/// See [`emit_lexer_files`]. Also returns [`EmitError::Unsupported`] when
+/// `gen_ffi` is set and a parser grammar has no `tokenVocab` option.
+pub fn emit_files_with_ffi(
+    grammar_path: &Path,
+    library_dirs: &[PathBuf],
+    gen_listener: bool,
+    gen_visitor: bool,
+    optimization: &OptimizationOptions,
+    gen_ffi: bool,
+) -> Result<EmittedOutput, EmitError> {
     let plan = OptimizationPlan::from_options(optimization)?;
     let compilation = compile_grammar_with(grammar_path, library_dirs, &plan)?;
     let mut diagnostics = crate::compile_error::non_fatal_diagnostics(&compilation);
@@ -192,7 +222,13 @@ pub fn emit_files_with_options(
     let files = if plan.report_only() {
         Vec::new()
     } else {
-        render_recognizer_files(&compilation, grammar_path, gen_listener, gen_visitor)?
+        render_recognizer_files(
+            &compilation,
+            grammar_path,
+            gen_listener,
+            gen_visitor,
+            gen_ffi,
+        )?
     };
     Ok(EmittedOutput {
         files,
@@ -208,6 +244,7 @@ fn render_recognizer_files(
     grammar_path: &Path,
     gen_listener: bool,
     gen_visitor: bool,
+    gen_ffi: bool,
 ) -> Result<Vec<EmittedFile>, EmitError> {
     let grammar_file_name = bare_file_name(grammar_path);
     let grammar_name = grammar_path.file_stem().map_or_else(
@@ -217,6 +254,9 @@ fn render_recognizer_files(
 
     let mut files = Vec::new();
     for root in &compilation.roots {
+        let combined_lexer = root
+            .lexer
+            .map(|lexer_id| compilation.lexers[&lexer_id].semantic.unit.name.as_str());
         if let Some(lexer_id) = root.lexer {
             let compiled = &compilation.lexers[&lexer_id];
             let static_tables = compilation
@@ -248,6 +288,13 @@ fn render_recognizer_files(
                 gen_listener,
                 gen_visitor,
             )?);
+            if gen_ffi {
+                let ffi = build_ffi_file_context(compiled, &context, combined_lexer)?;
+                files.push(EmittedFile {
+                    name: format!("{}_ffi.rs", ffi.parser_module),
+                    content: render_ffi_template(&minijinja::Value::from_serialize(&ffi))?,
+                });
+            }
         }
     }
     Ok(files)

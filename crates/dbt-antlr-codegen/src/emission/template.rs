@@ -28,6 +28,9 @@ pub const TEMPLATE_PATH_ENV_VAR: &str = "DBT_RUST_TEMPLATE";
 /// The template source embedded at compile time.
 const EMBEDDED_TEMPLATE: &str = include_str!("../../templates/dbt/Rust.stg.jinja");
 
+/// The template of the `<parser>_ffi.rs` grammar description.
+const FFI_TEMPLATE: &str = include_str!("../../templates/dbt/Ffi.rs.jinja");
+
 /// Line width the ANTLR code generator configures on its ST4 writer.
 const LINE_WIDTH: usize = 72;
 
@@ -78,6 +81,25 @@ pub fn render_template(ctx: &Value) -> Result<String, Error> {
     env.add_global("RUNTIME_VERSION_MINOR", dbt_antlr_runtime::VERSION_MINOR);
     let template = env.template_from_str(&source)?;
     Ok(resolve_wraps(&template.render(ctx)?))
+}
+
+/// Renders `templates/dbt/Ffi.rs.jinja` (`<parser>_ffi.rs`) with `ctx`.
+///
+/// # Errors
+///
+/// Returns an error when the template cannot be parsed or rendered.
+pub fn render_ffi_template(ctx: &Value) -> Result<String, Error> {
+    let mut env = Environment::new();
+    env.set_trim_blocks(true);
+    env.set_lstrip_blocks(true);
+    env.set_keep_trailing_newline(true);
+    env.add_filter("rust_str", rust_str_filter);
+    env.template_from_str(FFI_TEMPLATE)?.render(ctx)
+}
+
+/// A Rust string literal with the value of `value`.
+fn rust_str_filter(value: &str) -> String {
+    format!("{value:?}")
 }
 
 /// Resolves the [`WRAP_MARK`] wrap points like ST4's `AutoIndentWriter`:

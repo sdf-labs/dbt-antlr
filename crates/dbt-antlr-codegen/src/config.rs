@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::OptimizationOptions;
 #[cfg(feature = "generator")]
-use crate::emission::emit_files_with_options;
+use crate::emission::emit_files_with_ffi;
 use crate::error::{Diagnostic, EmitError, Severity};
 
 /// Generator configuration, primarily for use from a `build.rs` build script.
@@ -61,6 +61,7 @@ pub struct Config {
     gen_visitor: bool,
     cargo_directives: bool,
     quiet: bool,
+    ffi: bool,
     optimization: OptimizationOptions,
     pinned_release_version: Option<String>,
     pinned_release_sha256: Option<String>,
@@ -78,6 +79,7 @@ impl Config {
             gen_visitor: false,
             cargo_directives: true,
             quiet: false,
+            ffi: false,
             optimization: OptimizationOptions::default(),
             pinned_release_version: None,
             pinned_release_sha256: None,
@@ -135,6 +137,15 @@ impl Config {
     /// this setting has no effect on it.
     pub const fn quiet(&mut self, enabled: bool) -> &mut Self {
         self.quiet = enabled;
+        self
+    }
+
+    /// Also generates `<parser>_ffi.rs` (`--ffi`). Default: `false`.
+    ///
+    /// Each parser gets a `<parser>_ffi.rs` file in the output directory,
+    /// which describes the grammar to a `dbt_antlr_runtime::ffi` bundle.
+    pub const fn ffi(&mut self, enabled: bool) -> &mut Self {
+        self.ffi = enabled;
         self
     }
 
@@ -377,8 +388,11 @@ impl Config {
             &release,
             &self.grammars,
             &self.lib_dirs,
-            self.gen_listener,
-            self.gen_visitor,
+            crate::download::PinnedOutputs {
+                gen_listener: self.gen_listener,
+                gen_visitor: self.gen_visitor,
+                gen_ffi: self.ffi,
+            },
             &self.optimization,
             out_dir,
         )?;
@@ -415,12 +429,13 @@ impl Config {
         let mut optimization_messages = Vec::new();
         let mut reports = Vec::new();
         for grammar in &self.grammars {
-            let output = emit_files_with_options(
+            let output = emit_files_with_ffi(
                 grammar,
                 &self.lib_dirs,
                 self.gen_listener,
                 self.gen_visitor,
                 &self.optimization,
+                self.ffi,
             )?;
             if let Some(out_dir) = out_dir {
                 for file in &output.files {
@@ -455,7 +470,7 @@ impl Config {
         &self,
         out_dir: Option<&std::path::Path>,
     ) -> Result<Generation, EmitError> {
-        let _ = out_dir;
+        let _ = (out_dir, self.ffi);
         Err(EmitError::Config(
             "this build of dbt-antlr-codegen was compiled without the `generator` feature; \
              enable it or use Config::pinned_release"

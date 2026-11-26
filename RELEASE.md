@@ -8,7 +8,7 @@ This workspace ships three crates in lock-step from one shared `workspace.packag
 | `dbt-antlr-codegen`   | The generator: `dbt-antlr-codegen` binary + `dbt_antlr_codegen` build-script library | Occasional    |
 | `dbt-antlr-g4-parser` | Internal grammar front-end of the generator                          | Rides along with the tool |
 
-`tests/runtime-testsuite` and `tests/build-generate` are `publish = false`.
+`tests/runtime-testsuite` and `tests/ffi-bundle` are `publish = false`.
 
 ## Setup (one time)
 
@@ -30,11 +30,11 @@ g4-parser, then dbt-antlr-codegen).
    `dbt-antlr-g4-parser-vX.Y.Z`, or `dbt-antlr-codegen-vX.Y.Z`), and creates the
    GitHub release.
 3. The same workflow run regenerates the checked-in recognizers (the
-   `dbt-antlr-g4-parser` front-end and the runtime test goldens) on the
-   release branch and commits any diff. The version bump changes the
-   `check_version!` stamps in freshly generated recognizers, so the
-   regeneration keeps the version, the stamps, and the checked-in files in
-   agreement when the release PR merges.
+   `dbt-antlr-g4-parser` front-end, the runtime test goldens, and
+   `tests/ffi-bundle`) on the release branch and commits any diff. The version
+   bump changes the `check_version!` stamps in freshly generated recognizers,
+   so this step keeps the version, the stamps, and the checked-in files
+   synchronized when the release PR merges.
 4. Wait for the checks on the release PR before merging. GitHub does not
    run `pull_request` workflows on PRs opened by `GITHUB_TOKEN`
    (anti-recursion), so the Release-plz workflow dispatches the CI workflow
