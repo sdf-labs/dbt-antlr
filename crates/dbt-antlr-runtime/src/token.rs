@@ -88,7 +88,7 @@ pub trait Token: Debug + Display {
     fn set_token_index(&mut self, _v: isize);
 }
 
-const TOKEN_TYPE_BITS: u32 = 22;
+pub(crate) const TOKEN_TYPE_BITS: u32 = 22;
 const TOKEN_CHANNEL_BITS: u32 = 32 - TOKEN_TYPE_BITS;
 const TOKEN_TYPE_MASK: i32 = (1 << TOKEN_TYPE_BITS) - 1;
 const TOKEN_CHANNEL_MASK: i32 = !TOKEN_TYPE_MASK;
@@ -234,8 +234,8 @@ fn advance_to_char_boundary(s: &str, mut index: usize) -> usize {
 #[allow(missing_docs)]
 #[repr(C)]
 pub struct CommonToken<'input> {
-    source: &'input SourceInfo<'input>,
-    type_and_channel: i32,
+    pub(crate) source: &'input SourceInfo<'input>,
+    pub(crate) type_and_channel: i32,
     pub start: i32,
     pub stop: i32,
     pub token_index: i32,

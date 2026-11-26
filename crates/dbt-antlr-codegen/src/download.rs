@@ -242,14 +242,21 @@ fn ensure_binary(release: &PinnedRelease, out_dir: &Path) -> Result<PathBuf, Emi
     Ok(binary)
 }
 
+/// The auxiliary files that the pinned binary generates beside the recognizers.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PinnedOutputs {
+    pub(crate) gen_listener: bool,
+    pub(crate) gen_visitor: bool,
+    pub(crate) gen_ffi: bool,
+}
+
 /// Runs the pinned binary over the configured grammars and returns the
 /// generated file paths in `out_dir`.
 pub(crate) fn generate_with_pinned_binary(
     release: &PinnedRelease,
     grammars: &[PathBuf],
     lib_dirs: &[PathBuf],
-    gen_listener: bool,
-    gen_visitor: bool,
+    outputs: PinnedOutputs,
     optimization: &OptimizationOptions,
     out_dir: &Path,
 ) -> Result<Vec<PathBuf>, EmitError> {
@@ -266,11 +273,14 @@ pub(crate) fn generate_with_pinned_binary(
     for dir in lib_dirs {
         command.arg("-lib").arg(dir);
     }
-    if gen_visitor {
+    if outputs.gen_visitor {
         command.arg("-visitor");
     }
-    if !gen_listener {
+    if !outputs.gen_listener {
         command.arg("-no-listener");
+    }
+    if outputs.gen_ffi {
+        command.arg("--ffi");
     }
     for entry in optimization.entry_rules() {
         command.arg("--entry-rule").arg(entry);

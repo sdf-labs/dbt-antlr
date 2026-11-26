@@ -138,6 +138,28 @@ impl Arena {
         ptr
     }
 
+    #[cfg(feature = "ffi")]
+    pub(crate) fn stream_source_info(&self, input: &str) -> *const std::ffi::c_void {
+        let matches_input = |raw: *mut SourceInfo<'static>| -> bool {
+            // SAFETY: Every non-null pointer in `primary_source_info` and
+            // `source_infos` points to an initialized `SourceInfo` in `self.tokens`.
+            let info = unsafe { &*raw };
+            info.fallback.is_none()
+                && info.input.as_ptr() == input.as_ptr()
+                && info.input.len() == input.len()
+        };
+        let first = self.primary_source_info.get();
+        if !first.is_null() && matches_input(first) {
+            return first.cast();
+        }
+        for &raw in self.source_infos.borrow().iter() {
+            if matches_input(raw) {
+                return raw.cast();
+            }
+        }
+        ptr::null()
+    }
+
     #[inline]
     pub fn alloc_labeled_node<'input, 'a, N, I, Tok>(
         &self,

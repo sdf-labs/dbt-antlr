@@ -15,7 +15,7 @@ rust-version = { workspace = true }
 license = "BSD-3-Clause"
 keywords = ["ANTLR", "ANTLR4", "parsing", "runtime"]
 categories = ["parsing"]
-exclude = ["/build.rs", "/gen_test_grammars.sh", "/grammars", "/templates", "/tests"]
+exclude = ["/build.rs", "/cbindgen.toml", "/gen_test_grammars.sh", "/grammars", "/templates", "/tests"]
 
 [lints]
 workspace = true
@@ -25,6 +25,7 @@ arena-allocation-limit = []
 recursion-limit = []
 atn-dump = []
 static-dfa-build = []
+ffi = []
 # Runtime perf counters: only useful for profiling, don't enable in production
 # builds:
 perf-counters = []
@@ -43,6 +44,7 @@ memchr = { workspace = true }
 stacker = { version = "0.1.23", optional = true }
 
 [dev-dependencies]
+cbindgen = { version = "0.29.4", default-features = false }
 serial_test = "3.4.0"
 dbt-antlr-runtime = { path = ".", features = ["atn-dump"] }
 dbt-antlr-codegen = { path = "../dbt-antlr-codegen", default-features = false, features = [
@@ -66,3 +68,8 @@ required-features = ["static-dfa-build"]
 name = "static_lexer_walk"
 path = "tests/static_lexer/walk.rs"
 required-features = ["static-dfa-build"]
+
+[[test]]
+name = "ffi_header"
+path = "tests/ffi_header.rs"
+required-features = ["ffi"]

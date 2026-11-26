@@ -60,6 +60,7 @@ jobs:
           git checkout -b "$branch" "refs/remotes/origin/$branch"
           crates/dbt-antlr-g4-parser/regen_frontend.sh
           crates/dbt-antlr-runtime/gen_test_grammars.sh
+          tests/ffi-bundle/gen_grammars.sh
           if git diff --quiet; then
             echo "checked-in recognizers already match the bumped version"
           else

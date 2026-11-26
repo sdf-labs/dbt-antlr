@@ -4,6 +4,7 @@ members = [
   "crates/dbt-antlr-codegen",
   "crates/dbt-antlr-runtime",
   "tests/runtime-testsuite",
+  "tests/ffi-bundle",
 ]
 resolver = "3"
 # Makes bare `cargo run` execute the `dbt-antlr-codegen` generator binary.
