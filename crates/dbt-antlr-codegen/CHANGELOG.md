@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-codegen-v0.12.0...dbt-antlr-codegen-v0.13.0) - 2026-11-26
+
+### Other
+
+- *(runtime,codegen)* stabilize C-overlay layout for TreeNode, LeafNodeInner, and CommonToken ([#144](https://github.com/sdf-labs/dbt-antlr/pull/144))
+
 ## [0.12.0](https://github.com/sdf-labs/dbt-antlr/compare/dbt-antlr-codegen-v0.11.0...dbt-antlr-codegen-v0.12.0) - 2026-11-24
 
 ### Other
